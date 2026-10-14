@@ -5,6 +5,7 @@
 
 mod agent;
 mod checksum;
+mod storage;
 mod transport;
 mod upgrade;
 
@@ -3185,6 +3186,11 @@ pub fn run() {
             default_save_dir,
             open_folder,
             file_digest,
+            storage::command_table_get,
+            storage::command_table_save,
+            storage::cache_items,
+            storage::cache_delete,
+            storage::app_restart,
             device_list,
             device_pull,
             device_upload,

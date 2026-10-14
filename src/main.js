@@ -2793,58 +2793,184 @@ const CSHELL_CMDS = [
   ["sudo", "<cmd>", "提权执行", "权限"],
 ];
 
+/* ── 指令表：可编辑、可持久化 ─────────────────────────────────────────
+ * 结构：{ groups: [ { name, items: [ { name, args, desc } ] } ] }
+ * 内置的那份（CSHELL_CMDS，标准 Linux 指令）只是"默认值"：第一次运行写进
+ * agent/commands.json，之后用户加/改/删都以文件为准（设置 → 缓存 里能看到/删掉它）。 */
+let CMD_TABLE = { groups: [] };
+
+const cmdDefaults = () => {
+  const groups = [];
+  for (const [name, args, desc, grp] of CSHELL_CMDS) {
+    let g = groups.find((x) => x.name === grp);
+    if (!g) { g = { name: grp, items: [] }; groups.push(g); }
+    g.items.push({ name, args, desc });
+  }
+  return { groups };
+};
+
+async function cmdTableLoad() {
+  let t = null;
+  try { t = await invoke("command_table_get"); } catch (_) { t = null; }
+  if (!t || !Array.isArray(t.groups) || !t.groups.length) {
+    CMD_TABLE = cmdDefaults();
+    await cmdTableSave();          // 首次运行：把默认指令集落盘
+  } else {
+    CMD_TABLE = t;
+  }
+  buildCmdTable();
+}
+
+async function cmdTableSave() {
+  try { await invoke("command_table_save", { table: CMD_TABLE }); }
+  catch (e) { toast(en("指令表保存失败：") + String(e)); }
+}
+
 function buildCmdTable() {
   const box = $("cmd-table");
   const kw = ($("cmd-filter").value || "").trim().toLowerCase();
   box.innerHTML = "";
-  let group = "";
-  for (const [name, args, desc, grp] of CSHELL_CMDS) {
-    const line = `${name} ${args}`.trim();
-    const descShow = en(desc);
-    if (kw && !(line.toLowerCase().includes(kw) || descShow.toLowerCase().includes(kw) || desc.toLowerCase().includes(kw))) continue;
-    if (grp !== group) {
-      group = grp;
-      const h = document.createElement("div");
-      h.className = "navgroup";
-      h.textContent = en(grp);
-      box.appendChild(h);
-    }
-    const row = document.createElement("div");
-    row.className = "cmdrow";
-    const btn = document.createElement("button");
-    btn.className = "cname";
-    btn.textContent = name;
-    btn.title = en("填进输入框");
-    btn.onclick = () => {
-      $("tx").value = args ? `${name} ${args}` : name;
-      $("tx").focus();
-      toast(en("已填入：") + $("tx").value);
+  for (const g of CMD_TABLE.groups) {
+    const items = (g.items || []).filter((it) => {
+      if (!kw) return true;
+      const line = `${it.name} ${it.args || ""}`.toLowerCase();
+      return line.includes(kw) || String(it.desc || "").toLowerCase().includes(kw);
+    });
+    if (!items.length && kw) continue;
+    const h = document.createElement("div");
+    h.className = "navgroup cmdgrp";
+    const gt = document.createElement("span");
+    gt.textContent = en(g.name) + `（${(g.items || []).length}）`;
+    const gEdit = document.createElement("button");
+    gEdit.className = "btn small"; gEdit.textContent = "✎"; gEdit.title = en("改组名");
+    gEdit.onclick = async (e) => {
+      e.stopPropagation();
+      const v = await kdForm({ title: en("改指令组名"), fields: [{ id: "name", label: en("组名"), value: g.name }] });
+      if (!v) return;
+      g.name = v.name.trim() || g.name;
+      await cmdTableSave(); buildCmdTable();
     };
-    const d2 = document.createElement("div");
-    d2.className = "cdesc";
-    d2.innerHTML = args ? `<code>${escapeHtml(args)}</code> — ${escapeHtml(descShow)}` : escapeHtml(descShow);
-    const go = document.createElement("button");
-    go.className = "btn small cgo";
-    go.textContent = "▶";
-    go.title = en("直接发送");
-    go.onclick = async () => {
-      if (args) {                       // 带参数的不直接发，先填进去让用户改
-        $("tx").value = `${name} ${args}`;
+    const gDel = document.createElement("button");
+    gDel.className = "btn small danger"; gDel.textContent = "✕"; gDel.title = en("删掉这个组（连同组里的指令）");
+    gDel.onclick = async (e) => {
+      e.stopPropagation();
+      if (!(await agConfirm(`${en("删掉指令组")}「${g.name}」${en("连同里面的")} ${(g.items || []).length} ${en("条指令？")}`, en("删除指令组"), true))) return;
+      CMD_TABLE.groups = CMD_TABLE.groups.filter((x) => x !== g);
+      await cmdTableSave(); buildCmdTable();
+    };
+    h.append(gt, gEdit, gDel);
+    box.appendChild(h);
+
+    for (const it of items) {
+      const row = document.createElement("div");
+      row.className = "cmdrow";
+      const btn = document.createElement("button");
+      btn.className = "cname";
+      btn.textContent = it.name;
+      btn.title = en("填进输入框");
+      btn.onclick = () => {
+        $("tx").value = it.args ? `${it.name} ${it.args}` : it.name;
         $("tx").focus();
-        toast("这条要带参数，已填进输入框");
-        return;
-      }
-      await sendPayload(name, false);
-    };
-    row.appendChild(btn); row.appendChild(d2); row.appendChild(go);
-    box.appendChild(row);
+        toast(en("已填入：") + $("tx").value);
+      };
+      const d2 = document.createElement("div");
+      d2.className = "cdesc";
+      const descShow = en(it.desc || "");
+      d2.innerHTML = it.args ? `<code>${escapeHtml(it.args)}</code> — ${escapeHtml(descShow)}` : escapeHtml(descShow);
+      const go = document.createElement("button");
+      go.className = "btn small cgo";
+      go.textContent = "▶";
+      go.title = en("直接发送");
+      go.onclick = async () => {
+        if (it.args) {                 // 带参数的不直接发，先填进去让用户改
+          $("tx").value = `${it.name} ${it.args}`;
+          $("tx").focus();
+          toast(en("这条要带参数，已填进输入框"));
+          return;
+        }
+        await sendPayload(it.name, false);
+      };
+      const ed = document.createElement("button");
+      ed.className = "btn small"; ed.textContent = "✎"; ed.title = en("编辑这条指令");
+      ed.onclick = async (e) => {
+        e.stopPropagation();
+        const v = await kdForm({
+          title: en("编辑指令"),
+          fields: [
+            { id: "name", label: en("名字"), value: it.name },
+            { id: "args", label: en("参数模板"), value: it.args || "", ph: "[-l] [dir]" },
+            { id: "desc", label: en("说明"), value: it.desc || "", ph: "(optional)" },
+          ],
+        });
+        if (!v) return;
+        it.name = v.name.trim() || it.name;
+        it.args = v.args.trim();
+        it.desc = v.desc.trim();
+        await cmdTableSave(); buildCmdTable();
+      };
+      const del = document.createElement("button");
+      del.className = "btn small danger"; del.textContent = "✕"; del.title = en("删掉这条指令");
+      del.onclick = async (e) => {
+        e.stopPropagation();
+        g.items = (g.items || []).filter((x) => x !== it);
+        await cmdTableSave(); buildCmdTable();
+      };
+      row.append(btn, d2, go, ed, del);
+      box.appendChild(row);
+    }
   }
-  if (!box.children.length) box.innerHTML = '<p class="hint">没匹配的命令</p>';
+  if (!box.children.length) box.innerHTML = '<p class="hint">' + en("没匹配的命令") + '</p>';
+}
+
+/** 新增一条指令（选组 + 填名字/参数/说明） */
+async function cmdAddCommand() {
+  if (!CMD_TABLE.groups.length) CMD_TABLE.groups.push({ name: en("自定义"), items: [] });
+  const v = await kdForm({
+    title: en("新增指令"),
+    fields: [
+      { id: "group", label: en("指令组"), value: CMD_TABLE.groups[0].name, ph: en("可以填新组名，会自动创建") },
+      { id: "name", label: en("名字"), ph: "reboot" },
+      { id: "args", label: en("参数模板"), ph: "[-f]" },
+      { id: "desc", label: en("说明"), ph: en("这条是干什么的") },
+    ],
+  });
+  if (!v || !v.name.trim()) return;
+  const gname = v.group.trim() || en("自定义");
+  let g = CMD_TABLE.groups.find((x) => x.name === gname);
+  if (!g) { g = { name: gname, items: [] }; CMD_TABLE.groups.push(g); }
+  g.items.push({ name: v.name.trim(), args: v.args.trim(), desc: v.desc.trim() });
+  await cmdTableSave(); buildCmdTable();
+  toast(en("已加入指令表：") + v.name.trim());
 }
 
 function bindCmdTable() {
-  buildCmdTable();
+  cmdTableLoad();                  // 后端那份为准（没有就写默认）
   $("cmd-filter").oninput = buildCmdTable;
+  if ($("cmd-help")) $("cmd-help").onclick = cmdHelp;
+  $("cmd-add").onclick = cmdAddCommand;
+  $("cmd-grp-add").onclick = async () => {
+    const v = await kdForm({ title: en("新增指令组"), fields: [{ id: "name", label: en("组名"), ph: en("例：我的板子专用") }] });
+    if (!v || !v.name.trim()) return;
+    if (CMD_TABLE.groups.some((x) => x.name === v.name.trim())) return toast(en("这个组已经存在"));
+    CMD_TABLE.groups.push({ name: v.name.trim(), items: [] });
+    await cmdTableSave(); buildCmdTable();
+  };
+  $("cmd-reset").onclick = async () => {
+    if (!(await agConfirm(en("恢复成内置的标准 Linux 指令集？你自己加的组和指令会丢掉。"), en("恢复默认指令表"), true))) return;
+    CMD_TABLE = cmdDefaults();
+    await cmdTableSave(); buildCmdTable();
+    toast(en("已恢复默认指令表"));
+  };
+}
+
+/** 指令表帮助 */
+function cmdHelp() {
+  toast([
+    en("点名字=填进发送框；▶=直接发（带参数的会先填进去让你补）"),
+    en("+ 组 / + 指令：自己加；组名可以随便起（例：我的板子专用）"),
+    en("行尾 ✎ 改、✕ 删；改完立刻存进 agent/commands.json，下次开机还在"),
+    en("恢复默认：回到内置的标准 Linux 指令集"),
+  ].join("\n"));
 }
 
 // ---------------- 快捷发送：常用命令一键发 ----------------
@@ -3315,6 +3441,7 @@ function bindSettings() {
       if (b.dataset.set === "model" && !agNewProfile) agLoadConfig();
       if (b.dataset.set === "model") amdLoadPull(false);
       if (b.dataset.set === "about") agLoadTools();
+      if (b.dataset.set === "cache") { cacheRender(); bindCache(); }
       if (b.dataset.set === "about" || b.dataset.set === "general") agRenderAbout();
       if (LANG === "en") setTimeout(() => langWalk(), 0);   // 这一页里运行时拼出来的文字
     };
@@ -5049,6 +5176,241 @@ async function agLoadVersion() {
   agRenderAbout();
 }
 
+/* ── 通用小表单弹窗（新增/编辑指令、组名等用） ─────────────────────────
+ * 返回 { id: value } 或 null（取消）。样式复用 .kdmodal。 */
+function kdForm({ title, fields, okText }) {
+  return new Promise((resolve) => {
+    const mask = document.createElement("div");
+    mask.className = "kdmodal";
+    const box = document.createElement("div");
+    box.className = "kdbox";
+    const t = document.createElement("div");
+    t.className = "kdttl"; t.textContent = title || "";
+    box.appendChild(t);
+    const inputs = {};
+    for (const f of fields) {
+      const row = document.createElement("div");
+      row.className = "kdfield";
+      const lb = document.createElement("label");
+      lb.textContent = f.label || f.id;
+      const inp = document.createElement("input");
+      inp.value = f.value == null ? "" : String(f.value);
+      if (f.ph) inp.placeholder = f.ph;
+      inputs[f.id] = inp;
+      row.append(lb, inp);
+      box.appendChild(row);
+    }
+    const acts = document.createElement("div");
+    acts.className = "kdacts";
+    const cancel = document.createElement("button");
+    cancel.className = "btn small"; cancel.textContent = en("取消");
+    const ok = document.createElement("button");
+    ok.className = "btn small primary"; ok.textContent = okText || en("确定");
+    acts.append(cancel, ok);
+    box.appendChild(acts);
+    mask.appendChild(box);
+    document.body.appendChild(mask);
+    const close = (val) => { mask.remove(); document.removeEventListener("keydown", onKey); resolve(val); };
+    const collect = () => {
+      const out = {};
+      for (const [k, el] of Object.entries(inputs)) out[k] = el.value;
+      return out;
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); close(null); }
+      if (e.key === "Enter" && document.activeElement && document.activeElement.tagName === "INPUT") {
+        e.preventDefault(); close(collect());
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    cancel.onclick = () => close(null);
+    ok.onclick = () => close(collect());
+    mask.onclick = (e) => { if (e.target === mask) close(null); };
+    (Object.values(inputs)[0] || ok).focus();
+  });
+}
+
+/* ── 设置 → 缓存：列出全部持久化数据，按类删除 ─────────────────────── */
+let cacheRows = [];
+
+async function cacheRender() {
+  const box = document.getElementById("cache-list");
+  if (!box) return;
+  box.innerHTML = "";
+  let items = [];
+  try { items = await invoke("cache_items"); } catch (e) { box.innerHTML = '<p class="hint">' + String(e) + '</p>'; return; }
+  cacheRows = items;
+  for (const it of items) {
+    const row = document.createElement("div");
+    row.className = "agentrow cacherow";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.dataset.key = it.key;
+    cb.onchange = cacheSum;
+    const info = document.createElement("div");
+    info.className = "info";
+    const t = document.createElement("div");
+    t.className = "nm"; t.textContent = en(it.title);
+    const p = document.createElement("div");
+    p.className = "meta cmdp";
+    p.textContent = (it.exists ? "" : "（不存在）") + it.path + (it.files ? `  ·  ${it.files} 个文件 / ${fmtBytes(it.bytes)}` : "");
+    p.title = it.path;
+    const w = document.createElement("div");
+    w.className = "warn";
+    w.textContent = en(it.warn || "");
+    info.append(t, p, w);
+    row.append(cb, info);
+    box.appendChild(row);
+  }
+  cacheSum();
+}
+
+const fmtBytes = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : b >= 1024 ? (b / 1024).toFixed(1) + " KB" : (b || 0) + " B");
+
+function cacheSum() {
+  const n = [...document.querySelectorAll("#cache-list input[type=checkbox]")].filter((c) => c.checked).length;
+  const sum = document.getElementById("cache-sum");
+  if (sum) sum.textContent = n ? `${en("已选")} ${n} ${en("项")}` : "";
+}
+
+/** 删除确认：把选中的项列出来，每一项都能再勾一次（危险项默认勾上但要求显式确认） */
+function kdConfirmDelete(items) {
+  return new Promise((resolve) => {
+    const mask = document.createElement("div");
+    mask.className = "kdmodal";
+    const box = document.createElement("div");
+    box.className = "kdbox wide";
+    const t = document.createElement("div");
+    t.className = "kdttl"; t.textContent = en("确认删除这些缓存？");
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = en("勾选框里的会被删掉；删完软件会自动重启。带 ⚠ 的会丢数据（对话、密钥、供应商配置、技能副本），请确认你不需要它们。");
+    box.append(t, hint);
+    const list = document.createElement("div");
+    list.className = "kdlist";
+    const boxes = [];
+    for (const it of items) {
+      const r = document.createElement("label");
+      r.className = "kditem";
+      const cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = true; cb.dataset.key = it.key;
+      const span = document.createElement("span");
+      span.innerHTML = (it.confirm ? "⚠ " : "") + escapeHtml(en(it.title)) +
+        `<br><code>${escapeHtml(it.path)}</code>` +
+        (it.warn ? `<br><span class="mhint">${escapeHtml(en(it.warn))}</span>` : "");
+      boxes.push(cb);
+      r.append(cb, span);
+      list.appendChild(r);
+    }
+    box.appendChild(list);
+    const acts = document.createElement("div");
+    acts.className = "kdacts";
+    const cancel = document.createElement("button");
+    cancel.className = "btn small"; cancel.textContent = en("取消");
+    const ok = document.createElement("button");
+    ok.className = "btn small danger"; ok.textContent = en("删除并重启");
+    acts.append(cancel, ok);
+    box.appendChild(acts);
+    mask.appendChild(box);
+    document.body.appendChild(mask);
+    const close = (v) => { mask.remove(); resolve(v); };
+    cancel.onclick = () => close(null);
+    ok.onclick = () => {
+      const keys = boxes.filter((b) => b.checked).map((b) => b.dataset.key);
+      if (!keys.length) { toast(en("一个都没勾")); return; }
+      close(keys);
+    };
+    mask.onclick = (e) => { if (e.target === mask) close(null); };
+  });
+}
+
+async function cacheDeleteFlow() {
+  const picked = [...document.querySelectorAll("#cache-list input[type=checkbox]")]
+    .filter((c) => c.checked)
+    .map((c) => cacheRows.find((x) => x.key === c.dataset.key))
+    .filter(Boolean);
+  if (!picked.length) return toast(en("先勾选要删的项"));
+  const keys = await kdConfirmDelete(picked);
+  if (!keys) return;
+  // "浏览器本地存储"这一项由前端清（后端只负责文件）
+  const clearLocal = keys.includes("local");
+  const fileKeys = keys.filter((k) => k !== "local");
+  try {
+    if (fileKeys.length) await invoke("cache_delete", { keys: fileKeys });
+    if (clearLocal) {
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith("kdock_") || k.startsWith("h7test_")) localStorage.removeItem(k);
+      }
+    }
+    toast(en("已删除，正在重启…"));
+    await new Promise((r) => setTimeout(r, 600));
+    await invoke("app_restart");
+  } catch (e) { toast(String(e)); }
+}
+
+function bindCache() {
+  const reload = document.getElementById("cache-reload");
+  if (!reload) return;
+  reload.onclick = cacheRender;
+  document.getElementById("cache-all").onclick = () => {
+    document.querySelectorAll("#cache-list input[type=checkbox]").forEach((c) => { c.checked = true; });
+    cacheSum();
+  };
+  document.getElementById("cache-none").onclick = () => {
+    document.querySelectorAll("#cache-list input[type=checkbox]").forEach((c) => { c.checked = false; });
+    cacheSum();
+  };
+  document.getElementById("cache-del").onclick = cacheDeleteFlow;
+}
+
+/* ── 设备 IP / 端口 历史：下次输入时给提示 ─────────────────────────── */
+const DEV_HIST_IDS = ["tcp-client-host", "tcp-client-port", "upg-host", "upg-port",
+                      "fl-host", "fl-port", "sq-host", "sq-port", "sc-host"];
+let devHist = {};
+
+function devHistLoad() {
+  try { devHist = JSON.parse(localStorage.getItem("kdock_dev_hist") || "{}") || {}; } catch (_) { devHist = {}; }
+}
+
+function devHistRemember(id, val) {
+  const v = String(val || "").trim();
+  if (!v) return;
+  const arr = (devHist[id] || []).filter((x) => x !== v);
+  arr.unshift(v);
+  devHist[id] = arr.slice(0, 12);
+  localStorage.setItem("kdock_dev_hist", JSON.stringify(devHist));
+}
+
+function devHistRefresh(id) {
+  const inp = document.getElementById(id);
+  if (!inp) return;
+  let dl = document.getElementById(id + "-hist");
+  if (!dl) {
+    dl = document.createElement("datalist");
+    dl.id = id + "-hist";
+    document.body.appendChild(dl);
+    inp.setAttribute("list", id + "-hist");
+  }
+  dl.textContent = "";
+  for (const v of devHist[id] || []) {
+    const o = document.createElement("option");
+    o.value = v;
+    dl.appendChild(o);
+  }
+}
+
+function bindDevHistory() {
+  devHistLoad();
+  for (const id of DEV_HIST_IDS) {
+    const inp = document.getElementById(id);
+    if (!inp) continue;
+    devHistRefresh(id);
+    inp.addEventListener("focus", () => devHistRefresh(id));
+    inp.addEventListener("change", () => { devHistRemember(id, inp.value); devHistRefresh(id); });
+    inp.addEventListener("blur", () => { devHistRemember(id, inp.value); });
+  }
+}
+
 async function agLoadTools() {
   agTools = await invoke("agent_tools").catch(() => []);
   const box = agEl("ag-tool-list");
@@ -5591,7 +5953,8 @@ async function bindAgentEvents() {
 // ---------------- 中英文切换 ----------------
 // 说明：按"元素文本(中文) -> 英文"的字典做替换（叶子元素/placeholder/title），
 // 覆盖导航、标题栏、菜单、各页卡片标题与常用按钮/字段；字典里没有的保持中文（可随时补）。
-let LANG = localStorage.getItem("kdock_lang") === "en" ? "en" : "zh";
+// 没配置过就默认英文（用户要的是"如无配置默认英语"）
+let LANG = localStorage.getItem("kdock_lang") === "zh" ? "zh" : "en";
 const EN = {
   "调试": "Debug", "设备": "Device", "工具": "Tools",
   "传输": "Transfer", "命令表": "Commands", "固件升级": "Firmware", "烧录": "Flash",
@@ -6089,6 +6452,97 @@ const EN = {
   "三处保持一致，每次发版写进": ", and every release is recorded in",
   "， 并打一个": ", plus a", "的 git tag。": " git tag.",
   "是另一套：": " is a separate scheme: ",
+  // ============ 传输页「更多」面板 ============
+  "更多 ⋯": "More ⋯", "显示": "Display", "编码": "Encoding",
+  "设备打印的不是 UTF-8（例如 GB2312/GBK）时切过去，原始字节不会丢":
+    "Switch when the device prints non-UTF-8 text (e.g. GB2312/GBK); raw bytes are kept either way",
+  "中文乱码就切 GBK；编码只影响显示，日志里存的还是原始字节。":
+    "Garbled CJK? switch to GBK. Encoding only affects the view — logs keep raw bytes.",
+  "自动滚动": "Auto scroll", "新数据到达时自动滚到底部": "Scroll to the bottom as new data arrives",
+  "暂停接收": "Pause RX", "先冻住界面看历史，设备数据照收（不丢）": "Freeze the view to read history; data keeps arriving",
+  "「暂停」只是不刷新界面，串口照样在收；取消暂停会把攒下的数据补上。":
+    "Pause only stops repainting — the port keeps receiving, and resuming shows everything buffered.",
+  "交互": "Interaction", "ASCII 交互": "ASCII mode",
+  "打开后可以直接在输出区敲键盘跟设备对话": "Type directly in the output area to talk to the device",
+  "设备不回显时打开，自己敲的字会先显示出来": "Enable when the device does not echo; your keystrokes are shown",
+  "本地回显": "Local echo",
+  "打开「ASCII 交互」后点输出区就能直接打字（Enter 发送、Ctrl+C 发送 0x03）；适合对着 shell 交互。":
+    "With ASCII mode on, click the output area and type (Enter sends, Ctrl+C sends 0x03) — handy for shell sessions.",
+  "快捷发送": "Quick send", "按钮名": "Button label",
+  "要发送的内容（HEX 形如 41 54 0D 0A）": "Payload (HEX looks like 41 54 0D 0A)",
+  "勾上后按 HEX 发送": "Send as HEX", "加进去的按钮常驻在输出区上方，点一下就发；右键按钮可以删除。":
+    "Added buttons stay above the output area and send with one click; right-click a button to delete it.",
+  "会话日志": "Session log", "默认目录（留空=文档目录）": "Default folder (empty = Documents)",
+  "保存的是完整会话（含时间戳/方向/原始字节），加载后可以回放。":
+    "The saved file contains the whole session (timestamps, direction, raw bytes) and can be replayed.",
+  "回放": "Replay", "先「加载日志」再回放；1x 按原始时间轴，2x 就是两倍速。":
+    "Load a log first, then replay: 1x follows the original timeline, 2x is twice as fast.",
+  "0x": "0x (hex input)",
+
+  // ============ 指令表：编辑 ============
+  "新增一个指令组（比如：我的板子专用）": "Add a command group (e.g. my board)",
+  "往当前组新增一条指令": "Add a command to a group",
+  "恢复到内置的标准 Linux 指令集": "Restore the built-in standard Linux command set",
+  "指令表是**可编辑**的：加了什么就存在": "The command table is editable: whatever you add is stored in",
+  "，下次开机还在（「设置 → 缓存」里能看到它、也能删）。行尾的 ✎ / ✕ 用来改或删那一条。":
+    " and survives restarts (visible and deletable in Settings → Cache). The ✎ / ✕ buttons at the line end edit or delete that entry.",
+  "没匹配的命令": "no matching command", "这条要带参数，已填进输入框": "This one takes arguments — filled into the send box",
+  "改指令组名": "Rename group", "组名": "Group name", "删掉这个组（连同组里的指令）": "Delete this group and its commands",
+  "删掉指令组": "Delete group", "连同里面的": "and its", " 条指令？": " commands?",
+  "编辑这条指令": "Edit command", "删掉这条指令": "Delete command",
+  "名字": "Name", "参数模板": "Arguments", "说明": "Description",
+  "新增指令": "New command", "指令组": "Group", "可以填新组名，会自动创建": "a new name creates the group",
+  "这条是干什么的": "what it does", "自定义": "Custom", "新增指令组": "New group",
+  "例：我的板子专用": "e.g. my board", "这个组已经存在": "that group already exists",
+  "恢复成内置的标准 Linux 指令集？你自己加的组和指令会丢掉。":
+    "Restore the built-in standard Linux set? Your own groups and commands will be lost.",
+  "恢复默认指令表": "Restore default table", "已恢复默认指令表": "default command table restored",
+  "已加入指令表：": "added to the command table: ", "指令表保存失败：": "saving the command table failed: ",
+  "点名字=填进发送框；▶=直接发（带参数的会先填进去让你补）":
+    "Click a name to fill the send box; ▶ sends right away (entries with arguments are filled in for you to edit)",
+  "+ 组 / + 指令：自己加；组名可以随便起（例：我的板子专用）":
+    "+ group / + command: add your own; group names are free-form (e.g. my board)",
+  "行尾 ✎ 改、✕ 删；改完立刻存进 agent/commands.json，下次开机还在":
+    "✎ edits, ✕ deletes; every change is written to agent/commands.json immediately",
+  "恢复默认：回到内置的标准 Linux 指令集": "Restore default: back to the built-in standard Linux set",
+  "怎么用 / 怎么自定义": "How to use / customise",
+  "取消": "Cancel", "确定": "OK",
+
+  // ============ 设置 → 缓存 ============
+  "缓存": "Cache", "持久化数据（缓存）": "Persisted data (cache)", "↻ 刷新": "↻ Refresh",
+  "这里是本软件在你这台机器上留下的**全部**数据：界面偏好、窗口状态、LLM 供应商与密钥、 对话历史、技能副本、MCP 配置、指令表、工作区文件…… 每一项都标了路径，可以单独删。 删除后软件会自动重启（避免半截状态）。":
+    "Everything this app leaves on your machine: UI preferences, window state, LLM providers and keys, chat history, skill copies, MCP config, command table, workspace files… Each row shows its path and can be deleted on its own. The app restarts afterwards to avoid half-deleted state.",
+  "全选": "Select all", "全不选": "Select none", "删除选中…": "Delete selected…",
+  "已选": "selected", " 项": " item(s)", "（不存在）": "(missing)",
+  "确认删除这些缓存？": "Delete these cache items?",
+  "勾选框里的会被删掉；删完软件会自动重启。带 ⚠ 的会丢数据（对话、密钥、供应商配置、技能副本），请确认你不需要它们。":
+    "Checked items are deleted and the app restarts. Items marked ⚠ lose real data (chats, keys, provider config, skill copies) — make sure you do not need them.",
+  "删除并重启": "Delete and restart", "已删除，正在重启…": "deleted, restarting…",
+  "先勾选要删的项": "tick something first", "一个都没勾": "nothing selected",
+  // 后端返回的缓存项文案
+  "界面偏好（主题 / 配色 / 语言 / 栏宽）": "UI preferences (theme / accent / language / pane widths)",
+  "会回到默认外观（深色 + 海洋蓝 + 英文）": "resets the look to the default (dark, ocean blue, English)",
+  "窗口位置与大小": "Window position and size",
+  "下次启动窗口回到屏幕中央的默认尺寸": "next launch uses the default size, centred",
+  "浏览器本地存储（快捷发送 / 编排画布 / 编码 / 上次目录…）":
+    "Browser local storage (quick send / flow canvas / encoding / last folders…)",
+  "由界面自己清空（WebView2 的本地存储）": "cleared by the UI itself (WebView2 local storage)",
+  "LLM 供应商配置（不含密钥）": "LLM provider profiles (no keys)",
+  "供应商列表与当前选择会清空，需要重新配置模型": "the provider list and current selection are wiped — configure a model again",
+  "API 密钥（DPAPI 加密）": "API keys (DPAPI encrypted)",
+  "所有供应商的 Key 都会被删除，需要重新粘贴": "all provider keys are deleted; paste them again",
+  "Agent 对话历史（含摘要与压缩前的原始记录）": "Agent chat history (summaries and pre-compaction records)",
+  "所有对话都会消失，不可恢复": "every chat disappears — unrecoverable",
+  "技能（导入/新建的 SKILL.md 副本）": "Skills (imported/created SKILL.md copies)",
+  "只删这个副本目录（你自己的原始 SKILL.md 不在里面）": "only this copy directory is removed (your original SKILL.md files live elsewhere)",
+  "已关闭的技能副本": "Disabled skill copies", "同上，只删副本": "same as above — copies only",
+  "MCP 服务配置": "MCP server config", "MCP 列表会清空": "the MCP list is cleared",
+  "指令表配置（指令组 / 指令）": "Command table config (groups / commands)",
+  "回到内置的标准 Linux 指令集": "falls back to the built-in standard Linux set",
+  "工作区列表": "Workspace list", "工作区记录清空（目录本身不动）": "workspace records are cleared (the folders themselves stay)",
+  "Agent 工作区文件（下载/导出的文件）": "Agent workspace files (downloaded / exported)",
+  "里面有 agent 收发的文件，删了就没了": "files the agent sent and received — gone once deleted",
+  "出字速度统计": "Throughput stats", "速度与平均速度重新累计": "last and average throughput start over",
   "包头里的三段式版本号（PD_HW.PD_SW.PD_FIX）， 由设备端规则决定是否允许升级/降级，和上面的应用版本无关。":
     " header (three segments) that the device uses to accept or reject an upgrade — unrelated to the app version.",
   "未选择固件": "no firmware selected", "升级中…": "upgrading…", "升级完成": "upgrade finished",
@@ -6364,9 +6818,11 @@ async function main() {
   bindSeq();
   bindErrorBanner();
   bindGutter();
+  bindDevHistory();             // 设备 IP / 端口历史（datalist 提示）
   bindFlash();
   bindCapture();
   bindSettings();
+  bindCache();
   bindAgent();
   bindAgentEvents();
   bindScope();

@@ -57,6 +57,7 @@
             <button class="modaltab" data-set="model">模型与供应商</button>
             <button class="modaltab" data-set="skills">技能</button>
             <button class="modaltab" data-set="mcp">MCP</button>
+            <button class="modaltab" data-set="cache">缓存</button>
             <button class="modaltab" data-set="about">关于与数据</button>
           </div>
           <div class="modalcontent">
@@ -185,6 +186,23 @@
                 "Live capacity" 那份公开数据（后端去取，绕开跨域）。<b>只在打开这个页面时才刷新</b>，
                 每 15 秒一次。<span id="amd-load-at" class="hint"></span></p>
             </div>
+            <!-- 缓存：所有持久化数据一览 + 按类删除 -->
+            <div class="setpane" data-setpane="cache" hidden>
+              <div class="cardtitle">持久化数据（缓存）
+                <button id="cache-reload" class="btn small">↻ 刷新</button></div>
+              <p class="hint">这里是本软件在你这台机器上留下的**全部**数据：界面偏好、窗口状态、LLM 供应商与密钥、
+                对话历史、技能副本、MCP 配置、指令表、工作区文件…… 每一项都标了路径，可以单独删。
+                删除后软件会自动重启（避免半截状态）。</p>
+              <div class="trow">
+                <button id="cache-all" class="btn small">全选</button>
+                <button id="cache-none" class="btn small">全不选</button>
+                <span class="grow"></span>
+                <span id="cache-sum" class="lb"></span>
+                <button id="cache-del" class="btn small danger">删除选中…</button>
+              </div>
+              <div id="cache-list" class="agentlist"></div>
+            </div>
+
             <div class="setpane" data-setpane="about" hidden>
               <div class="cardtitle">关于 KDock</div>
               <div id="set-about" class="aginfo"></div>
@@ -345,46 +363,65 @@
               <span class="grow"></span>
               <label class="chk" title="每行前面显示时间戳"><input type="checkbox" id="show-ts" checked /> 时间戳</label>
               <details class="more" id="more-panel">
-                <summary class="btn small" title="更多：编码 / 滚动 / 暂停 / ASCII 交互 / 快捷命令 / 会话">⋯</summary>
+                <summary class="btn small" title="显示 / 交互 / 快捷发送 / 会话日志 / 回放">更多 ⋯</summary>
                 <div class="morebox panelbox">
-                  <div class="mrow">
-                    <span class="mlabel">显示</span>
-                    <label class="lb">编码</label>
-                    <select id="encoding" class="tight" title="设备打印非 UTF-8（比如 GB2312）时切到 GBK">
-                      <option value="utf-8">UTF-8</option>
-                      <option value="gbk">GBK</option>
-                    </select>
-                    <label class="chk"><input type="checkbox" id="autoscroll" checked /> 滚动</label>
-                    <label class="chk"><input type="checkbox" id="pause" /> 暂停</label>
-                  </div>
-                  <div class="mrow">
-                    <span class="mlabel">交互</span>
-                    <label class="chk" title="打开后可以直接在右边输出区敲键盘跟设备交互"><input type="checkbox" id="ascii-mode" /> ASCII 交互</label>
-                    <label class="chk" title="设备不回显时打开"><input type="checkbox" id="local-echo" /> 本地回显</label>
-                  </div>
-                  <div class="mrow mcol">
-                    <span class="mlabel">快捷</span>
+                  <section class="msec">
+                    <div class="msec-h">显示</div>
+                    <div class="mline">
+                      <label class="lb" for="encoding">编码</label>
+                      <select id="encoding" class="tight" title="设备打印的不是 UTF-8（例如 GB2312/GBK）时切过去，原始字节不会丢">
+                        <option value="utf-8">UTF-8</option>
+                        <option value="gbk">GBK</option>
+                      </select>
+                      <span class="mhint">中文乱码就切 GBK；编码只影响显示，日志里存的还是原始字节。</span>
+                    </div>
+                    <div class="mline">
+                      <label class="chk" title="新数据到达时自动滚到底部"><input type="checkbox" id="autoscroll" checked /> 自动滚动</label>
+                      <label class="chk" title="先冻住界面看历史，设备数据照收（不丢）"><input type="checkbox" id="pause" /> 暂停接收</label>
+                      <span class="mhint">「暂停」只是不刷新界面，串口照样在收；取消暂停会把攒下的数据补上。</span>
+                    </div>
+                  </section>
+                  <section class="msec">
+                    <div class="msec-h">交互</div>
+                    <div class="mline">
+                      <label class="chk" title="打开后可以直接在输出区敲键盘跟设备对话"><input type="checkbox" id="ascii-mode" /> ASCII 交互</label>
+                      <label class="chk" title="设备不回显时打开，自己敲的字会先显示出来"><input type="checkbox" id="local-echo" /> 本地回显</label>
+                      <span class="mhint">打开「ASCII 交互」后点输出区就能直接打字（Enter 发送、Ctrl+C 发送 0x03）；适合对着 shell 交互。</span>
+                    </div>
+                  </section>
+                  <section class="msec">
+                    <div class="msec-h">快捷发送</div>
                     <div id="qs-list" class="qslist"></div>
                     <div class="trow">
-                      <input id="qs-label" class="num" style="width:70px" placeholder="名字" />
-                      <input id="qs-payload" class="qsinput" placeholder="要发送的内容" />
-                      <label class="chk"><input type="checkbox" id="qs-hex" /> HEX</label>
+                      <input id="qs-label" class="num" style="width:80px" placeholder="按钮名" />
+                      <input id="qs-payload" class="qsinput" placeholder="要发送的内容（HEX 形如 41 54 0D 0A）" />
+                      <label class="chk" title="勾上后按 HEX 发送"><input type="checkbox" id="qs-hex" /> HEX</label>
                       <button id="qs-add" class="btn small">添加</button>
                     </div>
-                  </div>
-                  <div class="mrow">
-                    <span class="mlabel">会话</span>
-                    <input id="sess-dir" class="dirinput" placeholder="默认目录" />
-                    <button id="save" class="btn small">保存日志</button>
-                    <button id="load" class="btn small">加载日志</button>
-                    <button id="export" class="btn small">导出 CSV</button>
-                  </div>
-                  <div class="mrow">
-                    <span class="mlabel">回放</span>
-                    <label class="lb">速度</label>
-                    <input id="speed" type="number" min="0.1" step="0.1" value="1" class="num" /> x
-                    <button id="replay" class="btn small">开始回放</button>
-                  </div>
+                    <span class="mhint">加进去的按钮常驻在输出区上方，点一下就发；右键按钮可以删除。</span>
+                  </section>
+                  <section class="msec">
+                    <div class="msec-h">会话日志</div>
+                    <div class="mline">
+                      <label class="lb" for="sess-dir">目录</label>
+                      <input id="sess-dir" class="dirinput" placeholder="默认目录（留空=文档目录）" />
+                    </div>
+                    <div class="trow">
+                      <button id="save" class="btn small">保存日志</button>
+                      <button id="load" class="btn small">加载日志</button>
+                      <button id="export" class="btn small">导出 CSV</button>
+                      <span class="mhint">保存的是完整会话（含时间戳/方向/原始字节），加载后可以回放。</span>
+                    </div>
+                  </section>
+                  <section class="msec">
+                    <div class="msec-h">回放</div>
+                    <div class="mline">
+                      <label class="lb" for="speed">速度</label>
+                      <input id="speed" type="number" min="0.1" step="0.1" value="1" class="num" /> x
+                      <button id="replay" class="btn small">开始回放</button>
+                      <span class="mhint">先「加载日志」再回放；1x 按原始时间轴，2x 就是两倍速。</span>
+                    </div>
+                  </section>
                 </div>
               </details>
             </div>
@@ -869,9 +906,14 @@
         <!-- 命令表：整张表放右栏，中栏留给输入/输出，点了就能直接看反馈 -->
         <div class="parampane cmdpane" data-param="cmds" hidden>
           <div class="trow"><span class="lb">常用命令（Linux）</span><span class="grow"></span>
-            <button id="cmd-help" class="btn small" title="怎么用">?</button></div>
+            <button id="cmd-help" class="btn small" title="怎么用 / 怎么自定义">?</button>
+            <button id="cmd-grp-add" class="btn small" title="新增一个指令组（比如：我的板子专用）">+ 组</button>
+            <button id="cmd-add" class="btn small" title="往当前组新增一条指令">+ 指令</button>
+            <button id="cmd-reset" class="btn small" title="恢复到内置的标准 Linux 指令集">恢复默认</button></div>
           <input id="cmd-filter" class="dirinput" placeholder="搜索命令 / 说明" />
           <div id="cmd-table" class="cmdtable scrollable grow"></div>
+          <p class="hint">指令表是**可编辑**的：加了什么就存在 <code>agent/commands.json</code>，
+            下次开机还在（「设置 → 缓存」里能看到它、也能删）。行尾的 ✎ / ✕ 用来改或删那一条。</p>
         </div>
 
         <!-- 批量文本参数 -->

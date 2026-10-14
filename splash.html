@@ -62,7 +62,7 @@
       <img class="logo" src="/assets/kdock-logo.png" alt="KDock" />
       <div class="name">KDock</div>
       <div class="bar"></div>
-      <div class="sub">正在启动…</div>
+      <div class="sub" id="sub">Starting…</div>
       <div class="tip" id="tip">串口 / 网络调试 · 烧录 · OTA · 设备助手</div>
     </div>
     <script>
@@ -70,12 +70,21 @@
       // 超过 2.5 秒还没关，说明是"会话/技能比较多，正在加载"——把话说清楚，别让人以为卡住了。
       setTimeout(() => {
         const t = document.getElementById("tip");
-        if (t) t.textContent = "正在加载会话与技能（对话多时会慢一点）…";
+        if (t) t.textContent = window.__splashLoadingText || "Loading sessions and skills…";
       }, 2500);
-      // 跟着上次选的主题/配色走（读不到就用默认）
+      // 跟着上次选的主题/配色/语言走（读不到就用默认：深色 + 海洋蓝 + 英文）
       try {
-        // 老版本存在 h7test_* 名下，这里兜一下（主界面会做一次性搬运）
         const ls = (k, d) => localStorage.getItem("kdock_" + k) ?? localStorage.getItem("h7test_" + k) ?? d;
+        const lang = ls("lang", "en");
+        const EN = {
+          tip: "Serial / network debug · flashing · OTA · device assistant",
+          loading: "Loading sessions and skills (a lot of chats takes a moment)…",
+          boot: "Starting…",
+        };
+        document.getElementById("tip").textContent = lang === "zh"
+          ? "串口 / 网络调试 · 烧录 · OTA · 设备助手"
+          : EN.tip;
+        document.getElementById("sub").textContent = lang === "zh" ? "正在启动…" : EN.boot;
         const theme = ls("theme", "dark");
         const light =
           theme === "light" ||
@@ -88,6 +97,9 @@
         document.documentElement.style.setProperty("--primary", light ? `${h} 78% 46%` : `${h} 92% 72%`);
         // 深色底跟主界面一样跟着配色走（主界面是 applyScheme 里有同样的规则）
         if (!light) document.documentElement.style.setProperty("--bg", `${h} 24% 10%`);
+        window.__splashLoadingText = lang === "zh"
+          ? "正在加载会话与技能（对话多时会慢一点）…"
+          : EN.loading;
       } catch (_) { /* 读不到就默认 */ }
     </script>
   </body>

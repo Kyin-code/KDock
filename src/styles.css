@@ -904,6 +904,72 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 /* 工具行里的「⋯」在右下角容易被角手压住，往回让一点（只有右上角那两个控件会碰到） */
 .shellcard .outpane > .jump { right: 26px; }
 
+/* ============ 传输页「更多」面板：分区 + 每行一句说明 ============ */
+.morebox {
+  display: flex; flex-direction: column; gap: 4px;
+  min-width: 460px; max-width: min(560px, 92vw);
+  padding: 12px 14px 14px;
+}
+.morebox .msec { padding: 8px 0; border-top: 1px solid var(--surface-line-soft); }
+.morebox .msec:first-child { border-top: none; padding-top: 2px; }
+.morebox .msec-h {
+  font-size: 11.5px; letter-spacing: .6px; text-transform: uppercase;
+  color: hsl(var(--primary)); margin-bottom: 6px;
+}
+.morebox .mline {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 3px 0;
+}
+.morebox .mhint {
+  display: block; width: 100%; font-size: 11px; line-height: 1.6;
+  color: hsl(var(--muted-foreground)); margin-top: 2px;
+}
+.morebox .trow { flex-wrap: wrap; gap: 6px; }
+.morebox .qslist { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+.morebox .qslist .mrow { display: inline-flex; align-items: center; gap: 2px; }
+
+/* ============ 指令表：可编辑 ============ */
+.cmdgrp { display: flex; align-items: center; gap: 6px; }
+.cmdgrp span { flex: 1; }
+.cmdgrp .btn { height: 22px; padding: 0 8px; font-size: 12px; }
+.cmdp { font-family: Consolas, "Cascadia Mono", monospace; font-size: 10.5px; }
+
+/* 通用表单弹窗 */
+.kdmodal {
+  position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, .45);
+  display: flex; align-items: center; justify-content: center;
+}
+.kdbox {
+  min-width: 380px; max-width: min(560px, 92vw); max-height: 80vh; overflow: auto;
+  background: var(--surface-1); border: 1px solid var(--surface-line);
+  border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow-2);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.kdbox.wide { min-width: 460px; }
+.kdttl { font-size: 14px; font-weight: 650; }
+.kdfield { display: grid; grid-template-columns: 84px minmax(0, 1fr); align-items: center; gap: 8px; }
+.kdfield label { font-size: 12.5px; color: hsl(var(--muted-foreground)); }
+.kdfield input {
+  height: 30px; padding: 0 10px; border-radius: 9px;
+  border: 1px solid var(--surface-line); background: var(--surface-2);
+}
+.kdacts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.kdlist { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow: auto; }
+.kditem {
+  display: flex; gap: 8px; align-items: flex-start; cursor: pointer;
+  padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--surface-line-soft); background: var(--surface-2);
+}
+.kditem input { margin-top: 3px; }
+.kditem span { font-size: 12.5px; line-height: 1.6; }
+.kditem code { font-size: 11px; color: hsl(var(--muted-foreground)); word-break: break-all; }
+
+/* 缓存页条目 */
+.cacherow { align-items: flex-start; }
+.cacherow > input { margin-top: 4px; }
+.cacherow .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cacherow .warn { font-size: 11px; color: hsl(var(--warning)); }
+
 /* ==========================================================================
    4) 编排：连线要"看得见 + 点得到"，选中时高亮、并把两端节点也点亮
    ========================================================================== */
