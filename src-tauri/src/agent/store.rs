@@ -1,0 +1,904 @@
+//! Agent 的**存储层**：供应商配置 / API Key / 会话(JSONL) / 技能。
+//!
+//! 设计取舍（对着 juanx 那套抄结构、不抄重量）：
+//! - 供应商 profile 和密钥**分开存**：profile 是普通 JSON（不含密钥，可以进 git、可以分享），
+//!   密钥单独一个文件，Windows 上用 DPAPI 按当前用户加密（换用户/换机器解不开）。
+//! - 会话不用数据库：一条事件一行 JSON（JSONL）**追加写**，崩了也只丢最后半行；
+//!   元信息单独一个小 JSON（标题/时间/模型），列表就不用读全文。
+//! - 技能就是一个目录一份 `SKILL.md`（YAML frontmatter: name/description），
+//!   跟 Codex 一样：索引进上下文，正文按需读。
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Manager};
+
+// ── 目录 ────────────────────────────────────────────────────────────
+
+/// `<app_data_dir>/agent`（Windows 通常是 %APPDATA%\com.kyin.kdock\agent）
+pub fn agent_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("拿不到应用数据目录: {e}"))?;
+    let dir = base.join("agent");
+    for sub in ["", "sessions", "skills", "skills-off", "workspace"] {
+        let p = if sub.is_empty() { dir.clone() } else { dir.join(sub) };
+        std::fs::create_dir_all(&p).map_err(|e| format!("建目录 {} 失败: {e}", p.display()))?;
+    }
+    Ok(dir)
+}
+
+fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    // 先写临时文件再改名：写到一半崩了不会把好文件弄坏
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| format!("写 {} 失败: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("改名到 {} 失败: {e}", path.display()))
+}
+
+// ── 供应商 profile ──────────────────────────────────────────────────
+
+fn default_temperature() -> f32 { 0.2 }
+fn default_context_window() -> u32 { 128_000 }
+fn default_reserve_output() -> u32 { 8_192 }
+fn default_max_messages() -> u32 { 40 }
+fn default_true() -> bool { true }
+fn default_kind() -> String { "openai".into() }
+
+/// 一个模型供应商 profile。`api_key_ref` 只是**密钥的名字**，密钥本体在 secrets 文件里。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Provider {
+    pub id: String,
+    pub name: String,
+    /// 目前只做 OpenAI 兼容的 `/chat/completions`；留字段是为了以后接别的协议
+    #[serde(default = "default_kind")]
+    pub kind: String,
+    /// 形如 `https://api.deepseek.com/v1`（不带 `/chat/completions`）
+    pub endpoint: String,
+    pub model: String,
+    #[serde(default)]
+    pub api_key_ref: String,
+    #[serde(default = "default_temperature")]
+    pub temperature: f32,
+    #[serde(default = "default_context_window")]
+    pub context_window: u32,
+    #[serde(default = "default_reserve_output")]
+    pub reserve_output: u32,
+    #[serde(default = "default_max_messages")]
+    pub max_messages: u32,
+    #[serde(default = "default_true")]
+    pub supports_tools: bool,
+    #[serde(default = "default_true")]
+    pub supports_stream: bool,
+}
+
+impl Provider {
+    pub fn chat_url(&self) -> String {
+        let base = self.endpoint.trim().trim_end_matches('/');
+        if base.ends_with("/chat/completions") {
+            base.to_string()
+        } else if base.ends_with("/v1") || base.ends_with("/api/v3") {
+            format!("{base}/chat/completions")
+        } else {
+            format!("{base}/v1/chat/completions")
+        }
+    }
+    pub fn models_url(&self) -> String {
+        let base = self.endpoint.trim().trim_end_matches('/');
+        let cut = base.find("/chat/completions").unwrap_or(base.len());
+        format!("{}/models", &base[..cut])
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    #[serde(default)]
+    pub active_id: Option<String>,
+    #[serde(default)]
+    pub providers: Vec<Provider>,
+    /// AMD 那批内置免费模型是否已经塞过一次。
+    /// 有它才能做到"内置但可以删"：删掉之后不会在下次启动时自己长回来。
+    #[serde(default)]
+    pub amd_seeded: bool,
+}
+
+pub fn providers_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(agent_dir(app)?.join("providers.json"))
+}
+
+pub fn load_providers(app: &AppHandle) -> ProviderConfig {
+    let path = match providers_path(app) {
+        Ok(p) => p,
+        Err(_) => return ProviderConfig::default(),
+    };
+    read_json(&path).unwrap_or_default()
+}
+
+pub fn save_providers(app: &AppHandle, cfg: &ProviderConfig) -> Result<(), String> {
+    write_json(&providers_path(app)?, cfg)
+}
+
+pub fn find_provider(cfg: &ProviderConfig, id: Option<&str>) -> Option<Provider> {
+    let want = id
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| cfg.active_id.clone())?;
+    cfg.providers.iter().find(|p| p.id == want).cloned()
+}
+
+// ── 密钥（Windows 用 DPAPI 按用户加密） ─────────────────────────────
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct SecretsFile {
+    /// name -> "dpapi:<b64>" 或 "plain:<b64>"
+    #[serde(default)]
+    entries: std::collections::BTreeMap<String, String>,
+}
+
+fn secrets_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(agent_dir(app)?.join("secrets.json"))
+}
+
+pub fn secret_get(app: &AppHandle, name: &str) -> Option<String> {
+    let file: SecretsFile = read_json(&secrets_path(app).ok()?).unwrap_or_default();
+    let raw = file.entries.get(name)?;
+    decode_secret(raw)
+}
+
+pub fn secret_set(app: &AppHandle, name: &str, value: &str) -> Result<(), String> {
+    let path = secrets_path(app)?;
+    let mut file: SecretsFile = read_json(&path).unwrap_or_default();
+    if value.is_empty() {
+        file.entries.remove(name);
+    } else {
+        file.entries.insert(name.to_string(), encode_secret(value)?);
+    }
+    write_json(&path, &file)
+}
+
+pub fn secret_names(app: &AppHandle) -> Vec<String> {
+    read_json::<SecretsFile>(&secrets_path(app).unwrap_or_default())
+        .unwrap_or_default()
+        .entries
+        .keys()
+        .cloned()
+        .collect()
+}
+
+/// 密钥方案说明（给 UI 显示用）
+pub fn secret_scheme() -> &'static str {
+    if cfg!(windows) { "dpapi" } else { "plain" }
+}
+
+fn encode_secret(value: &str) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        let enc = dpapi::protect(value.as_bytes())?;
+        return Ok(format!("dpapi:{}", crate::upgrade::b64_encode(&enc)));
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(format!("plain:{}", crate::upgrade::b64_encode(value.as_bytes())))
+    }
+}
+
+fn decode_secret(raw: &str) -> Option<String> {
+    let (kind, body) = raw.split_once(':')?;
+    let bytes = crate::upgrade::b64_decode(body);
+    match kind {
+        "plain" => String::from_utf8(bytes).ok(),
+        "dpapi" => {
+            #[cfg(windows)]
+            {
+                let out = dpapi::unprotect(&bytes).ok()?;
+                String::from_utf8(out).ok()
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = bytes;
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+mod dpapi {
+    //! 直接用 crypt32 的 DPAPI：按**当前 Windows 用户**加密，别的用户/别的机器解不开。
+    //! （跟本项目其它 Windows 调用一样走 `#[link] extern "system"`，不引新依赖。）
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    struct DataBlob {
+        cb_data: u32,
+        pb_data: *mut u8,
+    }
+
+    #[link(name = "crypt32")]
+    extern "system" {
+        fn CryptProtectData(
+            data_in: *const DataBlob,
+            descr: *const u16,
+            entropy: *const DataBlob,
+            reserved: *const c_void,
+            prompt: *const c_void,
+            flags: u32,
+            data_out: *mut DataBlob,
+        ) -> i32;
+        fn CryptUnprotectData(
+            data_in: *const DataBlob,
+            descr: *mut *mut u16,
+            entropy: *const DataBlob,
+            reserved: *const c_void,
+            prompt: *const c_void,
+            flags: u32,
+            data_out: *mut DataBlob,
+        ) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn LocalFree(mem: *mut c_void) -> *mut c_void;
+    }
+
+    const CRYPTPROTECT_UI_FORBIDDEN: u32 = 0x01;
+
+    fn blob_of(data: &[u8]) -> (DataBlob, Vec<u8>) {
+        let mut copy = data.to_vec();
+        let blob = DataBlob { cb_data: copy.len() as u32, pb_data: copy.as_mut_ptr() };
+        (blob, copy)
+    }
+
+    /// 附加熵：同一个用户下，别的程序拿不到这段数据（可选，但加上更稳）
+    const ENTROPY: &[u8] = b"KDock.agent.v1";
+
+    fn call(data: &[u8], protect: bool) -> Result<Vec<u8>, String> {
+        let (in_blob, _keep) = blob_of(data);
+        let (ent_blob, _keep2) = blob_of(ENTROPY);
+        let mut out = DataBlob { cb_data: 0, pb_data: std::ptr::null_mut() };
+        let ok = unsafe {
+            if protect {
+                CryptProtectData(&in_blob, std::ptr::null(), &ent_blob, std::ptr::null(),
+                                 std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out)
+            } else {
+                CryptUnprotectData(&in_blob, std::ptr::null_mut(), &ent_blob, std::ptr::null(),
+                                   std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out)
+            }
+        };
+        if ok == 0 {
+            return Err(format!("DPAPI 调用失败: {}", std::io::Error::last_os_error()));
+        }
+        let result = unsafe { std::slice::from_raw_parts(out.pb_data, out.cb_data as usize).to_vec() };
+        unsafe { LocalFree(out.pb_data as *mut c_void) };
+        Ok(result)
+    }
+
+    pub fn protect(data: &[u8]) -> Result<Vec<u8>, String> { call(data, true) }
+    pub fn unprotect(data: &[u8]) -> Result<Vec<u8>, String> { call(data, false) }
+}
+
+// ── 会话（JSONL 追加写） ────────────────────────────────────────────
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// 会话里的一条事件。**只追加**，不改旧行 —— 这样"改历史"是不可能的，也就不会写坏。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Event {
+    /// 用户说的
+    User { text: String, #[serde(default)] ts: i64 },
+    /// 模型说的（可能是空文本 + 只有工具调用）。
+    /// `reasoning` 是"思考"内容：DeepSeek/GLM 这类推理模型，**带工具调用时必须原样带回去**，
+    /// 否则下一轮会直接 400（The `reasoning_content` in the thinking mode must be passed back）。
+    Assistant { text: String, #[serde(default)] reasoning: String, #[serde(default)] ts: i64 },
+    /// 模型要调一个工具
+    ToolCall { id: String, name: String, args: serde_json::Value, #[serde(default)] ts: i64 },
+    /// 工具跑完的结果
+    ToolResult { id: String, name: String, ok: bool, text: String, #[serde(default)] ts: i64 },
+    /// 上下文压缩后的摘要（老消息被它顶掉）
+    Summary { text: String, upto: usize, #[serde(default)] ts: i64 },
+    /// 系统提示/事件（比如"用户点了停止"）
+    Note { text: String, #[serde(default)] ts: i64 },
+}
+
+impl Event {
+    /// 事件时间戳（落盘 JSON 里本来就有 `ts`，这里给 Rust 侧读同一份数据用）。
+    #[allow(dead_code)]
+    pub fn ts(&self) -> i64 {
+        match self {
+            Event::User { ts, .. }
+            | Event::Assistant { ts, .. }
+            | Event::ToolCall { ts, .. }
+            | Event::ToolResult { ts, .. }
+            | Event::Summary { ts, .. }
+            | Event::Note { ts, .. } => *ts,
+        }
+    }
+    pub fn stamp(mut self) -> Self {
+        let t = now_ms();
+        match &mut self {
+            Event::User { ts, .. }
+            | Event::Assistant { ts, .. }
+            | Event::ToolCall { ts, .. }
+            | Event::ToolResult { ts, .. }
+            | Event::Summary { ts, .. }
+            | Event::Note { ts, .. } => {
+                if *ts == 0 { *ts = t; }
+            }
+        }
+        self
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMeta {
+    pub id: String,
+    pub title: String,
+    pub created: i64,
+    pub updated: i64,
+    #[serde(default)]
+    pub provider_id: String,
+    #[serde(default)]
+    pub model: String,
+    /// 这次会话的工作区（文件工具的根）
+    #[serde(default)]
+    pub workspace: String,
+    #[serde(default)]
+    pub turns: u32,
+    /// 属于哪个工作区（workspaces.json 里的 id）
+    #[serde(default)]
+    pub ws: String,
+    /// 上一次请求时 provider 自己报的 prompt_tokens —— 压缩判断以它为准（估算器太乐观）
+    #[serde(default)]
+    pub last_tokens: u64,
+    /// 这个会话累计的 token 账（给"Agent 信息"面板算花费/缓存命中率用）
+    #[serde(default)]
+    pub total_prompt: u64,
+    #[serde(default)]
+    pub total_completion: u64,
+    /// 命中前缀缓存的输入 token（DeepSeek: prompt_cache_hit_tokens）
+    #[serde(default)]
+    pub total_cache_hit: u64,
+    /// 没命中缓存的输入 token（DeepSeek: prompt_cache_miss_tokens）
+    #[serde(default)]
+    pub total_cache_miss: u64,
+    /// 已经提示过"大头是系统提示+工具定义"了（同一个会话只弹一次 toast）
+    #[serde(default)]
+    pub warned_overhead: bool,
+    /// 权限：read(只读) / ask(危险动作先问) / auto(自动)
+    #[serde(default = "default_perm")]
+    pub perm: String,
+    /// 用户用 `/goal` 设定的目标（一直生效，每轮都会进系统提示）
+    #[serde(default)]
+    pub goal: String,
+}
+
+fn default_perm() -> String {
+    "ask".into()
+}
+
+fn sessions_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(agent_dir(app)?.join("sessions"))
+}
+
+fn session_jsonl(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+    Ok(sessions_dir(app)?.join(format!("{}.jsonl", safe_id(id))))
+}
+fn session_meta(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+    Ok(sessions_dir(app)?.join(format!("{}.meta.json", safe_id(id))))
+}
+
+/// 只允许字母数字和 `-_.`，防止拿 id 拼路径时跑到外面去
+pub fn safe_id(id: &str) -> String {
+    let s: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+        .collect();
+    if s.is_empty() { "s".into() } else { s }
+}
+
+pub fn sessions_list(app: &AppHandle) -> Vec<SessionMeta> {
+    let dir = match sessions_dir(app) { Ok(d) => d, Err(_) => return Vec::new() };
+    // 会话一多，"每次都把所有 meta.json 读一遍"就很贵（agLoadTree 调用很频繁）。
+    // 用 (文件名 + mtime) 当指纹缓存：目录没变就直接复用。
+    let sig = dir_signature(&dir, ".meta.json");
+    if let Some((s, v)) = SESSIONS_CACHE.lock().ok().and_then(|g| g.clone()) {
+        if s == sig {
+            return v;
+        }
+    }
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for entry in rd.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(id) = name.strip_suffix(".meta.json") {
+                if let Some(mut meta) = read_json::<SessionMeta>(&path) {
+                    if meta.id.is_empty() { meta.id = id.to_string(); }
+                    out.push(meta);
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| b.updated.cmp(&a.updated));
+    if let Ok(mut g) = SESSIONS_CACHE.lock() {
+        *g = Some((sig, out.clone()));
+    }
+    out
+}
+
+/// 会话列表缓存：(目录指纹, 列表)
+static SESSIONS_CACHE: std::sync::LazyLock<std::sync::Mutex<Option<(String, Vec<SessionMeta>)>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+/// 目录指纹：只看"文件名 + 修改时间"，比把每个 JSON 读出来解析便宜得多
+fn dir_signature(dir: &Path, suffix: &str) -> String {
+    dir_signature_inner(dir, Some(suffix))
+}
+
+/// 同上，但不过滤后缀（技能目录那种"里面全是子目录"的场景用）
+fn dir_signature_all(dir: &Path) -> String {
+    dir_signature_inner(dir, None)
+}
+
+fn dir_signature_inner(dir: &Path, suffix: Option<&str>) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().to_string();
+            if let Some(sfx) = suffix {
+                if !n.ends_with(sfx) {
+                    continue;
+                }
+            }
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if !is_dir && suffix.is_none() {
+                // 不过滤后缀时只关心目录（技能就是子目录）
+                continue;
+            }
+            let t = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            parts.push(format!("{n}:{t}"));
+        }
+    }
+    parts.sort();
+    parts.join("|")
+}
+
+pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<SessionMeta, String> {
+    let ts = now_ms();
+    let meta = SessionMeta {
+        id: format!("s{ts}-{}", (ts % 1000).abs()),
+        title: if title.trim().is_empty() { "新会话".into() } else { title.trim().to_string() },
+        created: ts,
+        updated: ts,
+        provider_id: String::new(),
+        model: String::new(),
+        workspace: workspace.to_string(),
+        ws: String::new(),
+        last_tokens: 0,
+        total_prompt: 0,
+        total_completion: 0,
+        total_cache_hit: 0,
+        total_cache_miss: 0,
+        warned_overhead: false,
+        turns: 0,
+        perm: default_perm(),
+        goal: String::new(),
+    };
+    std::fs::File::create(session_jsonl(app, &meta.id)?).map_err(|e| e.to_string())?;
+    write_json(&session_meta(app, &meta.id)?, &meta)?;
+    Ok(meta)
+}
+
+pub fn session_update_meta(app: &AppHandle, meta: &SessionMeta) -> Result<(), String> {
+    write_json(&session_meta(app, &meta.id)?, meta)
+}
+
+pub fn session_meta_of(app: &AppHandle, id: &str) -> Option<SessionMeta> {
+    let path = session_meta(app, id).ok()?;
+    let mut meta: SessionMeta = read_json(&path)?;
+    if meta.id.is_empty() { meta.id = id.to_string(); }
+    Some(meta)
+}
+
+pub fn session_touch(app: &AppHandle, id: &str) -> Option<SessionMeta> {
+    let mut meta = session_meta_of(app, id)?;
+    meta.updated = now_ms();
+    meta.turns += 1;
+    let _ = session_update_meta(app, &meta);
+    Some(meta)
+}
+
+/// 追加一条事件（一行 JSON）。**每次打开追加**，所以掉电最多丢最后一行。
+pub fn session_append(app: &AppHandle, id: &str, event: &Event) -> Result<(), String> {
+    let path = session_jsonl(app, id)?;
+    let mut line = serde_json::to_string(&event.clone().stamp()).map_err(|e| e.to_string())?;
+    line.push('\n');
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("打开会话文件失败: {e}"))?;
+    f.write_all(line.as_bytes()).map_err(|e| format!("写会话失败: {e}"))?;
+    let _ = f.flush();
+    Ok(())
+}
+
+/// 原始 JSONL 文本（**包含已经被摘要覆盖的那部分**）—— history_search 用
+pub fn session_raw(app: &AppHandle, id: &str) -> String {
+    session_jsonl(app, id)
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default()
+}
+
+pub fn session_read(app: &AppHandle, id: &str) -> Vec<Event> {
+    let path = match session_jsonl(app, id) { Ok(p) => p, Err(_) => return Vec::new() };
+    let text = match std::fs::read_to_string(&path) { Ok(t) => t, Err(_) => return Vec::new() };
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<Event>(l).ok())
+        .collect()
+}
+
+pub fn session_delete(app: &AppHandle, id: &str) -> Result<(), String> {
+    let _ = std::fs::remove_file(session_jsonl(app, id)?);
+    let _ = std::fs::remove_file(session_meta(app, id)?);
+    Ok(())
+}
+
+/// 压缩：**只追加**一条 summary 事件，标记"第 upto 条之前的内容已经被它顶替了"。
+/// 原始事件一条都不删 —— 这跟 codex 的 rollout 一个意思：模型输入用摘要，
+/// 但人（和 agent 自己用 history_search）还能翻到原文。
+pub fn session_mark_summary(app: &AppHandle, id: &str, upto: usize, summary: &str) -> Result<(), String> {
+    session_append(app, id, &Event::Summary { text: summary.to_string(), upto, ts: 0 })
+}
+
+/// 会话里"已经被摘要覆盖到第几条"（取最大值）
+pub fn summary_upto(events: &[Event]) -> usize {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Summary { upto, .. } => Some(*upto),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// 最后一条摘要的正文（拼起来：滚动摘要）
+pub fn summary_text(events: &[Event]) -> Option<String> {
+    let idx = events.iter().rposition(|e| matches!(e, Event::Summary { .. }))?;
+    match &events[idx] {
+        Event::Summary { text, .. } => Some(text.clone()),
+        _ => None,
+    }
+}
+
+// ── 工作区（像 Codex：工作区里装对话） ──────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Workspace {
+    pub id: String,
+    pub name: String,
+    /// 这个工作区的根目录（agent 的文件工具都限制在里面）
+    pub path: String,
+    #[serde(default)]
+    pub created: i64,
+}
+
+fn workspaces_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(agent_dir(app)?.join("workspaces.json"))
+}
+
+pub fn load_workspaces(app: &AppHandle) -> Vec<Workspace> {
+    read_json(&workspaces_path(app).unwrap_or_default()).unwrap_or_default()
+}
+
+pub fn save_workspaces(app: &AppHandle, list: &[Workspace]) -> Result<(), String> {
+    write_json(&workspaces_path(app)?, &list.to_vec())
+}
+
+/// 默认工作区（就是 <app_data>/agent/workspace）
+pub fn default_workspace_entry(app: &AppHandle) -> Workspace {
+    let p = default_workspace(app);
+    let _ = std::fs::create_dir_all(&p);
+    Workspace {
+        id: "default".into(),
+        name: "默认工作区".into(),
+        path: p.to_string_lossy().to_string(),
+        created: now_ms(),
+    }
+}
+
+/// 没有就建一个默认的；顺便把"还没有归属"的老会话挂到对应工作区上
+pub fn ensure_workspaces(app: &AppHandle) -> Vec<Workspace> {
+    let mut list = load_workspaces(app);
+    if list.is_empty() {
+        list.push(default_workspace_entry(app));
+    }
+    let mut dirty = false;
+    for m in sessions_list(app) {
+        if !m.ws.is_empty() {
+            continue;
+        }
+        let target = list
+            .iter()
+            .find(|w| !m.workspace.is_empty() && w.path == m.workspace)
+            .cloned()
+            .unwrap_or_else(|| list[0].clone());
+        let mut m2 = m;
+        m2.ws = target.id.clone();
+        if m2.workspace.trim().is_empty() {
+            m2.workspace = target.path.clone();
+        }
+        if session_update_meta(app, &m2).is_ok() {
+            dirty = true;
+        }
+    }
+    let _ = dirty;
+    if save_workspaces(app, &list).is_err() {
+        return list;
+    }
+    list
+}
+
+pub fn workspace_by_id(app: &AppHandle, id: &str) -> Option<Workspace> {
+    ensure_workspaces(app).into_iter().find(|w| w.id == id)
+}
+
+pub fn new_workspace(path: &str, name: &str) -> Workspace {
+    let ts = now_ms();
+    let p = PathBuf::from(path);
+    let fallback = p
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "工作区".into());
+    Workspace {
+        id: format!("w{ts}"),
+        name: if name.trim().is_empty() { fallback } else { name.trim().to_string() },
+        path: path.to_string(),
+        created: ts,
+    }
+}
+
+// ── 技能（一份 SKILL.md 一个技能，跟 Codex 一个路子） ───────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillInfo {
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub path: String,
+    pub size: u64,
+    /// 开关：关掉的技能会挪到 `skills-off/`，不进口令索引（agent 也看不到）
+    pub enabled: bool,
+}
+
+pub fn skills_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(agent_dir(app)?.join("skills"))
+}
+
+/// 停用的技能放这儿：目录位置本身就是"开关状态"，比在文件里记一个标记更直观
+fn skills_off_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(agent_dir(app)?.join("skills-off"))
+}
+
+pub fn slugify(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.trim().chars() {
+        if c.is_ascii_alphanumeric() { out.push(c.to_ascii_lowercase()); }
+        else if c == '-' || c == '_' || c == ' ' || c == '.' { out.push('-'); }
+        else if !c.is_ascii() { out.push(c); }   // 中文技能名也允许
+    }
+    let out = out.trim_matches('-').to_string();
+    if out.is_empty() { "skill".into() } else { out }
+}
+
+/// 极简 frontmatter 解析：只认开头 `---` 里的 `key: value`
+fn parse_frontmatter(text: &str) -> (std::collections::BTreeMap<String, String>, String) {
+    let mut map = std::collections::BTreeMap::new();
+    let t = text.strip_prefix('\u{feff}').unwrap_or(text);
+    if let Some(rest) = t.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            let head = &rest[..end];
+            for line in head.lines() {
+                if let Some((k, v)) = line.split_once(':') {
+                    map.insert(k.trim().to_lowercase(), v.trim().trim_matches('"').to_string());
+                }
+            }
+            let body = rest[end + 4..].trim_start_matches(['\n', '\r']).to_string();
+            return (map, body);
+        }
+    }
+    (map, t.to_string())
+}
+
+pub fn skills_list(app: &AppHandle) -> Vec<SkillInfo> {
+    let dir = match skills_dir(app) { Ok(d) => d, Err(_) => return Vec::new() };
+    let off = skills_off_dir(app).unwrap_or_else(|_| dir.clone());
+    // 系统提示每轮都要用这份索引，而它要读每个 SKILL.md —— 会话/技能多了就贵。
+    // 用目录指纹缓存。
+    // 注意：技能目录里装的是"一个技能一个子目录"，不是文件 —— 签名要把所有条目都算上
+    // （按 SKILL.md 后缀过滤会得到空签名，缓存就永远不失效了，实测踩过）。
+    let sig = format!("{}||{}", dir_signature_all(&dir), dir_signature_all(&off));
+    if let Some((s, v)) = SKILLS_CACHE.lock().ok().and_then(|g| g.clone()) {
+        if s == sig {
+            return v;
+        }
+    }
+    let mut out = Vec::new();
+    for (base, enabled) in [(&dir, true), (&off, false)] {
+        if let Ok(rd) = std::fs::read_dir(base) {
+            for entry in rd.flatten() {
+                let path = entry.path();
+                if !path.is_dir() { continue; }
+                let md = path.join("SKILL.md");
+                let Ok(text) = std::fs::read_to_string(&md) else { continue };
+                let (fm, _body) = parse_frontmatter(&text);
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                out.push(SkillInfo {
+                    slug: dir_name.clone(),
+                    name: fm.get("name").cloned().unwrap_or_else(|| dir_name.clone()),
+                    description: fm.get("description").cloned().unwrap_or_default(),
+                    path: md.to_string_lossy().to_string(),
+                    size: std::fs::metadata(&md).map(|m| m.len()).unwrap_or(0),
+                    enabled,
+                });
+            }
+        }
+    }
+    // 启用的排前面，再按名字
+    out.sort_by(|a, b| b.enabled.cmp(&a.enabled).then(a.slug.cmp(&b.slug)));
+    if let Ok(mut g) = SKILLS_CACHE.lock() {
+        *g = Some((sig, out.clone()));
+    }
+    out
+}
+
+/// 技能列表缓存：(目录指纹, 列表)
+static SKILLS_CACHE: std::sync::LazyLock<std::sync::Mutex<Option<(String, Vec<SkillInfo>)>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+/// 技能在哪个目录（启用的优先）；读/删/改都用它
+fn skill_dir_of(app: &AppHandle, slug: &str) -> Result<PathBuf, String> {
+    let dir = skills_dir(app)?.join(slugify(slug));
+    if dir.is_dir() {
+        return Ok(dir);
+    }
+    let off = skills_off_dir(app)?.join(slugify(slug));
+    if off.is_dir() {
+        return Ok(off);
+    }
+    Ok(dir) // 不存在时返回"启用目录"下的路径，交给调用方报错
+}
+
+/// 开关一个技能：在两个目录之间搬（这就是"能不能用"的唯一事实）
+pub fn skill_set_enabled(app: &AppHandle, slug: &str, on: bool) -> Result<String, String> {
+    let s = slugify(slug);
+    let (from, to) = if on {
+        (skills_off_dir(app)?.join(&s), skills_dir(app)?.join(&s))
+    } else {
+        (skills_dir(app)?.join(&s), skills_off_dir(app)?.join(&s))
+    };
+    if !from.is_dir() {
+        // 已经在目标状态里了
+        if to.is_dir() {
+            return Ok(to.to_string_lossy().to_string());
+        }
+        return Err(format!("找不到技能 {slug}"));
+    }
+    if to.exists() {
+        let _ = std::fs::remove_dir_all(&to);
+    }
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(&from, &to).map_err(|e| format!("切换失败: {e}"))?;
+    Ok(to.to_string_lossy().to_string())
+}
+
+/// 从本机导入一个技能：给 `SKILL.md` 的路径，或者"装着 SKILL.md 的目录"
+pub fn skill_import(app: &AppHandle, src: &str) -> Result<String, String> {
+    let p = PathBuf::from(src.trim());
+    let (md, folder) = if p.is_dir() {
+        (p.join("SKILL.md"), p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "skill".into()))
+    } else {
+        let name = p
+            .parent()
+            .and_then(|d| d.file_name())
+            .map(|s| s.to_string_lossy().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "skill".into()));
+        (p.clone(), name)
+    };
+    let text = std::fs::read_to_string(&md).map_err(|e| format!("读 {} 失败: {e}", md.display()))?;
+    if !text.contains("---") {
+        return Err("这个文件不像 SKILL.md（缺少 frontmatter）".into());
+    }
+    let (fm, _) = parse_frontmatter(&text);
+    let slug = slugify(fm.get("name").cloned().unwrap_or(folder).as_str());
+    let target = skills_dir(app)?.join(&slug);
+    std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    std::fs::write(target.join("SKILL.md"), text).map_err(|e| format!("写失败: {e}"))?;
+    Ok(target.join("SKILL.md").to_string_lossy().to_string())
+}
+
+pub fn skill_read(app: &AppHandle, slug: &str) -> Result<String, String> {
+    let path = skill_dir_of(app, slug)?.join("SKILL.md");
+    std::fs::read_to_string(&path).map_err(|e| format!("读技能失败: {e}"))
+}
+
+pub fn skill_write(app: &AppHandle, slug: &str, content: &str) -> Result<String, String> {
+    let dir = skills_dir(app)?.join(slugify(slug));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("SKILL.md");
+    std::fs::write(&path, content).map_err(|e| format!("写技能失败: {e}"))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+pub fn skill_delete(app: &AppHandle, slug: &str) -> Result<(), String> {
+    let dir = skill_dir_of(app, slug)?;
+    std::fs::remove_dir_all(&dir).map_err(|e| format!("删技能失败: {e}"))
+}
+
+/// 给系统提示用的技能索引（只有名字 + 描述，正文按需读）
+pub fn skills_index(app: &AppHandle) -> String {
+    // 只有**启用**的技能进口令索引（关掉的挪在 skills-off/ 里）
+    let list: Vec<SkillInfo> = skills_list(app).into_iter().filter(|s| s.enabled).collect();
+    if list.is_empty() {
+        return "（还没有技能）".to_string();
+    }
+    list.iter()
+        .map(|s| {
+            let d = if s.description.is_empty() { "（无描述）".to_string() } else { s.description.clone() };
+            format!("- {} — {}", s.slug, d)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// ── 工作区 ──────────────────────────────────────────────────────────
+
+pub fn default_workspace(app: &AppHandle) -> PathBuf {
+    agent_dir(app).map(|d| d.join("workspace")).unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// 把相对路径钉在工作区内（拒绝绝对路径和 `..` 逃逸）—— 文件工具的守门人
+pub fn resolve_in_workspace(root: &Path, rel: &str) -> Result<PathBuf, String> {
+    let rel = rel.trim().replace('\\', "/");
+    if rel.starts_with('/') || rel.contains(':') {
+        return Err("只接受工作区内的相对路径".into());
+    }
+    let mut out = root.to_path_buf();
+    for part in rel.split('/') {
+        match part {
+            "" | "." => continue,
+            ".." => return Err("路径里不允许 ..".into()),
+            other => out.push(other),
+        }
+    }
+    Ok(out)
+}

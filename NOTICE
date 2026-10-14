@@ -1,0 +1,50 @@
+KDock
+Copyright 2026 KDock contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+--------------------------------------------------------------------------------
+1. 借鉴与致谢 / Third-party projects we learned from
+--------------------------------------------------------------------------------
+
+MICU-OmniProbe  (https://github.com/zuoliangyu/MICU-OmniProbe)
+  声明许可: MIT（该仓库 README 中声明；仓库内未附 LICENSE 文件）
+  使用方式: 实时图表（波形展示）的实现思路、界面配色方案与视觉风格参考了该项目。
+            未直接复制其源代码；如后续引入其代码片段，将在此处保留其版权声明与许可全文。
+
+uPlot (https://github.com/leeoniya/uPlot) — MIT — 曲线绘制
+Tauri (https://github.com/tauri-apps/tauri) — MIT OR Apache-2.0 — 桌面应用框架
+
+--------------------------------------------------------------------------------
+2. 主要第三方依赖 / Bundled third-party components
+--------------------------------------------------------------------------------
+
+本项目为 Rust + Web 前端，依赖通过 Cargo.lock / package-lock.json 锁定。
+直接依赖的许可情况（完整清单以锁文件与各 crate/npm 包内的许可文件为准）：
+
+  Rust crates (src-tauri, crates/kdock-core):
+    tauri, tauri-plugin-*      MIT OR Apache-2.0
+    serde, serde_json          MIT OR Apache-2.0
+    image, screenshots         MIT OR Apache-2.0 / Apache-2.0
+    url, ureq                  MIT OR Apache-2.0
+    crc32fast                  MIT OR Apache-2.0
+    digest, sha1, sha2, md-5   MIT OR Apache-2.0 (RustCrypto)
+    display-info               Apache-2.0
+    serialport                 MPL-2.0  ← 文件级弱 copyleft：本项目未修改其源码，仅按原样链接使用
+    cssparser / cssparser-macros / selectors / dtoa-short / option-ext   MPL-2.0（同上，未修改）
+    icu4x 系列 (Unicode-3.0)、zlib 系、BSD/ISC 系组件   各自许可
+
+  Web 前端 (package.json):
+    uplot                      MIT
+    vite, esbuild, rollup, postcss   MIT
+    picocolors                 ISC
+    source-map-js              BSD-3-Clause
+
+MPL-2.0 说明：这些组件的源码文件保持原样、未作修改；本项目整体仍按 Apache-2.0 发布。
+如需替换或修改这些组件的源码，请同时遵守 MPL-2.0 对相应文件的要求。
+
+--------------------------------------------------------------------------------
+3. 商标与名称
+--------------------------------------------------------------------------------
+
+"KDock" 仅用于标识本项目。Apache-2.0 不授予商标许可；二次分发时请勿暗示与项目作者存在官方关联。

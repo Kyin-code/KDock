@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>KDock</title>
+    <style>
+      /* 启动画面：logo + 一条不定长进度条。主题/配色跟着用户上次的选择走
+         （同一个 origin 的 localStorage，所以能读到） */
+      :root {
+        --bg: 205 24% 10%;
+        --fg: 214 38% 96%;
+        --muted: 217 16% 62%;
+        --track: 224 18% 20%;
+        --primary: 217 92% 74%;
+        --border: 224 14% 26%;
+      }
+      :root[data-theme="light"] {
+        --bg: 220 43% 97%;
+        --fg: 228 18% 18%;
+        --muted: 222 15% 42%;
+        --track: 220 30% 90%;
+        --primary: 224 72% 56%;
+        --border: 220 26% 86%;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        height: 100%;
+        background: hsl(var(--bg));
+        color: hsl(var(--fg));
+        font-family: "Segoe UI Variable", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", system-ui, sans-serif;
+        user-select: none;
+        -webkit-user-select: none;
+        overflow: hidden;
+      }
+      .card {
+        height: 100%;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+        border: 1px solid hsl(var(--border));
+        border-radius: 14px;
+      }
+      .logo { width: 76px; height: 76px; object-fit: contain; filter: drop-shadow(0 6px 18px hsl(var(--primary) / 0.28)); }
+      .name { font-size: 19px; font-weight: 650; letter-spacing: .6px; }
+      .sub { font-size: 12px; color: hsl(var(--muted)); }
+      .bar {
+        width: 232px; height: 5px; margin-top: 6px; border-radius: 999px;
+        background: hsl(var(--track)); overflow: hidden; position: relative;
+      }
+      .bar::after {
+        content: ""; position: absolute; top: 0; bottom: 0; width: 38%; border-radius: 999px;
+        background: hsl(var(--primary));
+        animation: slide 1.15s cubic-bezier(.45,.15,.35,.85) infinite;
+      }
+      @keyframes slide {
+        0%   { left: -40%; }
+        100% { left: 100%; }
+      }
+      .tip { font-size: 11.5px; color: hsl(var(--muted)); opacity: .85; margin-top: 2px; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <img class="logo" src="/assets/kdock-logo.png" alt="KDock" />
+      <div class="name">KDock</div>
+      <div class="bar"></div>
+      <div class="sub">正在启动…</div>
+      <div class="tip" id="tip">串口 / 网络调试 · 烧录 · OTA · 设备助手</div>
+    </div>
+    <script>
+      // 启动画面**不是靠延时**关的：前端把第一屏画完会通知后端来关它（后端另有 6 秒兜底）。
+      // 超过 2.5 秒还没关，说明是"会话/技能比较多，正在加载"——把话说清楚，别让人以为卡住了。
+      setTimeout(() => {
+        const t = document.getElementById("tip");
+        if (t) t.textContent = "正在加载会话与技能（对话多时会慢一点）…";
+      }, 2500);
+      // 跟着上次选的主题/配色走（读不到就用默认）
+      try {
+        // 老版本存在 h7test_* 名下，这里兜一下（主界面会做一次性搬运）
+        const ls = (k, d) => localStorage.getItem("kdock_" + k) ?? localStorage.getItem("h7test_" + k) ?? d;
+        const theme = ls("theme", "dark");
+        const light =
+          theme === "light" ||
+          (theme === "auto" && matchMedia("(prefers-color-scheme: light)").matches);
+        if (light) document.documentElement.dataset.theme = "light";
+        // 配色 -> 主色相（和 main.js 里的 SCHEMES 保持一致）
+        const HUES = { slate: 220, ocean: 205, mint: 167, forest: 128, twilight: 255, amber: 35, sakura: 338 };
+        const id = ls("scheme", "ocean");
+        const h = HUES[id] || 205;
+        document.documentElement.style.setProperty("--primary", light ? `${h} 78% 46%` : `${h} 92% 72%`);
+        // 深色底跟主界面一样跟着配色走（主界面是 applyScheme 里有同样的规则）
+        if (!light) document.documentElement.style.setProperty("--bg", `${h} 24% 10%`);
+      } catch (_) { /* 读不到就默认 */ }
+    </script>
+  </body>
+</html>
