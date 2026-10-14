@@ -727,8 +727,29 @@
 
         <!-- 示波器 -->
         <div class="workpane" data-work="scope" hidden>
-          <div id="sc-plot" class="chartbox"></div>
-          <img id="sc-shot" class="shot" alt="" hidden />
+          <div class="trow">
+            <span class="lb">示波器</span>
+            <span id="sc-model" class="lb"></span>
+            <span class="grow"></span>
+            <button id="sc-view-wave" class="btn small primary">波形</button>
+            <button id="sc-view-shot" class="btn small">截屏</button>
+            <span class="sep"></span>
+            <select id="sc-wave-points" class="tight" title="点数：1200 = 屏幕上的数据（快）；更大的走深存储（慢）">
+              <option value="1200">屏幕 1200 点</option>
+              <option value="12000">深存储 12k</option>
+              <option value="120000">深存储 120k</option>
+            </select>
+            <label class="chk" title="每 2 秒自动重读一次"><input type="checkbox" id="sc-wave-auto" /> 自动刷新</label>
+            <button id="sc-wave" class="btn small primary">读波形</button>
+            <span id="sc-wave-state" class="lb"></span>
+          </div>
+          <div id="sc-plot" class="chartbox grow"></div>
+          <img id="sc-shot" class="shot grow" alt="" hidden />
+          <div id="sc-shot-bar" class="trow" hidden>
+            <span id="sc-shot-info" class="lb"></span>
+            <span class="grow"></span>
+            <button id="sc-shot-save" class="btn small">另存为…</button>
+          </div>
         </div>
 
         <!-- 屏幕捕获 -->
@@ -1267,25 +1288,59 @@
         <!-- 示波器参数 -->
         <div class="parampane" data-param="scope" hidden>
           <div class="cardtitle">连接</div>
-          <div class="field"><label for="sc-host">IP</label><input id="sc-host" value="192.168.1.100" /></div>
+          <div class="field"><label for="sc-host">IP</label><input id="sc-host" value="192.168.1.23" /></div>
           <div class="field"><label for="sc-port">端口</label><input id="sc-port" type="number" value="5555" /></div>
           <div class="btnrow">
             <button id="sc-open" class="btn primary">连接</button>
             <button id="sc-close" class="btn">断开</button>
           </div>
           <div class="state"><span class="dot" id="sc-state">未连接</span></div>
-          <div class="cardtitle">一键读取</div>
+          <p class="hint">RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent
+            也能用同一套 <code>scope_*</code> 工具干同样的事。</p>
+
+          <div class="cardtitle">机器状态</div>
+          <div id="sc-info" class="aginfo"></div>
+
+          <div class="cardtitle">通道</div>
+          <div id="sc-channels" class="scchans"></div>
+
+          <div class="cardtitle">自动测量<span class="grow"></span>
+            <label class="chk" title="每 2 秒重测一次"><input type="checkbox" id="sc-meas-auto" /> 连续</label>
+            <button id="sc-meas" class="btn small">测一次</button></div>
+          <div class="field"><label for="sc-meas-ch">通道</label>
+            <select id="sc-meas-ch" class="tight wide"></select></div>
+          <div id="sc-meas-out" class="aginfo"></div>
+
+          <div class="cardtitle">时基 / 触发</div>
+          <div class="trow">
+            <span class="lb">时基</span>
+            <select id="sc-tb" class="tight grow"></select>
+            <button id="sc-tb-apply" class="btn small">应用</button>
+          </div>
+          <div class="trow">
+            <span class="lb">触发源</span>
+            <select id="sc-trig-src" class="tight grow"></select>
+          </div>
+          <div class="trow">
+            <span class="lb">电平 V</span>
+            <input id="sc-trig-lev" class="num" type="number" step="0.1" />
+            <button id="sc-trig-apply" class="btn small">应用</button>
+          </div>
+          <div class="trow">
+            <button id="sc-run" class="btn small primary">RUN</button>
+            <button id="sc-stop" class="btn small">STOP</button>
+            <span class="grow"></span>
+            <button id="sc-aut" class="btn small" title="让示波器自己找档位和时基（:AUT）">自动设置</button>
+          </div>
           <div class="btnrow">
             <button id="sc-idn" class="btn small">*IDN?</button>
-            <button id="sc-meas" class="btn small">自动测量</button>
-          </div>
-          <div class="btnrow">
-            <button id="sc-wave" class="btn small primary">读波形</button>
             <button id="sc-shot-btn" class="btn small">截屏</button>
           </div>
-          <div class="cardtitle">SCPI</div>
-          <textarea id="sc-cmd" rows="3" placeholder=":MEAS:VPP? CHAN1"></textarea>
+
+          <div class="cardtitle">SCPI（想发什么发什么）</div>
+          <textarea id="sc-cmd" rows="3" placeholder=":MEAS:VPP? CHAN2"></textarea>
           <div class="btnrow"><button id="sc-send" class="btn primary">发送</button></div>
+          <div id="sc-log"></div>
         </div>
 
         <!-- 屏幕捕获参数 -->

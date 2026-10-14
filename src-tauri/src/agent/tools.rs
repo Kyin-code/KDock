@@ -95,8 +95,48 @@ pub fn catalog() -> Vec<ToolDef> {
             "device":{"type":"string","description":"芯片型号，如 STM32F407VG"},
             "addr":{"type":"string","description":"bin 的烧写地址，如 0x08000000"}
         },"required":["tool","file"]}), false);
-    push("scope", "给示波器发一条 SCPI 命令（Rigol），返回设备回包。",
+    push("scope", "给示波器发一条裸 SCPI 命令（RIGOL），返回设备回包。要连通就用 scope_connect。",
         json!({"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}), false);
+    push("scope_connect", "连示波器（RIGOL DS1000Z 系，SCPI over TCP）。连上会回 *IDN?（型号+序列号+固件）。",
+        json!({"type":"object","properties":{
+            "ip":{"type":"string","description":"示波器 IP；不填就试上次用的那个"},
+            "port":{"type":"integer","description":"默认 5555"}
+        }}), false);
+    push("scope_info", "读示波器当前状态：型号、各通道开关/档位/偏移/耦合/探头、时基、采样率、触发源与电平。",
+        json!({"type":"object","properties":{}}), false);
+    push("scope_measure", "自动测量某个通道：峰峰值/频率/周期/有效值/平均值/最大最小/上升下降时间/占空比。测不到（没接信号）的项回 null。",
+        json!({"type":"object","properties":{
+            "channel":{"type":"integer","description":"通道号 1~4"},
+            "items":{"type":"array","items":{"type":"string"},
+                "description":"要测哪几项，默认 [VPP,FREQ,VMAX,VMIN]；可选 VPP,VMAX,VMIN,VAVG,VRMS,VTOP,VBASE,FREQ,PER,RTIM,FTIM,PDUT,NDUT"}
+        }}), false);
+    push("scope_waveform", "读波形：回一份摘要（点数/跨度/最大最小/峰峰/平均/按上升穿越估的频率）+ 一张字符画波形图。要看原始采样点就别用这个，用 workspace 写文件那套。",
+        json!({"type":"object","properties":{
+            "channel":{"type":"integer","description":"通道号，默认 1"},
+            "points":{"type":"integer","description":"点数：屏幕最多 1200，RAW 最多 120000"},
+            "mode":{"type":"string","description":"NORM（默认，屏幕数据快）/ RAW（深存储，慢）"},
+            "ascii_plot":{"type":"boolean","description":"true 就只回一张字符画（几十行文本，适合快速瞄一眼）"}
+        }}), false);
+    push("scope_screenshot", "截示波器屏幕，存成 PNG 并回存到哪了（同时回一张可给用户看的图）。",
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"存哪；不填就存到 agent 工作区"}
+        }}), false);
+    push("scope_control", "改示波器设置：通道档位/偏移/开关/耦合/探头、时基、触发源与电平、触发方式、RUN/STOP、自动设置。",
+        json!({"type":"object","properties":{
+            "channel":{"type":"integer","description":"要改的通道 1~4"},
+            "display":{"type":"boolean","description":"这个通道开不开"},
+            "scale":{"type":"number","description":"电压档位 V/div，如 0.5"},
+            "offset":{"type":"number","description":"垂直偏移 V"},
+            "probe":{"type":"number","description":"探头衰减倍数，如 10"},
+            "coupling":{"type":"string","description":"AC / DC / GND"},
+            "timebase":{"type":"number","description":"时基 s/div，如 2e-4"},
+            "timebase_offset":{"type":"number","description":"水平偏移 s"},
+            "trigger_source":{"type":"string","description":"CHAN1~CHAN4"},
+            "trigger_level":{"type":"number","description":"触发电平 V"},
+            "trigger_sweep":{"type":"string","description":"AUTO / NORMAL / SINGLE"},
+            "run":{"type":"boolean","description":"true=RUN，false=STOP"},
+            "autoset":{"type":"boolean","description":"true = 让示波器自己找档位（:AUT）"}
+        }}), false);
     push("workspace_list", "列 agent 工作区里的文件。",
         json!({"type":"object","properties":{"path":{"type":"string","description":"相对路径，默认 ."}}}), false);
     push("workspace_read", "读工作区里的文本文件。",
@@ -210,6 +250,249 @@ fn arg_bool(args: &Value, key: &str, default: bool) -> bool {
     args.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
 }
 
+// ── 示波器：把 JSON 抹成人话（agent 看的是文本，不是 JSON）────────────
+
+/// 数字怎么显示：小数位按量级给，别搞出 0.30000000000000004
+fn fmt_num(v: f64, unit: &str) -> String {
+    let a = v.abs();
+    let s = if a == 0.0 {
+        "0".to_string()
+    } else if a >= 1e6 {
+        format!("{:.3}e6", v / 1e6)
+    } else if a >= 1000.0 {
+        format!("{v:.2}")
+    } else if a >= 1.0 {
+        format!("{v:.4}")
+    } else if a >= 1e-3 {
+        format!("{:.4}", v)
+    } else if a >= 1e-6 {
+        format!("{:.4}m", v * 1e3) // mV / ms 这类小量纲一律转成"毫"
+    } else {
+        format!("{v:.4e}")
+    };
+    if unit.is_empty() {
+        s
+    } else {
+        format!("{s} {unit}")
+    }
+}
+
+/// 时间类读数按 µs / ms / s 挑一个顺眼的单位
+fn fmt_time(v: f64) -> String {
+    let a = v.abs();
+    if a >= 1.0 {
+        format!("{v:.4} s")
+    } else if a >= 1e-3 {
+        format!("{:.4} ms", v * 1e3)
+    } else {
+        format!("{:.4} µs", v * 1e6)
+    }
+}
+
+fn meas_text(item: &str, v: Option<f64>) -> (String, String) {
+    let name = match item {
+        "VPP" => "峰峰值",
+        "VMAX" => "最大值",
+        "VMIN" => "最小值",
+        "VAVG" => "平均值",
+        "VRMS" => "有效值",
+        "VTOP" => "顶电平",
+        "VBASE" => "底电平",
+        "FREQ" => "频率",
+        "PER" => "周期",
+        "RIS" => "上升时间",
+        "FALL" => "下降时间",
+        "PDUT" => "正占空比",
+        "NDUT" => "负占空比",
+        other => other,
+    };
+    let text = match v {
+        None => "测不到（这一路大概没接信号）".to_string(),
+        Some(x) => match item {
+            "FREQ" => {
+                if x.abs() >= 1000.0 {
+                    format!("{:.4} kHz", x / 1e3)
+                } else {
+                    format!("{x:.4} Hz")
+                }
+            }
+            "PER" | "RIS" | "FALL" => fmt_time(x),
+            "PDUT" | "NDUT" => format!("{x:.2} %"),
+            _ => fmt_num(x, "V"),
+        },
+    };
+    (name.to_string(), text)
+}
+
+fn scope_measure_text(v: &Value) -> String {
+    let ch = v.get("channel").and_then(|x| x.as_u64()).unwrap_or(0);
+    let mut s = format!("CH{ch} 自动测量：\n");
+    if let Some(items) = v.get("items").and_then(|x| x.as_object()) {
+        for (k, val) in items {
+            let (name, text) = meas_text(k, val.as_f64());
+            s.push_str(&format!("- {name}({k})：{text}\n"));
+        }
+    }
+    s
+}
+
+fn scope_info_text() -> Result<String, String> {
+    let v = crate::scope::info()?;
+    let mut s = String::new();
+    s.push_str(&format!(
+        "{}（{}）\n",
+        v.get("idn").and_then(|x| x.as_str()).unwrap_or("?"),
+        v.get("model").and_then(|x| x.as_str()).unwrap_or("?")
+    ));
+    if let Some(chs) = v.get("channels").and_then(|x| x.as_array()) {
+        for c in chs {
+            let n = c.get("n").and_then(|x| x.as_u64()).unwrap_or(0);
+            if !c.get("display").and_then(|x| x.as_bool()).unwrap_or(false) {
+                s.push_str(&format!("CH{n}：关闭\n"));
+                continue;
+            }
+            s.push_str(&format!(
+                "CH{n}：开 · {} V/div · 偏移 {} · {} · 探头 {}x\n",
+                c.get("scale").and_then(|x| x.as_f64()).map(|x| fmt_num(x, "V")).unwrap_or_else(|| "?".into()),
+                c.get("offset").and_then(|x| x.as_f64()).map(|x| format!("{x:.3} V")).unwrap_or_else(|| "?".into()),
+                c.get("coupling").and_then(|x| x.as_str()).unwrap_or("?"),
+                c.get("probe").and_then(|x| x.as_f64()).map(|x| format!("{x:.0}")).unwrap_or_else(|| "?".into()),
+            ));
+        }
+    }
+    let tb = v.get("timebase").and_then(|x| x.as_f64());
+    let sr = v.get("sample_rate").and_then(|x| x.as_f64());
+    s.push_str(&format!(
+        "时基：{}\n采样率：{}\n",
+        tb.map(fmt_time).unwrap_or_else(|| "?".into()),
+        sr.map(|x| format!("{} Sa/s", fmt_num(x, ""))).unwrap_or_else(|| "?".into()),
+    ));
+    if let Some(md) = v.get("memory_depth").and_then(|x| x.as_str()) {
+        if !md.trim().is_empty() {
+            s.push_str(&format!("存储深度：{}\n", md.trim()));
+        }
+    }
+    let t = &v["trigger"];
+    s.push_str(&format!(
+        "触发：源 {} · 电平 {} · 方式 {} · 状态 {}",
+        t.get("source").and_then(|x| x.as_str()).unwrap_or("?"),
+        t.get("level").and_then(|x| x.as_f64()).map(|x| format!("{x:.3} V")).unwrap_or_else(|| "?".into()),
+        t.get("sweep").and_then(|x| x.as_str()).unwrap_or("?"),
+        t.get("status").and_then(|x| x.as_str()).unwrap_or("?"),
+    ));
+    Ok(s)
+}
+
+/// 字符画波形：60 列 × 12 行（每列取这一段的最小/最大值）
+fn ascii_plot(y: &[f64], cols: usize, rows: usize) -> String {
+    if y.is_empty() {
+        return "（没有数据）".into();
+    }
+    let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+    for v in y {
+        if *v < lo {
+            lo = *v;
+        }
+        if *v > hi {
+            hi = *v;
+        }
+    }
+    if (hi - lo).abs() < 1e-12 {
+        hi = lo + 1e-3;
+    }
+    let mut grid = vec![vec![' '; cols]; rows];
+    for c in 0..cols {
+        let a = c * y.len() / cols;
+        let b = (((c + 1) * y.len() / cols).max(a + 1)).min(y.len());
+        let seg = &y[a..b];
+        let smin = seg.iter().copied().fold(f64::MAX, f64::min);
+        let smax = seg.iter().copied().fold(f64::MIN, f64::max);
+        let row_of = |v: f64| -> usize {
+            let t = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+            ((1.0 - t) * (rows - 1) as f64).round() as usize
+        };
+        let (r1, r2) = (row_of(smax), row_of(smin));
+        for r in r1..=r2 {
+            grid[r][c] = if r1 == r2 { '-' } else if r == r1 { '\'' } else if r == r2 { '.' } else { '|' };
+        }
+    }
+    let mut out = String::new();
+    for (i, row) in grid.iter().enumerate() {
+        let v = hi - (hi - lo) * i as f64 / (rows - 1) as f64;
+        out.push_str(&format!("{v:>8.3} |{}|\n", row.iter().collect::<String>()));
+    }
+    out.push_str(&format!("{:>8} +{}+\n", "", "-".repeat(cols)));
+    out
+}
+
+fn scope_wave_text(args: &Value) -> Result<String, String> {
+    let ch = arg_u64(args, "channel", 1) as u8;
+    let points = arg_u64(args, "points", 1200) as usize;
+    let mode = arg_str(args, "mode").unwrap_or_else(|| "NORM".into());
+    let v = crate::scope::wave(ch, points, &mode)?;
+    let y: Vec<f64> = v
+        .get("y")
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_f64()).collect())
+        .unwrap_or_default();
+    let acquired = v.get("acquired").and_then(|x| x.as_u64()).unwrap_or(0);
+    let stride = v.get("stride").and_then(|x| x.as_u64()).unwrap_or(1);
+    let xinc = v.get("xinc").and_then(|x| x.as_f64()).unwrap_or(0.0);
+    if y.is_empty() {
+        return Err("读到 0 个点".into());
+    }
+    let (mut lo, mut hi, mut sum) = (f64::MAX, f64::MIN, 0.0);
+    for s in &y {
+        lo = lo.min(*s);
+        hi = hi.max(*s);
+        sum += *s;
+    }
+    let avg = sum / y.len() as f64;
+    // 估算频率：以均值为界数上升穿越
+    let mut cross = 0usize;
+    let mut above = y[0] > avg;
+    for s in y.iter().skip(1) {
+        let now = *s > avg;
+        if now && !above {
+            cross += 1;
+        }
+        above = now;
+    }
+    let span = xinc * (acquired.max(1) as f64);
+    let mut out = format!(
+        "CH{ch} 波形：{} 点（mode={}），跨度约 {}，{}/点\n最大 {:+.4} V · 最小 {:+.4} V · 峰峰 {:.4} V · 平均 {:+.4} V\n",
+        acquired,
+        v.get("mode").and_then(|x| x.as_str()).unwrap_or("NORM"),
+        fmt_time(span),
+        fmt_time(xinc),
+        hi,
+        lo,
+        hi - lo,
+        avg
+    );
+    if stride > 1 {
+        out.push_str(&format!("（返回时抽稀成 {} 点，每 {} 点取 1）\n", y.len(), stride));
+    }
+    if cross >= 2 && span > 0.0 {
+        let f_est = cross as f64 / span;
+        // 一个周期至少要有 8 个采样点，否则这个"数穿越"的估计就是在数噪声
+        let per_period = if f_est > 0.0 && xinc > 0.0 { (1.0 / f_est) / xinc } else { 0.0 };
+        if per_period >= 8.0 {
+            out.push_str(&format!(
+                "按上升穿越估的频率：约 {:.4} Hz（{} 个周期）\n",
+                f_est, cross
+            ));
+        } else {
+            out.push_str("（这路信号相对采样率太快，数穿越估频率不可靠 —— 要准数就用 scope_measure）\n");
+        }
+    }
+    if arg_bool(args, "ascii_plot", true) {
+        out.push_str("\n");
+        out.push_str(&ascii_plot(&y, 60, 12));
+    }
+    Ok(out)
+}
+
 fn line_ending(kind: &str) -> &'static [u8] {
     match kind {
         "none" => b"",
@@ -316,7 +599,48 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "firmware_upgrade" => firmware_upgrade(ctx, args),
         "local_run" => local_run(args),
         "flash" => flash(ctx, args),
-        "scope" => crate::scope_cmd_impl(&arg_str(args, "cmd").ok_or("缺少 cmd")?),
+        "scope" => crate::scope::raw(&arg_str(args, "cmd").ok_or("缺少 cmd")?),
+        "scope_connect" => {
+            let ip = arg_str(args, "ip").unwrap_or_else(|| "192.168.1.23".into());
+            let port = arg_u64(args, "port", 5555) as u16;
+            let idn = crate::scope::connect(&ip, port)?;
+            Ok(format!("已连接 {ip}:{port}\n{idn}"))
+        }
+        "scope_info" => scope_info_text(),
+        "scope_measure" => {
+            let ch = arg_u64(args, "channel", 1) as u8;
+            let items: Vec<String> = args
+                .get("items")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+            let v = crate::scope::measure(ch, &items)?;
+            Ok(scope_measure_text(&v))
+        }
+        "scope_waveform" => scope_wave_text(args),
+        "scope_screenshot" => {
+            // 不给路径就存进这个会话的工作区（用户能直接从界面打开）
+            let p = arg_str(args, "path")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    ctx.workspace.join(format!("scope_{}.png", crate::now_ms()))
+                });
+            let v = crate::scope::screenshot(Some(p))?;
+            Ok(format!(
+                "截屏已保存：{}\n（{} 字节的 PNG；界面上「示波器」页点「截屏」也能直接看）",
+                v.get("path").and_then(|x| x.as_str()).unwrap_or("?"),
+                v.get("bytes").and_then(|x| x.as_u64()).unwrap_or(0)
+            ))
+        }
+        "scope_control" => {
+            let v = crate::scope::control(args)?;
+            let list = v
+                .get("applied")
+                .and_then(|x| x.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join("、"))
+                .unwrap_or_default();
+            Ok(format!("已改：{list}"))
+        }
         "history_search" => history_search(ctx, args),
         "browser_open" => browser_open(ctx, args),
         "browser_read" => browser_read(ctx, args),

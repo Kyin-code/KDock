@@ -964,6 +964,7 @@ function showPane(tab) {
   if (tab === "agent") agOnShow();
   if (tab === "batch") initBatch({ pushTx: pushEntry });
   if (tab === "calc") initCalc();
+  if (tab === "scope") { scSetView(scView); scResizePlot(); }
   if (LANG === "en") langWalk();   // 这一页里"切过来才渲染"的文字（提示语/空态）再扫一遍
 }
 
@@ -1441,28 +1442,440 @@ function flashBootstrap() {
 
 // ---------------- 示波器：SCPI（Rigol DS1000Z 那套） ----------------
 let scPlot = null;
-let scXs = [], scYs = [];
+let scWaves = {};           // ch -> { x: [], y: [] }
+let scInfo = null;          // scope_info 的结果
+let scShotData = null;      // 最近一次截屏 { path, dataUrl, bytes }
+let scMeasTimer = null;
+let scWaveTimer = null;
+let scView = "wave";
 
-function scStatus(t, cls) {
-  $("sc-state").textContent = t;
-  $("sc-state").className = "dot" + (cls ? " " + cls : "");
+const SC_COLORS = { 1: "#ffc857", 2: "#4f8cff", 3: "#3ddc97", 4: "#ff6b6b" };
+const SC_SCALES = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10];
+const SC_TB = [1e-9, 2e-9, 5e-9, 1e-8, 2e-8, 5e-8, 1e-7, 2e-7, 5e-7, 1e-6, 2e-6, 5e-6, 1e-5, 2e-5, 5e-5,
+               1e-4, 2e-4, 5e-4, 1e-3, 2e-3, 5e-3, 1e-2, 2e-2, 5e-2, 0.1, 0.2, 0.5, 1];
+// 测量项（短名 → 中文名）；单位/小数位统一在 scMeasValue 里定
+const SC_MEAS_ITEMS = [["FREQ", "频率"], ["PER", "周期"], ["VPP", "峰峰值"], ["VMAX", "最大值"],
+                       ["VMIN", "最小值"], ["VAVG", "平均值"], ["VRMS", "有效值"], ["VTOP", "顶电平"],
+                       ["VBASE", "底电平"], ["RTIM", "上升时间"], ["FTIM", "下降时间"],
+                       ["PDUT", "正占空"], ["NDUT", "负占空"]];
+
+/** 秒 → 顺眼的单位（时基、周期、跨度都用它） */
+function scFmtTime(v) {
+  if (!Number.isFinite(v)) return "—";
+  const a = Math.abs(v);
+  if (a >= 1) return v.toFixed(4) + " s";
+  if (a >= 1e-3) return (v * 1e3).toFixed(4) + " ms";
+  if (a >= 1e-6) return (v * 1e6).toFixed(4) + " µs";
+  return (v * 1e9).toFixed(1) + " ns";
 }
 
-function scDrawWave(x, y) {
-  scXs = x; scYs = y;
+/** 伏 → 顺眼的单位（档位显示用） */
+function scFmtV(v) {
+  if (!Number.isFinite(v)) return "—";
+  const a = Math.abs(v);
+  if (a >= 1) return (v === Math.round(v) ? v.toFixed(0) : v.toFixed(2)) + " V";
+  return (v * 1e3).toFixed(0) + " mV";
+}
+
+/** 测量项的显示值；null = 这一路没信号 / 测不到 */
+function scMeasValue(item, v) {
+  if (v == null) return "—";
+  switch (item) {
+    case "FREQ": return v >= 1000 ? (v / 1e3).toFixed(4) + " kHz" : v.toFixed(4) + " Hz";
+    case "PER": case "RTIM": case "FTIM": return scFmtTime(v);
+    case "PDUT": case "NDUT": return v.toFixed(2) + " %";
+    default: return v.toFixed(4) + " V";
+  }
+}
+
+/** 这页现在露着吗（自动刷新只在露着的时候干活） */
+function scPaneVisible() {
+  const p = document.querySelector('[data-work="scope"]');
+  return !!p && !p.hidden;
+}
+
+function scRow(k, v, cls) {
+  const r = document.createElement("div");
+  r.className = "row";
+  const a = document.createElement("span");
+  a.className = "k"; a.textContent = k;
+  const b = document.createElement("span");
+  b.className = "v" + (cls ? " " + cls : "");
+  b.textContent = v;
+  r.append(a, b);
+  return r;
+}
+
+function scStatus(t, cls) {
+  const el = $("sc-state");
+  if (!el) return;
+  el.textContent = t;
+  el.className = "dot" + (cls ? " " + cls : "");
+}
+
+/** SCPI 控制台的记录（只留最后 80 条，免得越堆越多） */
+let scLogLines = [];
+function scLog(line) {
+  scLogLines.push(line);
+  if (scLogLines.length > 80) scLogLines = scLogLines.slice(-80);
+  const box = $("sc-log");
+  if (!box) return;
+  box.textContent = scLogLines.join("\n");
+  box.scrollTop = box.scrollHeight;
+}
+
+/** 通道下拉（测量通道 / 触发源）按机型能拿到几个通道就填几个 */
+function scChannelNumbers() {
+  const chs = (scInfo && scInfo.channels) || [];
+  return chs.length ? chs.map((c) => c.n) : [1, 2];
+}
+
+function scFillSelects() {
+  const chans = scChannelNumbers();
+  const meas = $("sc-meas-ch");
+  if (meas && scInfo) {
+    const old = Number(meas.value) || 0;
+    meas.innerHTML = "";
+    for (const n of chans) {
+      const o = document.createElement("option");
+      o.value = String(n);
+      o.textContent = "CH" + n;
+      meas.appendChild(o);
+    }
+    const opened = (scInfo.channels || []).filter((c) => c.display).map((c) => c.n);
+    const want = chans.includes(old) ? old : (opened[0] || chans[0]);
+    meas.value = String(want);
+  }
+  const src = $("sc-trig-src");
+  if (src && scInfo) {
+    src.innerHTML = "";
+    for (const n of chans) {
+      const o = document.createElement("option");
+      o.value = "CHAN" + n;
+      o.textContent = "CH" + n;
+      src.appendChild(o);
+    }
+    const cur = (scInfo.trigger && scInfo.trigger.source) || "";
+    if (cur) src.value = cur;
+  }
+  const tb = $("sc-tb");
+  if (tb && !tb.options.length) {
+    for (const v of SC_TB) {
+      const o = document.createElement("option");
+      o.value = String(v);
+      o.textContent = scFmtTime(v) + "/div";
+      tb.appendChild(o);
+    }
+  }
+  if (tb && scInfo && scInfo.timebase) {
+    // 档位是 1-2-5 序列，浮点相等靠不住：挑对数上最近的那个
+    let best = null, bestD = Infinity;
+    for (const o of tb.options) {
+      const d = Math.abs(Math.log(Number(o.value) / scInfo.timebase));
+      if (d < bestD) { bestD = d; best = o; }
+    }
+    if (best) tb.value = best.value;
+  }
+  const lev = $("sc-trig-lev");
+  if (lev && scInfo && scInfo.trigger && scInfo.trigger.level != null && document.activeElement !== lev) {
+    lev.value = String(Number(scInfo.trigger.level.toFixed(3)));
+  }
+}
+
+function scRenderInfo() {
+  const box = $("sc-info");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!scInfo) {
+    box.appendChild(scRow(en("状态"), en("还没连上（点上面的「连接」）"), "warn"));
+    if ($("sc-model")) $("sc-model").textContent = "";
+    return;
+  }
+  if ($("sc-model")) $("sc-model").textContent = scInfo.model || "";
+  box.appendChild(scRow(en("型号"), scInfo.idn || "?"));
+  box.appendChild(scRow(en("时基"), scFmtTime(scInfo.timebase) + " /div"));
+  box.appendChild(scRow(en("采样率"), scInfo.sample_rate ? scInfo.sample_rate.toExponential(3) + " Sa/s" : "—"));
+  if (scInfo.memory_depth && String(scInfo.memory_depth).trim()) {
+    box.appendChild(scRow(en("存储深度"), String(scInfo.memory_depth).trim()));
+  }
+  const t = scInfo.trigger || {};
+  box.appendChild(scRow(en("触发"),
+    `${t.source || "?"} · ${t.level != null ? t.level.toFixed(3) + " V" : "—"} · ${t.sweep || "?"} · ${t.status || "?"}`));
+}
+
+/** 通道卡片：显示开关 / 档位 / 偏移 / 应用 */
+function scRenderChannels() {
+  const box = $("sc-channels");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!scInfo) {
+    box.innerHTML = '<p class="hint">' + en("连上之后这里会列出通道。") + "</p>";
+    return;
+  }
+  for (const c of scInfo.channels) {
+    const card = document.createElement("div");
+    card.className = "scchan" + (c.display ? "" : " off");
+    const head = document.createElement("div");
+    head.className = "scchan-head";
+    const nm = document.createElement("b");
+    nm.textContent = "CH" + c.n;
+    nm.style.color = SC_COLORS[c.n] || "";
+    const state = document.createElement("span");
+    state.className = "lb";
+    state.textContent = c.display ? en("开") : en("关");
+    const sp = document.createElement("span");
+    sp.className = "grow";
+    const cbx = document.createElement("input");
+    cbx.type = "checkbox";
+    cbx.checked = !!c.display;
+    const lbl = document.createElement("label");
+    lbl.className = "chk";
+    lbl.append(cbx, document.createTextNode(en("显示")));
+    head.append(nm, state, sp, lbl);
+    card.appendChild(head);
+
+    const row = document.createElement("div");
+    row.className = "trow";
+    const sel = document.createElement("select");
+    sel.className = "tight grow";
+    for (const v of SC_SCALES) {
+      const o = document.createElement("option");
+      o.value = String(v);
+      o.textContent = scFmtV(v) + "/div";
+      sel.appendChild(o);
+    }
+    if (c.scale) {
+      sel.value = String(SC_SCALES.reduce((a, b) => (Math.abs(b - c.scale) < Math.abs(a - c.scale) ? b : a)));
+    }
+    const off = document.createElement("input");
+    off.type = "number";
+    off.className = "num";
+    off.step = "0.1";
+    off.style.width = "76px";
+    off.value = c.offset != null ? c.offset : 0;
+    off.title = en("垂直偏移（V）");
+    const ap = document.createElement("button");
+    ap.className = "btn small";
+    ap.textContent = en("应用");
+    row.append(sel, off, ap);
+    card.appendChild(row);
+    if (c.coupling || c.probe) {
+      const extra = document.createElement("div");
+      extra.className = "lb";
+      extra.textContent = `${c.coupling || ""}${c.probe ? " · " + en("探头") + " " + c.probe.toFixed(0) + "x" : ""}`;
+      card.appendChild(extra);
+    }
+    const apply = async () => {
+      try {
+        await invoke("scope_control", {
+          args: { channel: c.n, display: cbx.checked, scale: Number(sel.value), offset: Number(off.value) },
+        });
+        await scRefreshInfo(true);
+      } catch (e) { toast(String(e)); }
+    };
+    ap.onclick = apply;
+    cbx.onchange = apply;
+    box.appendChild(card);
+  }
+}
+
+async function scRefreshInfo(silent) {
+  if (!silent) scStatus(en("读取状态…"));
+  try {
+    scInfo = await invoke("scope_info");
+    scStatus(scInfo.model || en("已连接"), "ok");
+    scRenderInfo();
+    scRenderChannels();
+    scFillSelects();
+  } catch (e) {
+    scStatus(en("读不到状态"), "err");
+    scLog(String(e));
+    if (!silent) toast(String(e));
+  }
+}
+
+/** 自动测量：一次读全 13 项（测不到的项显示 —） */
+/** 示波器的 socket 同时只认一个客户端：被别人抢走、或者它自己把空闲连接断了，
+ *  就会突然"还没连接"。这里自动连回去一次（用页面上填的 IP/端口）。 */
+let scReconnecting = false;
+async function scAutoReconnect() {
+  if (scReconnecting) return false;
+  scReconnecting = true;
+  try {
+    const host = ($("sc-host").value || "").trim() || "192.168.1.23";
+    const port = Number($("sc-port").value) || 5555;
+    const idn = await invoke("scope_open", { host, port });
+    scLog(`自动重连 ${host}:${port} → ${idn}`);
+    scStatus(idn || en("已连接"), "ok");
+    return true;
+  } catch (e) {
+    scLog("自动重连失败：" + String(e));
+    return false;
+  } finally {
+    scReconnecting = false;
+  }
+}
+
+/** 掉线了就先连回来，再把这个动作重做一次 */
+async function scRetryOnDrop(e, again) {
+  if (!/还没连接|没连接/.test(String(e))) return false;
+  if (!(await scAutoReconnect())) return false;
+  try { await again(); return true; } catch (e2) { toast(String(e2)); return false; }
+}
+
+async function scMeasureNow() {
+  const box = $("sc-meas-out");
+  if (!box) return;
+  if (window.__scMeasBusy) return;      // 连续模式 2 秒一次，别叠起来
+  window.__scMeasBusy = true;
+  const ch = Number($("sc-meas-ch").value) || 1;
+  try {
+    await scMeasureNow2(ch, box);
+  } catch (e) {
+    if (!(await scRetryOnDrop(e, () => scMeasureNow2(ch, box)))) {
+      box.innerHTML = "";
+      box.appendChild(scRow(en("出错"), String(e), "bad"));
+    }
+  } finally {
+    window.__scMeasBusy = false;
+  }
+}
+
+/** 测量渲染本体（单独拆出来，方便掉线重连后重做一次） */
+async function scMeasureNow2(ch, box) {
+  const items = SC_MEAS_ITEMS.map(([k]) => k);
+  const r = await invoke("scope_measure", { channel: ch, items });
+  const m = (r && r.items) || {};
+  box.innerHTML = "";
+  for (const [k, name] of SC_MEAS_ITEMS) {
+    const key = k === "RTIM" ? "RIS" : k === "FTIM" ? "FALL" : k;
+    const v = m[key];
+    box.appendChild(scRow(en(name), scMeasValue(k, v == null ? null : Number(v)), v == null ? "" : "ok"));
+  }
+}
+
+/** 读波形：开着的通道各读一份（点数 >1200 自动走深存储） */
+async function scReadWave() {
+  const st = $("sc-wave-state");
+  if (window.__scWaveBusy) return;      // 自动刷新别和手点叠在一起
+  window.__scWaveBusy = true;
+  const points = Number($("sc-wave-points").value) || 1200;
+  const mode = points > 1200 ? "RAW" : "NORM";
+  const chans = scInfo && scInfo.channels ? scInfo.channels.filter((c) => c.display).map((c) => c.n) : [1];
+  if (!chans.length) { window.__scWaveBusy = false; toast(en("示波器上现在没有打开的通道")); return; }
+  if (st) st.textContent = en("读取中…");
+  try {
+    await scReadWave2(chans, points, mode, st);
+  } catch (e) {
+    if (!(await scRetryOnDrop(e, () => scReadWave2(chans, points, mode, st)))) {
+      if (st) st.textContent = "";
+      toast(String(e));
+    }
+    if (points > 1200) $("sc-wave-points").value = "1200";   // 深存储读不动就退回屏幕数据
+  } finally {
+    window.__scWaveBusy = false;
+  }
+}
+
+/** 读波形的本体（掉线重连后要能重做一次，所以单独拆出来） */
+async function scReadWave2(chans, points, mode, st) {
+  const t0 = Date.now();
+  const next = {};
+  for (const n of chans) {
+    const d = await invoke("scope_waveform", { channel: n, points, mode });
+    next[n] = { x: d.x || [], y: d.y || [], acquired: d.acquired, stride: d.stride };
+  }
+  scWaves = next;
+  scSetView("wave");
+  scDraw();
+  const first = next[chans[0]] || { y: [] };
+  const acq = first.acquired || first.y.length;
+  if (st) st.textContent = `${acq} ${en("点")} · ${Date.now() - t0} ms`;
+  if (mode === "RAW" && acq < points) {
+    // 存储深度是 AUTO 的时候，深存储也只给屏幕那 1200 点 —— 说清楚，别让人以为读坏了
+    toast(`${en("示波器只给了")} ${acq} ${en("点（存储深度 AUTO）；想真深存储：先在示波器上按 STOP，把存储深度调大")}`);
+  }
+}
+
+function scResizePlot() {
   const box = $("sc-plot");
+  if (!scPlot || !box) return;
+  scPlot.setSize({ width: box.clientWidth || 600, height: box.clientHeight || 300 });
+}
+
+/** 画波形：一个通道一条线（颜色跟通道卡片一致），鼠标悬停看读数 */
+function scDraw() {
+  const box = $("sc-plot");
+  if (!box) return;
+  const nums = Object.keys(scWaves).map(Number).sort((a, b) => a - b);
+  if (!nums.length) return;
   const w = box.clientWidth || 600, h = box.clientHeight || 300;
-  if (!w || !h) return;
+  const base = scWaves[nums[0]];
+  const data = [base.x];
+  const series = [{ label: "t", value: (u, v) => (v == null ? "—" : scFmtTime(v)) }];
+  for (const n of nums) {
+    const d = scWaves[n];
+    const y = new Array(base.x.length);
+    for (let i = 0; i < base.x.length; i++) y[i] = d.y[i] == null ? null : d.y[i];
+    data.push(y);
+    series.push({
+      label: "CH" + n,
+      stroke: SC_COLORS[n] || "#4f8cff",
+      width: 1.6,
+      value: (u, v) => (v == null ? "—" : v.toFixed(4) + " V"),
+    });
+  }
   if (scPlot) scPlot.destroy();
   scPlot = new uPlot({
-    width: w, height: h,
-    series: [{ label: "t(s)" }, { label: "V", stroke: "#ffc857", width: 1.6 }],
+    width: w, height: h, series,
     axes: [
-      { stroke: "#8b98a8", grid: { stroke: "rgba(139,152,168,.15)" } },
-      { stroke: "#8b98a8", grid: { stroke: "rgba(139,152,168,.15)" } },
+      { stroke: "#8b98a8", grid: { stroke: "rgba(139,152,168,.15)" }, values: (u, sp) => sp.map(scFmtTime) },
+      { stroke: "#8b98a8", grid: { stroke: "rgba(139,152,168,.15)" }, size: 56,
+        values: (u, sp) => sp.map((v) => v.toFixed(3)) },
     ],
-    legend: { show: true },
-  }, [x, y], box);
+    legend: { show: true, live: true },
+    cursor: { points: { size: 6 } },
+  }, data, box);
+}
+
+/** 波形 / 截屏 两个视图来回切 */
+function scSetView(name) {
+  scView = name;
+  if ($("sc-plot")) $("sc-plot").hidden = name !== "wave";
+  if ($("sc-shot")) $("sc-shot").hidden = name !== "shot";
+  if ($("sc-shot-bar")) $("sc-shot-bar").hidden = name !== "shot" || !scShotData;
+  if ($("sc-view-wave")) $("sc-view-wave").classList.toggle("primary", name === "wave");
+  if ($("sc-view-shot")) $("sc-view-shot").classList.toggle("primary", name === "shot");
+  if (name === "wave") scResizePlot();
+}
+
+/** 截屏：后端读 TMC 里的二进制 PNG、存文件，这里直接显示（CSP 允许 data:） */
+async function scShotGo() {
+  try {
+    const r = await invoke("scope_screenshot", {});
+    scShotData = r;
+    const img = $("sc-shot");
+    img.src = r.dataUrl;
+    img.hidden = false;
+    $("sc-shot-info").textContent = `${r.path} · ${(r.bytes / 1024).toFixed(1)} KB`;
+    scSetView("shot");
+    scLog(`截屏 → ${r.path}`);
+  } catch (e) { toast(String(e)); }
+}
+
+async function scShotSave() {
+  if (!scShotData) return;
+  try {
+    const p = await dlgSave({
+      title: en("保存示波器截屏"), defaultPath: "scope.png",
+      filters: [{ name: "PNG", extensions: ["png"] }],
+    });
+    if (!p) return;
+    const saved = await invoke("scope_save_png", {
+      path: typeof p === "string" ? p : p.path, dataUrl: scShotData.dataUrl,
+    });
+    toast(en("已保存：") + saved);
+  } catch (e) { toast(String(e)); }
 }
 
 async function scAsk(cmd) {
@@ -1473,51 +1886,89 @@ async function scAsk(cmd) {
 
 function bindScope() {
   $("sc-open").onclick = async () => {
-    scStatus("连接中…");
+    const host = $("sc-host").value.trim();
+    const port = Number($("sc-port").value) || 5555;
+    scStatus(en("连接中…"));
     try {
-      const idn = await invoke("scope_open", { host: $("sc-host").value.trim(), port: Number($("sc-port").value) });
-      scStatus(idn || "已连接", "ok");
+      const idn = await invoke("scope_open", { host, port });
+      scStatus(idn || en("已连接"), "ok");
+      scLog(`已连接 ${host}:${port} → ${idn}`);
       pushSys(`[示波器] 已连接: ${idn}`);
-    } catch (e) { scStatus("连接失败", "err"); toast(String(e)); pushSys(`[示波器] ${e}`); }
+      devHistRemember("sc-host", host);
+      devHistRemember("sc-port", String(port));
+      await new Promise((r) => setTimeout(r, 150));   // 让示波器把命令队列消化一下
+      await scRefreshInfo(true);
+      if (!scInfo) { await new Promise((r) => setTimeout(r, 500)); await scRefreshInfo(true); }
+      if (!scInfo) toast(en("连上了，但状态没读到（示波器在忙？再点一次「连接」）"));
+      await scMeasureNow();
+    } catch (e) {
+      scStatus(en("连接失败"), "err");
+      toast(String(e));
+      scLog(String(e));
+      pushSys(`[示波器] ${e}`);
+    }
   };
-  $("sc-close").onclick = async () => { await invoke("scope_close").catch(() => {}); scStatus("未连接"); };
+  $("sc-close").onclick = async () => {
+    await invoke("scope_close").catch(() => {});
+    scStatus(en("未连接"));
+    scInfo = null;
+    scWaves = {};
+    if (scPlot) { scPlot.destroy(); scPlot = null; }
+    scRenderInfo();
+    scRenderChannels();
+  };
   $("sc-idn").onclick = () => scAsk("*IDN?").catch((e) => toast(String(e)));
   $("sc-send").onclick = () => {
     const c = $("sc-cmd").value.trim();
-    if (c) scAsk(c).catch((e) => toast(String(e)));
+    if (c) scAsk(c).catch((e) => { toast(String(e)); scLog(String(e)); });
   };
-  $("sc-meas").onclick = async () => {
+  $("sc-meas").onclick = () => scMeasureNow();
+  $("sc-meas-auto").onchange = (e) => {
+    if (scMeasTimer) { clearInterval(scMeasTimer); scMeasTimer = null; }
+    if (e.target.checked) scMeasTimer = setInterval(() => { if (scPaneVisible()) scMeasureNow(); }, 2000);
+  };
+  $("sc-meas-ch").onchange = () => { if ($("sc-meas-auto").checked) scMeasureNow(); };
+  $("sc-wave").onclick = () => scReadWave();
+  $("sc-wave-auto").onchange = (e) => {
+    if (scWaveTimer) { clearInterval(scWaveTimer); scWaveTimer = null; }
+    if (e.target.checked) scWaveTimer = setInterval(() => { if (scPaneVisible()) scReadWave(); }, 2000);
+  };
+  $("sc-wave-points").onchange = () => { if (scWaveTimer) scReadWave(); };
+  $("sc-view-wave").onclick = () => scSetView("wave");
+  $("sc-view-shot").onclick = () => scSetView("shot");
+  $("sc-shot-btn").onclick = () => scShotGo();
+  $("sc-shot-save").onclick = () => scShotSave();
+  $("sc-tb-apply").onclick = async () => {
     try {
-      const items = [["频率", ":MEAS:FREQ? CHAN1"], ["峰峰值", ":MEAS:VPP? CHAN1"],
-                     ["有效值", ":MEAS:VRMS? CHAN1"], ["平均值", ":MEAS:VAVG? CHAN1"],
-                     ["上升时间", ":MEAS:RIS? CHAN1"], ["周期", ":MEAS:PER? CHAN1"]];
-      pushSys("[示波器] ---- 自动测量 CH1 ----");
-      for (const [name, cmd] of items) {
-        const v = await invoke("scope_cmd", { cmd }).catch((e) => "ERR " + e);
-        pushSys(`[示波器] ${name}: ${v}`);
-      }
+      await invoke("scope_control", { args: { timebase: Number($("sc-tb").value) } });
+      toast(en("时基已改"));
+      await scRefreshInfo(true);
     } catch (e) { toast(String(e)); }
   };
-  $("sc-wave").onclick = async () => {
+  $("sc-trig-apply").onclick = async () => {
     try {
-      pushSys("[示波器] 读取波形 …");
-      const d = await invoke("scope_wave");
-      scDrawWave(d.x, d.y);
-      pushSys(`[示波器] 波形 ${d.y.length} 点`);
-    } catch (e) { toast(String(e)); pushSys(`[示波器] 读波形失败: ${e}`); }
-  };
-  $("sc-shot-btn").onclick = async () => {
-    try {
-      pushSys("[示波器] 截屏 …");
-      const b64 = await invoke("scope_cmd", { cmd: ":DISP:DATA? ON,OFF,PNG" });
-      const clean = String(b64).replace(/^#\d+/, "").trim();
-      if (clean.length < 100) { toast("截屏返回异常"); return; }
-      const img = $("sc-shot");
-      img.src = "data:image/png;base64," + clean;
-      img.hidden = false;
-      pushSys(`[示波器] 截屏 ${clean.length} 字符`);
+      await invoke("scope_control", {
+        args: { trigger_source: $("sc-trig-src").value, trigger_level: Number($("sc-trig-lev").value) },
+      });
+      toast(en("触发已改"));
+      await scRefreshInfo(true);
     } catch (e) { toast(String(e)); }
   };
+  $("sc-run").onclick = () => invoke("scope_control", { args: { run: true } })
+    .then(() => { toast("RUN"); return scRefreshInfo(true); }).catch((e) => toast(String(e)));
+  $("sc-stop").onclick = () => invoke("scope_control", { args: { run: false } })
+    .then(() => { toast("STOP"); return scRefreshInfo(true); }).catch((e) => toast(String(e)));
+  $("sc-aut").onclick = async () => {
+    try {
+      toast(en("自动设置中…（示波器要几秒）"));
+      await invoke("scope_control", { args: { autoset: true } });
+      await scRefreshInfo(true);
+      await scReadWave();
+      await scMeasureNow();
+    } catch (e) { toast(String(e)); }
+  };
+  scRenderInfo();
+  scRenderChannels();
 }
 
 // ---------------- 屏幕捕获：DXGI 抓屏 → JPEG → 显示 ----------------
@@ -5269,6 +5720,12 @@ const TOOL_DESC_EN = {
   local_run: "Run a command on this PC (cmd /C) and return the exit code and output.",
   flash: "Flash the chip with an external programmer (J-Link / openocd / STM32CubeProgrammer).",
   scope: "Send a SCPI command to the oscilloscope (Rigol) and return its reply.",
+  scope_connect: "Connect to the oscilloscope (RIGOL DS1000Z series, SCPI over TCP). Returns *IDN?.",
+  scope_info: "Read the scope state: model, channels (on/off, scale, offset, coupling, probe), timebase, sample rate, trigger.",
+  scope_measure: "Auto-measure one channel: Vpp / frequency / period / RMS / average / min / max / rise / fall / duty. Items with no signal come back null.",
+  scope_waveform: "Read a waveform: a summary (points, span, min/max, Vpp, average, estimated frequency) plus an ASCII plot.",
+  scope_screenshot: "Screenshot the scope as a PNG and report where it was saved.",
+  scope_control: "Change scope settings: channel scale/offset/display/coupling/probe, timebase, trigger source & level, sweep, RUN/STOP, autoset.",
   workspace_list: "List files in the agent workspace.",
   workspace_read: "Read a text file from the workspace.",
   workspace_write: "Write a file into the workspace (creates directories).",
@@ -6846,6 +7303,44 @@ const EN = {
   "个文件": "file(s)",
   "上次更新 ": "updated ",
   "显示 / 交互 / 快捷发送 / 会话日志 / 回放": "Display / interaction / quick send / session log / replay",
+
+  // ============ 示波器页 ============
+  "机器状态": "Instrument", "测一次": "Measure once", "连续": "continuous",
+  "时基 / 触发": "Timebase / Trigger", "时基": "Timebase",
+  "触发源": "Trigger source", "电平 V": "Level V", "自动设置": "Autoset",
+  "自动设置中…（示波器要几秒）": "Autoset running… (the scope takes a few seconds)",
+  "SCPI（想发什么发什么）": "SCPI (send whatever you like)",
+  "波形": "Waveform", "屏幕 1200 点": "screen, 1200 pts",
+  "深存储 12k": "deep memory, 12k", "深存储 120k": "deep memory, 120k",
+  "自动刷新": "auto refresh", "另存为…": "Save as…",
+  "型号": "Model", "采样率": "Sample rate", "存储深度": "Memory depth",
+  "触发": "Trigger", "状态": "State", "应用": "Apply", "探头": "probe",
+  "开": "on", "关": "off",
+  "还没连上（点上面的「连接」）": "not connected yet (click Connect above)",
+  "连上之后这里会列出通道。": "Channels show up here once connected.",
+  "读取状态…": "reading state…", "读不到状态": "cannot read state",
+  "连接中…": "connecting…", "连接失败": "connect failed", "出错": "error",
+  "时基已改": "timebase updated", "触发已改": "trigger updated",
+  "已保存：": "saved: ", "保存示波器截屏": "Save scope screenshot",
+  "示波器上现在没有打开的通道": "no channel is turned on in the scope",
+  "频率": "Frequency", "周期": "Period", "峰峰值": "Vpp", "最大值": "Vmax",
+  "最小值": "Vmin", "平均值": "Vavg", "有效值": "Vrms", "顶电平": "Vtop",
+  "底电平": "Vbase", "上升时间": "Rise time", "下降时间": "Fall time",
+  "正占空": "Duty+", "负占空": "Duty-",
+  "点数：1200 = 屏幕上的数据（快）；更大的走深存储（慢）":
+    "Point count: 1200 = on-screen data (fast); larger values use deep memory (slow)",
+  "每 2 秒自动重读一次": "re-read every 2 seconds", "每 2 秒重测一次": "re-measure every 2 seconds",
+  "让示波器自己找档位和时基（:AUT）": "let the scope find scale and timebase itself (:AUT)",
+  "探头 ": "probe ",
+  "示波器只给了": "the scope only returned",
+  "点（存储深度 AUTO）；想真深存储：先在示波器上按 STOP，把存储深度调大":
+    "points (memory depth is AUTO); for real deep memory, press STOP on the scope and raise the memory depth",
+  "连上了，但状态没读到（示波器在忙？再点一次「连接」）":
+    "connected, but the state could not be read (scope busy? click Connect again)",
+  "已重连": "reconnected",
+  "RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent":
+    "The standard LAN port on RIGOL DS1000Z series scopes (TCP 5555, SCPI text). Once connected the agent",
+  "工具干同样的事。": "can do the same things with the same tools.",
 };
 const en = (t) => (LANG === "en" && EN[t]) ? EN[t] : t;
 // 分文件写的小模块（批量文本/计算器）也要能翻译 + 切语言时重画

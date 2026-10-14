@@ -5,6 +5,7 @@
 
 mod agent;
 mod checksum;
+mod scope;
 mod storage;
 mod transport;
 mod upgrade;
@@ -1295,133 +1296,73 @@ fn flash_stop() {
     }
 }
 
-// ── 示波器：走 SCPI（Rigol DS1000Z 的裸 socket 端口，默认 5555） ──
-static SCOPE: LazyLock<Mutex<Option<std::net::TcpStream>>> = LazyLock::new(|| Mutex::new(None));
+// ── 示波器：SCPI（RIGOL DS1000Z 系，裸 socket 5555）──
+// 实现都在 `scope` 模块里，这里只是命令层的薄壳（UI 和 agent 工具共用同一份实现）。
 
 #[tauri::command]
 fn scope_open(host: String, port: u16) -> Result<String, String> {
-    use std::net::ToSocketAddrs;
-    let addr = format!("{host}:{port}")
-        .to_socket_addrs()
-        .map_err(|e| format!("地址解析失败: {e}"))?
-        .next()
-        .ok_or("地址解析失败")?;
-    let s = std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(3))
-        .map_err(|e| format!("连不上 {addr}: {e}"))?;
-    let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(3)));
-    let _ = s.set_write_timeout(Some(std::time::Duration::from_secs(3)));
-    let _ = s.set_nodelay(true);
-    *SCOPE.lock().expect("scope mutex") = Some(s);
-    scope_cmd("*IDN?".into())
+    scope::connect(&host, port)
 }
 
 #[tauri::command]
 fn scope_close() {
-    *SCOPE.lock().expect("scope mutex") = None;
+    scope::close();
 }
 
 #[tauri::command]
 fn scope_cmd(cmd: String) -> Result<String, String> {
-    scope_cmd_impl(&cmd)
+    scope::raw(&cmd)
 }
 
-/// 给 agent 工具复用的实现（命令只是它的薄壳）
-pub fn scope_cmd_impl(cmd: &str) -> Result<String, String> {
-    use std::io::{Read, Write};
-    let mut g = SCOPE.lock().expect("scope mutex");
-    let s = g.as_mut().ok_or("示波器还没连接")?;
-    let line = format!("{}\n", cmd.trim_end());
-    s.write_all(line.as_bytes()).map_err(|e| format!("发送失败: {e}"))?;
-    let _ = s.flush();
-    if !cmd.trim().ends_with('?') {
-        return Ok("(已发送，无查询)".to_string());
-    }
-    let mut buf = [0u8; 1];
-    let mut out: Vec<u8> = Vec::new();
-    loop {
-        match s.read(&mut buf) {
-            Ok(0) => break,
-            Ok(_) => {
-                if buf[0] == b'\n' {
-                    break;
-                }
-                if buf[0] != b'\r' {
-                    out.push(buf[0]);
-                }
-                if out.len() > 8 * 1024 * 1024 {
-                    break;
-                }
-            }
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::TimedOut && !out.is_empty() {
-                    break;
-                }
-                return Err(format!("读取失败: {e}"));
-            }
-        }
-    }
-    Ok(String::from_utf8_lossy(&out).to_string())
+#[tauri::command]
+fn scope_info() -> Result<serde_json::Value, String> {
+    scope::info()
 }
 
-/// 读一份波形：先问 5 个 preamble 参数，再拿 DATA（TMC 块，带 #800001000 头）
+#[tauri::command]
+fn scope_measure(channel: u8, items: Option<Vec<String>>) -> Result<serde_json::Value, String> {
+    scope::measure(channel, &items.unwrap_or_default())
+}
+
+/// 波形：`mode` = NORM（屏幕 1200 点）/ RAW（深存储，分块读）
+#[tauri::command]
+fn scope_waveform(
+    channel: u8,
+    points: Option<usize>,
+    mode: Option<String>,
+) -> Result<serde_json::Value, String> {
+    scope::wave(channel, points.unwrap_or(1200), mode.as_deref().unwrap_or("NORM"))
+}
+
+/// 老的"读波形"入口（只读 CH1 的屏幕数据），留着兼容旧前端
 #[tauri::command]
 fn scope_wave() -> Result<serde_json::Value, String> {
-    use std::io::{Read, Write};
-    let mut g = SCOPE.lock().expect("scope mutex");
-    let s = g.as_mut().ok_or("示波器还没连接")?;
-    let mut ask = |c: &str| -> Result<String, String> {
-        s.write_all(format!("{c}\n").as_bytes()).map_err(|e| e.to_string())?;
-        let _ = s.flush();
-        let mut out = Vec::new();
-        let mut b = [0u8; 1];
-        loop {
-            match s.read(&mut b) {
-                Ok(0) => break,
-                Ok(_) => {
-                    if b[0] == b'\n' {
-                        break;
-                    }
-                    if b[0] != b'\r' {
-                        out.push(b[0]);
-                    }
-                }
-                Err(e) => return Err(format!("读 {c} 失败: {e}")),
-            }
-        }
-        Ok(String::from_utf8_lossy(&out).trim().to_string())
-    };
-    let xinc: f64 = ask(":WAV:XINC?")?.parse().unwrap_or(0.0);
-    let xor: f64 = ask(":WAV:XOR?")?.parse().unwrap_or(0.0);
-    let yinc: f64 = ask(":WAV:YINC?")?.parse().unwrap_or(0.0);
-    let yor: f64 = ask(":WAV:YOR?")?.parse().unwrap_or(0.0);
-    let yref: f64 = ask(":WAV:YREF?")?.parse().unwrap_or(0.0);
-    s.write_all(b":WAV:DATA?\n").map_err(|e| e.to_string())?;
-    let _ = s.flush();
-    let mut raw: Vec<u8> = Vec::new();
-    let mut b = [0u8; 1];
-    loop {
-        match s.read(&mut b) {
-            Ok(0) => break,
-            Ok(_) => raw.push(b[0]),
-            Err(e) => return Err(format!("读波形失败: {e}")),
-        }
+    scope::wave(1, 1200, "NORM")
+}
+
+#[tauri::command]
+fn scope_screenshot(path: Option<String>) -> Result<serde_json::Value, String> {
+    let p = path.map(std::path::PathBuf::from);
+    scope::screenshot(p)
+}
+
+/// 「另存为」：把前端手上那份 PNG 写到用户选的路径
+#[tauri::command]
+fn scope_save_png(path: String, data_url: String) -> Result<String, String> {
+    let body = data_url
+        .split_once(",")
+        .map(|(_, b)| b)
+        .unwrap_or(data_url.as_str());
+    let bytes = upgrade::b64_decode(body);
+    if bytes.is_empty() {
+        return Err("图片内容是空的".into());
     }
-    let txt = String::from_utf8_lossy(&raw);
-    // TMC 块头 #<n><len>
-    let body = if let Some(rest) = txt.strip_prefix('#') {
-        let digits = rest.chars().next().and_then(|c| c.to_digit(10)).unwrap_or(0) as usize;
-        let head = 1 + digits;
-        txt.get(head..).unwrap_or("")
-    } else {
-        &txt
-    };
-    let ys: Vec<f64> = body
-        .split(',')
-        .filter_map(|v| v.trim().parse::<f64>().ok())
-        .map(|v| (v - yor - yref) * yinc)
-        .collect();
-    let xs: Vec<f64> = (0..ys.len()).map(|i| xor + i as f64 * xinc).collect();
-    Ok(serde_json::json!({ "x": xs, "y": ys }))
+    scope::save_png(&bytes, std::path::Path::new(&path))
+}
+
+#[tauri::command]
+fn scope_control(args: serde_json::Value) -> Result<serde_json::Value, String> {
+    scope::control(&args)
 }
 
 // ── 中控（时序编排）自带的连接 ─────────────────────────────────────
@@ -3228,6 +3169,12 @@ pub fn run() {
             scope_close,
             scope_cmd,
             scope_wave,
+                scope_info,
+                scope_measure,
+                scope_waveform,
+                scope_screenshot,
+                scope_save_png,
+                scope_control,
             // ── Agent ──
             agent::agent_config_get,
             agent::agent_provider_save,

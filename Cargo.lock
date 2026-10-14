@@ -2161,7 +2161,7 @@ dependencies = [
 
 [[package]]
 name = "kdock"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crc32fast",
  "digest",
@@ -2187,7 +2187,7 @@ dependencies = [
 
 [[package]]
 name = "kdock-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
