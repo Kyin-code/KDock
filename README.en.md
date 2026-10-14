@@ -59,6 +59,10 @@ live charts, flow orchestration — plus an Agent that can drive all of it. All 
 
 ![Oscilloscope](docs/images/06-scope.png)
 
+**The scope's own screen, grabbed with `DISP:DATA?` (native 800×480) — CH2 carries a 1 kHz square wave, CH1 is unconnected**
+
+![Scope screen](docs/images/06-scope-screen.png)
+
 **Agent info page: skill and MCP switches, context breakdown, cache hit rate and cost — the agent reads skills on demand**
 
 ![Skills and MCP](docs/images/07-skills.png)
@@ -137,7 +141,8 @@ It talks over the LAN port every RIGOL DS1000Z / DS1000Z-E series scope (DS1054Z
   (the scope returns 9.9E37, which is treated as "not measurable");
 - **Waveform**: every enabled channel on one plot (one colour per channel, cursor readout) with the
   1200 on-screen points, or deep memory (the UI says so when memory depth AUTO only gives 1200 points);
-- **Screenshot**: grabbed from the scope (`DISP:DATA?` returns a binary PNG) and shown in place, saveable as PNG;
+- **Screenshot**: grabbed from the scope (`DISP:DATA?` returns a binary PNG at the native 800×480) and shown in
+  place, saveable as PNG — [the instrument screen above](docs/images/06-scope-screen.png) was taken this way;
 - **Control**: timebase, trigger source, trigger level, RUN/STOP, autoset, plus a raw SCPI console with a reply log.
 
 The same abilities are exposed to the **Agent** as tools: `scope_connect` / `scope_info` / `scope_measure` /
