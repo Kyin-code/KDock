@@ -29,7 +29,7 @@ live charts, flow orchestration — plus an Agent that can drive all of it. All 
 | **Firmware** | `.fw` package parsing & verification, **serial in-app upgrade (YMODEM)**, **network upgrade (service channel)**, version manifest from an HTTP server |
 | **Flashing** | Drives external programmers (OpenOCD / J-Link / STM32CubeProgrammer) for flash, erase, verify and reset |
 | **Device files** | List directories, pull/push files, CRC verification (serial uses base64, network uses offset-based reads/writes) |
-| **Visualization** | Live charts (multi-channel), screen capture, oscilloscope (SCPI), logic analyzer slot |
+| **Visualization** | Live charts (multi-channel), screen capture, **oscilloscope** (RIGOL DS1000Z series over SCPI: state, 13 auto-measurements, multi-channel waveform, screenshot, timebase/trigger control), logic analyzer slot |
 | **Flow** | Chain local commands / TCP / UDP / serial into a timed flow with branches, run it with one click |
 | **AI Agent** | Built-in assistant that can call all of the above; OpenAI-compatible and Anthropic protocols, skills (`SKILL.md`), MCP servers, context compaction, throughput and cost stats |
 
@@ -54,6 +54,14 @@ live charts, flow orchestration — plus an Agent that can drive all of it. All 
 **Calculator: C-style expressions, keypad, 32-bit bit board, file checksums**
 
 ![Calculator](docs/images/05-calculator.png)
+
+**Oscilloscope: RIGOL DS1000Z series over SCPI — state, auto-measurements, multi-channel waveform, screenshot**
+
+![Oscilloscope](docs/images/06-scope.png)
+
+**Agent info page: skill and MCP switches, context breakdown, cache hit rate and cost — the agent reads skills on demand**
+
+![Skills and MCP](docs/images/07-skills.png)
 
 ## Quick start
 
@@ -103,7 +111,7 @@ List a device directory, pull/push files, verify CRC32 — over serial (`base64`
 
 - Send `1.23,4.56,7.89` one line at a time and the chart splits it into channels automatically;
 - Screen capture uses the OS desktop duplication API with adjustable frame rate and quality;
-- The oscilloscope speaks Rigol SCPI;
+- The **oscilloscope** speaks RIGOL DS1000Z-series SCPI — see its own section below;
 - Flow orchestrates several links into a timed sequence with branches, timeouts and logs.
 
 ### Batch text / Calculator
@@ -115,6 +123,29 @@ List a device directory, pull/push files, verify CRC32 — over serial (`base64`
   a traditional keypad, a **32-bit bit board** (click any bit; the value feeds back into the expression),
   IEEE 754 float ↔ bits (with sign/exponent/mantissa breakdown), radix conversion and **file checksums**
   (CRC32 / CRC16-CCITT / CRC16-MODBUS / MD5 / SHA1 / SHA256, optionally over a byte range).
+
+## Oscilloscope
+
+It talks over the LAN port every RIGOL DS1000Z / DS1000Z-E series scope (DS1054Z, DS1202Z-E, …) has:
+**TCP 5555, SCPI text**.
+
+- **State**: model (`*IDN?`), each channel's on/off, V/div, offset, coupling and probe, timebase,
+  sample rate, memory depth, trigger source and level;
+- **Channel cards**: change V/div and offset and push them to the scope with one click;
+- **Auto-measurements**: frequency, period, Vpp, Vmax/Vmin, Vavg, Vrms, Vtop/Vbase, rise/fall time,
+  duty+/duty- — 13 items, optionally refreshed every two seconds. A channel with no signal shows `—`
+  (the scope returns 9.9E37, which is treated as "not measurable");
+- **Waveform**: every enabled channel on one plot (one colour per channel, cursor readout) with the
+  1200 on-screen points, or deep memory (the UI says so when memory depth AUTO only gives 1200 points);
+- **Screenshot**: grabbed from the scope (`DISP:DATA?` returns a binary PNG) and shown in place, saveable as PNG;
+- **Control**: timebase, trigger source, trigger level, RUN/STOP, autoset, plus a raw SCPI console with a reply log.
+
+The same abilities are exposed to the **Agent** as tools: `scope_connect` / `scope_info` / `scope_measure` /
+`scope_waveform` (a summary plus an ASCII plot) / `scope_screenshot` (saved into the session workspace) /
+`scope_control`, plus the raw `scope <cmd>`. So you can just say "check what CH2 looks like".
+
+> Note: the DS1000Z SCPI socket accepts a **single** client at a time. KDock reconnects automatically when
+> it gets kicked, but do not drive the scope from two programs at once.
 
 ## Using the Agent
 
@@ -235,10 +266,10 @@ Issues and pull requests are welcome.
 ## Versioning
 
 - The **application version** follows [SemVer](https://semver.org/) `MAJOR.MINOR.PATCH`; it is currently
-  `v0.1.0` (the About page shows the live value) and is kept in sync across
+  `v0.3.0` (the About page shows the live value) and is kept in sync across
   `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `package.json`;
 - Every release appends a section to [CHANGELOG.md](CHANGELOG.md) and creates a `vX.Y.Z` git tag
-  (e.g. `git tag v0.1.0 && git push origin v0.1.0`);
+  (e.g. `git tag v0.3.0 && git push origin v0.3.0`);
 - The **firmware package version** is a separate three-segment `PD_HW.PD_SW.PD_FIX` stored in the `.fw` header and
   used by the device to accept or reject an upgrade — it is unrelated to the app version
   (see [docs/01](docs/01-固件包格式与打包算法.md));

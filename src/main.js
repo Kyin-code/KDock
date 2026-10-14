@@ -1857,7 +1857,10 @@ async function scShotGo() {
     const img = $("sc-shot");
     img.src = r.dataUrl;
     img.hidden = false;
-    $("sc-shot-info").textContent = `${r.path} · ${(r.bytes / 1024).toFixed(1)} KB`;
+    // 只显示文件名（完整路径放 title）：界面上没必要铺一串本地路径
+    const short = String(r.path || "").split(/[\\/]/).pop() || "(截图)";
+    $("sc-shot-info").textContent = `${short} · ${(r.bytes / 1024).toFixed(1)} KB`;
+    $("sc-shot-info").title = r.path || "";
     scSetView("shot");
     scLog(`截屏 → ${r.path}`);
   } catch (e) { toast(String(e)); }

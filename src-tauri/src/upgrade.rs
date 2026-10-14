@@ -107,8 +107,8 @@ pub fn ver_u32(s: &str) -> u32 {
     (0xA5 << 24) | (g(0) << 16) | (g(1) << 8) | g(2)
 }
 
-/// 裸镜像按 .fw 格式打包(和 tools/mkfw.py 一致)
-/// 目前上位机只**解包**不打包（.fw 由 MCU 工程侧的 mkfw 工具生成），
+/// 裸镜像按 .fw 格式打包（字段布局见 docs/01-固件包格式与打包算法.md）
+/// 目前 KDock 只**解包**不打包（`.fw` 由固件工程侧的打包脚本出），
 /// 这份实现留着做格式对照 / 以后要支持就地打包时直接用。
 #[allow(dead_code)]
 pub fn make_fw(image: &[u8], version: &str, note: &str) -> Vec<u8> {
