@@ -5498,7 +5498,7 @@ const EN = {
   "[NAME=值]": "[NAME=value]",
   "DXGI 桌面复制 → JPEG → 界面显示；帧率越高占 CPU 越多，调试看画面 5~10fps 够用。": "DXGI desktop duplication → JPEG → UI. Higher FPS costs more CPU; 5-10 fps is enough for debugging.",
   "J-Link 器件库": "J-Link device DB",
-  "cshell 命令": "cshell commands",
+  "常用命令（Linux）": "Common commands (Linux)",
   "openocd · 开发板": "openocd · board", "openocd · 芯片": "openocd · chip", "openocd · 适配器": "openocd · adapter",
   "openocd 开发板": "openocd board", "openocd 芯片": "openocd chip",
   "— PC→设备 传文件": "— PC → device: send file",
