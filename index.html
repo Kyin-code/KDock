@@ -92,99 +92,131 @@
               <div id="scheme-row" class="swrow"></div>
             </div>
             <div class="setpane" data-setpane="model" hidden>
-              <div class="cardtitle">供应商</div>
-              <div class="field"><label for="ag-provider">当前</label>
-                <div class="trow grow">
-                  <select id="ag-provider"></select>
-                  <button id="ag-prov-new" class="btn small">新增</button>
-                  <button id="ag-prov-save" class="btn small primary">保存</button>
-                  <button id="ag-prov-del" class="btn small danger">删除</button>
-                </div>
+              <div class="segtabs" id="ag-prov-tabs">
+                <button class="segtab active" data-provtab="use">使用</button>
+                <button class="segtab" data-provtab="new">新增 / 编辑</button>
               </div>
-              <div class="field"><label for="ag-preset">厂家预设</label>
-                <div class="trow grow">
-                  <select id="ag-preset"></select>
-                  <button id="ag-preset-fill" class="btn small">填入表单</button>
-                </div>
-              </div>
-              <p class="hint" id="ag-preset-note">选一个预设 -> 填入表单 -> 只补 API Key 就能用。都是 OpenAI 兼容写法（能填 base_url 的服务）。</p>
 
-              <div class="cardtitle">已配置</div>
-              <div id="ag-prov-list" class="agentlist"></div>
-              <div class="trow">
-                <button id="ag-prov-import" class="btn small">导入…</button>
-                <button id="ag-prov-export" class="btn small">导出…</button>
-                <button id="ag-prov-testall" class="btn small">全部测一测</button>
-                <button id="ag-prov-amd" class="btn small" title="把 AMD Radeon Cloud 那批免费模型加回列表（删掉之后不会自己回来，点这里加）">+ AMD 免费模型</button>
-              </div>
-              <p class="hint">导入/导出的是 profile（**不含密钥**：密钥按用户 DPAPI 加密，换机器本来也带不走，导过去重新粘一次）。</p>
+              <!-- ① 使用：只挑"用哪个"，行内只有编辑 / 删除 -->
+              <div class="provtab" data-provtab-pane="use">
+                <div class="field"><label for="ag-provider">当前模型</label>
+                  <div class="trow grow">
+                    <select id="ag-provider"></select>
+                  </div>
+                </div>
+                <p class="hint">选中的这个模型，agent 后面几轮就用它。点下面任意一条也能直接切过去。</p>
 
-              <div class="cardtitle">这个 profile 的参数</div>
-              <div class="field"><label for="ag-p-id">ID</label><input id="ag-p-id" placeholder="deepseek（只给程序用，随便起）" /></div>
-              <div class="field"><label for="ag-p-name">名字</label><input id="ag-p-name" placeholder="DeepSeek" /></div>
-              <div class="field"><label for="ag-p-endpoint">地址</label><input id="ag-p-endpoint" placeholder="https://api.deepseek.com/v1" /></div>
-              <div class="field"><label for="ag-p-kind">接口格式</label>
-                <select id="ag-p-kind">
-                  <option value="openai">OpenAI 兼容（/chat/completions）</option>
-                  <option value="anthropic">Anthropic（/v1/messages）</option>
-                </select>
+                <div class="cardtitle">自建 / 自己编辑的模型</div>
+                <div id="ag-prov-list" class="agentlist provlist"></div>
+
+                <div class="cardtitle">
+                  <button id="ag-free-toggle" class="btn small">显示免费模型 ▾</button>
+                  <span class="grow"></span>
+                  <span id="ag-free-count" class="lb"></span>
+                </div>
+                <div id="ag-prov-free" hidden>
+                  <div id="ag-prov-amd" class="agentlist provlist"></div>
+                  <div class="trow">
+                    <button id="ag-prov-amd-add" class="btn small"
+                      title="把 AMD Radeon Cloud 那批免费模型加回列表（删掉之后不会自己回来，点这里加）">+ AMD 免费模型</button>
+                    <span class="grow"></span>
+                  </div>
+                  <div class="cardtitle">实时负载
+                    <span class="grow"></span>
+                    <button id="amd-load-refresh" class="btn small" title="立刻取一次（这个接口本身要 20 多秒）">↻</button>
+                  </div>
+                  <div id="amd-load-list" class="agtable"></div>
+                  <p class="hint">AMD Radeon Cloud（tokenfactory）各模型当前的并发占用，来自他们页面上
+                    "Live capacity" 那份公开数据（后端去取，绕开跨域）。<b>只有你把这块展开时才去取</b>，
+                    展开期间每 15 秒一次。<span id="amd-load-at" class="hint"></span></p>
+                </div>
+
+                <div class="cardtitle">其它</div>
+                <div class="trow">
+                  <button id="ag-prov-import" class="btn small">导入…</button>
+                  <button id="ag-prov-export" class="btn small">导出…</button>
+                  <button id="ag-prov-testall" class="btn small">全部测一测</button>
+                </div>
+                <p class="hint">导入 / 导出的是 profile（**不含密钥**：密钥用 Windows DPAPI 按当前用户加密，
+                  换机器本来就带不走，导过去重新粘一次）。</p>
               </div>
-              <p class="hint">DeepSeek 两种都支持：OpenAI 兼容填 <code>https://api.deepseek.com</code>，
-                Anthropic 格式填 <code>https://api.deepseek.com/anthropic</code>。</p>
-              <div class="field"><label for="ag-p-model">模型</label>
-                <input id="ag-p-model" placeholder="deepseek-chat" list="ag-model-list" />
-                <datalist id="ag-model-list"></datalist>
-              </div>
-              <div class="field"><label for="ag-p-key">API Key</label>
-                <input id="ag-p-key" type="password" placeholder="粘贴 Key（已保存的会留空）" />
-              </div>
-              <div class="field"><label for="ag-p-ctx">上下文窗口</label>
-                <div class="trow grow">
-                  <input id="ag-p-ctx" class="num" type="number" value="128000" title="这个模型最多能记多少 token" />
-                  <span id="ag-ctx-presets" class="chips">
-                    <button class="chipbtn" data-ctx="32000">32K</button>
-                    <button class="chipbtn" data-ctx="65536">64K</button>
-                    <button class="chipbtn" data-ctx="128000">128K</button>
-                    <button class="chipbtn" data-ctx="200000">200K</button>
-                    <button class="chipbtn" data-ctx="262144">256K</button>
-                    <button class="chipbtn" data-ctx="512000">512K</button>
-                    <button class="chipbtn" data-ctx="1000000">1M</button>
-                  </span>
+
+              <!-- ② 新增 / 编辑：完整表单，保存放最下面 -->
+              <div class="provtab" data-provtab-pane="new" hidden>
+                <div class="cardtitle" id="ag-prov-new-title">新增供应商</div>
+                <div class="field"><label for="ag-preset">厂家预设</label>
+                  <div class="trow grow">
+                    <select id="ag-preset"></select>
+                    <button id="ag-preset-fill" class="btn small" title="把选中预设的地址 / 模型 / 上下文填进下面">使用默认模版</button>
+                  </div>
+                </div>
+                <p class="hint" id="ag-preset-note">选一个预设 → 使用默认模版 → 只补 API Key 就能用。都是 OpenAI 兼容写法（能填 base_url 的服务）。</p>
+
+                <div class="field"><label for="ag-p-id">ID</label><input id="ag-p-id" placeholder="deepseek（只给程序用，随便起）" /></div>
+                <div class="field"><label for="ag-p-name">名字</label><input id="ag-p-name" placeholder="DeepSeek" /></div>
+                <div class="field"><label for="ag-p-endpoint">地址</label><input id="ag-p-endpoint" placeholder="https://api.deepseek.com/v1" /></div>
+                <div class="field"><label for="ag-p-kind">接口格式</label>
+                  <select id="ag-p-kind">
+                    <option value="openai">OpenAI 兼容（/chat/completions）</option>
+                    <option value="anthropic">Anthropic（/v1/messages）</option>
+                  </select>
+                </div>
+                <p class="hint">DeepSeek 两种都支持：OpenAI 兼容填 <code>https://api.deepseek.com</code>，
+                  Anthropic 格式填 <code>https://api.deepseek.com/anthropic</code>。</p>
+                <div class="field"><label for="ag-p-model">模型</label>
+                  <input id="ag-p-model" placeholder="deepseek-chat" list="ag-model-list" />
+                  <datalist id="ag-model-list"></datalist>
+                </div>
+                <div class="field"><label for="ag-p-key">API Key</label>
+                  <input id="ag-p-key" type="password" placeholder="粘贴 Key（已保存的会留空）" />
+                </div>
+                <div class="field"><label for="ag-p-ctx">上下文窗口</label>
+                  <div class="trow grow">
+                    <input id="ag-p-ctx" class="num" type="number" value="128000" title="这个模型最多能记多少 token" />
+                    <span id="ag-ctx-presets" class="chips">
+                      <button class="chipbtn" data-ctx="32000">32K</button>
+                      <button class="chipbtn" data-ctx="65536">64K</button>
+                      <button class="chipbtn" data-ctx="128000">128K</button>
+                      <button class="chipbtn" data-ctx="200000">200K</button>
+                      <button class="chipbtn" data-ctx="262144">256K</button>
+                      <button class="chipbtn" data-ctx="512000">512K</button>
+                      <button class="chipbtn" data-ctx="1000000">1M</button>
+                    </span>
+                  </div>
+                </div>
+                <p class="hint">不知道填多少就看服务商文档；填小了会频繁触发"压缩上下文"，填大了没坏处（超了服务端会报错）。</p>
+                <div class="field"><label for="ag-p-res">最多回复</label>
+                  <input id="ag-p-res" class="num" type="number" value="8192" title="单次回复最多多少 token" />
+                  <span class="hint">留 2048~8192 就行</span>
+                </div>
+                <details class="adv">
+                  <summary>高级</summary>
+                  <div class="field"><label for="ag-p-temp">温度</label>
+                  <input id="ag-p-temp" class="num" type="number" step="0.1" min="0" max="2" value="0.2" list="ag-temp-list" />
+                  <datalist id="ag-temp-list">
+                    <option value="0"></option><option value="0.2"></option><option value="0.6"></option>
+                    <option value="0.9"></option><option value="1"></option>
+                  </datalist>
+                </div>
+                <p class="hint">温度 = 回答的"随机性"：0 最稳（每次几乎一样，调试/工具调用建议 0~0.3）；
+                  越高越发散（0.7~1.0 适合写东西）。这个助手要调工具、要准，建议 0.2。</p>
+                </details>
+                <div class="trow">
+                  <label class="chk"><input type="checkbox" id="ag-p-tools" checked /> 支持工具调用</label>
+                  <label class="chk"><input type="checkbox" id="ag-p-stream" checked /> 流式输出</label>
+                </div>
+                <div class="trow">
+                  <button id="ag-p-models" class="btn small">拉模型列表</button>
+                  <button id="ag-p-ping" class="btn small">测一测</button>
+                  <span class="hint">这两个直接用上面**当前填的值**试，不用先保存</span>
+                </div>
+                <p class="hint" id="ag-key-hint"></p>
+                <div class="trow endcap">
+                  <button id="ag-prov-cancel" class="btn small" hidden>取消编辑</button>
+                  <span class="grow"></span>
+                  <button id="ag-prov-save" class="btn primary">保存</button>
                 </div>
               </div>
-              <p class="hint">不知道填多少就看服务商文档；填小了会频繁触发"压缩上下文"，填大了没坏处（超了服务端会报错）。</p>
-              <div class="field"><label for="ag-p-res">最多回复</label>
-                <input id="ag-p-res" class="num" type="number" value="8192" title="单次回复最多多少 token" />
-                <span class="hint">留 2048~8192 就行</span>
-              </div>
-              <details class="adv">
-                <summary>高级</summary>
-                <div class="field"><label for="ag-p-temp">温度</label>
-                <input id="ag-p-temp" class="num" type="number" step="0.1" min="0" max="2" value="0.2" list="ag-temp-list" />
-                <datalist id="ag-temp-list">
-                  <option value="0"></option><option value="0.2"></option><option value="0.6"></option>
-                  <option value="0.9"></option><option value="1"></option>
-                </datalist>
-              </div>
-              <p class="hint">温度 = 回答的"随机性"：0 最稳（每次几乎一样，调试/工具调用建议 0~0.3）；
-                越高越发散（0.7~1.0 适合写东西）。这个助手要调工具、要准，建议 0.2。</p>
-              </details>
-              <div class="trow">
-                <label class="chk"><input type="checkbox" id="ag-p-tools" checked /> 支持工具调用</label>
-                <label class="chk"><input type="checkbox" id="ag-p-stream" checked /> 流式输出</label>
-              </div>
-              <div class="trow">
-                <button id="ag-p-models" class="btn small">拉模型列表</button>
-                <button id="ag-p-ping" class="btn small">测一测</button>
-                <span class="hint">这两个直接用上面**当前填的值**试，不用先保存</span>
-              </div>
-              <p class="hint" id="ag-key-hint"></p>
-              <div class="cardtitle">AMD Radeon Cloud 实时负载
-                <button id="amd-load-refresh" class="btn small">↻</button></div>
-              <div id="amd-load-list" class="agtable"></div>
-              <p class="hint">这些是 AMD Radeon Cloud（tokenfactory）各模型当前的并发占用，来自他们页面上
-                "Live capacity" 那份公开数据（后端去取，绕开跨域）。<b>只在打开这个页面时才刷新</b>，
-                每 15 秒一次。<span id="amd-load-at" class="hint"></span></p>
             </div>
             <!-- 缓存：所有持久化数据一览 + 按类删除 -->
             <div class="setpane" data-setpane="cache" hidden>
@@ -234,20 +266,29 @@
 
             <!-- 技能：本机技能的全部管理（Agent 信息页只放开关） -->
             <div class="setpane" data-setpane="skills" hidden>
-              <div class="cardtitle">本机技能</div>
-              <div id="set-skill-list" class="agentlist"></div>
-              <div class="trow">
-                <button id="set-skill-import" class="btn small">导入…</button>
-                <button id="set-skill-open" class="btn small">打开技能目录</button>
-                <button id="set-skill-new" class="btn small">新建</button>
-                <button id="set-skill-del" class="btn small danger">删除</button>
+              <div class="setcard">
+                <div class="cardtitle">本机技能<span class="grow"></span>
+                  <span id="set-skill-count" class="lb"></span></div>
+                <div id="set-skill-list" class="agentlist skilllist"></div>
+                <div class="trow">
+                  <button id="set-skill-import" class="btn small">导入…</button>
+                  <button id="set-skill-open" class="btn small">打开技能目录</button>
+                  <button id="set-skill-new" class="btn small">新建</button>
+                </div>
               </div>
-              <div class="field"><label for="set-skill-name">名字</label>
-                <input id="set-skill-name" placeholder="技能名（会 slug 化；中文也能用）" /></div>
-              <textarea id="set-skill-body" rows="10" class="agskill"
-                placeholder="---&#10;name: xxx&#10;description: 什么时候用它&#10;---&#10;&#10;正文"></textarea>
-              <div class="trow"><span class="grow"></span>
-                <button id="set-skill-save" class="btn small primary">保存技能</button></div>
+              <div class="setcard">
+                <div class="cardtitle">编辑技能<span class="grow"></span>
+                  <span class="lb">点上面列表里的一项读进来</span></div>
+                <div class="field"><label for="set-skill-name">名字</label>
+                  <input id="set-skill-name" placeholder="技能名（会 slug 化；中文也能用）" /></div>
+                <textarea id="set-skill-body" rows="14" class="agskill"
+                  placeholder="---&#10;name: xxx&#10;description: 什么时候用它&#10;---&#10;&#10;正文"></textarea>
+                <div class="trow">
+                  <button id="set-skill-del" class="btn small danger">删除这个技能</button>
+                  <span class="grow"></span>
+                  <button id="set-skill-save" class="btn small primary">保存技能</button>
+                </div>
+              </div>
               <p class="hint">技能 = 一份 <code>SKILL.md</code>（frontmatter 的 name/description 进系统提示，正文按需读）。
                 点列表里的一项可以读出来编辑；「导入」支持选一个 <code>SKILL.md</code> 或装着它的目录。
                 技能目录：<code id="set-skill-dir"></code></p>
@@ -540,57 +581,85 @@
 
         <!-- 计算器 -->
         <div class="workpane" data-work="calc" hidden>
-          <div class="trow">
-            <span class="lb">表达式</span>
-            <input id="calc-expr" class="calcin" placeholder="C 风格：0x1F &amp; (0x0F &lt;&lt; 2)  ·  1.5e3 * 2  ·  (1&lt;&lt;16)-1  ·  ~0 &amp; 0xFF" />
-            <button id="calc-go" class="btn small primary">=</button>
-            <label class="chk" title="键盘按十六进制解释：打 1F 就是 0x1F，A-F 也算数字"><input type="checkbox" id="calc-hexmode" /> HEX</label>
-          </div>
-          <div class="calcoutbox">
-            <div id="calc-out" class="calcout">—</div>
-            <div id="calc-radix" class="calcradix"></div>
-          </div>
-
-          <div class="cardtitle">32 位控制板<span class="grow"></span>
-            <button id="bit-zero" class="btn small">清零</button>
-            <button id="bit-not" class="btn small">取反 ~</button>
-            <button id="bit-shl" class="btn small" title="左移一位">&lt;&lt; 1</button>
-            <button id="bit-shr" class="btn small" title="右移一位">&gt;&gt; 1</button>
-            <button id="bit-rol" class="btn small" title="循环左移">↺ 1</button>
-            <button id="bit-ror" class="btn small" title="循环右移">↻ 1</button>
-            <button id="bit-byte-not" class="btn small" title="反相（异或 0xFFFFFFFF）">全反</button>
-            <button id="bit-feed" class="btn small primary" title="把这一行的值写进上面的表达式">→ 计算区</button>
-          </div>
-          <div id="calc-bits" class="bitboard"></div>
-          <div class="bithint">点任意一位就能改；改完的值会同时出现在上面的结果区，并（在你没在输入框里打字时）回填到表达式。</div>
-
-          <div class="calcpanel">
-            <div id="calc-pad" class="calcgrid"></div>
-            <div class="calcpanel-side">
-              <div class="calcpanel-title">传统计算器</div>
-              <div id="calc-pad-hint" class="sub">直接按数字和运算符，= 出结果；结果和上面的控制板实时同步。</div>
-              <div class="trow">
-                <label class="chk"><input type="checkbox" id="calc-pad-hex" /> 十六进制</label>
-                <span class="grow"></span>
-                <button id="calc-insert" class="btn small" title="把结果填进串口发送框">→ 发送框</button>
-              </div>
-              <div class="cardtitle">历史<span class="grow"></span>
-                <button id="calc-hist-clear" class="btn small">清空</button></div>
-              <div id="calc-hist" class="calchist"></div>
+          <!-- ① 表达式（C 风格）：单独一个控件，跟位控制板/键盘分开 -->
+          <div class="calccard">
+            <div class="cardtitle">表达式（C 风格）<span class="grow"></span>
+              <span class="lb">0x / 0b / 0o · 位移 · 位与或 · 乘方 **</span></div>
+            <div class="trow">
+              <input id="calc-expr" class="calcin"
+                placeholder="0x1F &amp; (0x0F &lt;&lt; 2)  ·  1.5e3 * 2  ·  (1&lt;&lt;16)-1  ·  ~0 &amp; 0xFF" />
+              <button id="calc-go" class="btn primary">=</button>
+            </div>
+            <div class="trow calcquick">
+              <span class="lb">插入</span>
+              <button class="btn small calc-quick" data-q="0x">0x</button>
+              <button class="btn small calc-quick" data-q="0b">0b</button>
+              <button class="btn small calc-quick" data-q="&lt;&lt;">&lt;&lt;</button>
+              <button class="btn small calc-quick" data-q="&gt;&gt;">&gt;&gt;</button>
+              <button class="btn small calc-quick" data-q="&amp;">&amp;</button>
+              <button class="btn small calc-quick" data-q="|">|</button>
+              <button class="btn small calc-quick" data-q="~">~</button>
+              <button class="btn small calc-quick" data-q="%">%</button>
+              <span class="grow"></span>
+              <button id="calc-result-to-support" class="btn small" title="把结果送进右边的浮点/IEEE 转换">→ 浮点转换</button>
             </div>
           </div>
-          <div class="trow">
-            <span class="lb">常用</span>
-            <button class="btn small calc-quick" data-q="0x">0x</button>
-            <button class="btn small calc-quick" data-q="0b">0b</button>
-            <button class="btn small calc-quick" data-q="&gt;&gt;">&gt;&gt;</button>
-            <button class="btn small calc-quick" data-q="&lt;&lt;">&lt;&lt;</button>
-            <button class="btn small calc-quick" data-q="&amp;">&amp;</button>
-            <button class="btn small calc-quick" data-q="|">|</button>
-            <button class="btn small calc-quick" data-q="~">~</button>
-            <button class="btn small calc-quick" data-q="%">%</button>
-            <span class="grow"></span>
-            <button id="calc-result-to-support" class="btn small" title="把结果送进右边的浮点/IEEE 转换">→ 浮点转换</button>
+
+          <!-- ② 32 位位控制板：一位一个大按钮，按半字节分组（Windows 程序员模式那种排法） -->
+          <div class="calccard">
+            <div class="cardtitle">32 位控制板
+              <span class="grow"></span>
+              <select id="calc-width" class="tight" title="限定位宽：结果会被掩到这么多位">
+                <option value="0">不限位宽</option>
+                <option value="8">8 位</option>
+                <option value="16">16 位</option>
+                <option value="32">32 位</option>
+              </select>
+              <button id="bit-zero" class="btn small">清零</button>
+              <button id="bit-not" class="btn small">取反 ~</button>
+              <button id="bit-shl" class="btn small" title="左移一位">&lt;&lt; 1</button>
+              <button id="bit-shr" class="btn small" title="右移一位">&gt;&gt; 1</button>
+              <button id="bit-rol" class="btn small" title="循环左移">↺ 1</button>
+              <button id="bit-ror" class="btn small" title="循环右移">↻ 1</button>
+              <button id="bit-byte-not" class="btn small" title="反相（异或 0xFFFFFFFF）">全反</button>
+              <button id="bit-feed" class="btn small primary" title="把这一行的值写进上面的表达式">→ 表达式</button>
+            </div>
+            <div id="calc-bits" class="bitboard"></div>
+            <div class="bithint">点任意一位就能翻它；结果会立刻同步到下面的显示区、表达式和右边的进制明细。</div>
+          </div>
+
+          <!-- ③ 程序员计算器：显示区（HEX/DEC/OCT/BIN）+ 键盘 + 历史 -->
+          <div class="calccard">
+            <div class="calcpanel">
+              <div class="calcpadcol">
+                <div class="calcdisp">
+                  <div class="calcoutline"><span id="calc-out" class="calcout">—</span></div>
+                  <div class="radixgrid">
+                    <div class="radixrow" data-radix="hex"><span class="k">HEX</span><span class="v" id="disp-hex">0</span></div>
+                    <div class="radixrow" data-radix="dec"><span class="k">DEC</span><span class="v" id="disp-dec">0</span></div>
+                    <div class="radixrow" data-radix="oct"><span class="k">OCT</span><span class="v" id="disp-oct">0</span></div>
+                    <div class="radixrow" data-radix="bin"><span class="k">BIN</span><span class="v" id="disp-bin">0</span></div>
+                  </div>
+                </div>
+                <div id="calc-pad" class="calcgrid"></div>
+                <div class="trow">
+                  <label class="chk" title="键盘按十六进制解释：打 1F 就是 0x1F，A-F 也算数字"><input type="checkbox" id="calc-hexmode" /> 十六进制输入</label>
+                  <span class="grow"></span>
+                  <span id="calc-pad-hint" class="lb"></span>
+                </div>
+                <div class="trow">
+                  <span class="grow"></span>
+                  <button id="calc-insert" class="btn small" title="把结果填进串口发送框">→ 发送框</button>
+                </div>
+              </div>
+              <div class="calcpanel-side">
+                <div class="cardtitle">历史<span class="grow"></span>
+                  <button id="calc-hist-clear" class="btn small">清空</button></div>
+                <div id="calc-hist" class="calchist"></div>
+                <div class="cardtitle">进制明细</div>
+                <div id="calc-radix2" class="aginfo"></div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -907,13 +976,12 @@
         <div class="parampane cmdpane" data-param="cmds" hidden>
           <div class="trow"><span class="lb">常用命令（Linux）</span><span class="grow"></span>
             <button id="cmd-help" class="btn small" title="怎么用 / 怎么自定义">?</button>
-            <button id="cmd-grp-add" class="btn small" title="新增一个指令组（比如：我的板子专用）">+ 组</button>
-            <button id="cmd-add" class="btn small" title="往当前组新增一条指令">+ 指令</button>
-            <button id="cmd-reset" class="btn small" title="恢复到内置的标准 Linux 指令集">恢复默认</button></div>
+            <button id="cmd-edit" class="btn small" title="打开指令表编辑器：加组 / 加指令 / 改名 / 删除 / 恢复默认">✎ 编辑指令表</button></div>
           <input id="cmd-filter" class="dirinput" placeholder="搜索命令 / 说明" />
           <div id="cmd-table" class="cmdtable scrollable grow"></div>
-          <p class="hint">指令表是**可编辑**的：加了什么就存在 <code>agent/commands.json</code>，
-            下次开机还在（「设置 → 缓存」里能看到它、也能删）。行尾的 ✎ / ✕ 用来改或删那一条。</p>
+          <p class="hint">点命令名 = 填进输入框；行尾 ▶ = 直接发。要加 / 改 / 删就点上面的
+            <b>✎ 编辑指令表</b>（在弹窗里改，主页只管用）。加了什么存在 <code>agent/commands.json</code>，
+            下次开机还在（「设置 → 缓存」里能看到它、也能删）。</p>
         </div>
 
         <!-- 批量文本参数 -->
@@ -1042,13 +1110,6 @@
 
           <div class="cardtitle">进制换算</div>
           <div id="calc-radix2" class="aginfo"></div>
-          <div class="cardtitle">位宽</div>
-          <select id="calc-width" class="tight wide">
-            <option value="0">不限（任意精度）</option>
-            <option value="8">8 位（掩到 0xFF）</option>
-            <option value="16">16 位</option>
-            <option value="32">32 位</option>
-          </select>
           <div class="cardtitle">串口常用换算</div>
           <div id="calc-baud" class="aginfo"></div>
           <p class="hint">位时间 = 1 / 波特率。开 8N1 时一个字节 10 位，所以 115200 下发一个字节约 86.8 µs。</p>

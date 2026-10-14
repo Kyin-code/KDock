@@ -2841,24 +2841,7 @@ function buildCmdTable() {
     h.className = "navgroup cmdgrp";
     const gt = document.createElement("span");
     gt.textContent = en(g.name) + `（${(g.items || []).length}）`;
-    const gEdit = document.createElement("button");
-    gEdit.className = "btn small"; gEdit.textContent = "✎"; gEdit.title = en("改组名");
-    gEdit.onclick = async (e) => {
-      e.stopPropagation();
-      const v = await kdForm({ title: en("改指令组名"), fields: [{ id: "name", label: en("组名"), value: g.name }] });
-      if (!v) return;
-      g.name = v.name.trim() || g.name;
-      await cmdTableSave(); buildCmdTable();
-    };
-    const gDel = document.createElement("button");
-    gDel.className = "btn small danger"; gDel.textContent = "✕"; gDel.title = en("删掉这个组（连同组里的指令）");
-    gDel.onclick = async (e) => {
-      e.stopPropagation();
-      if (!(await agConfirm(`${en("删掉指令组")}「${g.name}」${en("连同里面的")} ${(g.items || []).length} ${en("条指令？")}`, en("删除指令组"), true))) return;
-      CMD_TABLE.groups = CMD_TABLE.groups.filter((x) => x !== g);
-      await cmdTableSave(); buildCmdTable();
-    };
-    h.append(gt, gEdit, gDel);
+    h.append(gt);
     box.appendChild(h);
 
     for (const it of items) {
@@ -2890,86 +2873,195 @@ function buildCmdTable() {
         }
         await sendPayload(it.name, false);
       };
-      const ed = document.createElement("button");
-      ed.className = "btn small"; ed.textContent = "✎"; ed.title = en("编辑这条指令");
-      ed.onclick = async (e) => {
-        e.stopPropagation();
-        const v = await kdForm({
-          title: en("编辑指令"),
-          fields: [
-            { id: "name", label: en("名字"), value: it.name },
-            { id: "args", label: en("参数模板"), value: it.args || "", ph: "[-l] [dir]" },
-            { id: "desc", label: en("说明"), value: it.desc || "", ph: "(optional)" },
-          ],
-        });
-        if (!v) return;
-        it.name = v.name.trim() || it.name;
-        it.args = v.args.trim();
-        it.desc = v.desc.trim();
-        await cmdTableSave(); buildCmdTable();
-      };
-      const del = document.createElement("button");
-      del.className = "btn small danger"; del.textContent = "✕"; del.title = en("删掉这条指令");
-      del.onclick = async (e) => {
-        e.stopPropagation();
-        g.items = (g.items || []).filter((x) => x !== it);
-        await cmdTableSave(); buildCmdTable();
-      };
-      row.append(btn, d2, go, ed, del);
+      row.append(btn, d2, go);
       box.appendChild(row);
     }
   }
   if (!box.children.length) box.innerHTML = '<p class="hint">' + en("没匹配的命令") + '</p>';
 }
 
+/* ── 指令表编辑器：加组 / 加指令 / 改名 / 删除 / 恢复默认，全在这个弹窗里 ── */
 /** 新增一条指令（选组 + 填名字/参数/说明） */
-async function cmdAddCommand() {
+async function cmdEditCommand(presetGroup) {
   if (!CMD_TABLE.groups.length) CMD_TABLE.groups.push({ name: en("自定义"), items: [] });
   const v = await kdForm({
     title: en("新增指令"),
     fields: [
-      { id: "group", label: en("指令组"), value: CMD_TABLE.groups[0].name, ph: en("可以填新组名，会自动创建") },
+      { id: "group", label: en("指令组"), value: presetGroup || CMD_TABLE.groups[0].name, ph: en("可以填新组名，会自动创建") },
       { id: "name", label: en("名字"), ph: "reboot" },
       { id: "args", label: en("参数模板"), ph: "[-f]" },
       { id: "desc", label: en("说明"), ph: en("这条是干什么的") },
     ],
   });
-  if (!v || !v.name.trim()) return;
+  if (!v || !v.name.trim()) return false;
   const gname = v.group.trim() || en("自定义");
   let g = CMD_TABLE.groups.find((x) => x.name === gname);
   if (!g) { g = { name: gname, items: [] }; CMD_TABLE.groups.push(g); }
   g.items.push({ name: v.name.trim(), args: v.args.trim(), desc: v.desc.trim() });
   await cmdTableSave(); buildCmdTable();
   toast(en("已加入指令表：") + v.name.trim());
+  return true;
+}
+
+/** 改一条已有指令 */
+async function cmdEditOne(g, it) {
+  const v = await kdForm({
+    title: en("编辑指令"),
+    fields: [
+      { id: "name", label: en("名字"), value: it.name },
+      { id: "args", label: en("参数模板"), value: it.args || "", ph: "[-l] [dir]" },
+      { id: "desc", label: en("说明"), value: it.desc || "", ph: "(optional)" },
+    ],
+  });
+  if (!v) return false;
+  it.name = v.name.trim() || it.name;
+  it.args = v.args.trim();
+  it.desc = v.desc.trim();
+  await cmdTableSave(); buildCmdTable();
+  return true;
+}
+
+/** 主页面那个「✎ 编辑指令表」打开的弹窗：所有增删改都在这儿 */
+function cmdOpenEditor() {
+  const mask = document.createElement("div");
+  mask.className = "kdmodal";
+  const box = document.createElement("div");
+  box.className = "kdbox wide cmdedit";
+  const head = document.createElement("div");
+  head.className = "kdttl";
+  head.textContent = en("指令表编辑器");
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent = en("主页面只管用：点名字填进输入框、▶ 直接发。加 / 改 / 删都在这里做，改完立刻存进 agent/commands.json。");
+
+  const mkBtn = (label, cls, title) => {
+    const b = document.createElement("button");
+    b.className = "btn small" + (cls ? " " + cls : "");
+    b.textContent = label;
+    if (title) b.title = title;
+    return b;
+  };
+  const bar = document.createElement("div");
+  bar.className = "trow cmdbar";
+  const addGrp = mkBtn(en("+ 新增指令组"), "");
+  const addCmd = mkBtn(en("+ 新增指令"), "primary");
+  const sp = document.createElement("span");
+  sp.className = "grow";
+  const reset = mkBtn(en("恢复默认"), "danger", en("回到内置的标准 Linux 指令集"));
+  const close = mkBtn(en("关闭"), "");
+  bar.append(addGrp, addCmd, sp, reset, close);
+
+  const list = document.createElement("div");
+  list.className = "cmdlistscroll scrollable";
+
+  const closeMask = () => { mask.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); closeMask(); } };
+  document.addEventListener("keydown", onKey);
+  close.onclick = closeMask;
+  mask.onclick = (e) => { if (e.target === mask) closeMask(); };
+
+  const redraw = () => {
+    list.innerHTML = "";
+    if (!CMD_TABLE.groups.length) {
+      list.innerHTML = '<p class="hint">' + en("（空的：点「+ 新增指令组」或者「恢复默认」）") + '</p>';
+      return;
+    }
+    for (const g of CMD_TABLE.groups) {
+      const gh = document.createElement("div");
+      gh.className = "cmdeditgrp";
+      const gt = document.createElement("b");
+      gt.textContent = en(g.name);
+      const gn = document.createElement("span");
+      gn.className = "lb";
+      gn.textContent = `${(g.items || []).length} ${en("条")}`;
+      const gSp = document.createElement("span");
+      gSp.className = "grow";
+      const gRen = mkBtn("✎", "", en("改组名"));
+      const gDel = mkBtn("✕", "danger", en("删掉这个组（连同组里的指令）"));
+      const addHere = mkBtn(en("+ 加一条到本组"), "", en("往这个组里加一条指令"));
+      gh.append(gt, gn, gSp, addHere, gRen, gDel);
+      list.appendChild(gh);
+      gRen.onclick = async () => {
+        const v = await kdForm({ title: en("改指令组名"), fields: [{ id: "name", label: en("组名"), value: g.name }] });
+        if (!v) return;
+        g.name = v.name.trim() || g.name;
+        await cmdTableSave(); buildCmdTable(); redraw();
+      };
+      gDel.onclick = async () => {
+        if (!(await agConfirm(`${en("删掉指令组")}「${g.name}」${en("连同里面的")} ${(g.items || []).length} ${en("条指令？")}`, en("删除指令组"), true))) return;
+        CMD_TABLE.groups = CMD_TABLE.groups.filter((x) => x !== g);
+        await cmdTableSave(); buildCmdTable(); redraw();
+      };
+      addHere.onclick = async () => { if (await cmdEditCommand(g.name)) redraw(); };
+
+      for (const it of g.items || []) {
+        const row = document.createElement("div");
+        row.className = "cmdrow ed";
+        const nm = document.createElement("button");
+        nm.className = "cname";
+        nm.textContent = it.name;
+        nm.title = en("点一下填进输入框并关掉这个弹窗");
+        nm.onclick = () => {
+          $("tx").value = it.args ? `${it.name} ${it.args}` : it.name;
+          $("tx").focus();
+          closeMask();
+        };
+        const d2 = document.createElement("div");
+        d2.className = "cdesc";
+        d2.innerHTML = it.args
+          ? `<code>${escapeHtml(it.args)}</code> — ${escapeHtml(en(it.desc || ""))}`
+          : escapeHtml(en(it.desc || ""));
+        const ed = mkBtn("✎", "", en("编辑这条指令"));
+        ed.onclick = async () => { if (await cmdEditOne(g, it)) redraw(); };
+        const del = mkBtn("✕", "danger", en("删掉这条指令"));
+        del.onclick = async () => {
+          g.items = (g.items || []).filter((x) => x !== it);
+          await cmdTableSave(); buildCmdTable(); redraw();
+        };
+        row.append(nm, d2, ed, del);
+        list.appendChild(row);
+      }
+      const hr = document.createElement("div");
+      hr.className = "cmdedithr";
+      list.appendChild(hr);
+    }
+  };
+
+  addGrp.onclick = async () => {
+    const v = await kdForm({ title: en("新增指令组"), fields: [{ id: "name", label: en("组名"), ph: en("例：我的板子专用") }] });
+    if (!v || !v.name.trim()) return;
+    if (CMD_TABLE.groups.some((x) => x.name === v.name.trim())) return toast(en("这个组已经存在"));
+    CMD_TABLE.groups.push({ name: v.name.trim(), items: [] });
+    await cmdTableSave(); buildCmdTable(); redraw();
+  };
+  addCmd.onclick = async () => { if (await cmdEditCommand()) redraw(); };
+  reset.onclick = async () => {
+    if (!(await agConfirm(en("恢复成内置的标准 Linux 指令集？你自己加的组和指令会丢掉。"), en("恢复默认指令表"), true))) return;
+    CMD_TABLE = cmdDefaults();
+    await cmdTableSave(); buildCmdTable(); redraw();
+    toast(en("已恢复默认指令表"));
+  };
+
+  box.append(head, hint, bar, list);
+  mask.appendChild(box);
+  document.body.appendChild(mask);
+  redraw();
 }
 
 function bindCmdTable() {
   cmdTableLoad();                  // 后端那份为准（没有就写默认）
   $("cmd-filter").oninput = buildCmdTable;
   if ($("cmd-help")) $("cmd-help").onclick = cmdHelp;
-  $("cmd-add").onclick = cmdAddCommand;
-  $("cmd-grp-add").onclick = async () => {
-    const v = await kdForm({ title: en("新增指令组"), fields: [{ id: "name", label: en("组名"), ph: en("例：我的板子专用") }] });
-    if (!v || !v.name.trim()) return;
-    if (CMD_TABLE.groups.some((x) => x.name === v.name.trim())) return toast(en("这个组已经存在"));
-    CMD_TABLE.groups.push({ name: v.name.trim(), items: [] });
-    await cmdTableSave(); buildCmdTable();
-  };
-  $("cmd-reset").onclick = async () => {
-    if (!(await agConfirm(en("恢复成内置的标准 Linux 指令集？你自己加的组和指令会丢掉。"), en("恢复默认指令表"), true))) return;
-    CMD_TABLE = cmdDefaults();
-    await cmdTableSave(); buildCmdTable();
-    toast(en("已恢复默认指令表"));
-  };
+  if ($("cmd-edit")) $("cmd-edit").onclick = () => cmdOpenEditor();
 }
 
 /** 指令表帮助 */
 function cmdHelp() {
   toast([
     en("点名字=填进发送框；▶=直接发（带参数的会先填进去让你补）"),
-    en("+ 组 / + 指令：自己加；组名可以随便起（例：我的板子专用）"),
-    en("行尾 ✎ 改、✕ 删；改完立刻存进 agent/commands.json，下次开机还在"),
-    en("恢复默认：回到内置的标准 Linux 指令集"),
+    en("要加 / 改 / 删就点「✎ 编辑指令表」：组和指令都在那个弹窗里管，组名可以随便起"),
+    en("改完立刻存进 agent/commands.json，下次开机还在（「设置 → 缓存」里能看到、也能删）"),
+    en("弹窗里的「恢复默认」= 回到内置的标准 Linux 指令集"),
   ].join("\n"));
 }
 
@@ -3422,7 +3514,8 @@ function openSettings(section) {
     document.querySelectorAll(".setpane").forEach((p) => { p.hidden = p.dataset.setpane !== section; });
   }
   if (section === "model" && !agNewProfile) agLoadConfig();
-  if (section === "model") amdLoadPull(false);   // 打开模型页顺手拉一次云算力负载
+  // 打开模型页先落在「使用」面板；实时负载**不主动拉**（等用户展开免费模型那块再拉）
+  if (section === "model") agProvTab("use");
   if (section === "about") agLoadTools();
 }
 
@@ -3439,7 +3532,7 @@ function bindSettings() {
       document.querySelectorAll(".modaltab").forEach((x) => x.classList.toggle("active", x === b));
       document.querySelectorAll(".setpane").forEach((p) => { p.hidden = p.dataset.setpane !== b.dataset.set; });
       if (b.dataset.set === "model" && !agNewProfile) agLoadConfig();
-      if (b.dataset.set === "model") amdLoadPull(false);
+      if (b.dataset.set === "model") agProvTab("use");
       if (b.dataset.set === "about") agLoadTools();
       if (b.dataset.set === "cache") { cacheRender(); bindCache(); }
       if (b.dataset.set === "about" || b.dataset.set === "general") agRenderAbout();
@@ -3483,10 +3576,13 @@ function bindSettings() {
   invoke("agent_config_get").then((c) => {
     const el = document.getElementById("set-datadir");
     if (el) {
+      const scheme = c.secretScheme === "dpapi"
+        ? "Windows DPAPI" + en("（按当前用户加密）")
+        : en("明文（非 Windows）");
       el.textContent =
-        `数据目录：${c.dataDir}\n` +
-        `密钥存储：${c.secretScheme === "dpapi" ? "Windows DPAPI（按当前用户加密）" : "明文（非 Windows）"}\n` +
-        `供应商 ${c.providers.length} 个 · 已存密钥 ${(c.secrets || []).length} 个`;
+        `${en("数据目录：")}${c.dataDir}\n` +
+        `${en("密钥存储：")}${scheme}\n` +
+        `${en("供应商")} ${c.providers.length} ${en("个 · 已存密钥")} ${(c.secrets || []).length}`;
     }
   }).catch(() => {});
 }
@@ -3665,13 +3761,13 @@ function agToolNode(ev) {
   nm.textContent = ev.name + "(" + (ev.args && Object.keys(ev.args).length ? Object.keys(ev.args).join(", ") : "") + ")";
   const st = document.createElement("span");
   st.className = "st";
-  st.textContent = ev.ok === false ? "失败" : ev.ok ? "完成" : "执行中…";
+  st.textContent = ev.ok === false ? en("失败") : ev.ok ? en("完成") : en("执行中…");
   head.appendChild(nm);
   head.appendChild(st);
   const bd = document.createElement("div");
   bd.className = "bd";
   const argPre = document.createElement("pre");
-  argPre.textContent = "参数: " + JSON.stringify(ev.args || {}, null, 2);
+  argPre.textContent = en("参数：") + JSON.stringify(ev.args || {}, null, 2);
   bd.appendChild(argPre);
   if (ev.text != null) {
     const outPre = document.createElement("pre");
@@ -3716,7 +3812,7 @@ function agToolGroupNode(group) {
   head.className = "ghead";
   const nm = document.createElement("span");
   nm.className = "gname";
-  nm.textContent = `工具调用 ×${items.length}`;
+  nm.textContent = `${en("工具调用")} ×${items.length}`;
   const list = document.createElement("span");
   list.className = "glist";
   list.textContent = items.map((it) => it.call.name).join(" · ");
@@ -3724,7 +3820,7 @@ function agToolGroupNode(group) {
   st.className = "gst";
   const bad = items.filter((it) => it.result && it.result.ok === false).length;
   const pending = items.filter((it) => !it.result).length;
-  st.textContent = pending ? `执行中 ${pending}` : (bad ? `${bad} 个失败` : "全部完成");
+  st.textContent = pending ? `${en("执行中")} ${pending}` : (bad ? `${bad} ${en("个失败")}` : en("全部完成"));
   if (bad) st.classList.add("bad");
   head.appendChild(nm); head.appendChild(list); head.appendChild(st);
   const body = document.createElement("div");
@@ -4087,7 +4183,7 @@ function agRenderBreakdown() {
     `<div class="r"><span class="dot" style="background:var(--surface-3)"></span><span class="n">${en("剩余可用")}</span>` +
     `<span class="v">${agK(b.free || 0)} · ${freePct.toFixed(0)}%</span></div></div>` +
     (b.dropped
-      ? `<div class="sub">${en("已被摘要压掉")}：${agK(b.dropped)} tokens（${b.coveredEvents} 条旧事件；原文仍在会话文件里，可用 history_search 回查）</div>`
+      ? `<div class="sub">${en("已被摘要压掉")}: ${agK(b.dropped)} tokens · ${b.coveredEvents} ${en("条旧事件；原文仍在会话文件里，可用 history_search 回查")}</div>`
       : "") +
     `<div class="sub">${en("本机估算")} ${agK(b.used)} · ${en("模型上报")} ${agK(b.lastPromptTokens)} · ${en("窗口预算")} ${agK(b.budget)}</div>`;
 }
@@ -4451,32 +4547,39 @@ async function bindAgent() {
     });
   }
 
-  // 供应商表单
-  agEl("ag-provider").onchange = () => agFillProvider(agEl("ag-provider").value);
-  agEl("ag-prov-new").onclick = () => {
-    // 全新的一张空白页：不保留任何上一个 profile 的残留
-    agNewProfile = true;
-    if (agEl("ag-provider")) agEl("ag-provider").value = "";
-    agEl("ag-p-id").value = "";
-    agEl("ag-p-name").value = "";
-    agEl("ag-p-endpoint").value = "";
-    agEl("ag-p-model").value = "";
-    agEl("ag-p-key").value = "";
-    agEl("ag-p-key").placeholder = "粘贴 API Key";
-    agEl("ag-p-ctx").value = 128000;
-    agEl("ag-p-res").value = 8192;
-    agEl("ag-p-temp").value = 0.2;
-    agEl("ag-p-tools").checked = true;
-    agEl("ag-p-stream").checked = true;
-    if (agEl("ag-preset")) agEl("ag-preset").value = "";
-    if (agEl("ag-preset-note")) agEl("ag-preset-note").textContent = "空白页：先选上面「厂家预设」填入，或者自己填。";
-    toast("已清空，填完点「保存」");
+  // 供应商：两个子页（使用 / 新增）
+  document.querySelectorAll("#ag-prov-tabs .segtab").forEach((b) => {
+    b.onclick = () => agProvTab(b.dataset.provtab);
+  });
+  agEl("ag-provider").onchange = () => {
+    const id = agEl("ag-provider").value;
+    if (!id) return;
+    agUseProvider(id);
   };
+  if (agEl("ag-free-toggle")) {
+    agEl("ag-free-toggle").onclick = () => {
+      const wrap = agEl("ag-prov-free");
+      if (!wrap) return;
+      wrap.hidden = !wrap.hidden;
+      agSyncFreeSection();
+      // 展开那一刻才去取实时负载（用户手动 show more 才发请求）
+      if (!wrap.hidden) amdLoadPull(false);
+    };
+  }
+  if (agEl("ag-prov-cancel")) {
+    agEl("ag-prov-cancel").onclick = async () => {
+      agNewProfile = false;
+      agProvTab("use");
+      await agLoadConfig();
+    };
+  }
   if (agEl("ag-preset-fill")) {
     agEl("ag-preset-fill").onclick = () => {
       const p = AG_PRESETS.find((x) => x.id === (agEl("ag-preset") ? agEl("ag-preset").value : ""));
       if (!p) return toast("先选一个厂家");
       agNewProfile = true;
+      if (agEl("ag-prov-new-title")) agEl("ag-prov-new-title").textContent = "新增供应商";
+      if (agEl("ag-prov-cancel")) agEl("ag-prov-cancel").hidden = false;
       agEl("ag-p-id").value = p.id;
       agEl("ag-p-name").value = p.name;
       agEl("ag-p-endpoint").value = p.endpoint;
@@ -4495,8 +4598,8 @@ async function bindAgent() {
   if (agEl("ag-prov-import")) agEl("ag-prov-import").onclick = agImportProviders;
   if (agEl("ag-prov-export")) agEl("ag-prov-export").onclick = agExportProviders;
   if (agEl("ag-prov-testall")) agEl("ag-prov-testall").onclick = agTestAllProviders;
-  if (agEl("ag-prov-amd")) {
-    agEl("ag-prov-amd").onclick = async () => {
+  if (agEl("ag-prov-amd-add")) {
+    agEl("ag-prov-amd-add").onclick = async () => {
       try {
         const r = await invoke("agent_amd_reseed");
         await agLoadConfig();
@@ -4504,12 +4607,6 @@ async function bindAgent() {
       } catch (e) { toast(String(e)); }
     };
   }
-  agEl("ag-prov-del").onclick = async () => {
-    const id = agEl("ag-provider").value;
-    if (!id || !(await agConfirm("删掉这个供应商 profile？", "删除供应商", true))) return;
-    await invoke("agent_provider_delete", { id }).catch((e) => toast(String(e)));
-    await agLoadConfig();
-  };
   agEl("ag-p-models").onclick = async () => {
     const probe = agFormProvider();
     if (!probe.endpoint) return toast("先填地址（endpoint）");
@@ -4552,9 +4649,10 @@ async function agLoadConfig() {
     if (agCfg.activeId) sel.value = agCfg.activeId;
   }
   if (agEl("ag-key-hint")) {
-    agEl("ag-key-hint").textContent =
-      `密钥存储：${agCfg.secretScheme === "dpapi" ? "Windows DPAPI（按当前用户加密）" : "明文（非 Windows 平台）"}` +
-      `　数据目录：${agCfg.dataDir}`;
+    const scheme = agCfg.secretScheme === "dpapi"
+      ? "Windows DPAPI" + en("（按当前用户加密）")
+      : en("明文（非 Windows 平台）");
+    agEl("ag-key-hint").textContent = `${en("密钥存储：")}${scheme}　${en("数据目录：")}${agCfg.dataDir}`;
   }
   await agLoadQuickModels();
   if (agEl("ag-preset") && !agEl("ag-preset").options.length) {
@@ -4567,10 +4665,95 @@ async function agLoadConfig() {
     }
   }
   agRenderProviders();
-  if (agCfg.providers.length && !agNewProfile) agFillProvider(sel ? sel.value : agCfg.providers[0].id);
+  // 用户正在「新增 / 编辑」页填表时，别被后台刷新把表单冲掉
+  if (agCfg.providers.length && !agNewProfile && !agOnNewTab()) {
+    agFillProvider(agCfg.activeId || (sel && sel.value) || agCfg.providers[0].id);
+  }
 }
 
 let agNewProfile = false;
+
+/* ── 供应商面板：两个子页（使用 / 新增）──────────────────────────────── */
+/** 现在是不是停在「新增 / 编辑」那一页（后台刷新时别把用户正在填的表单冲掉） */
+function agOnNewTab() {
+  const p = document.querySelector('.provtab[data-provtab-pane="new"]');
+  return !!p && !p.hidden;
+}
+
+function agProvTab(name) {
+  document.querySelectorAll("#ag-prov-tabs .segtab").forEach((b) =>
+    b.classList.toggle("active", b.dataset.provtab === name));
+  document.querySelectorAll(".provtab").forEach((p) => { p.hidden = p.dataset.provtabPane !== name; });
+  if (name === "use") {
+    agSyncFreeSection();
+    if (amdNeedsData()) amdLoadPull(false);
+  }
+  if (LANG === "en") langWalk();
+}
+
+/** 「编辑」= 带着这条的数据跳到「新增 / 编辑」那一页 */
+function agProvToEdit(p) {
+  if (agEl("ag-prov-new-title")) agEl("ag-prov-new-title").textContent = en("编辑：") + agTrName(p.name || p.id);
+  if (agEl("ag-prov-cancel")) agEl("ag-prov-cancel").hidden = false;
+  agProvTab("new");
+}
+
+/** 免费模型那一块是"卷起来的"：默认收起；不收起来就不去发实时负载请求 */
+function agSyncFreeSection() {
+  const wrap = agEl("ag-prov-free");
+  const btn = agEl("ag-free-toggle");
+  const cnt = agEl("ag-free-count");
+  const n = ((agCfg && agCfg.providers) || []).filter(isAmdProfile).length;
+  if (cnt) cnt.textContent = n ? n + " " + en("个免费模型") : "";
+  const open = !!wrap && !wrap.hidden;
+  if (btn) {
+    btn.textContent = open ? en("收起免费模型 ▴") : en("显示免费模型 ▾");
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+}
+
+/** 切"当前用哪个模型"：全局 active + 当前会话记住的 profile 一起换 */
+async function agUseProvider(id, silent) {
+  if (!id) return;
+  const before = (agCfg && agCfg.activeId) || "";
+  try {
+    await invoke("agent_provider_set_active", { id });
+  } catch (e) { toast(String(e)); return; }
+  // 会话自己也有"用哪个 profile"的记忆，不一起改的话上下文面板/压缩判断还是旧模型的口径
+  const sid = agMeta && agMeta.id;
+  if (sid) {
+    await invoke("agent_session_set_provider", { id: sid, providerId: id }).catch(() => {});
+  }
+  await agLoadConfig();
+  if (!silent) {
+    const p = (agCfg.providers || []).find((x) => x.id === id);
+    toast(en("后面这轮用：") + (p ? agTrName(p.name) : id));
+  }
+  if (before !== id) await agGuardContextFit();
+}
+
+/** 半路换成上下文更小的模型：旧会话可能已经装不进新窗口 → 主动压一次。
+ *  注意口径：预算要按**新** profile 的窗口算（`agent_context_breakdown` 报的是会话当前记的那个，
+ *  换模型那一刻还是旧的）；用量取"后端报的 prompt_tokens"和本地估算里的大者。 */
+async function agGuardContextFit() {
+  const sid = agMeta && agMeta.id;
+  if (!sid || !agCfg) return;
+  if (agRunning) return;                       // 正在跑就交给后端这一轮的边界处理
+  const np = (agCfg.providers || []).find((x) => x.id === agCfg.activeId);
+  if (!np) return;
+  const budget = Math.max(0, (Number(np.context_window) || 0) - (Number(np.reserve_output) || 0));
+  if (!budget) return;
+  let b;
+  try { b = await invoke("agent_context_breakdown", { sessionId: sid }); } catch (_) { return; }
+  const used = Math.max(Number(b.used) || 0, Number(b.lastPromptTokens) || 0);
+  if (!used) return;
+  if (used * 10 < budget * 8) return;          // 跟后端一个口径：留 20% 余量
+  toast(`${en("新模型窗口更小：当前约")} ${used} tokens${en("，预算")} ${budget} —— ${en("先压一次上下文")}`);
+  try {
+    await invoke("agent_compact", { sessionId: sid });
+    await agRefreshBreakdown();
+  } catch (e) { toast(en("压缩失败：") + String(e)); }
+}
 
 /** 表单现在填的是什么（探针用，不用先保存） */
 function agFormProvider() {
@@ -4616,7 +4799,8 @@ const fmtTps = (v) => (v > 0 ? (v >= 100 ? Math.round(v) : v.toFixed(1)) + " tok
 function agModelStatus(p) {
   if (!isAmdProfile(p)) return "";
   const m = amdLoadData && amdLoadData.models ? amdLoadData.models[p.model] : null;
-  if (!m) return en(amdLoadData ? "状态未知" : "取状态中…");
+  // 没这份数据就不标状态（负载只在「设置 → 模型」里手动展开时才取，别在这儿骗人说"取状态中"）
+  if (!m) return "";
   const label = en(m.state === "full" ? "满载" : m.state === "busy" ? "繁忙" : "空闲");
   return m.utilization != null ? `${label} ${Math.round(m.utilization)}%` : label;
 }
@@ -4669,11 +4853,7 @@ function bindQuickModels() {
       openSettings("model");
       return;
     }
-    try {
-      await invoke("agent_provider_set_active", { id: sel.value });
-      await agLoadConfig();
-      toast("后面这轮用：" + (sel.options[sel.selectedIndex] || {}).textContent);
-    } catch (e) { toast(String(e)); }
+    await agUseProvider(sel.value);
   };
 }
 
@@ -4725,78 +4905,69 @@ async function agSaveProvider() {
     agNewProfile = false;
     toast("已保存");
     await agLoadConfig();
+    agProvTab("use");            // 存完回「使用」面板
   } catch (e) { toast(String(e)); }
 }
 
-/* ── 已配置的供应商列表（CC Switch 那种一行一个：协议徽标 / 行内测一测 / 余额 / 设为当前 / 编辑）── */
+/* ── 已配置的供应商：使用面板一行一个 —— 点行=切到它，行尾只有「编辑 / 删除」── */
 let agProvTest = {};      // id -> { ok, text }  最近一次"测一测"的结果
+
+function agProvRow(p, secrets) {
+  const row = document.createElement("div");
+  const active = !!(agCfg && agCfg.activeId === p.id);
+  row.className = "provrow" + (active ? " active" : "");
+  const nm = document.createElement("span");
+  nm.className = "nm";
+  nm.textContent = (active ? "● " : "") + agTrName(p.name || p.id);
+  nm.title = active ? en("当前在用") : en("点一下切到它");
+  const kind = document.createElement("span");
+  const isAnth = (p.kind || "openai") === "anthropic";
+  kind.className = "kind" + (isAnth ? " anthropic" : "");
+  kind.textContent = isAnth ? "Anthropic" : "OpenAI";
+  kind.title = isAnth ? "Anthropic /v1/messages" : en("OpenAI 兼容 /chat/completions");
+  const meta = document.createElement("span");
+  meta.className = "meta";
+  const hasKey = secrets.includes(p.api_key_ref || p.id);
+  meta.textContent = `${p.model} · ${p.endpoint}${hasKey ? "" : " · " + en("⚠ 没密钥")}`;
+  meta.title = meta.textContent;
+  const mk = (label, title, fn) => {
+    const b = document.createElement("button");
+    b.className = "btn small"; b.textContent = label; b.title = title;
+    b.onclick = (e) => { e.stopPropagation(); fn(); };
+    return b;
+  };
+  row.append(nm, kind, meta);
+  row.appendChild(mk(en("编辑"), en("在这条的基础上改（跳到「新增 / 编辑」）"), () => {
+    agNewProfile = false;
+    agFillProvider(p.id);
+    agProvToEdit(p);
+  }));
+  row.appendChild(mk(en("删除"), en("删掉这个 profile（密钥一起删）"), async () => {
+    const q = `${en("确定删掉")}「${agTrName(p.name || p.id)}」？${en("它的 API Key 也一起删。")}`;
+    if (!(await agConfirm(q, en("删除供应商"), true))) return;
+    await invoke("agent_provider_delete", { id: p.id }).catch((e) => toast(String(e)));
+    agProvTest[p.id] = undefined;
+    await agLoadConfig();
+  }));
+  row.onclick = () => { if (!active) agUseProvider(p.id); };
+  return row;
+}
+
 function agRenderProviders() {
   const box = agEl("ag-prov-list");
+  const freeBox = agEl("ag-prov-amd");
   if (!box) return;
   const list = (agCfg && agCfg.providers) || [];
   const secrets = (agCfg && agCfg.secrets) || [];
-  if (!list.length) {
-    box.innerHTML = '<div class="empty">（还没有供应商：上面「新增」或从「厂家预设」填一个）</div>';
-    return;
-  }
-  box.innerHTML = "";
-  for (const p of list) {
-    const row = document.createElement("div");
-    row.className = "provrow" + (agCfg.activeId === p.id ? " active" : "");
-    const nm = document.createElement("span");
-    nm.className = "nm"; nm.textContent = agTrName(p.name || p.id);
-    const kind = document.createElement("span");
-    const isAnth = (p.kind || "openai") === "anthropic";
-    kind.className = "kind" + (isAnth ? " anthropic" : "");
-    kind.textContent = isAnth ? "Anthropic" : "OpenAI";
-    kind.title = isAnth ? "Anthropic /v1/messages" : en("OpenAI 兼容 /chat/completions");
-    const meta = document.createElement("span");
-    meta.className = "meta";
-    const hasKey = secrets.includes(p.api_key_ref || p.id);
-    meta.textContent = `${p.model} · ${p.endpoint}${hasKey ? "" : " · " + en("⚠ 没密钥")}`;
-    meta.title = meta.textContent;
-    const st = document.createElement("span");
-    st.className = "st";
-    const t = agProvTest[p.id];
-    if (t) { st.textContent = t.ok ? "✓" : "✗"; st.title = t.text; st.style.color = t.ok ? "hsl(var(--success))" : "hsl(var(--destructive))"; }
-    const mk = (label, title, fn) => {
-      const b = document.createElement("button");
-      b.className = "btn small"; b.textContent = label; b.title = title;
-      b.onclick = (e) => { e.stopPropagation(); fn(); };
-      return b;
-    };
-    const pick = () => { agNewProfile = false; if (agEl("ag-provider")) agEl("ag-provider").value = p.id; agFillProvider(p.id); };
-    row.appendChild(nm); row.appendChild(kind); row.appendChild(meta); row.appendChild(st);
-    row.appendChild(mk(en("测一测"), en("按这个 profile 发一句最短的话，验证地址/密钥/模型"), async () => {
-      st.textContent = "…"; st.title = en("正在请求…"); st.style.color = "";
-      try {
-        const r = await invoke("agent_ping_provider", { id: p.id });
-        agProvTest[p.id] = { ok: true, text: r };
-        st.textContent = "✓"; st.style.color = "hsl(var(--success))"; st.title = r;
-      } catch (e) {
-        agProvTest[p.id] = { ok: false, text: String(e) };
-        st.textContent = "✗"; st.style.color = "hsl(var(--destructive))"; st.title = String(e);
-        toast(String(e));
-      }
-    }));
-    row.appendChild(mk(en("余额"), en("查余额（DeepSeek 有 /user/balance）"), async () => {
-      try {
-        const b = await invoke("agent_provider_balance", { id: p.id });
-        if (!b.supported) return toast(b.note || "该厂商没有余额接口");
-        const s = (b.infos || []).map((i) => `${i.currency} ${i.total}`).join(" / ") || "（余额字段为空）";
-        toast(`${p.name}：${s}${b.available ? "" : "（账号不可用）"}\n${b.url || ""}`);
-      } catch (e) { toast(String(e)); }
-    }));
-    if (agCfg.activeId !== p.id) {
-      row.appendChild(mk(en("设为当前"), en("后面这些轮都用它"), async () => {
-        await invoke("agent_provider_set_active", { id: p.id }).catch((e) => toast(String(e)));
-        await agLoadConfig();
-      }));
-    }
-    row.appendChild(mk(en("编辑"), en("填进下面的表单"), pick));
-    row.onclick = pick;
-    box.appendChild(row);
-  }
+  const draw = (container, arr, emptyText) => {
+    if (!container) return;
+    container.innerHTML = "";
+    if (!arr.length) { container.innerHTML = '<div class="empty">' + emptyText + '</div>'; return; }
+    for (const p of arr) container.appendChild(agProvRow(p, secrets));
+  };
+  draw(box, list.filter((p) => !isAmdProfile(p)), en("（还没有自建供应商：去「新增 / 编辑」加一个）"));
+  draw(freeBox, list.filter(isAmdProfile), en("（没有免费模型：展开后点「+ AMD 免费模型」加回来）"));
+  agSyncFreeSection();
 }
 
 async function agTestAllProviders() {
@@ -4880,7 +5051,7 @@ function agRenderSkillTable() {
     sz.className = "sz"; sz.textContent = (s.size / 1024).toFixed(1) + " KB";
     const sw = document.createElement("input");
     sw.type = "checkbox"; sw.className = "sw"; sw.checked = !!s.enabled;
-    sw.title = s.enabled ? "已启用（关掉=不进口令索引）" : "已停用";
+    sw.title = en(s.enabled ? "已启用（关掉=不进口令索引）" : "已停用");
     sw.onchange = async () => {
       try {
         await invoke("agent_skill_set_enabled", { name: s.slug, on: sw.checked });
@@ -4914,7 +5085,7 @@ function agRenderMcpTable() {
     d.title = d.textContent;
     const sw = document.createElement("input");
     sw.type = "checkbox"; sw.className = "sw"; sw.checked = !!m.enabled;
-    sw.title = m.enabled ? "已启用（工具会挂给 agent）" : "已停用";
+    sw.title = en(m.enabled ? "已启用（工具会挂给 agent）" : "已停用");
     sw.onchange = async () => {
       try {
         await invoke("mcp_save", { server: { ...m, enabled: sw.checked } });
@@ -4976,7 +5147,7 @@ function renderMcpPage() {
     nm.className = "nm"; nm.textContent = m.id;
     const tag = document.createElement("span");
     tag.className = "tag";
-    tag.textContent = (m.enabled ? "已启用" : "已停用") + " · " + [m.command, ...(m.args || [])].join(" ").slice(0, 40);
+    tag.textContent = en(m.enabled ? "已启用" : "已停用") + " · " + [m.command, ...(m.args || [])].join(" ").slice(0, 40);
     row.title = [m.command, ...(m.args || [])].join(" ");
     row.appendChild(nm); row.appendChild(tag);
     row.onclick = () => {
@@ -5253,7 +5424,8 @@ async function cacheRender() {
     t.className = "nm"; t.textContent = en(it.title);
     const p = document.createElement("div");
     p.className = "meta cmdp";
-    p.textContent = (it.exists ? "" : "（不存在）") + it.path + (it.files ? `  ·  ${it.files} 个文件 / ${fmtBytes(it.bytes)}` : "");
+    p.textContent = (it.exists ? "" : en("（不存在）")) + it.path +
+      (it.files ? `  ·  ${it.files} ${en("个文件")} / ${fmtBytes(it.bytes)}` : "");
     p.title = it.path;
     const w = document.createElement("div");
     w.className = "warn";
@@ -5437,7 +5609,6 @@ let agBrSource = false;     // 是否显示源码
 function agShowPane(name) {
   document.querySelectorAll(".agptab").forEach((b) => b.classList.toggle("active", b.dataset.agp === name));
   document.querySelectorAll(".agppane").forEach((p) => { p.hidden = p.dataset.agpane !== name; });
-  if (name === "skills") amdLoadPull(false);   // 信息页露出来了：顺手刷一次云算力
   if (LANG === "en") langWalk();
 }
 
@@ -5464,7 +5635,7 @@ async function amdLoadPull(force) {
   try {
     amdLoadData = await invoke("amd_load", { force: !!force });
     const at = document.getElementById("amd-load-at");
-    if (at) at.textContent = "上次更新 " + new Date().toLocaleTimeString();
+    if (at) at.textContent = en("上次更新 ") + new Date().toLocaleTimeString();
   } catch (e) {
     const at = document.getElementById("amd-load-at");
     if (at) at.textContent = "取不到：" + String(e).slice(0, 90);
@@ -5519,16 +5690,16 @@ function amdRenderLoad() {
   // 状态只出现在两处：设置 → 模型 的那张表，以及选模型的下拉里（见 agModelOptionText）。
 }
 
-/// 现在有没有"露着"的地方需要这份数据（设置→模型 页 或 Agent 信息页）
+/// 现在有没有"露着"的地方需要这份数据：
+/// 只有「设置 → 模型 → 使用」面板里那块免费模型**被用户展开**了才去取。
 function amdNeedsData() {
   const modal = document.getElementById("settings-modal");
   const modelPane = document.querySelector('.setpane[data-setpane="model"]');
-  if (modal && !modal.hidden && modelPane && !modelPane.hidden) return true;
-  // Agent 页露着 + 列表里有 AMD 的内置模型 → 也刷：那个下拉里要显示"空闲/繁忙/满载"。
-  // 没有 AMD 的 profile 就完全不发这个请求（别的厂商不需要状态）。
-  const agentTabActive = document.querySelector('.navitem[data-tab="agent"]');
-  if (!agentTabActive || !agentTabActive.classList.contains("active")) return false;
-  return !!(agCfg && agCfg.providers && agCfg.providers.some((p) => /^amd-/.test(String(p.id || ""))));
+  if (!modal || modal.hidden || !modelPane || modelPane.hidden) return false;
+  const wrap = document.getElementById("ag-prov-free");
+  if (!wrap || wrap.hidden) return false;      // 免费那块收着：一个请求都不发
+  const useTab = document.querySelector('.provtab[data-provtab-pane="use"]');
+  return !!useTab && !useTab.hidden;
 }
 
 function amdBind() {
@@ -5857,7 +6028,7 @@ async function bindAgentEvents() {
     const p = ev.payload || {};
     if (agMeta && p.session !== agMeta.id) return;
     const el = agEl("ag-usage");
-    const cache = p.cacheHit || p.cacheMiss ? ` · 缓存命中 ${p.cacheHit || 0}` : "";
+    const cache = p.cacheHit || p.cacheMiss ? ` · ${en("缓存命中")} ${p.cacheHit || 0}` : "";
     if (el) el.textContent = `in ${p.prompt} / out ${p.completion} tokens${cache}`;
     agRenderInfo();
   });
@@ -6261,7 +6432,7 @@ const EN = {
   "位时间 = 1 / 波特率。开 8N1 时一个字节 10 位，所以 115200 下发一个字节约 86.8 µs。":
     "Bit time = 1 / baud. With 8N1 a byte takes 10 bits, so one byte at 115200 is about 86.8 µs.",
   "十进制": "decimal", "科学计数": "sci", "符号": "sign", "阶码": "exponent",
-  "尾数": "mantissa", "二进制": "binary", "字节": "width", "1 字节": "1 byte",
+  "尾数": "mantissa", "二进制": "binary", "字节": "byte", "1 字节": "1 byte",
   "2 字节": "2 bytes", "4 字节": "4 bytes", "+1（正数）": "+1 (positive)", "-1（负数）": "-1 (negative)",
 
   // ============ Agent 信息 / 工作区 / 会话 ============
@@ -6574,6 +6745,107 @@ const EN = {
   "连接 / 端口（新写法）": "connections / ports (modern)", "HTTP 请求": "HTTP request",
   "改权限": "change mode", "改属主": "change owner", "当前用户 / 组": "current user / groups",
   "当前用户名": "current user name", "提权执行": "run as root",
+
+  // ============ 设置 → 模型：供应商面板（使用 / 新增）============
+  "使用": "Use", "新增 / 编辑": "Add / Edit",
+  "当前模型": "Current model",
+  "选中的这个模型，agent 后面几轮就用它。点下面任意一条也能直接切过去。":
+    "The selected model is what the agent uses from now on. Clicking any row below switches to it.",
+  "自建 / 自己编辑的模型": "Your own / hand-edited models",
+  "显示免费模型 ▾": "Show free models ▾", "收起免费模型 ▴": "Hide free models ▴",
+  "个免费模型": "free models", "实时负载": "Live load",
+  "立刻取一次（这个接口本身要 20 多秒）": "Fetch now (this endpoint takes ~20s)",
+  "AMD Radeon Cloud（tokenfactory）各模型当前的并发占用，来自他们页面上 \"Live capacity\" 那份公开数据（后端去取，绕开跨域）。":
+    "Current concurrency usage of the AMD Radeon Cloud (tokenfactory) models, taken from the public \"Live capacity\" data on their page (fetched by the backend to avoid CORS).",
+  "只有你把这块展开时才去取": "It is fetched only while you keep this section expanded",
+  "，展开期间每 15 秒一次。": ", once every 15 seconds while expanded.",
+  "其它": "Other",
+  "（还没有自建供应商：去「新增 / 编辑」加一个）": "(no custom provider yet — add one under Add / Edit)",
+  "（没有免费模型：展开后点「+ AMD 免费模型」加回来）": "(no free model — expand this and click “+ AMD free models”)",
+  "把 AMD Radeon Cloud 那批免费模型加回列表（删掉之后不会自己回来，点这里加）":
+    "Add the AMD Radeon Cloud free models back to the list (they do not come back on their own)",
+  "在这条的基础上改（跳到「新增 / 编辑」）": "Edit this entry (jumps to Add / Edit)",
+  "删掉这个 profile（密钥一起删）": "Delete this profile (its key is deleted too)",
+  "密钥也一起删。": "Its API key is deleted too.",
+  "点一下切到它": "Click to switch to it", "当前在用": "in use",
+  "后面这轮用：": "Using for the next turn: ",
+  "新模型窗口更小：当前约": "The new model has a smaller window: about",
+  "，预算": " tokens used, budget",
+  "先压一次上下文": "compressing the context first",
+  "压缩失败：": "compression failed: ",
+  "使用默认模版": "Use default template",
+  "把选中预设的地址 / 模型 / 上下文填进下面": "Fill the selected preset's endpoint / model / context into the form below",
+  "取消编辑": "Cancel edit", "编辑：": "Editing: ",
+  "新增供应商": "Add a provider",
+  "把这条 profile 删掉？": "Delete this profile?",
+
+  // ============ 计算器：位控制板 / 显示区 ============
+  "表达式（C 风格）": "Expression (C style)",
+  "0x / 0b / 0o · 位移 · 位与或 · 乘方 **": "0x / 0b / 0o · shifts · bitwise and/or · power **",
+  "插入": "Insert",
+  "不限位宽": "unbounded width", "8 位": "8-bit", "16 位": "16-bit", "32 位": "32-bit",
+  "取反 ~": "NOT ~", "全反": "Invert all", "→ 表达式": "→ expression",
+  "点任意一位就能翻它；结果会立刻同步到下面的显示区、表达式和右边的进制明细。":
+    "Click any bit to flip it; the value syncs to the display below, the expression and the radix detail on the right.",
+  "十六进制输入": "Hex input",
+  "进制明细": "Radix detail",
+  "无符号 32 位": "unsigned 32-bit",
+  "点一下复制这一行的值": "Click to copy this line",
+  "已复制：": "copied: ",
+
+  // ============ 设置 → 技能：编辑卡片 ============
+  "编辑技能": "Edit skill", "点上面列表里的一项读进来": "click an item above to load it",
+  "删除这个技能": "Delete this skill",
+
+  // ============ 指令表编辑器 ============
+  "指令表编辑器": "Command table editor",
+  "主页面只管用：点名字填进输入框、▶ 直接发。加 / 改 / 删都在这里做，改完立刻存进 agent/commands.json。":
+    "The main page is for use only: click a name to fill the send box, ▶ to send. Add / edit / delete here; changes are saved to agent/commands.json right away.",
+  "（空的：点「+ 新增指令组」或者「恢复默认」）": "(empty — click “+ new group” or “restore defaults”)",
+  "点一下填进输入框并关掉这个弹窗": "Click to fill the send box and close this dialog",
+  "✎ 编辑指令表": "✎ Edit command table",
+  "打开指令表编辑器：加组 / 加指令 / 改名 / 删除 / 恢复默认":
+    "Open the command table editor: add groups / commands, rename, delete, restore defaults",
+  "+ 新增指令组": "+ New group", "+ 新增指令": "+ New command",
+  "恢复默认": "Restore defaults", "关闭": "Close",
+  "+ 加一条到本组": "+ Add command here", "条": "items",
+  "改组名": "Rename group", "往这个组里加一条指令": "Add a command to this group",
+  "编辑指令": "Edit command",
+
+  // ============ 补齐：多行文本节点的规范化写法 / 说明文字 ============
+  "限定位宽：结果会被掩到这么多位": "Limit the width: results are masked to this many bits",
+  "， 展开期间每 15 秒一次。": ", once every 15 seconds while expanded.",
+  "选一个预设 → 使用默认模版 → 只补 API Key 就能用。都是 OpenAI 兼容写法（能填 base_url 的服务）。":
+    "Pick a preset → Use default template → then just add the API key. All of them are OpenAI-compatible (any service with a base_url).",
+  "， Anthropic 格式填": ", and for the Anthropic format use",
+  "导入 / 导出的是 profile（**不含密钥**：密钥用 Windows DPAPI 按当前用户加密， 换机器本来就带不走，导过去重新粘一次）。":
+    "Import / export covers profiles only (**no keys**: keys are encrypted with Windows DPAPI per user, so they cannot travel to another machine — paste them again there).",
+  "点命令名 = 填进输入框；行尾 ▶ = 直接发。要加 / 改 / 删就点上面的":
+    "Clicking a command name fills the send box; ▶ sends it right away. To add / edit / delete, use the",
+  "（在弹窗里改，主页只管用）。加了什么存在": "button above (everything is edited in a dialog; the main page is for use only). What you add is stored in",
+  "， 下次开机还在（「设置 → 缓存」里能看到它、也能删）。":
+    ", and it survives a restart (you can see and delete it under Settings → Cache).",
+  "密钥存储：": "Key storage: ",
+  "（按当前用户加密）": " (encrypted for the current user)",
+  "明文（非 Windows 平台）": "plain text (non-Windows)",
+  "数据目录：": "Data directory: ",
+  "明文（非 Windows）": "plain text (non-Windows)",
+  "供应商": "Providers", "个 · 已存密钥": "· stored keys",
+  "删除供应商": "Delete provider", "确定删掉": "Delete",
+  "它的 API Key 也一起删。": "Its API key is deleted as well.",
+  "已启用": "enabled", "已停用": "disabled",
+  "已启用（关掉=不进口令索引）": "enabled (turn off = not indexed)",
+  "已启用（工具会挂给 agent）": "enabled (tools are exposed to the agent)",
+  "失败": "failed", "完成": "done", "执行中…": "running…",
+  "参数：": "args: ",
+  "工具调用": "Tool calls", "执行中": "running", "个失败": "failed", "全部完成": "all done",
+  "条旧事件；原文仍在会话文件里，可用 history_search 回查":
+    "old events; the raw text is still in the session file — search it with history_search",
+  "温度 = 回答的\"随机性\"：0 最稳（每次几乎一样，调试/工具调用建议 0~0.3）； 越高越发散（0.7~1.0 适合写东西）。这个助手要调工具、要准，建议 0.2。":
+    "Temperature = how \"random\" the answer is: 0 is the steadiest (almost identical every time; 0–0.3 is right for debugging and tool calls); higher is more exploratory (0.7–1.0 for writing). This assistant calls tools and needs accuracy, so 0.2 is recommended.",
+  "个文件": "file(s)",
+  "上次更新 ": "updated ",
+  "显示 / 交互 / 快捷发送 / 会话日志 / 回放": "Display / interaction / quick send / session log / replay",
 };
 const en = (t) => (LANG === "en" && EN[t]) ? EN[t] : t;
 // 分文件写的小模块（批量文本/计算器）也要能翻译 + 切语言时重画

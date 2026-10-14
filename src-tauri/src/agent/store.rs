@@ -633,12 +633,75 @@ pub fn default_workspace_entry(app: &AppHandle) -> Workspace {
     }
 }
 
+/// 从 serial tool 改名成 KDock 时留下的历史遗留：默认工作区还指在旧的数据目录
+/// （`%APPDATA%\com.kyin.serialtool\agent\workspace`）里。
+/// 只迁移"确实是老的默认工作区"这一种（路径里带旧 app id、尾巴正好是 `agent\workspace`），
+/// 用户自己挑的目录一律不动；旧目录里的文件**复制**过来，不删原件。
+fn migrate_legacy_default_workspace(app: &AppHandle, list: &mut [Workspace]) {
+    let newp = default_workspace(app);
+    let news = newp.to_string_lossy().to_string();
+    let mut moved: Vec<std::path::PathBuf> = Vec::new();
+    let mut changed = false;
+    for w in list.iter_mut() {
+        if w.path == news {
+            continue;
+        }
+        let low = w.path.to_lowercase();
+        let is_legacy = low.contains("serialtool")
+            && (low.ends_with("\\agent\\workspace") || low.ends_with("/agent/workspace"));
+        if !is_legacy {
+            continue;
+        }
+        moved.push(std::path::PathBuf::from(&w.path));
+        w.path = news.clone();
+        changed = true;
+    }
+    if !changed {
+        return;
+    }
+    let _ = std::fs::create_dir_all(&newp);
+    for old in &moved {
+        copy_tree(old, &newp);
+    }
+    // 会话里记的工作区路径也一起换过来（不然 agent 还往旧目录里写）
+    for m in sessions_list(app) {
+        let hit = moved.iter().any(|o| o.to_string_lossy() == m.workspace.as_str());
+        if !hit {
+            continue;
+        }
+        let mut m2 = m;
+        m2.workspace = news.clone();
+        if m2.ws.is_empty() {
+            m2.ws = list.first().map(|w| w.id.clone()).unwrap_or_else(|| "default".into());
+        }
+        let _ = session_update_meta(app, &m2);
+    }
+}
+
+/// 尽力而为地把一个目录树复制过去（同名文件已存在就跳过，绝不覆盖、绝不删除）
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+    let Ok(rd) = std::fs::read_dir(from) else { return };
+    for e in rd.flatten() {
+        let src = e.path();
+        let Some(name) = src.file_name() else { continue };
+        let dst = to.join(name);
+        if src.is_dir() {
+            if std::fs::create_dir_all(&dst).is_ok() {
+                copy_tree(&src, &dst);
+            }
+        } else if !dst.exists() {
+            let _ = std::fs::copy(&src, &dst);
+        }
+    }
+}
+
 /// 没有就建一个默认的；顺便把"还没有归属"的老会话挂到对应工作区上
 pub fn ensure_workspaces(app: &AppHandle) -> Vec<Workspace> {
     let mut list = load_workspaces(app);
     if list.is_empty() {
         list.push(default_workspace_entry(app));
     }
+    migrate_legacy_default_workspace(app, &mut list);
     let mut dirty = false;
     for m in sessions_list(app) {
         if !m.ws.is_empty() {

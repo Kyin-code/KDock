@@ -3244,6 +3244,7 @@ pub fn run() {
             agent::agent_session_delete,
             agent::agent_session_rename,
             agent::agent_session_set_workspace,
+                agent::agent_session_set_provider,
             agent::agent_session_set_perm,
             agent::agent_session_set_goal,
             agent::agent_approval_result,

@@ -588,6 +588,27 @@ pub fn agent_session_rename(app: AppHandle, id: String, title: String) -> Result
     Ok(json!({ "ok": true }))
 }
 
+/// 会话中途换模型：把"这个会话用哪个 profile"也一起改掉。
+/// 不这么做的话会出现两套口径 —— 发送时用的是全局 active（`agent_send` 带过去的 providerId），
+/// 而会话自己记的还是旧 profile：上下文面板显示的窗口、压缩判断的预算全是旧模型的。
+#[tauri::command]
+pub fn agent_session_set_provider(app: AppHandle, id: String, provider_id: String) -> Result<Value, String> {
+    let mut meta = store::session_meta_of(&app, &id).ok_or("找不到这个会话")?;
+    let cfg = store::load_providers(&app);
+    let p = cfg
+        .providers
+        .iter()
+        .find(|x| x.id == provider_id)
+        .ok_or("找不到这个供应商 profile")?;
+    if meta.provider_id != provider_id {
+        meta.provider_id = provider_id;
+        meta.model = p.model.clone();
+        meta.updated = now_ms();
+        store::session_update_meta(&app, &meta)?;
+    }
+    Ok(json!({ "ok": true, "provider": meta.provider_id, "model": meta.model }))
+}
+
 #[tauri::command]
 pub fn agent_session_set_workspace(app: AppHandle, id: String, path: String) -> Result<Value, String> {
     let mut meta = store::session_meta_of(&app, &id).ok_or("找不到这个会话")?;

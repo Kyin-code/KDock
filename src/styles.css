@@ -1593,26 +1593,56 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .calchist .r .e { color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .calchist .r .v { color: hsl(var(--primary)); font-weight: 600; }
 
-/* 32 位控制板：按字节分组，每 8 位一格（MSB 在左） */
-.bitboard { display: flex; flex-direction: column; gap: 5px; margin: 4px 0 2px; }
-.bitboard .bitrow { display: flex; align-items: center; gap: 6px; }
-.bitboard .bitrow .bl { flex: 0 0 auto; width: 46px; font-size: 11px; color: hsl(var(--muted-foreground)); font-family: Consolas, monospace; }
-.bitboard .bitrow .bits { display: flex; gap: 3px; }
+/* 32 位控制板：两行 × 16 位，每 4 位（半字节）一组、高位在上（MSB 在左），每组底下一行位号 */
+.bitboard { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; }
+.bitgrid { display: flex; flex-direction: column; gap: 10px; }
+.bitrow2 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.bitcell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bitgrp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
 .bitboard .bit {
-  width: 26px; height: 26px; padding: 0; cursor: pointer;
+  height: 34px; padding: 0; cursor: pointer; min-width: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--surface-line); border-radius: 6px;
+  border: 1px solid var(--surface-line); border-radius: 7px;
   background: var(--surface-1); color: hsl(var(--muted-foreground));
-  font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; font-weight: 600;
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 15px; font-weight: 600;
 }
-.bitboard .bit:hover { border-color: hsl(var(--primary) / 0.6); }
+.bitboard .bit:hover { border-color: hsl(var(--primary) / 0.6); background: var(--surface-2); }
 .bitboard .bit.on { background: hsl(var(--primary)); border-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
 .bitboard .bit.hot { outline: 2px solid hsl(var(--warning) / 0.45); outline-offset: 1px; }
-.bitboard .bitrow .bhex { margin-left: auto; font-family: Consolas, monospace; font-size: 12px; color: hsl(var(--primary)); }
-.bithint { font-size: 11px; color: hsl(var(--muted-foreground)); margin: 2px 0 10px; line-height: 1.5; }
+.bitidxgrp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.bitidxgrp .bi { text-align: center; font-size: 10.5px; color: hsl(var(--muted-foreground)); font-family: Consolas, monospace; }
+.bithint { font-size: 11px; color: hsl(var(--muted-foreground)); margin: 6px 0 10px; line-height: 1.5; }
 
-/* 传统计算器控件 + 右边一列（历史） */
-.calcpanel { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 14px; align-items: start; }
+/* 计算器这一页：每个功能块一张卡，别挤在一起 */
+.calccard {
+  padding: 10px 12px 12px; border-radius: 12px; margin-bottom: 10px;
+  background: var(--surface-1); border: 1px solid var(--surface-line);
+}
+.calccard:last-child { margin-bottom: 0; }
+.calccard > .cardtitle { margin: 0 0 8px; }
+.calccard .calcin { height: 34px; }
+.calcquick { gap: 5px; }
+
+/* 程序员模式那种显示区：HEX / DEC / OCT / BIN 四行 + 当前值 */
+.calcdisp {
+  padding: 8px 12px 6px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--surface-line);
+}
+.calcoutline { text-align: right; padding: 0 6px 4px; border-bottom: 1px solid var(--surface-line-soft); margin-bottom: 4px; }
+.calcoutline .calcout { font-size: 26px; line-height: 1.25; }
+.radixgrid { display: flex; flex-direction: column; gap: 1px; }
+.radixrow { display: flex; align-items: baseline; gap: 10px; padding: 2px 6px; border-radius: 6px; cursor: pointer; }
+.radixrow:hover { background: var(--surface-3); }
+.radixrow .k { flex: 0 0 34px; font-size: 10.5px; color: hsl(var(--muted-foreground)); font-family: Consolas, monospace; letter-spacing: .5px; }
+.radixrow .v {
+  flex: 1 1 auto; min-width: 0; text-align: right;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 13.5px;
+}
+
+/* 传统计算器控件 + 右边一列（历史 / 进制明细） */
+.calcpanel { display: grid; grid-template-columns: minmax(270px, 350px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.calcpadcol { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .calcgrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
 .calcgrid button {
   height: 38px; padding: 0; cursor: pointer; border-radius: 9px;
@@ -1622,8 +1652,9 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .calcgrid button:hover { background: var(--surface-3); border-color: hsl(var(--border)); }
 .calcgrid button.op { color: hsl(var(--primary)); font-weight: 600; }
-.calcgrid button.hexd { display: none; }
-.calcgrid.hexmode button.hexd { display: inline-flex; }
+/* A-F 那排：非十六进制模式下占着格子但不可用（别让键盘排版跳来跳去） */
+.calcgrid button.hexd { visibility: hidden; }
+.calcgrid.hexmode button.hexd { visibility: visible; }
 .calcgrid button.eq { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-weight: 700; }
 .calcgrid button.danger { color: hsl(var(--destructive)); }
 .calcpanel-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -1639,3 +1670,60 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .calc-file-row { font-family: Consolas, "Cascadia Mono", monospace; }
+
+/* ==========================================================================
+   设置 → 模型：供应商面板拆成「使用 / 新增」两个子页（对齐 CC Switch 的用法）
+   ========================================================================== */
+.segtabs {
+  display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 12px;
+  border-radius: 10px; background: var(--surface-3);
+}
+.segtab {
+  height: 28px; padding: 0 14px; cursor: pointer; border: none; border-radius: 8px;
+  background: none; color: hsl(var(--muted-foreground)); font-size: 12.5px;
+}
+.segtab:hover { color: hsl(var(--foreground)); }
+.segtab.active { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-weight: 600; }
+
+.provtab { display: flex; flex-direction: column; }
+.provlist { gap: 4px; }
+.provlist .provrow { padding: 7px 9px; cursor: pointer; }
+.provrow button { height: 22px; padding: 0 8px; font-size: 11px; border-radius: 6px; }
+.provrow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 表单最下面那条：保存按钮单独一行、放最底下 */
+.trow.endcap {
+  margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--surface-line);
+}
+
+/* ==========================================================================
+   设置页里的"卡片分组"（技能 / MCP 这些管理页，别挤成一坨）
+   ========================================================================== */
+.setcard {
+  padding: 12px 14px 14px; margin-bottom: 14px;
+  border: 1px solid var(--surface-line); border-radius: 12px; background: var(--surface-1);
+}
+.setcard .cardtitle { margin-top: 0; }
+.setcard .agentlist { margin-bottom: 8px; }
+.skilllist { max-height: 320px; overflow: auto; gap: 4px; }
+.skilllist .row { padding: 7px 10px; font-size: 12.5px; }
+.modalcontent .agskill { min-height: 240px; }
+.modalcontent .setpane .field { margin-bottom: 10px; }
+
+/* ==========================================================================
+   指令表编辑器弹窗
+   ========================================================================== */
+.kdbox.cmdedit { width: min(760px, 94vw); max-width: min(760px, 94vw); }
+.cmdedit .hint { margin: 0; }
+.cmdedit .cmdbar { gap: 8px; }
+.cmdlistscroll { max-height: 58vh; overflow: auto; display: flex; flex-direction: column; gap: 3px; }
+.cmdeditgrp {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 9px; margin-top: 6px;
+  border-radius: 9px; background: var(--surface-2);
+}
+.cmdeditgrp b { font-size: 12.5px; }
+.cmdeditgrp .lb { font-size: 11px; }
+.cmdrow.ed { grid-template-columns: 118px minmax(0, 1fr) 30px 30px; }
+.cmdedithr { height: 1px; background: var(--surface-line-soft); margin: 8px 0 2px; }

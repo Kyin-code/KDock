@@ -440,13 +440,15 @@ let calcHexPad = false;
 let calcPadError = "";
 
 const PAD_KEYS = [
-  ["AC", "clear", "danger"], ["⌫", "back", ""], ["(", "ins:((", ""], [")", "ins:)", ""], ["÷", "op:/", "op"],
+  // 前四行是程序员模式那套（位运算 + A-F），后面才是普通算数
+  ["AC", "clear", "danger"], ["⌫", "back", ""], ["(", "ins:(", ""], [")", "ins:)", ""], ["÷", "op:/", "op"],
+  ["A", "d:A", "hexd"], ["B", "d:B", "hexd"], ["C", "d:C", "hexd"], ["D", "d:D", "hexd"], ["E", "d:E", "hexd"],
+  ["F", "d:F", "hexd"], ["AND", "op:&", "op"], ["OR", "op:|", "op"], ["XOR", "op:^", "op"], ["NOT", "op:~", "op"],
   ["7", "d:7", ""], ["8", "d:8", ""], ["9", "d:9", ""], ["%", "pct", ""], ["×", "op:*", "op"],
   ["4", "d:4", ""], ["5", "d:5", ""], ["6", "d:6", ""], ["±", "neg", ""], ["−", "op:-", "op"],
   ["1", "d:1", ""], ["2", "d:2", ""], ["3", "d:3", ""], ["xʸ", "op:**", "op"], ["+", "op:+", "op"],
-  ["0", "d:0", ""], [".", "dot", ""], ["=", "eq", "eq"], ["√", "sqrt", ""], ["1/x", "inv", ""],
-  ["A", "d:A", "hexd"], ["B", "d:B", "hexd"], ["C", "d:C", "hexd"], ["D", "d:D", "hexd"], ["E", "d:E", "hexd"],
-  ["F", "d:F", "hexd"],
+  ["0", "d:0", ""], [".", "dot", ""], ["<<", "op:<<", "op"], [">>", "op:>>", "op"], ["√", "sqrt", ""],
+  ["1/x", "inv", ""], ["=", "eq", "eq"], ["Lsh", "ins:<<", "op"], ["Rsh", "ins:>>", "op"], ["HEX/…", "hexmode", "op"],
 ];
 
 const calcNum = (v) => {
@@ -505,6 +507,11 @@ function calcRenderPad() {
 
 function calcPadKey(act) {
   const [kind, arg] = act.split(":");
+  if (kind === "hexmode") {                 // 切"键盘按十六进制解释"
+    const cb = $id("calc-hexmode");
+    if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event("change")); }
+    return;
+  }
   if (kind === "d") {
     if (calcFresh) { calcEntry = ""; calcFresh = false; calcPadError = ""; }
     calcEntry += arg;
@@ -573,6 +580,8 @@ function calcFold(a, b, op) {
     case "**": v = Math.pow(a, b); break;
     case "&": v = a & b; break;
     case "|": v = a | b; break;
+    case "^": v = a ^ b; break;
+    case "~": v = ~a; break;
     case "<<": v = a << b; break;
     case ">>": v = a >> b; break;
     default: v = b;
@@ -691,63 +700,71 @@ function calcRenderRadix(v) {
     r.append(el("span", "k", k), el("span", "v" + (cls ? " " + cls : ""), val));
     rows.push(r);
   };
+  // 大显示区那四行（HEX / DEC / OCT / BIN）
+  const setDisp = (id, txt) => { const n = $id(id); if (n) n.textContent = txt; };
   if (Number.isFinite(v)) {
     const iv = Math.trunc(v);
-    push("DEC", String(iv));
-    push("HEX", (iv < 0 ? "-" : "") + "0x" + Math.abs(iv).toString(16).toUpperCase());
-    push("BIN", (iv < 0 ? "-" : "") + "0b" + Math.abs(iv).toString(2));
-    push("OCT", (iv < 0 ? "-" : "") + "0o" + Math.abs(iv).toString(8));
+    const neg = iv < 0 ? "-" : "";
+    setDisp("disp-dec", String(iv));
+    setDisp("disp-hex", neg + "0x" + Math.abs(iv).toString(16).toUpperCase());
+    setDisp("disp-oct", neg + "0o" + Math.abs(iv).toString(8));
+    setDisp("disp-bin", neg + "0b" + Math.abs(iv).toString(2));
     if (iv >= 0 && iv <= 0xffffffff) push(T("字节"), T(iv <= 0xff ? "1 字节" : iv <= 0xffff ? "2 字节" : "4 字节"));
+    push(T("无符号 32 位"), `${u32hex(iv)}（${u32(iv)}）`);
+    push("float32", String(Math.fround(iv)));
   } else {
+    setDisp("disp-dec", String(v));
+    setDisp("disp-hex", "—");
+    setDisp("disp-oct", "—");
+    setDisp("disp-bin", "—");
     push(T("值"), String(v), "bad");
   }
-  const r1 = $id("calc-radix");
-  if (r1) { r1.innerHTML = ""; rows.slice(0, 2).forEach((r) => r1.appendChild(r.cloneNode(true))); }
   const r2 = $id("calc-radix2");
-  if (r2) { r2.innerHTML = ""; rows.slice(2).forEach((r) => r2.appendChild(r.cloneNode(true))); }
+  if (r2) { r2.innerHTML = ""; rows.forEach((r) => r2.appendChild(r)); }
 }
 
-/** 32 位控制板：4 行（每行 8 位，MSB 在左），点一下就能翻那一位 */
+/** 32 位控制板：两行 × 16 位，每 4 位（半字节）一组，高位在上、MSB 在左（跟 Windows
+ *  计算器的程序员模式一个读法）；每组底下标位号。点一下就能翻那一位。 */
 function calcRenderBits() {
   const box = $id("calc-bits");
   if (!box) return;
   const v = u32(calcValue);
   if (!box.children.length) {
-    for (let byte = 3; byte >= 0; byte--) {
-      const row = el("div", "bitrow");
-      row.append(el("span", "bl", `B${byte} [${byte * 8 + 7}..${byte * 8}]`));
-      const bits = el("div", "bits");
-      for (let k = 7; k >= 0; k--) {
-        const bit = byte * 8 + k;
-        const b = el("button", "bit", "0");
-        b.type = "button";
-        b.dataset.bit = String(bit);
-        b.onclick = () => {
-          const nv = (u32(calcValue) ^ (1 << bit)) >>> 0;
-          calcEntry = String(nv >>> 0);
-          calcFresh = true;
-          calcSetValue(nv, true);      // 反馈到计算区
-        };
-        bits.appendChild(b);
+    const grid = el("div", "bitgrid");
+    for (let half = 1; half >= 0; half--) {          // 上半 = 31..16，下半 = 15..0
+      const brow = el("div", "bitrow2");
+      for (let nb = 3; nb >= 0; nb--) {              // 每行 4 个半字节
+        const g = half * 4 + nb;
+        const cell = el("div", "bitcell");
+        const grp = el("div", "bitgrp");
+        const idxGrp = el("div", "bitidxgrp");
+        for (let k = 3; k >= 0; k--) {
+          const bit = g * 4 + k;
+          const b = el("button", "bit", "0");
+          b.type = "button";
+          b.dataset.bit = String(bit);
+          b.onclick = () => {
+            const nv = (u32(calcValue) ^ (1 << bit)) >>> 0;
+            calcEntry = String(nv >>> 0);
+            calcFresh = true;
+            calcSetValue(nv, true);      // 反馈到计算区
+          };
+          grp.appendChild(b);
+          idxGrp.appendChild(el("span", "bi", String(bit)));
+        }
+        cell.append(grp, idxGrp);
+        brow.appendChild(cell);
       }
-      row.append(bits);
-      row.append(el("span", "bhex", "00"));
-      box.appendChild(row);
+      grid.appendChild(brow);
     }
+    box.appendChild(grid);
   }
-  const rows = [...box.children];
-  rows.forEach((row, idx) => {
-    const byte = 3 - idx;
-    const val = (v >>> (byte * 8)) & 0xff;
-    [...row.querySelectorAll(".bit")].forEach((b) => {
-      const bit = Number(b.dataset.bit);
-      const on = (v >>> bit) & 1;
-      b.textContent = on ? "1" : "0";
-      b.classList.toggle("on", !!on);
-      b.title = `bit ${bit}（${on ? "1" : "0"}）`;
-    });
-    const hx = row.querySelector(".bhex");
-    if (hx) hx.textContent = "0x" + val.toString(16).toUpperCase().padStart(2, "0");
+  box.querySelectorAll(".bit").forEach((b) => {
+    const bit = Number(b.dataset.bit);
+    const on = (v >>> bit) & 1;
+    b.textContent = on ? "1" : "0";
+    b.classList.toggle("on", !!on);
+    b.title = `bit ${bit}（${on ? "1" : "0"}）`;
   });
 }
 
@@ -968,6 +985,21 @@ export function initCalc() {
   }
   document.querySelectorAll(".calc-quick").forEach((b) => {
     b.onclick = () => { box.value += b.dataset.q || ""; box.focus(); calcRun(box.value, false); };
+  });
+  // 显示区那四行：点一下就把那一行的值复制走（HEX/DEC/OCT/BIN 想抄哪个抄哪个）
+  document.querySelectorAll(".radixrow").forEach((r) => {
+    r.title = T("点一下复制这一行的值");
+    r.onclick = async () => {
+      const v = (r.querySelector(".v") || {}).textContent || "";
+      try {
+        await navigator.clipboard.writeText(v);
+        const h = $id("calc-pad-hint");
+        if (h) h.textContent = T("已复制：") + v;
+      } catch (_) {
+        const h = $id("calc-pad-hint");
+        if (h) h.textContent = v;
+      }
+    };
   });
   for (const [id, kind] of [["bit-zero", "zero"], ["bit-not", "not"], ["bit-shl", "shl"], ["bit-shr", "shr"],
                             ["bit-rol", "rol"], ["bit-ror", "ror"], ["bit-byte-not", "not"], ["bit-feed", "feed"]]) {
