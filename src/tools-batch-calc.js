@@ -5,6 +5,9 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
 
 const $id = (id) => document.getElementById(id);
+/** 翻译：main.js 把 en() 挂在 window 上（这个文件是独立模块，拿不到它的作用域） */
+const T = (s) => (window.kdockT ? window.kdockT(s) : s);
+const onLang = (fn) => { if (window.kdockOnLang) window.kdockOnLang(fn); };
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -81,7 +84,7 @@ function btRender() {
   btWords = lines;
   btRawLines = $id("bt-in").value.split(/\r?\n/);
   $id("bt-out").value = btFormat(lines, $id("bt-format").value);
-  $id("bt-count").textContent = `${lines.length} 行 · ${lines.reduce((a, l) => a + l.length, 0)} 字`;
+  $id("bt-count").textContent = lines.length + T(" 行") + " · " + lines.reduce((a, l) => a + l.length, 0) + T(" 字");
   btUpdateCount();
 }
 
@@ -127,7 +130,7 @@ function btPattern() {
   try {
     return { re: new RegExp(src, flags), isRe };
   } catch (e) {
-    btMsg("正则写错了：" + String(e.message || e).slice(0, 80), true);
+    btMsg(T("正则写错了：") + String(e.message || e).slice(0, 80), true);
     return null;
   }
 }
@@ -149,15 +152,15 @@ function btMatches(text) {
 function btUpdateCount() {
   const info = $id("bt-find-count");
   if (!info) return;
-  if (!$id("bt-find").value) { info.textContent = "没在找"; return; }
+  if (!$id("bt-find").value) { info.textContent = T("没在找"); return; }
   const n = btMatches($id("bt-in").value).length;
-  info.textContent = n ? `找到 ${n} 处` : "没找到";
+  info.textContent = n ? T("找到 ") + n + T(" 处") : T("没找到");
 }
 
 function btFindStep(dir) {
   const ta = $id("bt-in");
   const ms = btMatches(ta.value);
-  if (!ms.length) { $id("bt-find-count").textContent = "没找到"; return; }
+  if (!ms.length) { $id("bt-find-count").textContent = T("没找到"); return; }
   const from = dir > 0 ? (ta.selectionEnd || 0) : (ta.selectionStart || 0);
   let hit = null;
   if (dir > 0) hit = ms.find((m) => m.start >= from) || ms[0];
@@ -216,7 +219,7 @@ function btReplaceAll() {
     ta.value = ta.value.replace(p.re, rep);
   }
   btRender();
-  btMsg("已全部替换");
+  btMsg(T("已全部替换"));
 }
 
 /* ==================== 批量文本：JSON / 正则 / 缩进 ==================== */
@@ -233,8 +236,8 @@ function btJsonFormat(min) {
     } catch (e) {
       // 不是合法 JSON：退一步按花括号重排，好歹能看
       const m = /position (\d+)/.exec(String(e.message || ""));
-      if (m) btMsg(`JSON 解析失败（第 ${Number(m[1]) + 1} 个字符）：${e.message}`, true);
-      else btMsg("JSON 解析失败：" + String(e.message || e).slice(0, 80), true);
+      if (m) btMsg(T("JSON 解析失败（第 ") + (Number(m[1]) + 1) + T(" 个字符）：") + e.message, true);
+      else btMsg(T("JSON 解析失败：") + String(e.message || e).slice(0, 80), true);
       return min ? text.replace(/\s*\n\s*/g, "") : btFormatBrace(text);
     }
   });
@@ -293,10 +296,10 @@ function btFormatBrace(src) {
 
 function btRegexRun() {
   const pat = $id("bt-re-pat").value;
-  if (!pat) { btMsg("先写个正则", true); return; }
+  if (!pat) { btMsg(T("先写个正则"), true); return; }
   let re;
   try { re = new RegExp(pat, "g"); } catch (e) {
-    btMsg("正则写错了：" + String(e.message || e).slice(0, 80), true);
+    btMsg(T("正则写错了：") + String(e.message || e).slice(0, 80), true);
     return;
   }
   const rep = $id("bt-re-rep").value;
@@ -305,7 +308,7 @@ function btRegexRun() {
     if (scope === "line") return text.split("\n").map((l) => l.replace(re, rep)).join("\n");
     return text.replace(re, rep);
   });
-  btMsg(scope === "line" ? "正则批量处理完成（每行单独）" : "正则批量处理完成（全文）");
+  btMsg(T(scope === "line" ? "正则批量处理完成（每行单独）" : "正则批量处理完成（全文）"));
 }
 
 const btCase = (mode) => (text) => {
@@ -335,19 +338,19 @@ async function btSendAll() {
   $id("bt-send").classList.add("primary");
   for (let i = 0; i < lines.length; i++) {
     if (!btSending) break;
-    $id("bt-state").textContent = `发送中 ${i + 1}/${lines.length}`;
+    $id("bt-state").textContent = T("发送中 ") + (i + 1) + "/" + lines.length;
     try {
       const ack = await invoke("write_data", { payload: lines[i], mode: "text", lineEnding: le });
       btPushTx({ dir: "TX", ts_ms: Date.now(), text: ack.text, hex: ack.hex, ascii: ack.ascii });
     } catch (e) {
-      $id("bt-state").textContent = "出错：" + String(e).slice(0, 60);
+      $id("bt-state").textContent = T("出错：") + String(e).slice(0, 60);
       break;
     }
     if (i < lines.length - 1 && gap) await new Promise((r) => setTimeout(r, gap));
   }
   btSending = false;
   $id("bt-send").classList.remove("primary");
-  if ($id("bt-state").textContent.startsWith("发送中")) $id("bt-state").textContent = "发完了";
+  if ($id("bt-state").textContent.startsWith(T("发送中"))) $id("bt-state").textContent = T("发完了");
 }
 
 export function initBatch(opts) {
@@ -402,25 +405,27 @@ export function initBatch(opts) {
   $id("bt-out-to-in").onclick = () => {
     box.value = $id("bt-out").value;
     btRender();
-    $id("bt-state").textContent = "结果已搬回输入";
+    $id("bt-state").textContent = T("结果已搬回输入");
   };
 
   // 清空 / 复制 / 另存为 / 发送
   $id("bt-clear").onclick = () => { box.value = ""; $id("bt-out").value = ""; btRender(); };
   $id("bt-copy").onclick = async () => {
-    try { await navigator.clipboard.writeText($id("bt-out").value); $id("bt-state").textContent = "已复制"; }
-    catch (e) { $id("bt-state").textContent = "复制失败：" + String(e).slice(0, 40); }
+    try { await navigator.clipboard.writeText($id("bt-out").value); $id("bt-state").textContent = T("已复制"); }
+    catch (e) { $id("bt-state").textContent = T("复制失败：") + String(e).slice(0, 40); }
   };
   $id("bt-download").onclick = async () => {
     try {
-      const p = await dlgSave({ title: "保存批量文本结果", defaultPath: "batch.txt" });
+      const p = await dlgSave({ title: T("保存批量文本结果"), defaultPath: "batch.txt" });
       if (!p) return;
       await writeTextFile(p, $id("bt-out").value);
-      $id("bt-state").textContent = "已保存";
-    } catch (e) { $id("bt-state").textContent = "保存失败：" + String(e).slice(0, 40); }
+      $id("bt-state").textContent = T("已保存");
+    } catch (e) { $id("bt-state").textContent = T("保存失败：") + String(e).slice(0, 40); }
   };
   $id("bt-send").onclick = btSendAll;
   btRender();
+  // 切语言时把这一页里"运行时拼出来的"文字重画一遍
+  onLang(() => { btRender(); btUpdateCount(); });
 }
 
 /* ============================== 计算器 ============================== */
@@ -517,7 +522,7 @@ function calcPadKey(act) {
   }
   if (kind === "clear") {
     calcAcc = null; calcOp = null; calcEntry = "0"; calcFresh = true; calcPadError = "";
-    $id("calc-pad-hint").textContent = "重新开始";
+    $id("calc-pad-hint").textContent = T("重新开始");
     calcSetValue(0, true);
     return;
   }
@@ -529,8 +534,8 @@ function calcPadKey(act) {
   }
   if (kind === "neg") { calcEntry = String(-calcEntryValue()); $id("calc-pad-hint").textContent = calcEntry; calcSetValue(calcEntryValue(), false); return; }
   if (kind === "pct") { calcEntry = String(calcEntryValue() / 100); calcFresh = true; $id("calc-pad-hint").textContent = calcEntry; calcSetValue(calcEntryValue(), true); return; }
-  if (kind === "sqrt") { const v = Math.sqrt(calcEntryValue()); if (v < 0 || !Number.isFinite(v)) return calcError("负数不能开平方"); calcEntry = String(v); calcFresh = true; $id("calc-pad-hint").textContent = calcEntry; calcSetValue(v, true); return; }
-  if (kind === "inv") { const v = calcEntryValue(); if (v === 0) return calcError("0 没有倒数"); calcEntry = String(1 / v); calcFresh = true; $id("calc-pad-hint").textContent = calcEntry; calcSetValue(1 / v, true); return; }
+  if (kind === "sqrt") { const v = Math.sqrt(calcEntryValue()); if (v < 0 || !Number.isFinite(v)) return calcError(T("负数不能开平方")); calcEntry = String(v); calcFresh = true; $id("calc-pad-hint").textContent = calcEntry; calcSetValue(v, true); return; }
+  if (kind === "inv") { const v = calcEntryValue(); if (v === 0) return calcError(T("0 没有倒数")); calcEntry = String(1 / v); calcFresh = true; $id("calc-pad-hint").textContent = calcEntry; calcSetValue(1 / v, true); return; }
   if (kind === "ins") { const inp = $id("calc-expr"); inp.value += arg; inp.focus(); return; }
   if (kind === "op") {
     const cur = calcEntryValue();
@@ -564,7 +569,7 @@ function calcFold(a, b, op) {
     case "+": v = a + b; break;
     case "-": v = a - b; break;
     case "*": v = a * b; break;
-    case "/": if (b === 0) return calcError("除数不能是 0"), null; v = a / b; break;
+    case "/": if (b === 0) return calcError(T("除数不能是 0")), null; v = a / b; break;
     case "**": v = Math.pow(a, b); break;
     case "&": v = a & b; break;
     case "|": v = a | b; break;
@@ -587,9 +592,9 @@ function calcSanitize(src) {
     .replace(/\^/g, "**")
     .replace(/\s+/g, " ")
     .trim();
-  if (!s) throw new Error("空表达式");
+  if (!s) throw new Error(T("空表达式"));
   if (!/^[0-9a-fA-FxXbBoO_\s+\-*/().,%<>&|~]+$/.test(s)) {
-    throw new Error("只能算数字和 + - * / % & | ~ << >> ** 这些");
+    throw new Error(T("只能算数字和 + - * / % & | ~ << >> ** 这些"));
   }
   return s;
 }
@@ -603,19 +608,19 @@ function calcEval(src) {
     const v = String(t).replace(/_/g, "");
     const n = /^0[xX]/.test(v) ? parseInt(v, 16) : /^0[bB]/.test(v) ? parseInt(v.slice(2), 2)
       : /^0[oO]/.test(v) ? parseInt(v.slice(2), 8) : Number(v);
-    if (!Number.isFinite(n)) throw new Error("认不出这个数字：" + t);
+    if (!Number.isFinite(n)) throw new Error(T("认不出这个数字：") + t);
     return n;
   };
   const peek = () => toks[i];
   const eat = (t) => { if (toks[i] === t) { i++; return true; } return false; };
   const primary = () => {
     const t = peek();
-    if (t === undefined) throw new Error("表达式没写完");
-    if (t === "(") { i++; const v = expr(); if (!eat(")")) throw new Error("括号没闭合"); return v; }
+    if (t === undefined) throw new Error(T("表达式没写完"));
+    if (t === "(") { i++; const v = expr(); if (!eat(")")) throw new Error(T("括号没闭合")); return v; }
     if (t === "-") { i++; return -primary(); }
     if (t === "+") { i++; return primary(); }
     if (t === "~") { i++; return ~primary(); }
-    if (!/^[0-9]/.test(t)) throw new Error("这里不该出现 " + t);
+    if (!/^[0-9]/.test(t)) throw new Error(T("这里不该出现 ") + t);
     i++;
     return num(t);
   };
@@ -625,8 +630,8 @@ function calcEval(src) {
     for (;;) {
       const t = peek();
       if (t === "*") { i++; v = v * power(); }
-      else if (t === "/") { i++; const d = power(); if (d === 0) throw new Error("除数不能是 0"); v = v / d; }
-      else if (t === "%") { i++; const d = power(); if (d === 0) throw new Error("取余的除数不能是 0"); v = v % d; }
+      else if (t === "/") { i++; const d = power(); if (d === 0) throw new Error(T("除数不能是 0")); v = v / d; }
+      else if (t === "%") { i++; const d = power(); if (d === 0) throw new Error(T("取余的除数不能是 0")); v = v % d; }
       else return v;
     }
   };
@@ -652,7 +657,7 @@ function calcEval(src) {
   const bor = () => { let v = band(); while (eat("|")) v = v | band(); return v; };
   const expr = () => bor();
   const val = expr();
-  if (i < toks.length) throw new Error("多余的字符：" + toks.slice(i).join(" "));
+  if (i < toks.length) throw new Error(T("多余的字符：") + toks.slice(i).join(" "));
   return val;
 }
 
@@ -692,9 +697,9 @@ function calcRenderRadix(v) {
     push("HEX", (iv < 0 ? "-" : "") + "0x" + Math.abs(iv).toString(16).toUpperCase());
     push("BIN", (iv < 0 ? "-" : "") + "0b" + Math.abs(iv).toString(2));
     push("OCT", (iv < 0 ? "-" : "") + "0o" + Math.abs(iv).toString(8));
-    if (iv >= 0 && iv <= 0xffffffff) push("字节", iv <= 0xff ? "1 字节" : iv <= 0xffff ? "2 字节" : "4 字节");
+    if (iv >= 0 && iv <= 0xffffffff) push(T("字节"), T(iv <= 0xff ? "1 字节" : iv <= 0xffff ? "2 字节" : "4 字节"));
   } else {
-    push("值", String(v), "bad");
+    push(T("值"), String(v), "bad");
   }
   const r1 = $id("calc-radix");
   if (r1) { r1.innerHTML = ""; rows.slice(0, 2).forEach((r) => r1.appendChild(r.cloneNode(true))); }
@@ -784,19 +789,19 @@ function ieeeRows(label, v, bitsHex, width) {
     rows.push(r);
   };
   push(label + " HEX", bitsHex);
-  push("十进制", String(v));
-  push("科学计数", Number.isFinite(v) ? v.toExponential(7) : String(v));
+  push(T("十进制"), String(v));
+  push(T("科学计数"), Number.isFinite(v) ? v.toExponential(7) : String(v));
   if (width === 32) {
     // 注意：阶码/尾数是**按位**切的，不是按字节 —— 符号 1 位、阶码 8 位、尾数 23 位
     const raw = parseInt(bitsHex, 16) >>> 0;
     const sign = (raw >>> 31) & 1;
     const exp = (raw >>> 23) & 0xff;
     const mant = raw & 0x7fffff;
-    push("符号", sign ? "-1（负数）" : "+1（正数）");
-    push("阶码", `${exp} - 127 = ${exp - 127}（0x${exp.toString(16).toUpperCase().padStart(2, "0")}）`);
-    push("尾数", "0x" + mant.toString(16).toUpperCase().padStart(6, "0"));
+    push(T("符号"), T(sign ? "-1（负数）" : "+1（正数）"));
+    push(T("阶码"), `${exp} - 127 = ${exp - 127} (0x${exp.toString(16).toUpperCase().padStart(2, "0")})`);
+    push(T("尾数"), "0x" + mant.toString(16).toUpperCase().padStart(6, "0"));
     // 32 位二进制按字节隔开，肉眼好对
-    push("二进制", bitsHex.match(/../g).map((h) => parseInt(h, 16).toString(2).padStart(8, "0")).join(" "));
+    push(T("二进制"), bitsHex.match(/../g).map((h) => parseInt(h, 16).toString(2).padStart(8, "0")).join(" "));
   }
   return rows;
 }
@@ -869,7 +874,7 @@ async function calcFileGo() {
   if (!box) return;
   if (!calcFile) { box.innerHTML = ""; return; }
   box.innerHTML = "";
-  box.appendChild(el("div", "sub", "计算中…"));
+  box.appendChild(el("div", "sub", T("计算中…")));
   try {
     const r = await invoke("file_digest", {
       path: calcFile,
@@ -879,8 +884,8 @@ async function calcFileGo() {
     if (!box) return;
     box.innerHTML = "";
     box.append(
-      digestRow("文件大小", `${Number(r.size).toLocaleString()} 字节`),
-      digestRow("算的范围", `${r.offset} + ${r.length}`),
+      digestRow(T("文件大小"), `${Number(r.size).toLocaleString()} ${T("字节")}`),
+      digestRow(T("算的范围"), `${r.offset} + ${r.length}`),
       digestRow("CRC32", r.crc32),
       digestRow("CRC16/CCITT", r.crc16Ccitt),
       digestRow("CRC16/MODBUS", r.crc16Modbus),
@@ -917,7 +922,7 @@ function calcRenderHist() {
   const box = $id("calc-hist");
   if (!box) return;
   box.innerHTML = "";
-  if (!calcHist.length) { box.appendChild(el("div", "sub", "（还没算过）")); return; }
+  if (!calcHist.length) { box.appendChild(el("div", "sub", T("（还没算过）"))); return; }
   for (const h of calcHist) {
     const r = el("div", "r");
     r.append(el("span", "e", h.e), el("span", "v", h.v));
@@ -934,7 +939,7 @@ function calcRenderBaud() {
   for (const b of [9600, 57600, 115200, 230400, 460800, 921600]) {
     const us = 1e6 / b;
     const r = el("div", "row");
-    r.append(el("span", "k", String(b)), el("span", "v", `${us.toFixed(2)} µs/位 · 一字节约 ${(us * 10).toFixed(0)} µs`));
+    r.append(el("span", "k", String(b)), el("span", "v", `${us.toFixed(2)} µs/${T("位")} · ${T("一字节约")} ${(us * 10).toFixed(0)} µs`));
     box.appendChild(r);
   }
 }
@@ -953,7 +958,7 @@ export function initCalc() {
     if ($id("calc-pad-hex")) $id("calc-pad-hex").checked = calcHexPad;
     calcEntry = calcHexPad ? u32(calcEntryValue()).toString(16).toUpperCase() : String(calcEntryValue());
     calcRenderPad();
-    $id("calc-pad-hint").textContent = (calcHexPad ? "0x（十六进制输入）" : "十进制输入");
+    $id("calc-pad-hint").textContent = T(calcHexPad ? "0x（十六进制输入）" : "十进制输入");
   };
   if ($id("calc-pad-hex")) {
     $id("calc-pad-hex").onchange = (e) => {
@@ -1013,4 +1018,13 @@ export function initCalc() {
   calcRenderHist();
   calcRenderBaud();
   calcRenderBits();
+  onLang(() => {
+    calcRenderHist();
+    calcRenderBaud();
+    calcRenderBits();
+    calcRenderRadix(calcValue);
+    ieeeManual = false;                     // 切语言后让"实时"那份重画一次（纯显示，无副作用）
+    ieeeRenderLive(calcValue);
+    $id("calc-pad-hint").textContent = T("直接按数字和运算符，= 出结果；结果和上面的控制板实时同步。");
+  });
 }

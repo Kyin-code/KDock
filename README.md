@@ -30,6 +30,7 @@
 - [目录结构](#目录结构)
 - [常见问题](#常见问题)
 - [开源协议与致谢](#开源协议与致谢)
+- [版本管理](#版本管理)
 
 ## 它能做什么
 
@@ -214,15 +215,31 @@ A：目标存在会话里，每轮都会拼进系统提示；用 `/goal` 可以�
 **Q：为什么有些界面文字是英文？**
 A：设置 → 通用里可以切换中英文，切换是即时生效的。
 
+## 版本管理
+
+- **应用版本**走 [语义化版本](https://semver.org/lang/zh-CN/) `MAJOR.MINOR.PATCH`，当前
+  `v0.1.0`（关于页也会显示实时值）。版本号在这三处保持一致：
+  `src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`package.json`；
+- 每次发版在 [CHANGELOG.md](CHANGELOG.md) 追加一段，并打 `vX.Y.Z` 的 git tag
+  （例如 `git tag v0.1.0 && git push origin v0.1.0`）；
+- **固件包版本**是另一套：`.fw` 包头里的三段式 `PD_HW.PD_SW.PD_FIX`，用于设备端判断能否升级/降级，
+  与应用版本无关（见 [docs/01](docs/01-固件包格式与打包算法.md)）；
+- 应用内「设置 → 关于与数据」里也写了同样的约定，并给出当前版本、作者与仓库地址。
+
 ## 开源协议与致谢
 
 本项目以 **Apache License 2.0** 开源，见 [LICENSE](LICENSE)；第三方组件与借鉴项目的声明见 [NOTICE](NOTICE)。
 
-特别感谢：
+特别感谢（设计/交互参考过的开源项目）：
 
 - [MICU-OmniProbe](https://github.com/zuoliangyu/MICU-OmniProbe)（README 声明 MIT）：
   实时图表的实现思路与配色方案参考了它；
+- [opencode](https://github.com/anomalyco/opencode)：Agent 的交互形态参考了它 ——
+  上下文成分/花费面板、技能与 MCP 的组织方式、"边跑边补充方向"这些都受益于它；
+- [CC Switch](https://github.com/farion1231/cc-switch)：供应商 profile 列表与技能管理的组织方式参考了它；
 - [Tauri](https://github.com/tauri-apps/tauri)、[uPlot](https://github.com/leeoniya/uPlot)、
   [RustCrypto](https://github.com/RustCrypto) 等开源项目提供的坚实基础。
 
 欢迎 issue / PR。
+
+<sub>English README: [README.en.md](README.en.md)</sub>

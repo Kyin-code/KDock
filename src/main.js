@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 // 原生文件对话框 / 文件读写：WebView 里 window.prompt 是空实现，路径类交互一律走这两个
 import { open as dlgOpen, save as dlgSave } from "@tauri-apps/plugin-dialog";
 import { readFile, writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
@@ -425,7 +426,7 @@ function applyPorts(ports) {
           const desc = p.friendly || p.description || "";
           return { value: p.port_name, label: desc ? `${p.port_name} — ${desc}` : p.port_name };
         })
-      : [{ value: "", label: "（没有检测到串口）" }];
+      : [{ value: "", label: en("（没有检测到串口）") }];
     // 两个页面各有一份串口列表，内容保持一致
     for (const id of ["ports", "upg-ports", "fl-ports", "sq-ports"]) {
       const sel = $(id);
@@ -455,24 +456,24 @@ async function refreshPorts() {
 async function refreshStats() {
   try {
     const s = await invoke("get_stats");
-    const state = s.connected ? "已连接" : s.listening ? "监听中" : "未连接";
-    const chip = s.connected ? (s.label || "已连接") : state;
+    const state = en(s.connected ? "已连接" : s.listening ? "监听中" : "未连接");
+    const chip = s.connected ? (s.label || en("已连接")) : state;
     $("status-chip").textContent = chip;
     $("status-chip").className = "chip" + (s.connected ? " ok" : "");
     $("status").textContent = s.connected ? `${state} · ${s.label || ""}` : state;
     /* 只看收/发字符数(和字节数)，不要时长/速率 */
     $("stats").textContent =
-      `接收 ${s.rx_chars ?? 0} 字符 / ${s.rx_bytes} B\n` +
-      `发送 ${s.tx_chars ?? 0} 字符 / ${s.tx_bytes} B\n` +
-      `日志 ${s.log_lines} 行`;
+      `${en("接收")} ${s.rx_chars ?? 0} ${en("字符")} / ${s.rx_bytes} B\n` +
+      `${en("发送")} ${s.tx_chars ?? 0} ${en("字符")} / ${s.tx_bytes} B\n` +
+      `${en("日志")} ${s.log_lines}${en(" 行")}`;
     // 升级页也看一眼"升级会挂在哪条连接上"
     $("upg-link").textContent = s.connected
       ? `${s.label || ""}`
-      : s.listening ? "监听中（等对端接入）" : "未连接";
+      : s.listening ? en("监听中（等对端接入）") : en("未连接");
     $("upg-link").className = "dot" + (s.connected ? " ok" : "");
     $("fl-link").textContent = s.connected
       ? `${s.label || ""}`
-      : s.listening ? "监听中（等对端接入）" : "未连接";
+      : s.listening ? en("监听中（等对端接入）") : en("未连接");
     $("fl-link").className = "dot" + (s.connected ? " ok" : "");
   } catch (_) {
     /* 还没连接时拿不到，忽略 */
@@ -591,7 +592,7 @@ let upgRunning = false;
 
 function upgState(text, cls) {
   const el = $("upg-state");
-  el.textContent = text;
+  el.textContent = en(text);
   el.className = "dot" + (cls ? " " + cls : "");
 }
 
@@ -778,7 +779,7 @@ async function refreshUpgState() {
     const st = await invoke("upgrade_state");
     upgRunning = st.running;
     $("upg-go").disabled = st.running;
-    $("upg-go").textContent = st.running ? `升级中 ${Math.round(st.percent || 0)}%` : "升级";
+    $("upg-go").textContent = st.running ? `${en("升级中")} ${Math.round(st.percent || 0)}%` : en("升级");
     // 升级状态只写升级页；左下角那行只显示"连接状态"，两边不再抢
     if (st.running) upgState(st.text || "");
     else if (st.text) upgState(st.text, st.text.includes("失败") ? "err" : st.percent >= 100 ? "ok" : "");
@@ -794,7 +795,7 @@ let flSeq = 0;      // 列目录可能并发(切页自动列 + 手动点)，只�
 
 function flState(text, cls) {
   const el = $("fl-state");
-  el.textContent = text;
+  el.textContent = en(text);
   el.className = "dot" + (cls ? " " + cls : "");
 }
 
@@ -839,7 +840,7 @@ async function flList() {
   } catch (e) {
     if (my !== flSeq) return;
     flEntries = [];
-    $("fl-items").innerHTML = '<option value="">（读不到）</option>';
+    $("fl-items").innerHTML = '<option value="">' + en("（读不到）") + '</option>';
     flState("失败: " + e, "err");
     pushSys(`[文件] 列目录失败: ${e}`);
   }
@@ -963,6 +964,7 @@ function showPane(tab) {
   if (tab === "agent") agOnShow();
   if (tab === "batch") initBatch({ pushTx: pushEntry });
   if (tab === "calc") initCalc();
+  if (LANG === "en") langWalk();   // 这一页里"切过来才渲染"的文字（提示语/空态）再扫一遍
 }
 
 function bindTabs() {
@@ -1083,7 +1085,7 @@ function bindChart() {
     const box = $("chart-box");
     if (box.closest("[hidden]")) return;      // 不在图表页就先不画（**别清 dirty**，切回来要补画）
     chDirty = false;
-    $("ch-src").textContent = `${chYs.length} 通道 / ${chXs.length} 点`;
+    $("ch-src").textContent = chYs.length + en(" 通道 / ") + chXs.length + en(" 点");
     if (!chart || chart.series.length - 1 !== chYs.length) rebuildChart();
     else chart.setData([chXs, ...chYs]);
   }, Math.max(30, Number($("ch-sample").value) || 4) * 5);
@@ -1175,8 +1177,8 @@ async function flDetectTools(clearFirst) {
       const key = pair[0], id = pair[1];
       const t = r[key] || {};
       if (t.found) $(id).value = t.exe;
-      const from = t.from === "manual" ? "手动" : t.from === "path" ? "PATH" : "自动找到";
-      seg.push(key + (t.found ? " ✓ " + (t.version || "") + "（" + from + "）" : " ✗ 没找到"));
+      const from = t.from === "manual" ? en("手动") : t.from === "path" ? "PATH" : en("自动找到");
+      seg.push(key + (t.found ? " ✓ " + (t.version || "") + " (" + from + ")" : " ✗ " + en("没找到")));
     }
     const sc = (r.openocd || {}).scripts || "";
     if (sc) $("fl-tool-scripts").value = sc;
@@ -1209,7 +1211,7 @@ let FL_PICK = null;        // 当前选中的器件
 let FL_JLINK_PATH = "";
 
 const flBadge = (x) => (x.src === "jlink" ? "J-Link"
-  : x.group === "target" ? "openocd 芯片" : x.group === "board" ? "openocd 开发板" : "openocd 适配器");
+  : en(x.group === "target" ? "openocd 芯片" : x.group === "board" ? "openocd 开发板" : "openocd 适配器"));
 
 async function flLoadDevs(quiet) {
   $("fl-dev-src").textContent = "读取中…";
@@ -1224,7 +1226,7 @@ async function flLoadDevs(quiet) {
     for (const x of list) out.push({ ...x, src: "openocd" });
     const n = { target: 0, board: 0, interface: 0 };
     list.forEach((x) => { n[x.group] = (n[x.group] || 0) + 1; });
-    srcTxt.push(`openocd：芯片 ${n.target} / 开发板 ${n.board} / 适配器 ${n.interface}`);
+    srcTxt.push(`${en("openocd：芯片")} ${n.target} / ${en("开发板")} ${n.board} / ${en("适配器")} ${n.interface}`);
     // 适配器下拉顺便用 interface 列表填
     const sel = $("fl-adapter");
     const cur = sel.value;
@@ -1248,9 +1250,9 @@ async function flLoadDevs(quiet) {
     }
     FL_JLINK_PATH = (r && r.path) || "";
     srcTxt.push(`J-Link：${devs.length}（${(r && r.source) || "库"}）`);
-    $("fl-dev-src").title = FL_JLINK_PATH ? `J-Link 器件库文件: ${FL_JLINK_PATH}` : "没找到 J-Link 器件库";
+    $("fl-dev-src").title = FL_JLINK_PATH ? `J-Link device DB: ${FL_JLINK_PATH}` : en("没找到 J-Link 器件库");
   } catch (e) {
-    srcTxt.push("J-Link 器件库：没找到 JLinkDevices.xml");
+    srcTxt.push(en("J-Link 器件库：没找到 JLinkDevices.xml"));
   }
   FL_DEVS = out;
   FL_DEVS_SRC = srcTxt.join("  |  ");
@@ -1266,7 +1268,7 @@ function flRenderDevs() {
   const src = $("fl-src").value;
   box.innerHTML = "";
   if (!FL_DEVS.length) {
-    box.innerHTML = '<p class="hint">还没有器件库，点右上角「↻ 刷新」。</p>';
+    box.innerHTML = '<p class="hint">' + en("还没有器件库，点右上角「↻ 刷新」。") + '</p>';
     return;
   }
   let shown = 0;
@@ -1568,7 +1570,7 @@ async function bindCapture() {
         o.textContent = m.name;
         sel.appendChild(o);
       });
-      if (!list.length) sel.innerHTML = '<option value="0">（没找到显示器）</option>';
+      if (!list.length) sel.innerHTML = '<option value="0">' + en("（没找到显示器）") + '</option>';
     } catch (e) {
       $("cap-mon").innerHTML = `<option value="0">${e}</option>`;
     }
@@ -2798,12 +2800,13 @@ function buildCmdTable() {
   let group = "";
   for (const [name, args, desc, grp] of CSHELL_CMDS) {
     const line = `${name} ${args}`.trim();
-    if (kw && !(line.toLowerCase().includes(kw) || desc.toLowerCase().includes(kw))) continue;
+    const descShow = en(desc);
+    if (kw && !(line.toLowerCase().includes(kw) || descShow.toLowerCase().includes(kw) || desc.toLowerCase().includes(kw))) continue;
     if (grp !== group) {
       group = grp;
       const h = document.createElement("div");
       h.className = "navgroup";
-      h.textContent = grp;
+      h.textContent = en(grp);
       box.appendChild(h);
     }
     const row = document.createElement("div");
@@ -2811,19 +2814,19 @@ function buildCmdTable() {
     const btn = document.createElement("button");
     btn.className = "cname";
     btn.textContent = name;
-    btn.title = "填进输入框";
+    btn.title = en("填进输入框");
     btn.onclick = () => {
       $("tx").value = args ? `${name} ${args}` : name;
       $("tx").focus();
-      toast(`已填入：${$("tx").value}`);
+      toast(en("已填入：") + $("tx").value);
     };
     const d2 = document.createElement("div");
     d2.className = "cdesc";
-    d2.innerHTML = args ? `<code>${escapeHtml(args)}</code> — ${escapeHtml(desc)}` : escapeHtml(desc);
+    d2.innerHTML = args ? `<code>${escapeHtml(args)}</code> — ${escapeHtml(descShow)}` : escapeHtml(descShow);
     const go = document.createElement("button");
     go.className = "btn small cgo";
     go.textContent = "▶";
-    go.title = "直接发送";
+    go.title = en("直接发送");
     go.onclick = async () => {
       if (args) {                       // 带参数的不直接发，先填进去让用户改
         $("tx").value = `${name} ${args}`;
@@ -2895,7 +2898,7 @@ function qsRender() {
   qsItems.forEach((it, i) => {
     const b = document.createElement("button");
     b.className = "btn small";
-    b.textContent = it.label || it.payload;
+    b.textContent = en(it.label || it.payload);
     b.title = (it.hex ? "HEX: " : "") + it.payload;
     b.onclick = () => sendPayload(it.payload, it.hex);
     const del = document.createElement("button");
@@ -3259,19 +3262,24 @@ function langWalk() {
   while ((n = w.nextNode())) {
     if (n.nodeType === 1) {
       if (n.placeholder) {
-        if (LANG === "en" && EN[n.placeholder]) { n.dataset.zhPh = n.dataset.zhPh || n.placeholder; n.placeholder = EN[n.placeholder]; }
+        const ph = EN[n.placeholder] || EN[n.placeholder.trim().replace(/\s+/g, " ")];
+        if (LANG === "en" && ph) { n.dataset.zhPh = n.dataset.zhPh || n.placeholder; n.placeholder = ph; }
         else if (LANG === "zh" && n.dataset.zhPh) n.placeholder = n.dataset.zhPh;
       }
       if (n.title) {
-        if (LANG === "en" && EN[n.title]) { n.dataset.zhTi = n.dataset.zhTi || n.title; n.title = EN[n.title]; }
+        const ti = EN[n.title] || EN[n.title.trim().replace(/\s+/g, " ")];
+        if (LANG === "en" && ti) { n.dataset.zhTi = n.dataset.zhTi || n.title; n.title = ti; }
         else if (LANG === "zh" && n.dataset.zhTi) n.title = n.dataset.zhTi;
       }
       continue;
     }
     const t = (n.nodeValue || "").trim();
     if (!t) continue;
+    // HTML 里换行+缩进会被算进文本节点；查表时把空白规范化再试一次
+    const key = t.replace(/\s+/g, " ");
     if (LANG === "en") {
-      if (EN[t]) { if (n.__zh == null) n.__zh = n.nodeValue; n.nodeValue = n.nodeValue.replace(t, EN[t]); }
+      const tr = EN[t] || EN[key];
+      if (tr) { if (n.__zh == null) n.__zh = n.nodeValue; n.nodeValue = n.nodeValue.replace(t, tr); }
     } else if (n.__zh != null) {
       n.nodeValue = n.__zh; n.__zh = null;
     }
@@ -3307,10 +3315,34 @@ function bindSettings() {
       if (b.dataset.set === "model" && !agNewProfile) agLoadConfig();
       if (b.dataset.set === "model") amdLoadPull(false);
       if (b.dataset.set === "about") agLoadTools();
+      if (b.dataset.set === "about" || b.dataset.set === "general") agRenderAbout();
+      if (LANG === "en") setTimeout(() => langWalk(), 0);   // 这一页里运行时拼出来的文字
     };
   });
   const close = document.getElementById("settings-close");
   if (close) close.onclick = closeSettings;
+  // 关于本软件那几个按钮：GitHub 仓库 / 作者主页 / 更新日志 / 跳到完整关于页
+  if (document.getElementById("set-open-github")) {
+    document.getElementById("set-open-github").onclick = () => openExternal(KDOCK_REPO);
+  }
+  if (document.getElementById("set-open-author")) {
+    document.getElementById("set-open-author").onclick = () => openExternal(KDOCK_AUTHOR);
+  }
+  if (document.getElementById("set-open-changelog")) {
+    document.getElementById("set-open-changelog").onclick = () => openExternal(KDOCK_REPO + "/blob/main/CHANGELOG.md");
+  }
+  if (document.getElementById("set-about-github")) {
+    document.getElementById("set-about-github").onclick = () => openExternal(KDOCK_REPO);
+  }
+  if (document.getElementById("set-about-more")) {
+    document.getElementById("set-about-more").onclick = () => {
+      document.querySelectorAll(".modaltab").forEach((x) => x.classList.toggle("active", x.dataset.set === "about"));
+      document.querySelectorAll(".setpane").forEach((p) => { p.hidden = p.dataset.setpane !== "about"; });
+      agLoadTools();
+      agRenderAbout();
+    };
+  }
+  agLoadVersion();
   m.addEventListener("click", (e) => { if (e.target === m) closeSettings(); });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !m.hidden) closeSettings();
@@ -3692,12 +3724,12 @@ function agRenderTree() {
     const caret = document.createElement("span");
     caret.className = "caret"; caret.textContent = open ? "▾" : "▸";
     const t = document.createElement("span");
-    t.className = "t"; t.textContent = w.name || "工作区";
+    t.className = "t"; t.textContent = (w.name === "默认工作区" ? en("默认工作区") : (w.name || en("工作区")));
     const p = document.createElement("span");
     p.className = "p"; p.textContent = String(w.path || "").replace(/.*[\\/]/, "");
     p.title = w.path || "";
     const plus = document.createElement("button");
-    plus.className = "plus"; plus.textContent = "＋"; plus.title = "在这个工作区里新开一个对话";
+    plus.className = "plus"; plus.textContent = "＋"; plus.title = en("在这个工作区里新开一个对话");
     plus.onclick = async (e) => {
       e.stopPropagation();
       agFocus();                 // 同上：新会话建好就直接切过去看
@@ -3727,7 +3759,7 @@ function agRenderTree() {
       const b = document.createElement("button");
       b.className = "sess" + (agMeta && agMeta.id === x.id ? " active" : "");
       const tt = document.createElement("span");
-      tt.className = "t"; tt.textContent = x.title || "（无标题）";
+      tt.className = "t"; tt.textContent = x.title || en("（无标题）");
       tt.title = (x.title || "") + " · " + new Date(x.updated).toLocaleString();
       b.appendChild(tt);
       // 点会话：先确保中间已经切到 Agent 页再加载
@@ -3740,21 +3772,21 @@ function agRenderTree() {
         if (agMeta && agMeta.id === x.id) { agSetMeta(null, "deleted"); agEvents = []; agRender(); }
         agLoadTree();
       };
-      b.title = "右键可以删除";
+      b.title = en("右键可以删除");
       box.appendChild(b);
     }
     if (!kids.length) {
       const e0 = document.createElement("div");
       e0.className = "sess";
       const tt = document.createElement("span");
-      tt.className = "t"; tt.textContent = "（还没对话，点 ＋）";
+      tt.className = "t"; tt.textContent = en("（还没对话，点 ＋）");
       e0.appendChild(tt);
       box.appendChild(e0);
     }
     if (kids.length > shownN) {
       const more = document.createElement("button");
       more.className = "sess more";
-      more.textContent = `… 还有 ${kids.length - shownN} 个对话（点开）`;
+      more.textContent = en("… 还有 ") + (kids.length - shownN) + en(" 个对话（点开）");
       more.onclick = (e) => {
         e.stopPropagation();
         agSessShown[w.id] = shownN + 100;
@@ -3780,10 +3812,10 @@ async function agNewWorkspace() {
 /** 对话头：名字 + 本会话完成了多少轮正常对话 */
 function agUpdateHeader() {
   const t = agEl("ag-title");
-  if (t) t.textContent = agMeta ? (agMeta.title || "（无标题）") : "（还没选对话）";
+  if (t) t.textContent = agMeta ? (agMeta.title || en("（无标题）")) : en("（还没选对话）");
   const n = agEvents.filter((e) => e.type === "assistant" && String(e.text || "").trim()).length;
   const g = agEl("ag-turns");
-  if (g) g.textContent = agMeta ? `${n} 轮` : "";
+  if (g) g.textContent = agMeta ? n + en(" 轮") : "";
   // /goal 设的长期目标：钉在头上，随时能看见（也能看出它还生效着）
   const goalEl = agEl("ag-goal");
   if (goalEl) {
@@ -3792,7 +3824,7 @@ function agUpdateHeader() {
     goalEl.textContent = goal ? `目标：${goal}` : "";
     goalEl.title = goal || "";
   }
-  if (agEl("ag-m-wsname")) agEl("ag-m-wsname").textContent = agMeta ? (agMeta.workspace || "（默认）") : "（无）";
+  if (agEl("ag-m-wsname")) agEl("ag-m-wsname").textContent = agMeta ? (agMeta.workspace || en("（默认）")) : en("（无）");
   if (agEl("ag-stop")) agEl("ag-stop").hidden = !agRunning;
 }
 
@@ -3848,7 +3880,7 @@ function agRenderInfo() {
   const model = (prov && prov.model) || (agMeta && agMeta.model) || "";
   const cost = agCostOf(model, hit, miss, outTok);
   const ws = (agMeta && agMeta.workspace) || (agCfg && agCfg.workspace) || "";
-  const wsShort = ws ? ws.replace(/[\\/]+$/, "").split(/[\\/]/).pop() : "（默认）";
+  const wsShort = ws ? ws.replace(/[\\/]+$/, "").split(/[\\/]/).pop() : en("（默认）");
 
   const row = (k, v, cls) => `<div class="row"><span class="k">${en(k)}</span><span class="v ${cls || ""}">${v}</span></div>`;
   const git = agGit;
@@ -4384,10 +4416,10 @@ async function agLoadConfig() {
   const sel = agEl("ag-provider");
   if (sel) {
     sel.innerHTML = "";
-    if (!agCfg.providers.length) sel.innerHTML = '<option value="">（还没有，点新增）</option>';
+    if (!agCfg.providers.length) sel.innerHTML = '<option value="">' + en("（还没有，点新增）") + '</option>';
     for (const p of agCfg.providers) {
       const o = document.createElement("option");
-      o.value = p.id; o.textContent = p.name + " · " + p.model;
+      o.value = p.id; o.textContent = agTrName(p.name) + " · " + p.model;
       sel.appendChild(o);
     }
     if (agCfg.activeId) sel.value = agCfg.activeId;
@@ -4440,6 +4472,15 @@ function agFormKey() {
 /** 这条 profile 是不是"AMD Radeon Cloud 内置"那批（id 形如 amd-xxx） */
 const isAmdProfile = (p) => !!p && /^amd-/.test(String(p.id || ""));
 
+/** 内置 profile 名字里带中文前缀（"AMD 免费 · xxx"）；英文界面下把它换掉。
+ *  用户自己改过的名字不动。 */
+function agTrName(name) {
+  const s = String(name || "");
+  if (LANG !== "en") return s;
+  // 内置/预设名字：先按整名查词典（"DeepSeek（Anthropic 格式）" 这种），再换 AMD 前缀
+  return (EN[s] || s).replace(/^AMD 免费 · /, "AMD Free · ");
+}
+
 /** 出字速度：每个 profile 一条 {last, avg, tokens, ms, samples} */
 let agSpeed = {};
 const fmtTps = (v) => (v > 0 ? (v >= 100 ? Math.round(v) : v.toFixed(1)) + " tok/s" : "");
@@ -4448,13 +4489,13 @@ const fmtTps = (v) => (v > 0 ? (v >= 100 ? Math.round(v) : v.toFixed(1)) + " tok
 function agModelStatus(p) {
   if (!isAmdProfile(p)) return "";
   const m = amdLoadData && amdLoadData.models ? amdLoadData.models[p.model] : null;
-  if (!m) return amdLoadData ? "状态未知" : "取状态中…";
-  const label = m.state === "full" ? "满载" : m.state === "busy" ? "繁忙" : "空闲";
+  if (!m) return en(amdLoadData ? "状态未知" : "取状态中…");
+  const label = en(m.state === "full" ? "满载" : m.state === "busy" ? "繁忙" : "空闲");
   return m.utilization != null ? `${label} ${Math.round(m.utilization)}%` : label;
 }
 
 function agModelOptionText(p) {
-  const bits = [p.name];
+  const bits = [agTrName(p.name)];
   // 名字里已经带了模型名（AMD 那批就是 "AMD 免费 · <模型>"）就别再重复一遍
   if (p.model && !String(p.name || "").includes(p.model)) bits.push(p.model);
   const st = agModelStatus(p);
@@ -4478,7 +4519,7 @@ async function agLoadQuickModels() {
     sel.appendChild(o);
   }
   const more = document.createElement("option");
-  more.value = "__settings__"; more.textContent = "＋ 新增/编辑…";
+  more.value = "__settings__"; more.textContent = en("＋ 新增/编辑…");
   sel.appendChild(more);
   sel.value = agCfg.activeId || agCfg.providers[0].id;
   agSyncModelBusy();
@@ -4576,16 +4617,16 @@ function agRenderProviders() {
     const row = document.createElement("div");
     row.className = "provrow" + (agCfg.activeId === p.id ? " active" : "");
     const nm = document.createElement("span");
-    nm.className = "nm"; nm.textContent = p.name || p.id;
+    nm.className = "nm"; nm.textContent = agTrName(p.name || p.id);
     const kind = document.createElement("span");
     const isAnth = (p.kind || "openai") === "anthropic";
     kind.className = "kind" + (isAnth ? " anthropic" : "");
     kind.textContent = isAnth ? "Anthropic" : "OpenAI";
-    kind.title = isAnth ? "Anthropic /v1/messages" : "OpenAI 兼容 /chat/completions";
+    kind.title = isAnth ? "Anthropic /v1/messages" : en("OpenAI 兼容 /chat/completions");
     const meta = document.createElement("span");
     meta.className = "meta";
     const hasKey = secrets.includes(p.api_key_ref || p.id);
-    meta.textContent = `${p.model} · ${p.endpoint}${hasKey ? "" : " · ⚠ 没密钥"}`;
+    meta.textContent = `${p.model} · ${p.endpoint}${hasKey ? "" : " · " + en("⚠ 没密钥")}`;
     meta.title = meta.textContent;
     const st = document.createElement("span");
     st.className = "st";
@@ -4599,8 +4640,8 @@ function agRenderProviders() {
     };
     const pick = () => { agNewProfile = false; if (agEl("ag-provider")) agEl("ag-provider").value = p.id; agFillProvider(p.id); };
     row.appendChild(nm); row.appendChild(kind); row.appendChild(meta); row.appendChild(st);
-    row.appendChild(mk("测一测", "按这个 profile 发一句最短的话，验证地址/密钥/模型", async () => {
-      st.textContent = "…"; st.title = "正在请求…"; st.style.color = "";
+    row.appendChild(mk(en("测一测"), en("按这个 profile 发一句最短的话，验证地址/密钥/模型"), async () => {
+      st.textContent = "…"; st.title = en("正在请求…"); st.style.color = "";
       try {
         const r = await invoke("agent_ping_provider", { id: p.id });
         agProvTest[p.id] = { ok: true, text: r };
@@ -4611,7 +4652,7 @@ function agRenderProviders() {
         toast(String(e));
       }
     }));
-    row.appendChild(mk("余额", "查余额（DeepSeek 有 /user/balance）", async () => {
+    row.appendChild(mk(en("余额"), en("查余额（DeepSeek 有 /user/balance）"), async () => {
       try {
         const b = await invoke("agent_provider_balance", { id: p.id });
         if (!b.supported) return toast(b.note || "该厂商没有余额接口");
@@ -4620,12 +4661,12 @@ function agRenderProviders() {
       } catch (e) { toast(String(e)); }
     }));
     if (agCfg.activeId !== p.id) {
-      row.appendChild(mk("设为当前", "后面这些轮都用它", async () => {
+      row.appendChild(mk(en("设为当前"), en("后面这些轮都用它"), async () => {
         await invoke("agent_provider_set_active", { id: p.id }).catch((e) => toast(String(e)));
         await agLoadConfig();
       }));
     }
-    row.appendChild(mk("编辑", "填进下面的表单", pick));
+    row.appendChild(mk(en("编辑"), en("填进下面的表单"), pick));
     row.onclick = pick;
     box.appendChild(row);
   }
@@ -4697,7 +4738,7 @@ function agRenderSkillTable() {
   if (!box) return;
   box.innerHTML = "";
   if (!agSkills.length) {
-    box.innerHTML = '<div class="agrow empty">（还没有技能）· 去「设置 → 技能」导入</div>';
+    box.innerHTML = '<div class="agrow empty">' + en("（还没有技能）· 去「设置 → 技能」导入") + '</div>';
     return;
   }
   for (const s of agSkills) {
@@ -4732,7 +4773,7 @@ function agRenderMcpTable() {
   if (!box) return;
   box.innerHTML = "";
   if (!agMcps.length) {
-    box.innerHTML = '<div class="agrow empty">（还没有 MCP 服务）· 去「设置 → MCP」新增</div>';
+    box.innerHTML = '<div class="agrow empty">' + en("（还没有 MCP 服务）· 去「设置 → MCP」新增") + '</div>';
     return;
   }
   for (const m of agMcps) {
@@ -4767,7 +4808,7 @@ function renderSkillsPage() {
   if (!box) return;
   box.innerHTML = "";
   if (!agSkills.length) {
-    box.innerHTML = '<div class="empty">（还没有技能：点「导入…」选一个 SKILL.md，或「新建」）</div>';
+    box.innerHTML = '<div class="empty">' + en("（还没有技能：点「导入…」选一个 SKILL.md，或「新建」）") + '</div>';
   }
   for (const s of agSkills) {
     const row = document.createElement("div");
@@ -4799,7 +4840,7 @@ function renderMcpPage() {
   if (!box) return;
   box.innerHTML = "";
   if (!agMcps.length) {
-    box.innerHTML = '<div class="empty">（还没有 MCP 服务：填下面的 ID / 命令 / 参数，点保存）</div>';
+    box.innerHTML = '<div class="empty">' + en("（还没有 MCP 服务：填下面的 ID / 命令 / 参数，点保存）") + '</div>';
   }
   for (const m of agMcps) {
     const row = document.createElement("div");
@@ -4912,6 +4953,102 @@ function bindMcpPage() {
   };
 }
 
+/**
+ * Agent 工具说明的英文对照。后端返回的是中文说明（那份同时给模型看），
+ * 界面按工具名查这张表显示英文；查不到就用原文。
+ */
+const TOOL_DESC_EN = {
+  link_open: "Open the agent's own link (serial/network). Any previous link is closed first.",
+  link_close: "Close the agent's link.",
+  link_status: "Check whether the agent's link is up.",
+  link_send: "Write data to the link (text or HEX).",
+  link_read: "Read from the link (until the silence timeout or an `until` hit).",
+  device_list: "List a directory on the device (serial uses cshell ls, network uses the port 6666 service channel).",
+  device_pull: "Pull a file from the device (verified with CRC32).",
+  device_push: "Push a local file to the device.",
+  firmware_info: "Read version / size / CRC32 of a .fw package.",
+  firmware_upgrade: "Upgrade the device with a .fw package (serial or network). **Reboots the device** — verify the version afterwards.",
+  local_run: "Run a command on this PC (cmd /C) and return the exit code and output.",
+  flash: "Flash the chip with an external programmer (J-Link / openocd / STM32CubeProgrammer).",
+  scope: "Send a SCPI command to the oscilloscope (Rigol) and return its reply.",
+  workspace_list: "List files in the agent workspace.",
+  workspace_read: "Read a text file from the workspace.",
+  workspace_write: "Write a file into the workspace (creates directories).",
+  workspace_mkdir: "Create a directory in the workspace.",
+  skill_list: "List installed skills (name + description).",
+  skill_read: "Read the full SKILL.md of a skill.",
+  skill_create: "Create a skill (a SKILL.md with frontmatter).",
+  skill_update: "Overwrite a skill's SKILL.md.",
+  skill_delete: "Delete a skill.",
+  browser_open: "Open a page in the built-in browser (extracts the main text; also shown in the Browser pane).",
+  browser_read: "Read the main text of the current page (omit url to use the current page).",
+  browser_find: "Find a snippet in the current page text and return the surrounding context.",
+  history_search: "Search this session's raw log by keyword (including parts already compacted away).",
+  ui_show_text: "Show a block of text in the Text pane on the right.",
+  ui_goto: "Switch the UI to a page (transfer/upgrade/flash/files/chart/flow/capture/scope).",
+  flow_run: "Run the flow (the current canvas when no graph is given).",
+  flow_status: "Check flow progress / the tail of its log.",
+  flow_stop: "Stop the running flow.",
+  capture_save: "Grab a screenshot (saved into the workspace).",
+};
+
+// ── 关于本软件：作者 / 仓库 / 版本 ────────────────────────────────
+// 开源信息集中在「设置 → 通用（简短）」和「设置 → 关于与数据（完整）」两处；
+// 版本管理的约定写在关于页（应用版本走 semver，固件包版本是另一套）。
+const KDOCK_REPO = "https://github.com/Kyin-code/KDock";
+const KDOCK_AUTHOR = "https://github.com/Kyin-code";
+let appVersion = "0.1.0";
+
+function openExternal(url) {
+  invoke("browser_open_external", { path: url }).catch((e) => toast(String(e)));
+}
+
+function aboutRow(box, k, v, cls, title) {
+  const r = document.createElement("div");
+  r.className = "row";
+  const a = document.createElement("span");
+  a.className = "k"; a.textContent = k;
+  const b = document.createElement("span");
+  b.className = "v" + (cls ? " " + cls : "");
+  b.textContent = v;
+  if (title) b.title = title;
+  r.append(a, b);
+  box.appendChild(r);
+}
+
+function agRenderAbout() {
+  const full = document.getElementById("set-about");
+  if (full) {
+    full.textContent = "";
+    aboutRow(full, en("版本"), "v" + appVersion, "ok");
+    aboutRow(full, en("作者"), "Kyin (任开炎)", "", KDOCK_AUTHOR);
+    aboutRow(full, en("仓库"), KDOCK_REPO, "", KDOCK_REPO);
+    aboutRow(full, en("协议"), en("Apache-2.0（见仓库里的 LICENSE / NOTICE）"));
+    aboutRow(full, en("构建"), "Tauri 2 · Rust + 原生 JS");
+  }
+  const mini = document.getElementById("set-about-mini");
+  if (mini) {
+    mini.textContent = "";
+    aboutRow(mini, en("版本"), "v" + appVersion, "ok");
+    aboutRow(mini, en("作者"), "Kyin (任开炎)");
+    aboutRow(mini, en("仓库"), KDOCK_REPO, "", KDOCK_REPO);
+  }
+  const ver = document.getElementById("set-versioning");
+  if (ver) {
+    ver.textContent = "";
+    aboutRow(ver, en("当前版本"), "v" + appVersion, "ok");
+    aboutRow(ver, en("版本号来源"), en("tauri.conf.json · Cargo.toml · package.json（三处保持一致）"));
+    aboutRow(ver, en("变更记录"), en("CHANGELOG.md（每次发版追加一段）"));
+    aboutRow(ver, en("发版约定"), en("打 tag：") + "v" + appVersion);
+    aboutRow(ver, en("固件包版本"), en("三段式 PD_HW.PD_SW.PD_FIX（写在 .fw 包头里，与应用版本无关）"));
+  }
+}
+
+async function agLoadVersion() {
+  try { appVersion = await getVersion(); } catch (_) { /* 拿不到就用默认 */ }
+  agRenderAbout();
+}
+
 async function agLoadTools() {
   agTools = await invoke("agent_tools").catch(() => []);
   const box = agEl("ag-tool-list");
@@ -4923,8 +5060,8 @@ async function agLoadTools() {
     const nm = document.createElement("span");
     nm.className = "nm"; nm.textContent = t.name;
     const tag = document.createElement("span");
-    tag.className = "tag"; tag.textContent = t.host ? "界面" : "本机";
-    row.title = t.description;
+    tag.className = "tag"; tag.textContent = en(t.host ? "界面" : "本机");
+    row.title = (LANG === "en" && TOOL_DESC_EN[t.name]) || t.description;
     row.appendChild(nm); row.appendChild(tag);
     box.appendChild(row);
   }
@@ -4939,6 +5076,7 @@ function agShowPane(name) {
   document.querySelectorAll(".agptab").forEach((b) => b.classList.toggle("active", b.dataset.agp === name));
   document.querySelectorAll(".agppane").forEach((p) => { p.hidden = p.dataset.agpane !== name; });
   if (name === "skills") amdLoadPull(false);   // 信息页露出来了：顺手刷一次云算力
+  if (LANG === "en") langWalk();
 }
 
 /* ── AMD Radeon Cloud（tokenfactory）实时负载 ─────────────────────────
@@ -4958,7 +5096,7 @@ async function amdLoadPull(force) {
   if (!amdLoadData) {
     for (const id of ["amd-load-list", "ag-amd"]) {
       const box = document.getElementById(id);
-      if (box) box.textContent = "正在取（这个接口本身要 20 多秒）…";
+      if (box) box.textContent = en("正在取（这个接口本身要 20 多秒）…");
     }
   }
   try {
@@ -5182,7 +5320,7 @@ async function agSyncRunning() {
   try {
     const c = await invoke("agent_config_get");
     agRunning = !!c.running;
-    agState(agRunning ? "思考中…" : "空闲", agRunning ? "ok" : "");
+    agState(agRunning ? en("思考中…") : en("空闲"), agRunning ? "ok" : "");
     if (agEl("ag-stop")) agEl("ag-stop").hidden = !agRunning;
     agSetSendDisabled(agRunning);
   } catch (_) {}
@@ -5681,8 +5819,313 @@ const EN = {
   "同长度，留空=逐字节比较；如 F00000000000": "Same length; empty = byte-by-byte, e.g. F00000000000",
   "在收到的字节流里找一段，使 (数据 & 掩码) == (期望值 & 掩码)。":
     "Find a run in the received bytes where (data & mask) == (expected & mask).",
+
+  // ============ 状态栏 / 对话框 / 通用 ============
+  "未连接": "Disconnected", "空闲": "Idle", "确认": "Confirm", "取消": "Cancel", "确定": "OK",
+  "语言": "Language", "运行时长 / 负载": "Uptime / load", "系统时间": "System time",
+  "环境变量": "Environment", "查看挂载": "Mounts", "刷写缓存到存储": "Flush caches",
+  "重启设备": "Reboot", "复制": "Copy", "编辑": "Edit", "设为当前": "Use this",
+  "loading…": "loading…",
+  "（读不到）": "(unavailable)",
+
+  // ============ 工具页：批量文本 ============
+  "输入（一行一条）": "Input (one per line)", "结果": "Result",
+  "逐行发送": "Send line by line", "按下面的间隔，一行一行发到串口": "Send each line to the serial port with the delay below",
+  "每行带走当前行尾": "Append the current line ending", "间隔": "Delay",
+  "搜索 / 替换": "Find / replace", "查找": "Find", "要查找的内容": "Text to find",
+  "全词": "Whole word", "模糊": "Fuzzy",
+  "忽略大小写 + 空白灵活（空格可以匹配换行/多空格）": "Case-insensitive; whitespace matches any run of spaces/newlines",
+  "替换成": "Replace with", "留空 = 删除匹配": "Empty = delete matches",
+  "↑": "↑", "↓ 找下一个": "↓ Find next",
+  "上一个（Shift+Enter）": "Previous (Shift+Enter)", "下一个（Enter / F3）": "Next (Enter / F3)",
+  "替换": "Replace", "全部替换": "Replace all", "没在找": "idle",
+  "JSON 整理": "JSON tools", "格式化": "Format", "压缩成一行": "Minify",
+  "缩进 2": "indent 2", "缩进 4": "indent 4", "缩进 1（Tab 宽）": "indent 1 (tab)",
+  "按标准 JSON 解析后再排版；解析失败会告诉你错在第几个字符。":
+    "Parses as standard JSON before formatting; on failure it tells you the offending character position.",
+  "正则批量处理": "Regex batch", "替换为": "Replace with",
+  "每行单独": "per line", "全文一起": "whole text", "批量处理": "Run",
+  "选中一段就只处理那段；没选就按下面的\"范围\"处理。用": "With a selection only that part is processed; otherwise the scope below applies. Use",
+  "引用捕获组。": "for capture groups.",
+  "大小写 / 缩进": "Case / indent", "大写": "UPPER", "小写": "lower", "首字母大写": "Title Case",
+  "JSON 自动": "JSON auto", "花括号自动（C/JS）": "Braces auto (C/JS)",
+  "Tab → 2 空格": "Tab → 2 spaces", "Tab → 4 空格": "Tab → 4 spaces", "去掉行首缩进": "Strip leading indent",
+  "只处理选中部分（没选就整篇）": "Only the selection (whole text if none)",
+  "把右边结果搬回左边输入，继续往下处理": "Move the result back to the input to keep processing",
+  "结果 → 输入": "Result → input",
+  "逐行处理": "Per-line processing", "去掉首尾空白": "Trim each line", "丢掉空行": "Drop empty lines",
+  "去重（保留首次出现）": "De-duplicate (keep first)", "排序": "Sort", "加行号": "Number lines",
+  "起": "start at", "前缀": "Prefix", "例：AT+": "e.g. AT+", "后缀": "Suffix", "例：\\r\\n": "e.g. \\r\\n",
+  "大小写": "Case", "不改": "keep", "转大写": "UPPER", "转小写": "lower",
+  "输出格式": "Output format", "原样（一行一条）": "as-is (one per line)",
+  "HEX 数组 0x41,0x42…": "HEX array 0x41,0x42…", "HEX 字符串 4142…": "HEX string 4142…",
+  "JSON 数组": "JSON array", "逗号连接": "comma joined", "C 数组 {0x41,0x42}": "C array {0x41,0x42}",
+  "十六进制那几种是按": "The HEX formats encode", "UTF-8 字节": "UTF-8 bytes",
+  "转的，中文也行。": "; CJK text works too.",
+  "「逐行发送」按上面的间隔一条条发到当前串口，发完自动停；中途再点一次就停。":
+    "\"Send line by line\" pushes each line to the current serial port with the delay above and stops when done; click again to abort.",
+
+  // ============ 工具页：计算器 ============
+  "表达式": "Expression", "C 风格：0x1F & (0x0F << 2)  ·  1.5e3 * 2  ·  (1<<16)-1  ·  ~0 & 0xFF":
+    "C style: 0x1F & (0x0F << 2)  ·  1.5e3 * 2  ·  (1<<16)-1  ·  ~0 & 0xFF",
+  "键盘按十六进制解释：打 1F 就是 0x1F，A-F 也算数字":
+    "Keypad enters hex: typing 1F means 0x1F, A-F count as digits",
+  "32 位控制板": "32-bit bit board", "清零": "Zero", "取反 ~": "NOT ~",
+  "左移一位": "Shift left by one", "右移一位": "Shift right by one",
+  "循环左移": "Rotate left", "循环右移": "Rotate right",
+  "反相（异或 0xFFFFFFFF）": "Invert (XOR 0xFFFFFFFF)", "全反": "Invert",
+  "把这一行的值写进上面的表达式": "Write this value into the expression above",
+  "→ 计算区": "→ Calc",
+  "点任意一位就能改；改完的值会同时出现在上面的结果区，并（在你没在输入框里打字时）回填到表达式。":
+    "Click any bit to flip it; the value updates the result area and is written back into the expression (unless you are typing there).",
+  "传统计算器": "Keypad",
+  "直接按数字和运算符，= 出结果；结果和上面的控制板实时同步。":
+    "Tap digits and operators; = evaluates. The result stays in sync with the bit board above.",
+  "十六进制": "Hex", "把结果填进串口发送框": "Put the result into the send box", "→ 发送框": "→ Send box",
+  "历史": "History", "（还没算过）": "(nothing yet)", "常用": "Quick",
+  "把结果送进右边的浮点/IEEE 转换": "Feed the result into the IEEE panel on the right",
+  "→ 浮点转换": "→ IEEE",
+  "文件校验（CRC / 哈希）": "File checksum (CRC / hash)", "选文件…": "Choose file…",
+  "（还没选）": "(none)", "偏移": "Offset", "长度": "Length", "计算": "Compute",
+  "CRC32 填进计算区": "Put CRC32 into the calc area",
+  "长度填 0 = 从偏移算到文件末尾。固件查分段有没有被改过时很好用。":
+    "Length 0 = from the offset to EOF. Handy to check whether a firmware region changed.",
+  "IEEE 754 浮点": "IEEE 754", "浮点 → 位": "float → bits", "位 → 浮点": "bits → float",
+  "3.14 或 0x4048F5C3": "3.14 or 0x4048F5C3", "转换": "Convert",
+  "拿计算区当前的值来转": "Convert the current calc value", "用计算区当前值": "Use calc value",
+  "进制换算": "Radix", "位宽": "Width", "不限（任意精度）": "unbounded", "8 位（掩到 0xFF）": "8-bit (mask 0xFF)",
+  "16 位": "16-bit", "32 位": "32-bit", "串口常用换算": "Serial timing",
+  "位时间 = 1 / 波特率。开 8N1 时一个字节 10 位，所以 115200 下发一个字节约 86.8 µs。":
+    "Bit time = 1 / baud. With 8N1 a byte takes 10 bits, so one byte at 115200 is about 86.8 µs.",
+  "十进制": "decimal", "科学计数": "sci", "符号": "sign", "阶码": "exponent",
+  "尾数": "mantissa", "二进制": "binary", "字节": "width", "1 字节": "1 byte",
+  "2 字节": "2 bytes", "4 字节": "4 bytes", "+1（正数）": "+1 (positive)", "-1（负数）": "-1 (negative)",
+
+  // ============ Agent 信息 / 工作区 / 会话 ============
+  "出字速度": "Throughput", "最近": "last", "平均": "avg",
+  "出字速度只算模型正在出字的那段（工具调用、等待不算）":
+    "Throughput counts only the time the model spends emitting tokens (tool calls and waiting are excluded).",
+  "更多": "More", "工作区：": "Workspace:", "重命名对话": "Rename session",
+  "删除这个对话": "Delete session", "你": "You",
+  "会自己动手的调试助手": "A debugging assistant that can actually do things",
+  "新建工作区（选一个目录）": "New workspace (pick a folder)",
+  "在这个工作区里新开一个对话": "Start a new session in this workspace",
+  "右键可以删除": "Right-click to delete", "默认工作区": "Default workspace",
+  "3.14 或 0x4048F5C3 ": "3.14 or 0x4048F5C3 ",
+  "上一轮的 token 用量": "token usage of the last round",
+  "例：看一下设备根目录里有什么，再把 /config/config.bin 取回来":
+    "e.g. look at the device root, then pull back /config/config.bin",
+  "/goal <目标>": "/goal <text>", "设定长期目标（每轮都带上，": "set a standing goal (injected every round, ",
+  "清除）·": " clears it) · ", "压缩上下文 ·": "compact · ", "新会话 ·": " new · ",
+  "切权限 ·": "permission · ", "停止 ·": "stop · ",
+  "附上本机文件：复制进会话工作区，agent 就能读它": "Attach a local file: copied into the session workspace so the agent can read it",
+  "📎 文件": "📎 File",
+  "agent 的权限：只读 / 危险动作先问 / 全自动": "Agent permission: read-only / ask before risky actions / fully automatic",
+  "只读": "Read-only", "需要批准": "Ask", "自动": "Auto",
+  "正在取模型状态（AMD 那边约 20 秒）": "Fetching model status (takes ~20 s for AMD)",
+  "这轮用哪个模型（参数去设置里改）": "Model to use (edit parameters in Settings)",
+  "＋ 新增/编辑…": "＋ Add / edit…", "取状态中…": "fetching status…",
+  "状态未知": "status unknown", "满载": "full", "繁忙": "busy",
+  "（还没有技能）· 去「设置 → 技能」导入": "(no skills yet) · import one in Settings → Skills",
+  "（还没有 MCP 服务）· 去「设置 → MCP」新增": "(no MCP servers yet) · add one in Settings → MCP",
+  "这里只管**开关**（关掉的技能不进口令索引，agent 也看不到）。": "This page only shows toggles (a disabled skill is not indexed and stays invisible to the agent).",
+  "路径 / 导入 / 编辑都在": "Paths, import and editing live in",
+  "设置 → 技能": "Settings → Skills",
+  "这里只管**开关**。新增 / 参数 / 测试都在": "This page only shows toggles. Adding, parameters and tests live in",
+  "设置 → MCP": "Settings → MCP",
+  "（来自文件名 / agent）": "(from file name / agent)",
+  "这里可以看文本：打开文件、或者让 agent 用 ui_show_text 推过来。":
+    "Show text here: open a file, or let the agent push one with ui_show_text.",
+
+  // ============ 设置：模型与供应商 ============
+  "厂家预设": "Vendor preset", "— 选厂家 —": "— pick a vendor —", "填入表单": "Fill form",
+  "DeepSeek（OpenAI 兼容）": "DeepSeek (OpenAI-compatible)",
+  "DeepSeek（Anthropic 格式）": "DeepSeek (Anthropic format)",
+  "智谱 GLM": "Zhipu GLM", "阿里通义 DashScope": "Alibaba DashScope", "硅基流动": "SiliconFlow",
+  "火山方舟（豆包）": "Volcano Ark (Doubao)", "Ollama（本机）": "Ollama (local)",
+  "LM Studio（本机）": "LM Studio (local)", "AMD Radeon Cloud（免费额度）": "AMD Radeon Cloud (free tier)",
+  "自定义 / 自建网关": "Custom / self-hosted gateway",
+  "选一个预设 -> 填入表单 -> 只补 API Key 就能用。都是 OpenAI 兼容写法（能填 base_url 的服务）。":
+    "Pick a preset → fill the form → only the API key is missing. All of them are OpenAI-compatible (any service with a base_url).",
+  "导入…": "Import…", "导出…": "Export…", "全部测一测": "Test all",
+  "+ AMD 免费模型": "+ AMD free models",
+  "把 AMD Radeon Cloud 那批免费模型加回列表（删掉之后不会自己回来，点这里加）":
+    "Add the AMD Radeon Cloud free models back to the list (deleted ones do not come back by themselves)",
+  "导入/导出的是 profile（**不含密钥**：密钥按用户 DPAPI 加密，换机器本来也带不走，导过去重新粘一次）。":
+    "Import/export covers profiles only (**no API keys**: keys are DPAPI-encrypted per user, so paste them again on another machine).",
+  "这个 profile 的参数": "Parameters of this profile",
+  "deepseek（只给程序用，随便起）": "deepseek (internal id, any name works)",
+  "OpenAI 兼容（/chat/completions）": "OpenAI-compatible (/chat/completions)",
+  "OpenAI 兼容 /chat/completions": "OpenAI-compatible /chat/completions",
+  "按这个 profile 发一句最短的话，验证地址/密钥/模型": "Send a one-line request with this profile to verify endpoint/key/model",
+  "查余额（DeepSeek 有 /user/balance）": "Check balance (DeepSeek exposes /user/balance)",
+  "填进下面的表单": "Fill the form below", "后面这些轮都用它": "Use it for the next rounds",
+  "DeepSeek 两种都支持：OpenAI 兼容填": "DeepSeek supports both: OpenAI-compatible uses",
+  "，\n                Anthropic 格式填": " , Anthropic format uses",
+  "已在密钥库里（留空=不改）": "already in the key store (empty = keep)",
+  "上下文窗口": "Context window", "这个模型最多能记多少 token": "How many tokens this model can remember",
+  "不知道填多少就看服务商文档；填小了会频繁触发\"压缩上下文\"，填大了没坏处（超了服务端会报错）。":
+    "Check the vendor docs if unsure. Too small triggers compaction often; too large is harmless (the server will error out if exceeded).",
+  "最多回复": "Max reply", "单次回复最多多少 token": "Max tokens per reply",
+  "留 2048~8192 就行": "2048–8192 is fine", "高级": "Advanced",
+  "温度 = 回答的\"随机性\"：0 最稳（每次几乎一样，调试/工具调用建议 0~0.3）；\n                越高越发散（0.7~1.0 适合写东西）。这个助手要调工具、要准，建议 0.2。":
+    "Temperature = randomness: 0 is most stable (debugging/tool calls prefer 0–0.3); higher is more creative (0.7–1.0 suits prose). For an assistant that calls tools, 0.2 is a good default.",
+  "支持工具调用": "Tool calls", "流式输出": "Streaming",
+  "这两个直接用上面**当前填的值**试，不用先保存": "Both use the values currently typed above — no need to save first",
+  "AMD Radeon Cloud 实时负载": "AMD Radeon Cloud live load",
+  "这些是 AMD Radeon Cloud（tokenfactory）各模型当前的并发占用，来自他们页面上\n                \"Live capacity\" 那份公开数据（后端去取，绕开跨域）。":
+    "Current concurrency usage per AMD Radeon Cloud (tokenfactory) model — the same public data as the \"Live capacity\" line on their page (fetched by the backend to bypass CORS).",
+  "只在打开这个页面时才刷新": "refreshed only while this page is open", "，\n                每 15 秒一次。": ", every 15 s.",
+
+  // ============ 设置：技能 / MCP ============
+  "本机技能": "Local skills", "（还没有技能：点「导入…」选一个 SKILL.md，或「新建」）":
+    "(no skills yet: use Import… to pick a SKILL.md, or New)",
+  "打开技能目录": "Open skills folder", "新建": "New",
+  "技能名（会 slug 化；中文也能用）": "Skill name (slugified; CJK works too)",
+  "---\nname: xxx\ndescription: 什么时候用它\n---\n\n正文": "---\nname: xxx\ndescription: when to use it\n---\n\nbody",
+  "技能 = 一份": "A skill is one",
+  "（frontmatter 的 name/description 进系统提示，正文按需读）。\n                点列表里的一项可以读出来编辑；「导入」支持选一个": "(name/description from the frontmatter go into the system prompt, the body is read on demand). Click a list item to edit it; Import accepts a",
+  "或装着它的目录。\n                技能目录：": "or a folder containing it. Skills folder:",
+  "（还没有 MCP 服务：填下面的 ID / 命令 / 参数，点保存）": "(no MCP servers yet: fill in ID / command / args below and save)",
+  "npx / node / 你的 mcp server.exe": "npx / node / your mcp server.exe",
+  "打开配置目录": "Open config folder",
+  "stdio 方式：保存后按「测一测」会真的起进程握手一次（不响应会在 20 秒内报超时）。\n                启用中的服务，工具会以": "stdio transport: \"Test\" really spawns the process and handshakes (times out in 20 s if it stays silent). Enabled servers expose their tools to the agent as",
+  "挂给 agent；\n                配置文件：": " . Config file:",
+
+  // ============ 升级 / 烧录 / 图表 零星文案 ============
+  "固件目录 / manifest.json / 单个 .fw 的地址": "firmware folder / manifest.json / a single .fw URL",
+  "显示当前目录": "show current directory",
+  "等待数据…": "waiting for data…", "设备按": "The device sends",
+  "读取中…": "reading…",
+  "openocd 芯片": "openocd chip", "openocd 开发板": "openocd board",
+  "（没有检测到串口）": "(no serial port found)",
+  "（还没对话，点 ＋）": "(no sessions yet — click ＋)", "（无标题）": "(untitled)",
+  "（还没选对话）": "(no session selected)", " 轮": " turns",
+  "… 还有 ": "… ", " 个对话（点开）": " more sessions (click to show)",
+  "⚠ 没密钥": "⚠ no key", "正在请求…": "requesting…",
+  "该厂商没有余额接口": "this vendor has no balance endpoint",
+  "（余额字段为空）": "(balance fields empty)", "（账号不可用）": " (account unavailable)",
+  "还没有供应商": "no providers yet", "开始逐个测": "testing",
+  "openocd 适配器": "openocd adapter",
+  "openocd：芯片": "openocd: chips", "开发板": "boards", "适配器": "adapters",
+  "J-Link 器件库：没找到 JLinkDevices.xml": "J-Link device DB: JLinkDevices.xml not found",
+  "还没有器件库，点右上角「↻ 刷新」。": "No device DB yet — click ↻ Refresh.",
+  " 行": " lines", " 字": " chars", " 通道 / ": " channels / ", " 点": " points",
+  "接收": "RX", "发送": "TX", "字符": "chars", "日志": "log",
+  "（还没有技能）": "(no skills)",
+  "监听中（等对端接入）": "listening (waiting for peer)", "监听中": "listening",
+
+  // ============ 批量文本 / 计算器：运行时提示 ============
+  "找到 ": "found ", " 处": " matches", "没找到": "not found",
+  "正则写错了：": "bad regex: ", "JSON 解析失败：": "JSON parse failed: ",
+  "JSON 解析失败（第 ": "JSON parse failed (at char ", " 个字符）：": "): ",
+  "先写个正则": "enter a regex first", "已全部替换": "replaced all",
+  "正则批量处理完成（每行单独）": "regex batch done (per line)",
+  "正则批量处理完成（全文）": "regex batch done (whole text)",
+  "出错：": "error: ", "发送中 ": "sending ", "发完了": "done",
+  "结果已搬回输入": "result moved back to the input", "已复制": "copied",
+  "复制失败：": "copy failed: ", "保存批量文本结果": "Save batch text result", "已保存": "saved",
+  "保存失败：": "save failed: ", "重新开始": "cleared", "0x（十六进制输入）": "0x (hex input)",
+  "十进制输入": "decimal input", "负数不能开平方": "cannot take the square root of a negative number",
+  "0 没有倒数": "0 has no reciprocal", "除数不能是 0": "division by zero",
+  "空表达式": "empty expression", "只能算数字和 + - * / % & | ~ << >> ** 这些":
+    "only numbers and + - * / % & | ~ << >> ** are supported",
+  "认不出这个数字：": "unrecognized number: ", "表达式没写完": "incomplete expression",
+  "括号没闭合": "unmatched parenthesis", "这里不该出现 ": "unexpected token ",
+  "取余的除数不能是 0": "modulo by zero", "多余的字符：": "trailing characters: ",
+  "值": "value", "位": "bit", "一字节约": "per byte ~",
+  "计算中…": "computing…", "文件大小": "Size", "算的范围": "Range",
+  "保存技能": "Save skill", "加行号": "Number lines",
+  // 运行时写进去的（词典查表管不到，源码里用 en() 包）
+  "已连接": "Connected", "主题：": "Theme: ", "（点一下切换）": " (click to cycle)",
+  "暗色": "Dark", "亮色": "Light", "跟随系统": "Follow system",
+  "直接发送": "Send now", "（默认）": "(default)", "（无）": "(none)",
+  "（先读版本）": "(read versions first)",
+  "下载文件": "download a file", "端口探测": "probe a port",
+  "粘贴 Key（已保存的会留空）": "paste the key (empty keeps the saved one)",
+  "多行文本批量处理 / 逐行发到串口": "Batch-process multi-line text / send line by line",
+  "表达式计算：进制、位运算、常用换算": "Expression calculator: radix, bitwise, conversions",
+  "用户消息：悬停看前几个字，点一下跳过去": "User messages: hover to preview, click to jump",
+  "https:// 或直接输域名": "https:// or a bare domain",
+  "（agent 打开网页后这里会同步显示；也可以自己填网址打开）":
+    "(pages the agent opens show up here; you can also type a URL yourself)",
+  "在中间点一下节点或连线，这里改参数。": "Click a node or an edge in the middle to edit its parameters here.",
+  "这里只管**开关**（关掉的技能不进口令索引，agent 也看不到）。 路径 / 导入 / 编辑都在":
+    "This page only shows toggles (a disabled skill is not indexed and stays invisible to the agent). Paths, import and editing live in",
+  "： hex/elf 自带地址；bin 要填下面的起始地址（STM32 一般是":
+    ": hex/elf carry their own address; a .bin needs the start address below (usually",
+  "例：^(\\w+)=(\\d+)$": "e.g. ^(\\w+)=(\\d+)$",
+  "例：$1 -> $2": "e.g. $1 -> $2",
+  "思考中…": "thinking…", "思考中": "thinking",
+  "（还没有，点新增）": "(none yet — click Add)", "（没找到显示器）": "(no monitor found)",
+  "还没有对话，点 ＋ 新建": "No sessions yet — click ＋ to create one",
+  "还没有器件库，点右上角「↻ 刷新」。": "No device DB yet — click ↻ Refresh.",
+  "没找到 J-Link 器件库": "J-Link device DB not found",
+  "正在取（这个接口本身要 20 多秒）…": "fetching (this endpoint takes ~20 s)…",
+  "工作区": "Workspace", "界面": "UI tools", "本机": "local",
+  "手动": "manual", "自动找到": "auto-detected",
+  // 关于本软件 / 版本管理
+  "版本": "Version", "作者": "Author", "仓库": "Repository", "协议": "License",
+  "构建": "Build", "当前版本": "Current version", "版本号来源": "Version sources",
+  "变更记录": "Changelog", "发版约定": "Release convention", "固件包版本": "Firmware package version",
+  "关于本软件": "About", "打开 GitHub 仓库": "Open GitHub repo", "作者主页": "Author profile",
+  "更新日志": "Changelog", "更多（版本管理 / 数据目录）…": "More (versioning / data folder)…",
+  "版本管理": "Versioning",
+  "Apache-2.0（见仓库里的 LICENSE / NOTICE）": "Apache-2.0 (see LICENSE / NOTICE in the repo)",
+  "tauri.conf.json · Cargo.toml · package.json（三处保持一致）":
+    "tauri.conf.json · Cargo.toml · package.json (kept in sync)",
+  "CHANGELOG.md（每次发版追加一段）": "CHANGELOG.md (a new section per release)",
+  "打 tag：": "tag it: ",
+  "三段式 PD_HW.PD_SW.PD_FIX（写在 .fw 包头里，与应用版本无关）":
+    "three-segment PD_HW.PD_SW.PD_FIX, stored in the .fw header (unrelated to the app version)",
+  "内存": "Memory", "时间": "Time", "进程": "Processes", "GitHub 仓库": "GitHub repo",
+  "Tauri 2 · Rust + 原生 JS": "Tauri 2 · Rust + vanilla JS",
+  "KDock 以": "KDock is released under",
+  "开源，欢迎 issue / PR。第三方组件与借鉴声明见仓库里的": "— issues and PRs are welcome. Third-party notices live in",
+  "应用版本": "App version", "遵循": " follows ",
+  "语义化版本": "Semantic Versioning",
+  "：不兼容改动升 MAJOR，加功能升 MINOR，修 bug 升 PATCH。 版本号在":
+    ": breaking changes bump MAJOR, features bump MINOR, fixes bump PATCH. The version is kept in sync across",
+  "三处保持一致，每次发版写进": ", and every release is recorded in",
+  "， 并打一个": ", plus a", "的 git tag。": " git tag.",
+  "是另一套：": " is a separate scheme: ",
+  "包头里的三段式版本号（PD_HW.PD_SW.PD_FIX）， 由设备端规则决定是否允许升级/降级，和上面的应用版本无关。":
+    " header (three segments) that the device uses to accept or reject an upgrade — unrelated to the app version.",
+  "未选择固件": "no firmware selected", "升级中…": "upgrading…", "升级完成": "upgrade finished",
+  "读取服务器 ...": "reading server …", "填服务器地址后点【读版本】": "fill in the server address, then click Read version",
+  "开始升级": "start upgrade", "取消升级": "cancel",
+  "设置（Ctrl+, ）": "Settings (Ctrl+, )",
+  "切换主题：暗色 / 亮色 / 跟随系统": "Switch theme: dark / light / system",
+
+  // ============ 命令表：分组 + 说明 + 交互 ============
+  "系统": "System", "网络": "Network", "权限": "Permissions",
+  "填进输入框": "Put into the send box", "已填入：": "filled in: ",
+  "列目录": "list directory", "切换目录": "change directory", "显示当前目录": "show current directory",
+  "打印文件内容": "print file content", "分页查看文件": "page through a file",
+  "看前 n 行": "first n lines", "看后 n 行": "last n lines", "建目录": "create directory",
+  "删除文件/目录": "remove files/dirs", "复制": "copy", "移动 / 改名": "move / rename",
+  "建空文件 / 改时间": "create empty file / touch", "建软链接": "create symlink",
+  "按名字找文件": "find by name", "看类型 / 大小 / 时间": "type / size / mtime",
+  "统计占用": "disk usage of a path", "文件系统占用": "filesystem usage",
+  "递归列目录（需已安装）": "recursive listing (if installed)", "猜文件类型": "guess file type",
+  "回显 / 重定向": "echo / redirect", "搜索文本": "search text", "流编辑": "stream edit",
+  "按列处理": "process columns", "按分隔符取列": "cut by delimiter", "排序": "sort",
+  "去重（配合 sort）": "de-duplicate (after sort)", "统计行/字/字节": "count lines/words/bytes",
+  "字符替换": "translate characters", "比较两个文件": "diff two files", "十六进制查看": "hex view",
+  "内核 / 架构信息": "kernel / arch info", "内存占用": "memory usage", "进程列表": "process list",
+  "进程快照": "process snapshot", "结束进程": "kill a process", "内核日志": "kernel log",
+  "设置环境变量": "set an env var", "等待 1 秒": "wait one second", "命令路径": "command path",
+  "网卡地址": "interface addresses", "网卡信息（旧写法）": "interface info (legacy)",
+  "连通性测试": "reachability test", "连接 / 端口": "connections / ports",
+  "连接 / 端口（新写法）": "connections / ports (modern)", "HTTP 请求": "HTTP request",
+  "改权限": "change mode", "改属主": "change owner", "当前用户 / 组": "current user / groups",
+  "当前用户名": "current user name", "提权执行": "run as root",
 };
 const en = (t) => (LANG === "en" && EN[t]) ? EN[t] : t;
+// 分文件写的小模块（批量文本/计算器）也要能翻译 + 切语言时重画
+const langHooks = [];
+window.kdockT = en;
+window.kdockOnLang = (fn) => { if (typeof fn === "function") langHooks.push(fn); };
 function applyLang(lang) {
   LANG = lang === "en" ? "en" : "zh";
   localStorage.setItem("kdock_lang", LANG);
@@ -5700,10 +6143,23 @@ function applyLang(lang) {
   document.title = "KDock";
   // 下面这些都是"运行时拼出来的"文字，DOM 扫描扫不到它们，切语言要主动重画一次
   window.__langBusy = true;          // 重画时会走到 sqRenderCfg，靠这个标志避免反复进 applyLang
+  // 每步单独兜底：任何一步抛错都不该让"最后那次 DOM 扫描"被跳过
+  // （踩过：以前没有兜底，一处报错 → 那批"运行时才渲染"的文案全留着中文）
+  const safe = (fn, tag) => {
+    try { fn(); } catch (e) {
+      window.__langErr = (window.__langErr || []).concat(tag + ": " + (e && e.message ? e.message : String(e)));
+      if (window.__langErr.length > 20) window.__langErr.shift();
+    }
+  };
   try {
-    outHeadRefresh();
-    outClockTick();
-    sqRender();                      // 画布节点正文 + 右侧配置面板，都是运行时拼的
+    safe(outHeadRefresh, "outHeadRefresh");
+    safe(outClockTick, "outClockTick");
+    safe(sqRender, "sqRender");            // 画布节点正文 + 右侧配置面板，都是运行时拼的
+    safe(buildCmdTable, "buildCmdTable");  // 命令表（说明文字按当前语言重画）
+    safe(agRenderTree, "agRenderTree");    // 工作区/会话树里的固定文案
+    safe(agRenderInfo, "agRenderInfo");    // Agent 信息面板
+    safe(agRefreshBreakdown, "agRefreshBreakdown");
+    for (const fn of langHooks) safe(fn, "hook");
   } finally {
     window.__langBusy = false;
   }
@@ -5735,7 +6191,7 @@ function tbCopyRx() {
 function tbSyncTheme() {
   const cur = document.documentElement.dataset.theme || "dark";
   $("tb-theme-btn").textContent = cur === "light" ? "☀" : cur === "auto" ? "◐" : "☾";
-  $("tb-theme-btn").title = `主题：${TB_THEME_NAME[cur] || cur}（点一下切换）`;
+  $("tb-theme-btn").title = `${en("主题：")}${en(TB_THEME_NAME[cur] || cur)}${en("（点一下切换）")}`;
 }
 function tbSetTheme(m) { applyTheme(m); tbSyncTheme(); toast("主题：" + (TB_THEME_NAME[m] || m)); }
 function tbMenuDefs() {
@@ -6073,7 +6529,7 @@ async function main() {
     $("upg-state").textContent = s.text || "";
     $("upg-state").className = "dot" + (s.running ? "" : s.percent >= 100 ? " ok" : "");
     $("upg-go").disabled = !!s.running;
-    $("upg-go").textContent = s.running ? `升级中 ${Math.round(s.percent || 0)}%` : "升级";
+    $("upg-go").textContent = s.running ? `${en("升级中")} ${Math.round(s.percent || 0)}%` : en("升级");
     upgRunning = !!s.running;
   });
 

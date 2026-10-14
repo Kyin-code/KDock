@@ -70,6 +70,13 @@
               <div class="trow"><label class="chk"><input type="checkbox" id="opt-tray" /> 关闭到托盘</label></div>
               <div class="trow"><label class="chk"><input type="checkbox" id="opt-autostart" /> 开机自启</label></div>
               <div class="trow"><label class="chk"><input type="checkbox" id="opt-reconnect" checked /> 断线自动重连</label></div>
+              <div class="cardtitle">关于本软件</div>
+              <div id="set-about-mini" class="aginfo"></div>
+              <div class="trow">
+                <button id="set-about-github" class="btn small">GitHub 仓库</button>
+                <span class="grow"></span>
+                <button id="set-about-more" class="btn small">更多（版本管理 / 数据目录）…</button>
+              </div>
             </div>
             <div class="setpane" data-setpane="theme" hidden>
               <div class="cardtitle">主题</div>
@@ -179,6 +186,28 @@
                 每 15 秒一次。<span id="amd-load-at" class="hint"></span></p>
             </div>
             <div class="setpane" data-setpane="about" hidden>
+              <div class="cardtitle">关于 KDock</div>
+              <div id="set-about" class="aginfo"></div>
+              <div class="trow">
+                <button id="set-open-github" class="btn small primary">打开 GitHub 仓库</button>
+                <button id="set-open-author" class="btn small">作者主页</button>
+                <button id="set-open-changelog" class="btn small">更新日志</button>
+              </div>
+              <p class="hint">KDock 以 <b>Apache-2.0</b> 开源，欢迎 issue / PR。第三方组件与借鉴声明见仓库里的
+                <code>NOTICE</code>。</p>
+
+              <div class="cardtitle">版本管理</div>
+              <div id="set-versioning" class="aginfo"></div>
+              <p class="hint">
+                <b>应用版本</b>遵循<a href="https://semver.org/lang/zh-CN/" target="_blank" rel="noreferrer">语义化版本</a>
+                <code>MAJOR.MINOR.PATCH</code>：不兼容改动升 MAJOR，加功能升 MINOR，修 bug 升 PATCH。
+                版本号在 <code>src-tauri/tauri.conf.json</code>、<code>src-tauri/Cargo.toml</code>、
+                <code>package.json</code> 三处保持一致，每次发版写进 <code>CHANGELOG.md</code>，
+                并打一个 <code>vX.Y.Z</code> 的 git tag。<br />
+                <b>固件包版本</b>是另一套：<code>.fw</code> 包头里的三段式版本号（PD_HW.PD_SW.PD_FIX），
+                由设备端规则决定是否允许升级/降级，和上面的应用版本无关。
+              </p>
+
               <div class="cardtitle">数据目录</div>
               <p class="hint" id="set-datadir"></p>
               <div class="cardtitle">agent 能用的工具</div>
@@ -878,7 +907,7 @@
           <p class="hint">按标准 JSON 解析后再排版；解析失败会告诉你错在第几个字符。</p>
 
           <div class="cardtitle">正则批量处理</div>
-          <div class="field"><label for="bt-re-pat">正则</label><input id="bt-re-pat" class="dirinput" placeholder="例：^(\\w+)=(\\d+)$" /></div>
+          <div class="field"><label for="bt-re-pat">正则</label><input id="bt-re-pat" class="dirinput" placeholder="例：^(\w+)=(\d+)$" /></div>
           <div class="field"><label for="bt-re-rep">替换为</label><input id="bt-re-rep" class="dirinput" placeholder="例：$1 -> $2" /></div>
           <div class="trow">
             <select id="bt-re-scope" class="tight">
