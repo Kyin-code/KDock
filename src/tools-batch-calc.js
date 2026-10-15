@@ -723,8 +723,9 @@ function calcRenderRadix(v) {
   if (r2) { r2.innerHTML = ""; rows.forEach((r) => r2.appendChild(r)); }
 }
 
-/** 32 位控制板：两行 × 16 位，每 4 位（半字节）一组，高位在上、MSB 在左（跟 Windows
- *  计算器的程序员模式一个读法）；每组底下标位号。点一下就能翻那一位。 */
+/** 32 位控制板：**按半字节分组**（一个半字节 = 一个十六进制位），8 个半字节分两行、MSB 在左，
+ *  读法就是 0xDEAD / 0xBEEF 那样两行四个十六进制位；每一组上面标这一组的十六进制值 + 序号，
+ *  底下标位号。点一下就能翻那一位（组内 4 个位 MSB 在左）。 */
 function calcRenderBits() {
   const box = $id("calc-bits");
   if (!box) return;
@@ -736,6 +737,10 @@ function calcRenderBits() {
       for (let nb = 3; nb >= 0; nb--) {              // 每行 4 个半字节
         const g = half * 4 + nb;
         const cell = el("div", "bitcell");
+        const nib = el("div", "bitnib");
+        nib.dataset.nib = String(g);
+        nib.title = `nibble ${g} · bit ${g * 4 + 3}..${g * 4}`;
+        nib.append(el("span", "d", "0"), el("span", "n", String(g)));
         const grp = el("div", "bitgrp");
         const idxGrp = el("div", "bitidxgrp");
         for (let k = 3; k >= 0; k--) {
@@ -752,7 +757,7 @@ function calcRenderBits() {
           grp.appendChild(b);
           idxGrp.appendChild(el("span", "bi", String(bit)));
         }
-        cell.append(grp, idxGrp);
+        cell.append(nib, grp, idxGrp);
         brow.appendChild(cell);
       }
       grid.appendChild(brow);
@@ -765,6 +770,13 @@ function calcRenderBits() {
     b.textContent = on ? "1" : "0";
     b.classList.toggle("on", !!on);
     b.title = `bit ${bit}（${on ? "1" : "0"}）`;
+  });
+  // 半字节那行小标：把这一组的 4 位读成一个十六进制位（0xABCD 里那个 A）
+  box.querySelectorAll(".bitnib").forEach((x) => {
+    const nb = Number(x.dataset.nib);
+    const d = (v >>> (nb * 4)) & 0xf;
+    x.querySelector(".d").textContent = d.toString(16).toUpperCase();
+    x.classList.toggle("on", d !== 0);
   });
 }
 

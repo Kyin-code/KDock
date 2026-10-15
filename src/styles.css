@@ -208,6 +208,10 @@ body {
 .nav { border-radius: 12px; border: 1px solid hsl(var(--border) / 0.5); background: var(--surface-1); padding: 8px 7px; overflow: auto; }
 .work { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .workpane { flex: 1; display: flex; flex-direction: column; gap: 10px; min-height: 0; min-width: 0; }
+/* 卡片是一张张往下堆的页面（计算器、批量文本、烧录…）：内容比窗口高时要能滚到底。
+   传输页(.shell)和 agent 页自己管滚动（内部各有自己的滚动区/拖动条），别掺和。
+   注意 overflow:auto 必须给到 .workpane 而不是 .work —— .work 是网格项，撑破了会把整页顶出去。 */
+.workpane:not(.shell):not([data-work="agent"]) { overflow: auto; }
 .workpane.shell { gap: 10px; }
 .params {
   border-radius: 12px; border: 1px solid hsl(var(--border) / 0.5); background: var(--surface-1);
@@ -1686,24 +1690,39 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .calchist .r .e { color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .calchist .r .v { color: hsl(var(--primary)); font-weight: 600; }
 
-/* 32 位控制板：两行 × 16 位，每 4 位（半字节）一组、高位在上（MSB 在左），每组底下一行位号 */
-.bitboard { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; }
-.bitgrid { display: flex; flex-direction: column; gap: 10px; }
-.bitrow2 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
-.bitcell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.bitgrp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+/* 32 位控制板：**按半字节分组**（一个半字节 = 一个十六进制位），8 个半字节分两行、MSB 在左 ——
+   读法就是 0xDEAD / 0xBEEF 那种两行四个十六进制位；半字节内部 4 个位，下面标位号。
+   宽度不放 1fr：摊满整行会变成"一个坑一个字"，组之间只留 8px，整排靠左。 */
+.bitboard { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 4px; }
+.bitgrid { display: flex; flex-direction: column; gap: 8px; }
+.bitrow2 { display: flex; flex-wrap: wrap; gap: 8px; }
+/* 每个半字节最宽 118px（4 个位 + 3 个 3px 缝）。基准写 78px 是有意的：
+   flex-wrap 换行是按"基准"分行的，基准给大了（104）窗口一窄就变成 3+1 两行 ——
+   78×4 + 3×8 = 336 在窄窗最小中间栏（420）里也放得下，永远 4 个一行；挤到极限才换行兜底。 */
+.bitcell { flex: 1 1 78px; max-width: 118px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+/* 半字节值（D E A D…）+ 半字节序号（7…0） */
+.bitnib {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  height: 18px; border-radius: 5px; background: var(--surface-3);
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; line-height: 1;
+  color: hsl(var(--muted-foreground));
+}
+.bitnib .d { font-size: 12.5px; }
+.bitnib .n { font-size: 10px; opacity: .75; }
+.bitnib.on { color: hsl(var(--primary)); }
+.bitgrp { display: grid; grid-template-columns: repeat(4, minmax(16px, 1fr)); gap: 2px; }
 .bitboard .bit {
-  height: 34px; padding: 0; cursor: pointer; min-width: 0;
+  height: 28px; padding: 0; cursor: pointer; min-width: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--surface-line); border-radius: 7px;
+  border: 1px solid var(--surface-line); border-radius: 6px;
   background: var(--surface-1); color: hsl(var(--muted-foreground));
-  font-family: Consolas, "Cascadia Mono", monospace; font-size: 15px; font-weight: 600;
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; font-weight: 600;
 }
 .bitboard .bit:hover { border-color: hsl(var(--primary) / 0.6); background: var(--surface-2); }
 .bitboard .bit.on { background: hsl(var(--primary)); border-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
 .bitboard .bit.hot { outline: 2px solid hsl(var(--warning) / 0.45); outline-offset: 1px; }
-.bitidxgrp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
-.bitidxgrp .bi { text-align: center; font-size: 10.5px; color: hsl(var(--muted-foreground)); font-family: Consolas, monospace; }
+.bitidxgrp { display: grid; grid-template-columns: repeat(4, minmax(16px, 1fr)); gap: 2px; }
+.bitidxgrp .bi { text-align: center; font-size: 10px; color: hsl(var(--muted-foreground)); font-family: Consolas, monospace; }
 .bithint { font-size: 11px; color: hsl(var(--muted-foreground)); margin: 6px 0 10px; line-height: 1.5; }
 
 /* 计算器这一页：每个功能块一张卡，别挤在一起 */
