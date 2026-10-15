@@ -7713,7 +7713,10 @@ const EN = {
   // ── 计算器（重排）/ 数据计算 ──
   "程序员计算器：表达式、32 位控制板、历史记录": "Programmer calculator: expressions, 32-bit bit board, history",
   "文件校验 / 哈希、浮点、进制字节序、AES / RSA": "Checksums / hashes, float, radix & byte order, AES / RSA",
-  "数据计算": "Data calcs", "以 16 进制显示": "Show as hex", "以 10 进制显示": "Show as decimal", "以 2 进制显示": "Show as binary",
+  "数据计算": "Data calcs",
+  "位宽": "Width", "算式": "Expression",
+  "点任意一位就能翻它；结果会立刻同步到上面的显示区。": "Click any bit to flip it; the display above updates immediately.",
+  "位宽按你敲进去的数位自动定：如 0036 = 4 位十进制 → 16 位": "Width follows the digits you type: e.g. 0036 = 4 decimal digits → 16 bits", "以 16 进制显示": "Show as hex", "以 10 进制显示": "Show as decimal", "以 2 进制显示": "Show as binary",
   "→ 浮点数": "→ Float", "☆ 标记这个数据": "☆ Mark this value", "历史记录": "History",
   "清未标记": "Clear unmarked", "各进制一览": "All bases", "拖动调整上下比例（双击回到 1/3）": "Drag to resize (double-click resets to 1/3)",
   "点任意一位就能翻它；结果会立刻同步到上面的显示区和右侧历史。": "Click any bit to flip it; the display and the history on the right update immediately.",

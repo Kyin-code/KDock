@@ -1959,8 +1959,8 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .calcpane { gap: 0; }                      /* 上下两块自己拼，缝交给拖动条 */
 .calcview {
   /* 0 0 = 就是硬 1/3：baseline 用 auto 的话下面键区一"自然长高"就把上面挤小了 */
-  flex: 0 0 33.333%; min-height: 100px; display: flex; flex-direction: column; gap: 6px;
-  padding: 10px 12px; border-radius: 12px;
+  flex: 0 0 33.333%; min-height: 116px; display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 12px; border-radius: 12px;
   background: var(--surface-1); border: 1px solid var(--surface-line); overflow: hidden;
 }
 .calcexprrow { display: flex; align-items: center; gap: 6px; }
@@ -1991,7 +1991,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 #calc-split:hover::after { background: hsl(var(--primary)); }
 
-.calcops { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.calcops { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
 .calcctl { flex: 0 0 auto; }
 .calcbody { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; }
 .calcbasebtn.on {
@@ -2036,7 +2036,46 @@ summary.tb-icon::-webkit-details-marker { display: none; }
    32 位控制板拿整宽，4 个一组还是 4 个一组（不然会被挤成 3+1，读起来就断了）。
    用容器查询按"这一栏到底多宽"判，不按窗口 —— 拖左右分栏同样会触发。 */
 .calcpane { container-type: inline-size; container-name: calcpane; }
-@container calcpane (max-width: 660px) {
+@container calcpane (max-width: 420px) {
   .calcbody { flex-direction: column; }
   .calcgrid, .calcprog { flex: 1 1 auto; }
 }
+
+/* ---- 计算器显示区（只显示：过程小字 + 算式小字 + = 大字结果，结果那行能直接打字） ---- */
+.calclog {
+  flex: 0 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 1px;
+  text-align: right; color: hsl(var(--muted-foreground) / 0.75);
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 11.5px;
+}
+.calclog .l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calcexprline {
+  flex: 0 0 auto; text-align: right; min-height: 16px;
+  color: hsl(var(--muted-foreground)); font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.calceq {
+  flex: 0 0 auto; font-family: Consolas, "Cascadia Mono", monospace; font-size: 24px;
+  color: hsl(var(--muted-foreground) / 0.8);
+}
+.calcout {
+  flex: 1 1 auto; min-width: 0; width: 100%; padding: 0; border: none; outline: none;
+  background: transparent; color: hsl(var(--foreground)); text-align: right;
+}
+.calcout:focus { outline: none; box-shadow: inset 0 -1px 0 hsl(var(--primary) / 0.6); }
+.calcout[readonly] { color: hsl(var(--muted-foreground)); }
+
+/* 表达式那一行（挪到下面了）：标签 + 输入 + 插入键 + = */
+.calcexprctl { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.calcexprctl .calcexprin { flex: 1 1 auto; }
+
+/* 左右两块都做成同样的卡片，顶端对齐 */
+.calcpadcard {
+  flex: 1 1 50%; min-width: 0; display: flex; padding: 8px 10px; border-radius: 12px;
+  background: var(--surface-1); border: 1px solid var(--surface-line);
+}
+.calcpadcard > .calcgrid { flex: 1 1 auto; }
+
+/* 位宽之外的半字节压暗 */
+.bitnib.out { opacity: .45; }
+.bitboard .bit.dim { opacity: .32; }
+.bitidxgrp .bi.dim { opacity: .3; }

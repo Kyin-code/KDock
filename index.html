@@ -599,22 +599,28 @@
         <!-- 计算器：上部 1/3 只显示（小字算式 + 大字结果），下部 2/3 = 控制行 + 左键盘 / 右 32 位控制板 -->
         <div class="workpane calcpane" data-work="calc" hidden>
           <div class="calcview" id="calc-view">
-            <div class="calcexprrow">
-              <input id="calc-expr" class="calcexprin" spellcheck="false"
-                placeholder="0x1F &amp; (0x0F &lt;&lt; 2)   ·   1.5e3 * 2   ·   (1&lt;&lt;16)-1   ·   ~0 &amp; 0xFF" />
-              <button class="btn small calc-quick" data-q="0x" title="插入 0x">0x</button>
-              <button class="btn small calc-quick" data-q="0b" title="插入 0b">0b</button>
-              <button id="calc-go" class="btn small primary" title="算一次（回车同效）">=</button>
-            </div>
+            <!-- 上：只显示。历史计算过程（上一步一行小字）+ 这一步的算式 + = 结果；结果那行可以直接键盘输入 -->
+            <div class="calclog" id="calc-log"></div>
+            <div class="calcexprline" id="calc-expr-line"></div>
             <div class="calcbigline">
+              <span class="calceq">=</span>
               <span class="calcbase" id="calc-base">DEC</span>
-              <span id="calc-out" class="calcout">0</span>
+              <input id="calc-out" class="calcout" spellcheck="false" autocomplete="off" />
             </div>
             <div class="calcsubline"><span id="calc-sub" class="lb"></span></div>
           </div>
           <div class="vsplit" id="calc-split" title="拖动调整上下比例（双击回到 1/3）"></div>
 
           <div class="calcops">
+            <!-- 表达式控件挪到下面来了：上面那块只负责"显示过程" -->
+            <div class="calcexprctl">
+              <span class="lb">算式</span>
+              <input id="calc-expr" class="calcexprin" spellcheck="false"
+                placeholder="0x1F &amp; (0x0F &lt;&lt; 2)   ·   1.5e3 * 2   ·   (1&lt;&lt;16)-1   ·   ~0 &amp; 0xFF" />
+              <button class="btn small calc-quick" data-q="0x" title="插入 0x">0x</button>
+              <button class="btn small calc-quick" data-q="0b" title="插入 0b">0b</button>
+              <button id="calc-go" class="btn small primary" title="算一次（回车同效）">=</button>
+            </div>
             <div class="trow calcctl">
               <button id="calc-to-float" class="btn small" title="把当前结果按 IEEE-754 单精度解释一次（再点回到整数显示）">→ 浮点数</button>
               <span class="sep"></span>
@@ -627,15 +633,12 @@
               <span id="calc-pad-hint" class="lb"></span>
             </div>
             <div class="calcbody">
-              <div id="calc-pad" class="calcgrid"></div>
+              <div class="calcpadcard">
+                <div id="calc-pad" class="calcgrid"></div>
+              </div>
               <div class="calcprog">
                 <div class="trow calcprogtop">
-                  <select id="calc-width" class="tight" title="限定位宽：结果会被掩到这么多位">
-                    <option value="0">不限位宽</option>
-                    <option value="8">8 位</option>
-                    <option value="16">16 位</option>
-                    <option value="32">32 位</option>
-                  </select>
+                  <span class="lb" id="calc-width-tag" title="位宽按你敲进去的数位自动定：如 0036 = 4 位十进制 → 16 位"></span>
                   <button id="bit-zero" class="btn small">清零</button>
                   <button id="bit-not" class="btn small">取反 ~</button>
                   <button id="bit-shl" class="btn small" title="左移一位">&lt;&lt; 1</button>

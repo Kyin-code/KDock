@@ -521,6 +521,23 @@ const calcNum = (v) => {
 const u32 = (v) => (Math.trunc(Number(v) || 0) >>> 0);
 const u32hex = (v) => "0x" + u32(v).toString(16).toUpperCase().padStart(8, "0");
 
+/** 位宽：跟着"敲进去的数位"或"这个值本身需要多少位"走，凑成 4 的倍数（8~64）。
+ *  为什么要按数位：允许打 0036 这种前导零，数位本身就是用户想要的宽度。 */
+function calcAutoBits(entryText, v) {
+  const radix = calcBaseRadix();
+  const txt = String(entryText == null ? "" : entryText).replace(/^0[xbo]/i, "").replace(/^-/, "").replace(/[^0-9A-Fa-f]/g, "");
+  let bits;
+  if (txt) bits = Math.ceil((txt.length * Math.log2(radix)) / 4) * 4;
+  else {
+    const n = Math.abs(Math.trunc(Number(v) || 0));
+    bits = Math.max(4, n.toString(2).length);
+    bits = Math.ceil(bits / 4) * 4;
+  }
+  return Math.max(8, Math.min(64, bits));
+}
+/** 当前位宽（每次重画时按"正在敲的字面量/当前值"重算） */
+let calcBits = 32;
+
 function calcEntryValue() {
   const radix = calcBaseRadix();
   if (radix !== 10) {
@@ -537,13 +554,16 @@ function calcRenderBig() {
   if (!out) return;
   const v = calcValue;
   const tag = $id("calc-base");
+  const typing = document.activeElement === out;
   if (calcFloatShow && Number.isFinite(v)) {
-    out.textContent = String(Math.fround(v));
+    if (!typing) out.value = String(Math.fround(v));
     if (tag) tag.textContent = "FLOAT32";
   } else {
-    out.textContent = calcFmt(v);
+    if (!typing) out.value = calcFmt(v);
     if (tag) tag.textContent = calcBase.toUpperCase();
   }
+  const wt = $id("calc-width-tag");
+  if (wt) wt.textContent = T("位宽") + " " + calcBits;
   const sub = $id("calc-sub");
   if (sub) {
     if (!Number.isFinite(v)) sub.textContent = "";
@@ -579,22 +599,19 @@ function calcSetValue(v, writeExpr) {
   if (out) {
     const bad = !Number.isFinite(v) && typeof v !== "string";
     out.classList.toggle("bad", bad);
-    if (bad) out.textContent = typeof v === "string" ? v : calcNum(v);
+    if (bad) out.value = typeof v === "string" ? v : calcNum(v);
   }
+  if (Number.isFinite(v)) calcBits = calcAutoBits(calcFresh ? null : calcEntry, v);
   calcRenderBig();
   if (out && !Number.isFinite(v) && typeof v !== "string") return;   // 出错时别覆盖错误文字
   calcRenderRadix(v);
   calcRenderBits();
   ieeeRenderLive(v);
-  if (writeExpr) {
-    const inp = $id("calc-expr");
-    if (inp && document.activeElement !== inp) inp.value = u32hex(v);
-  }
 }
 
 function calcError(msg) {
   const out = $id("calc-out");
-  if (out) { out.classList.add("bad"); out.textContent = msg; }
+  if (out) { out.classList.add("bad"); out.value = msg; }
 }
 
 function calcRenderPad() {
@@ -676,9 +693,10 @@ function calcPadKey(act) {
       : calcFmt(calcAcc) + " " + ({ "&": "AND", "|": "OR", "^": "XOR", "<<": "<<", ">>": ">>" }[calcOp] || calcOp) + " " + calcFmt(cur);
     calcAcc = null; calcOp = null; calcFresh = true;
     calcEntry = String(v);
-    calcHistPush(label, v);
+    calcLogPush(label, v);
+    calcExprSet(label);
     $id("calc-pad-hint").textContent = calcNum(v);
-    calcSetValue(v, true);
+    calcSetValue(v, false);
   }
 }
 
@@ -699,8 +717,11 @@ function calcFold(a, b, op) {
     case ">>": v = a >> b; break;
     default: v = b;
   }
-  const width = Number($id("calc-width").value) || 0;
-  if (width) v = Math.trunc(v) & (2 ** width - 1);
+  // 位运算按当前位宽收口（算术 + - × ÷ 不动，免得 200*200 被掩成 64）
+  if (["&", "|", "^", "~", "<<", ">>"].includes(op)) {
+    const bits = calcBits || 32;
+    v = Math.trunc(v) & (2 ** bits - 1);
+  }
   return v;
 }
 
@@ -783,6 +804,63 @@ function calcEval(src) {
   return val;
 }
 
+/** 上面那行小字 = 这一步的算式 */
+function calcExprLineSet(text) {
+  const el = $id("calc-expr-line");
+  if (el) el.textContent = text || "";
+}
+/** 写/清表达式（两边一起：下面的输入框 + 上面的过程显示） */
+function calcExprSet(text) {
+  const inp = $id("calc-expr");
+  if (inp) inp.value = text || "";
+  calcExprLineSet(text);
+}
+function calcExprClear() {
+  const inp = $id("calc-expr");
+  if (inp) inp.value = "";
+  calcExprLineSet("");
+}
+
+/** 算完一步：顶部"历史计算过程"加一行（6*8 = 48），顺手记进右侧历史 */
+function calcLogPush(text, v) {
+  calcExprLineSet(text);
+  calcHistPush(text, v);
+  const box = $id("calc-log");
+  if (!box) return;
+  box.appendChild(el("div", "l", text + " = " + calcFmt(v)));
+  while (box.children.length > 8) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+
+/** 大字结果那行可以直接键盘输入：按当前进制收数字，输入即视为"手改数据" → 原算式清空 */
+function calcBindOutInput() {
+  const out = $id("calc-out");
+  if (!out || out.__bound) return;
+  out.__bound = true;
+  const apply = () => {
+    const radix = calcBaseRadix();
+    let t = String(out.value || "").replace(/[\s,]/g, "").replace(/^0[xbo]/i, "").replace(/^-/, "");
+    t = t.replace(radix === 16 ? /[^0-9A-Fa-f]/g : radix === 10 ? /[^0-9]/g : radix === 8 ? /[^0-7]/g : /[^01]/g, "");
+    if (!t) {
+      calcEntry = "0";
+      calcFresh = true;
+      calcExprClear();
+      calcSetValue(0, false);
+      return;
+    }
+    calcEntry = t;
+    calcFresh = false;
+    const n = parseInt(t, radix);
+    calcExprClear();
+    calcSetValue(Number.isFinite(n) ? n : 0, false);
+  };
+  out.addEventListener("input", apply);
+  out.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); out.blur(); }
+  });
+  out.addEventListener("blur", () => { calcFresh = true; calcRenderBig(); });
+}
+
 function calcRun(expr, record) {
   const src = expr !== undefined ? expr : $id("calc-expr").value;
   let v;
@@ -791,9 +869,8 @@ function calcRun(expr, record) {
   } catch (e) {
     return calcError(String(e.message || e));
   }
-  const width = Number($id("calc-width").value) || 0;
-  if (width && Number.isFinite(v)) v = Math.trunc(v) & (2 ** width - 1);
-  if (record !== false) calcHistPush(src, v);
+  if (Number.isFinite(v)) calcBits = calcAutoBits(calcFresh ? null : calcEntry, v);
+  if (record !== false) calcLogPush(src, v);
   calcEntry = String(v);
   calcFresh = true;
   calcSetValue(v, false);
@@ -835,10 +912,11 @@ function calcRenderBits() {
   const v = u32(calcValue);
   if (!box.children.length) {
     const grid = el("div", "bitgrid");
-    for (let half = 1; half >= 0; half--) {          // 上半 = 31..16，下半 = 15..0
+    // 4 行 × 2 个半字节：一行就是一个字节（DE AD / BE EF 这么读），比横着铺 4 个更好认
+    for (let row = 3; row >= 0; row--) {             // row 3 = 最高字节（bit 31..24）
       const brow = el("div", "bitrow2");
-      for (let nb = 3; nb >= 0; nb--) {              // 每行 4 个半字节
-        const g = half * 4 + nb;
+      for (let nb = 1; nb >= 0; nb--) {              // 每行 2 个半字节
+        const g = row * 2 + nb;
         const cell = el("div", "bitcell");
         const nib = el("div", "bitnib");
         nib.dataset.nib = String(g);
@@ -855,7 +933,8 @@ function calcRenderBits() {
             const nv = (u32(calcValue) ^ (1 << bit)) >>> 0;
             calcEntry = String(nv >>> 0);
             calcFresh = true;
-            calcSetValue(nv, true);      // 反馈到计算区
+            calcExprClear();             // 手改了一位 = 原算式不成立了
+            calcSetValue(nv, false);
           };
           grp.appendChild(b);
           idxGrp.appendChild(el("span", "bi", String(bit)));
@@ -880,6 +959,7 @@ function calcRenderBits() {
     const d = (v >>> (nb * 4)) & 0xf;
     x.querySelector(".d").textContent = d.toString(16).toUpperCase();
     x.classList.toggle("on", d !== 0);
+    x.classList.toggle("out", nb * 4 >= calcBits);     // 这一组在位宽之外 → 压暗
   });
 }
 
@@ -892,10 +972,11 @@ function calcBitsOp(kind) {
   else if (kind === "shr") nv = v >>> 1;
   else if (kind === "rol") nv = ((v << 1) | (v >>> 31)) >>> 0;
   else if (kind === "ror") nv = ((v >>> 1) | (v << 31)) >>> 0;
-  else if (kind === "feed") { $id("calc-expr").value = u32hex(v); calcRun(u32hex(v)); return; }
+  else if (kind === "feed") { calcExprSet(u32hex(v)); calcRun(u32hex(v)); return; }
   calcEntry = String(nv);
   calcFresh = true;
-  calcSetValue(nv, true);
+  calcExprClear();                 // 手改过位 = 原算式不成立了，清掉
+  calcSetValue(nv, false);
 }
 
 /* --------------------------- IEEE 754 --------------------------- */
@@ -1416,7 +1497,7 @@ export function initCalc() {
     const n = $id(id);
     if (n) n.onclick = () => calcBitsOp(kind);
   }
-  $id("calc-width").onchange = () => calcRun(box.value, false);
+  calcBindOutInput();
   $id("calc-hist-clear").onclick = () => {                 // 只清没标记的
     calcHist = calcHist.filter((h) => h.marked);
     calcRenderHist();
@@ -1427,7 +1508,7 @@ export function initCalc() {
     calcRenderHist();
   };
   $id("calc-insert").onclick = () => {
-    const v = Number.isFinite(calcValue) ? calcNum(calcValue) : $id("calc-out").textContent;
+    const v = Number.isFinite(calcValue) ? calcNum(calcValue) : $id("calc-out").value;
     const tx = $id("tx");
     if (tx) { tx.value = v; tx.focus(); }
   };
@@ -1460,6 +1541,7 @@ export function initCalc() {
   box.value = "0x1F & 0x0F << 2";
   calcSetBase("dec", true);
   calcRun(box.value, false);
+  calcExprLineSet(box.value);
   calcRenderHist();
   calcRenderBaud();
   calcRenderBits();
