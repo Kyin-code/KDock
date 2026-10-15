@@ -473,12 +473,12 @@ function calcHistTrim() {
 const PAD_KEYS = [
   // 第 1 行：进制显示 + 浮点 —— 单独高亮一排，放最上面
   [["以 16 进制显示", "base:hex", "base hi", 2], ["以 10 进制显示", "base:dec", "base hi", 2], ["以 2 进制显示", "base:bin", "base hi", 2], ["→ 浮点", "float", "base hi"]],
-  [["A", "d:A", "hexd"], ["B", "d:B", "hexd"], ["C", "d:C", "hexd"], ["D", "d:D", "hexd"], ["E", "d:E", "hexd"], ["F", "d:F", "hexd"], ["⌫", "back", ""]],
+  [["A", "d:A", "hexd"], ["B", "d:B", "hexd"], ["C", "d:C", "hexd"], ["D", "d:D", "hexd"], ["E", "d:E", "hexd"], ["F", "d:F", "hexd"], ["←", "back", "", 1, "退格（删一个字符）"]],
   [["<<", "op:<<", "op"], [">>", "op:>>", "op"], ["AND", "op:&", "op"], ["OR", "op:|", "op"], ["XOR", "op:^", "op"], ["NOT", "op:~", "op"], ["AC", "clear", "danger"]],
   [["7", "d:7", ""], ["8", "d:8", ""], ["9", "d:9", ""], ["÷", "op:/", "op"], ["×", "op:*", "op"], ["%", "pct", ""], ["±", "neg", ""]],
   [["4", "d:4", ""], ["5", "d:5", ""], ["6", "d:6", ""], ["−", "op:-", "op"], ["+", "op:+", "op"], ["x²", "sqr", "op"], ["√", "sqrt", ""]],
-  [["1", "d:1", ""], ["2", "d:2", ""], ["3", "d:3", ""], ["=", "eq", "eq"], ["xʸ", "op:**", "op"], ["1/x", "inv", ""], ["MOD", "op:%", "op"]],
-  [["0", "d:0", ""], [".", "dot", ""], ["(", "ins:(", ""], [")", "ins:)", ""], ["字节交换", "bits:bswap", "base"], ["位反转", "bits:bitrev", "base"], ["CE", "ce", ""]],
+  [["1", "d:1", ""], ["2", "d:2", ""], ["3", "d:3", ""], ["xʸ", "op:**", "op"], ["1/x", "inv", ""], ["☆ 标记", "mark", "base hi", 2]],
+  [["0", "d:0", ""], [".", "dot", ""], ["(", "ins:(", ""], [")", "ins:)", ""], ["字节交换", "bits:bswap", "base"], ["MOD", "op:%", "op"], ["CE", "ce", ""]],
   [["清零", "bits:zero", "bit"], ["取反", "bits:not", "bit"], ["<< 1", "bits:shl", "bit"], [">> 1", "bits:shr", "bit"], ["↺ 1", "bits:rol", "bit"], ["↻ 1", "bits:ror", "bit"], ["全反", "bits:not32", "bit"]],
 ];
 
@@ -627,10 +627,11 @@ function calcRenderPad() {
   if (!box) return;
   box.innerHTML = "";
   for (const row of PAD_KEYS) {
-    for (const [label, act, cls, span] of row) {
+    for (const [label, act, cls, span, tip] of row) {
       const b = el("button", cls || "", label);
       b.type = "button";
       b.dataset.act = act;
+      if (tip) b.title = T(tip);
       if (span) b.style.gridColumn = "span " + span;
       b.onclick = () => calcPadKey(act);
       box.appendChild(b);
@@ -648,6 +649,7 @@ function calcRenderPad() {
 function calcPadKey(act) {
   const [kind, arg] = act.split(":");
   if (kind === "bits") { calcBitsOp(arg); return; }
+  if (kind === "mark") { $id("calc-pad-hint").textContent = calcMarkCurrent(); return; }
   if (kind === "base") { calcSetBase(arg); return; }
   if (kind === "float") {
     calcFloatShow = !calcFloatShow;
@@ -1001,8 +1003,8 @@ function calcRenderBits() {
         const cell = el("div", "bitcell");
         const nib = el("div", "bitnib");
         nib.dataset.nib = String(g);
-        nib.title = `nibble ${g} · bit ${g * 4 + 3}..${g * 4}`;
-        nib.append(el("span", "d", "0"), el("span", "n", String(g)));
+        nib.title = `bit ${g * 4 + 3}..${g * 4}`;
+        nib.append(el("span", "d", "0"));   // 只显示这个半字节的值，位号下面已经有了，不用再标一遍
         const grp = el("div", "bitgrp");
         const idxGrp = el("div", "bitidxgrp");
         for (let k = 3; k >= 0; k--) {
@@ -1562,7 +1564,8 @@ export function initCalc() {
     };
   }
   // ☆ 标记这个数据：右侧历史高亮 + 写进本机（没标记的不写盘）
-  $id("calc-mark").onclick = () => { $id("calc-pad-hint").textContent = calcMarkCurrent(); };
+  const markBtn = $id("calc-mark");                 // 老位置（已搬进键盘），有就还绑
+  if (markBtn) markBtn.onclick = () => { $id("calc-pad-hint").textContent = calcMarkCurrent(); };
   // 上下比例（默认 1/3，拖动改、双击复位）
   (function bindCalcSplit() {
     const view = $id("calc-view"), grip = $id("calc-split");
