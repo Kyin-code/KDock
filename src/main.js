@@ -1248,7 +1248,7 @@ async function kbSync(force) {
     }
     kbEmptyText();
     const mgmt = kbNorm($("kb-url") && $("kb-url").value ? $("kb-url").value : kbGet(KB_MGMT_KEY));
-    const chat = kbNorm(kbGet(KB_CHAT_KEY));
+    const chat = kbNorm($("kb-chat-url") && $("kb-chat-url").value ? $("kb-chat-url").value : kbGet(KB_CHAT_KEY));
     await kbPlace("mgmt", "kb-host", mgmt, "kb-empty", force);
     await kbPlace("chat", "kb-chat-host", chat, "kb-chat-empty", force);
     if (force) kbEmptyText();
@@ -1265,7 +1265,9 @@ function kbSyncSoon() {
 function bindKb() {
   if (!$("kb-url")) return;
   const urlIn = $("kb-url");
+  const chatIn = $("kb-chat-url");
   urlIn.value = kbGet(KB_MGMT_KEY);
+  if (chatIn) chatIn.value = kbGet(KB_CHAT_KEY);
   kbEmptyText();
 
   const open = async () => {
@@ -1275,10 +1277,34 @@ function bindKb() {
     await kbSync(true);
     kbEmptyText();
   };
+  const openChat = async () => {
+    const u = kbNorm(chatIn && chatIn.value);
+    if (!u) { toast(en("先填「对话页面」地址：已经在设置 → 知识库里等你")); openSettings("kb"); return; }
+    kbLastPlace.chat = "";
+    await kbSync(true);
+    kbEmptyText();
+  };
   $("kb-open").onclick = () => open().catch((e) => toast(String(e)));
   urlIn.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); $("kb-open").click(); }
   });
+  if (chatIn) {
+    chatIn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); openChat().catch(() => {}); }
+    });
+  }
+  const saveKey = (key, input, name) => {
+    const u = kbNorm(input.value);
+    if (!u) { toast(en("先填个地址")); return; }
+    localStorage.setItem(key, u);
+    input.value = u;
+    if ($("set-kb-mgmt") && key === KB_MGMT_KEY) $("set-kb-mgmt").value = u;
+    if ($("set-kb-chat") && key === KB_CHAT_KEY) $("set-kb-chat").value = u;
+    toast(`${en(name)} ${en("地址已存为默认")}`);
+  };
+  // 每一块有自己的地址与自己的默认值（管理页 / 对话页各一份）
+  if ($("kb-save")) $("kb-save").onclick = () => saveKey(KB_MGMT_KEY, urlIn, "管理页面");
+  if ($("kb-chat-save")) $("kb-chat-save").onclick = () => saveKey(KB_CHAT_KEY, chatIn, "对话页面");
   $("kb-reload").onclick = () => {
     if (!kbLastPlace.mgmt) { toast(en("还没打开过")); return; }
     invoke("kb_reload", { kind: "mgmt" }).catch((e) => toast(String(e)));
@@ -1298,11 +1324,7 @@ function bindKb() {
       else openSettings("kb");
     };
   }
-  $("kb-chat-open").onclick = () => {
-    if (!kbNorm(kbGet(KB_CHAT_KEY))) { toast(en("先填「对话页面」地址：已经在设置 → 知识库里等你")); openSettings("kb"); return; }
-    kbLastPlace = {};
-    kbSync(true).then(kbEmptyText).catch(() => {});
-  };
+  $("kb-chat-open").onclick = () => openChat().catch((e) => toast(String(e)));
   $("kb-chat-reload").onclick = () => {
     if (!kbLastPlace.chat) { toast(en("还没打开过")); return; }
     invoke("kb_reload", { kind: "chat" }).catch((e) => toast(String(e)));
@@ -8657,6 +8679,60 @@ const EN = {
   "浮点 ↔ 位，含符号/阶码/尾数拆解": "float ↔ bits, with sign/exponent/mantissa breakdown",
   "任意进制互转、有符号/无符号、大小端翻转":
     "any radix, signed/unsigned and endianness flipping",
+
+  // ============ 知识库：两块各自的地址栏 ============
+  "存为默认": "Save as default", "↻ 重新加载": "↻ Reload",
+  "把这个地址存成「管理页面」默认（设置 → 知识库）": "Save this as the admin-page default (Settings → Knowledge base)",
+  "把这个地址存成「对话页面」默认（设置 → 知识库）": "Save this as the chat-page default (Settings → Knowledge base)",
+  "地址已存为默认": "saved as default",
+
+  // ============ 数据计算：新一批标签/按钮 ============
+  "文件校验 / 哈希": "Checksums / hashes", "算法": "Algorithms", "范围": "Range",
+  "核对": "Verify", "长度 0 = 算到文件末尾": "length 0 = to end of file",
+  "选中的结果填进计算器": "Send the selected result to the calculator",
+  "文件": "File", "计算": "Compute", "算完了": "done", "对得上": "matches", "先点「计算」": "press Compute first",
+  "先粘一个期望值": "paste an expected value first",
+  "六项都对不上 —— 文件或范围可能不对": "none of them match — wrong file or range?",
+  "→ 计算器": "→ Calculator", "已填进计算器": "sent to the calculator",
+  "这一项没法当数算": "this one is not a number", "点一行复制": "click a row to copy", "点一下复制": "click to copy",
+  "JSON 整理": "JSON tidy", "缩进": "Indent", "不缩进": "no indent", "空格": "spaces",
+  "输入": "Input", "结果": "Result", "格式化": "Format", "压缩": "Minify", "只校验": "Validate only",
+  "键排序": "Sort keys", "转义": "Escape", "反转义": "Unescape", "复制结果": "Copy result",
+  "结果搬回输入": "Result → input", "已转义（可直接塞进代码）": "escaped (ready to paste into code)",
+  "反转义完成": "unescaped", "✅ JSON 合法": "✅ valid JSON", "格式化完成": "formatted", "压缩完成": "minified",
+  "行": "lines", "字符": "chars", "先粘点 JSON": "paste some JSON first", "结果还是空的": "the result is still empty",
+  "第": "line", "行第": "col", "列": "",
+  "按行整理了 ": "formatted ", " 份 JSON（结果栏直接给的排版结果）": " JSON documents line by line (the result pane shows it directly)",
+  "JSON 已排版（结果栏直接给的是排版后的内容，不过行处理那条流水线）":
+    "JSON formatted — the result pane shows it directly, bypassing the line pipeline",
+  "浮点 ↔ 数值": "Float ↔ value", "宽度": "Width", "浮点（十进制）": "Float (decimal)", "位（HEX）": "Bits (HEX)",
+  "明细": "Details", "复制": "Copy", "用计算器当前值": "Use the calculator value",
+  "已取计算器当前值": "took the calculator value: ",
+  "位侧支持 0x / 0b / 十进制整数；宽度 32/64 会同时给出两种精度":
+    "the bits side accepts 0x / 0b / decimal integers; both precisions are always shown",
+  "-（负数）": "−(negative)", "+（正数）": "+(positive)",
+  "AES 加解密": "AES", "模式": "Mode", "密钥": "Key", "格式": "Format", "输出": "Output",
+  "自动": "auto", "都要": "both", "随机": "Random", "加密": "Encrypt", "解密": "Decrypt",
+  "GCM：IV 12 字节，密文自带 16 字节认证标签": "GCM: 12-byte IV, ciphertext carries a 16-byte auth tag",
+  "CBC：IV 16 字节，密文长度是 16 的整数倍": "CBC: 16-byte IV, ciphertext is a multiple of 16 bytes",
+  "CTR：IV 16 字节，密文长度是 16 的整数倍": "CTR: 16-byte IV, ciphertext is a multiple of 16 bytes",
+  "文本哈希 / HMAC": "Text hashes / HMAC", "文本": "Text", "HMAC 密钥": "HMAC key",
+  "留空就只算普通哈希（填了会多算一行 HMAC-SHA256）":
+    "leave empty for plain hashes (a key adds an HMAC-SHA256 row)",
+  "生成": "Generate", "生成密钥对": "Generate key pair", "清空": "Clear", "验签原文": "Signed text",
+  "生成的私钥只在你本机内存/框里，自己存好": "the private key stays in this box on your machine — keep it safe",
+  "密钥对已生成（框里放的是私钥；公钥在下面，复制给对方）":
+    "key pair generated (the box holds the private key; copy the public key below to the other side)",
+  "公钥": "Public key", "私钥": "Private key", "正在生成…": "generating…", "生成完成": "generated",
+  "算的范围": "Range", "先填密钥": "fill in the key first", "先填内容": "fill in the content first",
+  "hex 得是偶数个字符": "hex needs an even number of digits",
+  "先把 PEM 密钥粘进来（或选文件）": "paste the PEM key first (or pick a file)",
+  "这把钥匙认不出来（要 SPKI/PKCS#8 的 PEM 或 DER）":
+    "cannot read this key (needs an SPKI/PKCS#8 PEM or DER)",
+  "解密失败：密钥 / IV / 密文对不上，或者数据被改过":
+    "decryption failed: wrong key / IV / ciphertext, or the data was modified",
+  "这不是个数：": "not a number: ", "位": "bits", "字节": "bytes", "要": "needs",
+  "长度不对": "bad length", "先填": "fill in the ", "用计算器当前值": "Use the calculator value",
   "RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent":
     "The standard LAN port on RIGOL DS1000Z series scopes (TCP 5555, SCPI text). Once connected the agent",
   "工具干同样的事。": "can do the same things with the same tools.",

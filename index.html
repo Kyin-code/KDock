@@ -672,45 +672,147 @@
             <button id="dc-collapse-all" class="btn small">全部折叠</button>
           </div>
 
+          <!-- ① 文件校验 / 哈希：算法可选、结果可核对、可送进计算器 -->
           <details class="calccard dcsection" data-dcsec="hash">
             <summary class="dcsum">
-              <span class="dcttl">文件校验（CRC16 / CRC32 / MD5 / SHA-1 / SHA-256）</span>
+              <span class="dcttl">文件校验 / 哈希</span>
               <span class="grow"></span>
-              <button id="calc-file-pick" class="btn small">选文件…</button>
+              <span class="dchint">CRC16 / CRC32 / MD5 / SHA-1 / SHA-256</span>
             </summary>
             <div class="dcbody">
-              <div class="field"><label>文件</label><span id="calc-file-name" class="lb ell" title="">（还没选）</span></div>
-              <div class="trow">
-                <label class="chk ell">偏移 <input type="number" id="calc-file-off" class="num" value="0" min="0" /> </label>
-                <label class="chk ell">长度 <input type="number" id="calc-file-len" class="num" value="0" min="0" /></label>
-                <button id="calc-file-go" class="btn small primary">计算</button>
-                <label class="chk"><input type="checkbox" id="calc-file-into" checked /> CRC32 填进计算器</label>
+              <div class="dcrow">
+                <label class="dclb">文件</label>
+                <div class="dcctl">
+                  <input id="calc-file-path" class="dirinput grow mono" spellcheck="false"
+                    placeholder="文件路径（直接粘也行，或者点右边「选文件…」）" />
+                  <button id="calc-file-pick" class="btn small">选文件…</button>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">范围</label>
+                <div class="dcctl">
+                  <span class="lb">偏移</span><input type="number" id="calc-file-off" class="num" value="0" min="0" />
+                  <span class="lb">长度</span><input type="number" id="calc-file-len" class="num" value="0" min="0" />
+                  <span class="hint">长度 0 = 算到文件末尾</span>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">算法</label>
+                <div class="dcctl"><div class="dcchips" id="dc-algs"></div></div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb"></label>
+                <div class="dcctl">
+                  <button id="calc-file-go" class="btn small primary">计算</button>
+                  <label class="chk"><input type="checkbox" id="calc-file-into" /> 选中的结果填进计算器</label>
+                  <span class="grow"></span>
+                  <span id="calc-file-hint" class="lb"></span>
+                </div>
               </div>
               <div id="calc-file-out" class="aginfo"></div>
-              <p class="hint">长度填 0 = 从偏移算到文件末尾。固件查分段有没有被改过时很好用。</p>
+              <div class="dcrow">
+                <label class="dclb">核对</label>
+                <div class="dcctl">
+                  <input id="dc-verify" class="dirinput grow" placeholder="粘一个期望值，我告诉你它跟哪一项对得上（不分大小写、空格无所谓）" />
+                  <button id="dc-verify-go" class="btn small">核对</button>
+                </div>
+              </div>
             </div>
           </details>
 
-          <details class="calccard dcsection" data-dcsec="ieee">
+          <!-- ② JSON 整理 -->
+          <details class="calccard dcsection" data-dcsec="json">
             <summary class="dcsum">
-              <span class="dcttl">IEEE 754 浮点</span>
+              <span class="dcttl">JSON 整理</span>
               <span class="grow"></span>
-              <span class="dchint">浮点 ↔ 位，含符号/阶码/尾数拆解</span>
+              <span class="dchint">格式化 / 压缩 / 校验 / 排序键 / 转义</span>
             </summary>
             <div class="dcbody">
-              <div class="trow">
-                <select id="ieee-mode" class="tight">
-                  <option value="f2b">浮点 → 位</option>
-                  <option value="b2f">位 → 浮点</option>
-                </select>
-                <input id="ieee-in" class="dirinput" placeholder="3.14 或 0x4048F5C3" />
-                <button id="ieee-go" class="btn small primary">转换</button>
-                <button id="ieee-use-calc" class="btn small" title="拿计算器当前的值来转">用计算器当前值</button>
+              <div class="dcrow">
+                <label class="dclb">缩进</label>
+                <div class="dcctl"><div class="dcchips" id="dc-json-indent" data-val="2"></div></div>
               </div>
-              <div id="ieee-out" class="aginfo"></div>
+              <div class="dcrow">
+                <label class="dclb">输入</label>
+                <div class="dcctl">
+                  <textarea id="dc-json-in" class="dcpem grow" spellcheck="false"
+                    placeholder='{"b":1,"a":[1,2,{"c":true}]}  或  \"{\\\"a\\\":1}\"（转义过的也行）'></textarea>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb"></label>
+                <div class="dcctl">
+                  <button id="dc-json-fmt" class="btn small primary">格式化</button>
+                  <button id="dc-json-min" class="btn small">压缩</button>
+                  <button id="dc-json-check" class="btn small">只校验</button>
+                  <label class="chk"><input type="checkbox" id="dc-json-sort" /> 键排序</label>
+                  <span class="grow"></span>
+                  <button id="dc-json-un" class="btn small" title="把 \n 之类的转义还原成真内容">反转义</button>
+                  <button id="dc-json-esc" class="btn small" title="转成一行一字符串（便于塞进代码 / 配置）">转义</button>
+                  <span id="dc-json-hint" class="lb"></span>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">结果</label>
+                <div class="dcctl">
+                  <textarea id="dc-json-out" class="dcpem grow" spellcheck="false" readonly></textarea>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb"></label>
+                <div class="dcctl">
+                  <button id="dc-json-copy" class="btn small">复制结果</button>
+                  <button id="dc-json-toin" class="btn small">结果搬回输入</button>
+                </div>
+              </div>
             </div>
           </details>
 
+          <!-- ③ 浮点 ↔ 数值（照翻译页面那种"左右两个框互转"，不做模式选择） -->
+          <details class="calccard dcsection" data-dcsec="float">
+            <summary class="dcsum">
+              <span class="dcttl">浮点 ↔ 数值</span>
+              <span class="grow"></span>
+              <span class="dchint">左右随便在哪边输入，另一边实时跟着变</span>
+            </summary>
+            <div class="dcbody">
+              <div class="dcrow">
+                <label class="dclb">宽度</label>
+                <div class="dcctl"><div class="dcchips" id="fl-width" data-val="32"></div></div>
+              </div>
+              <div class="dcpair">
+                <div class="dcpane">
+                  <div class="dcpane-head"><span>浮点（十进制）</span><button class="btn tiny dccopy" data-copy="fl-float">复制</button></div>
+                  <input id="fl-float" class="dirinput mono" spellcheck="false" placeholder="3.14 · -0.5 · 1e-3 · nan" />
+                </div>
+                <div class="dcarrow">⇄</div>
+                <div class="dcpane">
+                  <div class="dcpane-head"><span>位（HEX）</span><button class="btn tiny dccopy" data-copy="fl-bits">复制</button></div>
+                  <input id="fl-bits" class="dirinput mono" spellcheck="false" placeholder="0x4048F5C3" />
+                </div>
+              </div>
+              <div class="dcpair">
+                <div class="dcpane">
+                  <div class="dcpane-head"><span>BIN</span><button class="btn tiny dccopy" data-copy="fl-bin">复制</button></div>
+                  <input id="fl-bin" class="dirinput mono" spellcheck="false" readonly />
+                </div>
+                <div class="dcarrow"></div>
+                <div class="dcpane">
+                  <div class="dcpane-head"><span>明细</span></div>
+                  <div id="fl-out" class="aginfo dcinfo"></div>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb"></label>
+                <div class="dcctl">
+                  <button id="fl-use-calc" class="btn small" title="把计算器当前的值拿过来">用计算器当前值</button>
+                  <span class="hint">位侧支持 0x / 0b / 十进制整数；宽度 32/64 会同时给出两种精度</span>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <!-- ④ 进制 / 字节序 -->
           <details class="calccard dcsection" data-dcsec="radix">
             <summary class="dcsum">
               <span class="dcttl">进制 / 字节序</span>
@@ -718,79 +820,152 @@
               <span class="dchint">任意进制互转、有符号/无符号、大小端翻转</span>
             </summary>
             <div class="dcbody">
-              <div class="trow">
-                <input id="dc-num" class="dirinput" placeholder="随便哪种进制：0x1F · 0b1010 · 0o17 · 1234 或 1,234" />
-                <select id="dc-bits" class="tight" title="按多少位解释（影响有符号/无符号与翻转）">
-                  <option value="8">8 位</option>
-                  <option value="16">16 位</option>
-                  <option value="32" selected>32 位</option>
-                  <option value="64">64 位</option>
-                </select>
-                <button id="dc-go" class="btn small primary">换算</button>
+              <div class="dcrow">
+                <label class="dclb">数值</label>
+                <div class="dcctl">
+                  <input id="dc-num" class="dirinput grow mono" placeholder="0x1F · 0b1010 · 0o17 · 1234 · 1,234" />
+                  <div class="dcchips" id="dc-bits" data-val="32"></div>
+                  <button id="dc-go" class="btn small primary">换算</button>
+                </div>
               </div>
-              <div id="dc-out" class="aginfo"></div>
+              <div id="dc-out" class="aginfo dcinfo"></div>
             </div>
           </details>
 
+          <!-- ⑤ AES 加解密 -->
           <details class="calccard dcsection" data-dcsec="aes">
             <summary class="dcsum">
-              <span class="dcttl">AES 加解密（WebCrypto）</span>
+              <span class="dcttl">AES 加解密</span>
               <span class="grow"></span>
-              <select id="aes-mode" class="tight"><option value="GCM">AES-GCM</option><option value="CBC">AES-CBC</option></select>
-              <select id="aes-bits" class="tight"><option value="256">256 位</option><option value="128">128 位</option></select>
+              <span class="dchint">CBC / CTR / GCM · 128 / 192 / 256 · 本地 WebCrypto</span>
             </summary>
             <div class="dcbody">
-              <div class="trow">
-                <span class="lb ell">密钥</span>
-                <input id="aes-key" class="dirinput" placeholder="hex（32 / 64 个十六进制字符）或 base64" />
-                <button id="aes-key-gen" class="btn small" title="随机生成一个密钥">随机</button>
+              <div class="dcrow">
+                <label class="dclb">模式</label>
+                <div class="dcctl">
+                  <div class="dcchips" id="aes-mode" data-val="GCM"></div>
+                  <div class="dcchips" id="aes-bits" data-val="256"></div>
+                  <span class="grow"></span>
+                  <span id="aes-ivhint" class="hint"></span>
+                </div>
               </div>
-              <div class="trow">
-                <span class="lb ell">IV</span>
-                <input id="aes-iv" class="dirinput" placeholder="GCM 12 字节 / CBC 16 字节，hex 或 base64" />
-                <button id="aes-iv-gen" class="btn small" title="随机生成 IV">随机</button>
+              <div class="dcrow">
+                <label class="dclb">密钥</label>
+                <div class="dcctl">
+                  <input id="aes-key" class="dirinput grow mono" placeholder="HEX 或 Base64（长度跟位数对上）" />
+                  <button id="aes-key-gen" class="btn small">随机</button>
+                </div>
               </div>
-              <div class="trow">
-                <input id="aes-in" class="dirinput" placeholder="要加密的明文，或要解密的 base64 密文" />
+              <div class="dcrow">
+                <label class="dclb">IV</label>
+                <div class="dcctl">
+                  <input id="aes-iv" class="dirinput grow mono" placeholder="CBC 16 字节 / CTR 16 字节 / GCM 12 字节（HEX 或 Base64）" />
+                  <button id="aes-iv-gen" class="btn small">随机</button>
+                </div>
               </div>
-              <div class="trow">
-                <button id="aes-enc" class="btn small primary">加密 → base64</button>
-                <button id="aes-dec" class="btn small">base64 解密</button>
-                <span class="grow"></span>
-                <span id="aes-hint" class="lb"></span>
+              <div class="dcrow">
+                <label class="dclb">输入</label>
+                <div class="dcctl">
+                  <textarea id="aes-in" class="dcpem grow" spellcheck="false" placeholder="要加密的明文；解密时粘密文（按下面选的格式解析）"></textarea>
+                </div>
               </div>
-              <div id="aes-out" class="aginfo"></div>
+              <div class="dcrow">
+                <label class="dclb">格式</label>
+                <div class="dcctl">
+                  <span class="lb">输入</span><div class="dcchips" id="aes-infmt" data-val="auto"></div>
+                  <span class="lb">输出</span><div class="dcchips" id="aes-outfmt" data-val="both"></div>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb"></label>
+                <div class="dcctl">
+                  <button id="aes-enc" class="btn small primary">加密</button>
+                  <button id="aes-dec" class="btn small">解密</button>
+                  <span class="grow"></span>
+                  <span id="aes-hint" class="lb"></span>
+                </div>
+              </div>
+              <div id="aes-out" class="aginfo dcinfo"></div>
             </div>
           </details>
 
-          <details class="calccard dcsection" data-dcsec="rsa">
+          <!-- ⑥ 哈希 / HMAC -->
+          <details class="calccard dcsection" data-dcsec="hmac">
             <summary class="dcsum">
-              <span class="dcttl">RSA（RSA-OAEP-SHA256 / RSASSA-PKCS1-SHA256）</span>
+              <span class="dcttl">文本哈希 / HMAC</span>
               <span class="grow"></span>
-              <select id="rsa-keykind" class="tight"><option value="pub">用公钥</option><option value="prv">用私钥</option></select>
+              <span class="dchint">SHA-1 / SHA-256 / SHA-384 / SHA-512 / HMAC-SHA256</span>
             </summary>
             <div class="dcbody">
-              <div class="trow">
-                <span class="lb ell">密钥</span>
-                <input id="rsa-key-file" class="dirinput" placeholder="PEM/BER 文件路径，或直接粘在下面" />
-                <button id="rsa-key-pick" class="btn small">选文件…</button>
+              <div class="dcrow">
+                <label class="dclb">文本</label>
+                <div class="dcctl"><textarea id="hm-in" class="dcpem" rows="3" spellcheck="false" placeholder="要算哈希的文本（UTF-8）"></textarea></div>
               </div>
-              <textarea id="rsa-key" class="dcpem" spellcheck="false" placeholder="-----BEGIN PUBLIC KEY-----&#10;…&#10;-----END PUBLIC KEY-----"></textarea>
-              <div class="trow">
-                <input id="rsa-in" class="dirinput" placeholder="明文 / base64 密文 / 待签名文本 / base64 签名" />
+              <div class="dcrow">
+                <label class="dclb">HMAC 密钥</label>
+                <div class="dcctl">
+                  <input id="hm-key" class="dirinput grow" placeholder="留空就只算普通哈希（填了会多算一行 HMAC-SHA256）" />
+                  <button id="hm-go" class="btn small primary">计算</button>
+                </div>
               </div>
-              <div class="trow">
-                <input id="rsa-msg" class="dirinput" placeholder="验签用的原文（只验签时填）" />
+              <div id="hm-out" class="aginfo dcinfo"></div>
+            </div>
+          </details>
+
+          <!-- ⑦ RSA -->
+          <details class="calccard dcsection" data-dcsec="rsa">
+            <summary class="dcsum">
+              <span class="dcttl">RSA</span>
+              <span class="grow"></span>
+              <span class="dchint">OAEP-SHA256 加解密 · PKCS#1-SHA256 签名验签 · 可生成密钥对</span>
+            </summary>
+            <div class="dcbody">
+              <div class="dcrow">
+                <label class="dclb">密钥</label>
+                <div class="dcctl">
+                  <input id="rsa-key-file" class="dirinput grow" placeholder="PEM/DER 文件路径，或直接粘在下面" />
+                  <button id="rsa-key-pick" class="btn small">选文件…</button>
+                  <button id="rsa-key-clear" class="btn small">清空</button>
+                </div>
               </div>
-              <div class="trow">
-                <button id="rsa-enc" class="btn small primary">公钥加密</button>
-                <button id="rsa-dec" class="btn small">私钥解密</button>
-                <button id="rsa-sign" class="btn small">私钥签名</button>
-                <button id="rsa-verify" class="btn small">公钥验签</button>
-                <span class="grow"></span>
-                <span id="rsa-hint" class="lb"></span>
+              <div class="dcrow">
+                <label class="dclb"></label>
+                <div class="dcctl">
+                  <textarea id="rsa-key" class="dcpem" spellcheck="false" placeholder="-----BEGIN PUBLIC KEY-----&#10;…&#10;-----END PUBLIC KEY-----"></textarea>
+                </div>
               </div>
-              <div id="rsa-out" class="aginfo"></div>
+              <div class="dcrow">
+                <label class="dclb">生成</label>
+                <div class="dcctl">
+                  <div class="dcchips" id="rsa-genbits" data-val="2048"></div>
+                  <button id="rsa-gen" class="btn small">生成密钥对</button>
+                  <span class="hint">生成的私钥只在你本机内存/框里，自己存好</span>
+                  <span class="grow"></span>
+                  <span id="rsa-keyinfo" class="lb"></span>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">输入</label>
+                <div class="dcctl">
+                  <textarea id="rsa-in" class="dcpem" rows="2" spellcheck="false" placeholder="加密：明文；解密：base64 密文；签名：待签文本；验签：base64 签名"></textarea>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">验签原文</label>
+                <div class="dcctl"><input id="rsa-msg" class="dirinput grow" placeholder="只验签时填" /></div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb"></label>
+                <div class="dcctl">
+                  <button id="rsa-enc" class="btn small primary">公钥加密</button>
+                  <button id="rsa-dec" class="btn small">私钥解密</button>
+                  <button id="rsa-sign" class="btn small">私钥签名</button>
+                  <button id="rsa-verify" class="btn small">公钥验签</button>
+                  <span class="grow"></span>
+                  <span id="rsa-hint" class="lb"></span>
+                </div>
+              </div>
+              <div id="rsa-out" class="aginfo dcinfo"></div>
             </div>
           </details>
         </div>
@@ -798,12 +973,16 @@
         <!-- 知识库：中间那块贴"管理页面"（内置浏览器 = WebView2 子视图），右栏贴"对话页面"。
              两个地址都在 设置 → 知识库 里填；没填时点页面中间就会跳到设置。-->
         <div class="workpane kbpane" data-work="kb" hidden>
-          <div class="trow">
-            <span class="lb">知识库</span>
-            <input id="kb-url" class="dirinput grow" placeholder="管理页面地址（留空 = 用设置里配的那个）" />
-            <button id="kb-open" class="btn small primary">打开</button>
-            <button id="kb-reload" class="btn small" title="重新加载">↻</button>
+          <!-- 地址栏独占一行（宽度整行给输入框），按钮另起一行 -->
+          <div class="trow kbaddrrow">
+            <span class="lb kblb">管理页面</span>
+            <input id="kb-url" class="dirinput grow" placeholder="https://…（知识库后台 / 数据集管理页）" />
+          </div>
+          <div class="trow kbaddrbtns">
+            <button id="kb-open" class="btn primary">打开</button>
+            <button id="kb-reload" class="btn small" title="重新加载">↻ 重新加载</button>
             <button id="kb-external" class="btn small" title="用系统浏览器打开（登录 / 下载这类它更顺手）">↗ 系统浏览器</button>
+            <button id="kb-save" class="btn small" title="把这个地址存成「管理页面」默认（设置 → 知识库）">存为默认</button>
             <span class="grow"></span>
             <span id="kb-state" class="lb"></span>
           </div>
@@ -1362,11 +1541,15 @@
 
         <!-- 知识库参数：右栏 = 对话页面（也是内置浏览器） -->
         <div class="parampane kbpane" data-param="kb" hidden>
-          <div class="trow">
-            <span class="lb">对话</span>
-            <span class="grow"></span>
+          <div class="trow kbaddrrow">
+            <span class="lb kblb">对话页面</span>
+            <input id="kb-chat-url" class="dirinput grow" placeholder="https://…（问答 / 聊天页）" />
+          </div>
+          <div class="trow kbaddrbtns">
             <button id="kb-chat-open" class="btn small primary">打开</button>
             <button id="kb-chat-reload" class="btn small" title="重新加载">↻</button>
+            <span class="grow"></span>
+            <button id="kb-chat-save" class="btn small" title="把这个地址存成「对话页面」默认（设置 → 知识库）">存为默认</button>
           </div>
           <div id="kb-chat-host" class="kbhost grow">
             <div class="placeholder kbempty" id="kb-chat-empty"></div>

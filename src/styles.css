@@ -552,6 +552,14 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
 .parampane.kbpane { flex: 1 1 auto; min-height: 0; }
 /* 右栏本身是"按内容高度滚动"的容器，普通 flex:1 在这里长不起来 —— 直接按视口算一个稳的高 */
 .parampane.kbpane #kb-chat-host { flex: 1 1 auto; height: max(160px, calc(100vh - 300px)); }
+/* 地址栏：一行只放"标签 + 输入框"（宽度全给输入框），按钮另起一行；
+   整行高度按 1.5 倍放大，好点也好认。 */
+.kbaddrrow { padding: 8px 0 10px; gap: 10px; }
+.kbaddrrow .kblb { flex: 0 0 auto; font-size: 14px; }
+.kbaddrrow .dirinput { height: 46px; font-size: 15px; padding: 0 14px; border-radius: 11px; }
+.kbaddrbtns { gap: 8px; padding-bottom: 2px; }
+.kbaddrbtns .btn { height: 32px; }
+.kbaddrbtns .btn.primary { padding: 0 16px; }
 .kbhost {
   position: relative; min-height: 160px;
   border-radius: 12px; border: 1px solid var(--surface-line); background: var(--surface-1);
@@ -2055,6 +2063,57 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 
 /* 数据计算页：PEM 文本框 + 结果行可点复制 */
 .dctools { flex: 0 0 auto; }
+
+/* 数据计算：统一的行式布局 —— 左边一列固定宽度的标签（右对齐），右边控件从同一条线开始，
+   这样每一块看起来都是对齐的（以前有的用 <label>、有的用 .lb、有的塞在 .field 里，左边界参差不齐）。 */
+.dcrow {
+  display: grid; grid-template-columns: 5.6rem minmax(0, 1fr);
+  align-items: start; gap: 10px;
+}
+.dcrow > .dclb {
+  text-align: right; font-size: 12.5px; color: hsl(var(--muted-foreground));
+  white-space: nowrap; padding-top: 8px;
+}
+.dcrow > .dcctl { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.dcrow > .dcctl > .dirinput.grow, .dcrow > .dcctl > textarea { flex: 1 1 auto; min-width: 0; }
+.dcflex1 { flex: 1 1 auto; min-width: 0; }
+.dcpem.grow { flex: 1 1 auto; }
+.dcinfo .row { cursor: default; }
+.dcinfo .row:hover { background: var(--surface-2); }
+
+/* 小选择器（chips）：比复选框/下拉紧凑、也更清楚"现在选的是哪个" */
+.dcchips { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.dcchips button {
+  height: 26px; padding: 0 10px; cursor: pointer; font-size: 12px;
+  border: 1px solid hsl(var(--border) / 0.75); border-radius: 999px;
+  background: var(--surface-2); color: hsl(var(--muted-foreground));
+}
+.dcchips button:hover { border-color: hsl(var(--primary) / 0.6); color: hsl(var(--foreground)); }
+.dcchips button.on {
+  background: hsl(var(--primary) / 0.16); border-color: hsl(var(--primary) / 0.7);
+  color: hsl(var(--primary)); font-weight: 600;
+}
+
+/* "翻译页"那种左右两个框：改哪边都行，另一边实时跟着变 */
+.dcpair { display: flex; align-items: stretch; gap: 10px; }
+.dcpane {
+  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 10px 10px; border-radius: 10px;
+  border: 1px solid var(--surface-line); background: var(--surface-0);
+}
+.dcpane-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11.5px; color: hsl(var(--muted-foreground));
+}
+.dcpane-head > span { flex: 1 1 auto; }
+.dcpane .dirinput { height: 40px; font-size: 15px; }
+.dcpane .mono { font-family: Consolas, "Cascadia Mono", monospace; }
+.dcarrow {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+  width: 1.6rem; color: hsl(var(--muted-foreground)); font-size: 16px;
+}
+.dcpane .dcinfo { margin: 0; }
+.btn.tiny { height: 22px; padding: 0 8px; font-size: 11px; border-radius: 6px; }
 
 /* 数据计算：每块 = 标题 + 可折叠主体（原生 <details>，标题一行，展开才占地方） */
 .dcsection { padding: 0; overflow: hidden; margin-bottom: 8px; }

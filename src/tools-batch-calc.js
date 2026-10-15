@@ -225,22 +225,54 @@ function btReplaceAll() {
 /* ==================== 批量文本：JSON / 正则 / 缩进 ==================== */
 
 function btJsonFormat(min) {
+  let produced = "";
+  let linesDone = 0;
+  let failed = false;
   btApply((text) => {
     const trimmed = text.trim();
     if (!trimmed) return text;
+    const indent0 = Number($id("bt-json-indent").value) || 2;
     try {
       const v = JSON.parse(trimmed);
-      if (min) return JSON.stringify(v);
-      const n = Number($id("bt-json-indent").value) || 2;
-      return JSON.stringify(v, null, n);
+      produced = min ? JSON.stringify(v) : JSON.stringify(v, null, indent0);
+      return produced;
     } catch (e) {
-      // 不是合法 JSON：退一步按花括号重排，好歹能看
+      // 整段不是一份 JSON：可能是"每行一份 JSON"（日志/多文档），一行一行试
+      const rows = trimmed.split(/\r?\n/).filter((l) => l.trim());
+      if (rows.length > 1) {
+        const ok = [];
+        let allOk = true;
+        for (const row of rows) {
+          try {
+            const v = JSON.parse(row.trim());
+            ok.push(min ? JSON.stringify(v) : JSON.stringify(v, null, indent0));
+          } catch (_) { allOk = false; break; }
+        }
+        if (allOk && ok.length) {
+          linesDone = ok.length;
+          produced = ok.join("\n");
+          return produced;
+        }
+      }
+      // 真不是合法 JSON：退一步按花括号重排，好歹能看（并且明说"只是排版，没校验通过"）
       const m = /position (\d+)/.exec(String(e.message || ""));
+      failed = true;
       if (m) btMsg(T("JSON 解析失败（第 ") + (Number(m[1]) + 1) + T(" 个字符）：") + e.message, true);
       else btMsg(T("JSON 解析失败：") + String(e.message || e).slice(0, 80), true);
-      return min ? text.replace(/\s*\n\s*/g, "") : btFormatBrace(text);
+      produced = min ? text.replace(/\s*\n\s*/g, "") : btFormatBrace(text);
+      return produced;
     }
   });
+  // 结果栏直接给排版结果：那一栏是按"行流水线"重算的（默认会去掉首尾空格），
+  // 走一遍就会把 JSON 的缩进全吃掉 —— 这里绕开它。
+  if (produced) {
+    const out = $id("bt-out");
+    if (out) out.value = produced;
+    if (!failed) {
+      if (linesDone) btMsg(T("按行整理了 ") + linesDone + T(" 份 JSON（结果栏直接给的排版结果）"));
+      else btMsg(T("JSON 已排版（结果栏直接给的是排版后的内容，不过行处理那条流水线）"));
+    }
+  }
 }
 
 /** 花括号/C 风格自动缩进：尊重字符串、行注释、块注释，for(...) 里的分号不换行 */
@@ -1104,102 +1136,150 @@ function calcBitsOp(kind) {
   calcBitChanged(prev, u32(nv));
 }
 
-/* --------------------------- IEEE 754 --------------------------- */
+/* --------------------- 浮点 ↔ 数值（左右互转） ---------------------
+   照"翻译页面"那种做法：两个框并排摆着，在哪边输入都行，另一边实时跟着变 ——
+   不让人先选"我要哪个方向"，也没有模式下拉/复选框。
+   位侧认 0x / 0b 前缀，也认纯十进制整数；宽度 32/64 决定这串位怎么解释。 */
 
-const ieee32 = (() => {
-  const b = new ArrayBuffer(4);
-  return { view: new DataView(b), buf: new Uint8Array(b) };
-})();
-const ieee64 = (() => {
-  const b = new ArrayBuffer(8);
-  return { view: new DataView(b), buf: new Uint8Array(b) };
-})();
+const fd32 = new DataView(new ArrayBuffer(4));
+const fd64 = new DataView(new ArrayBuffer(8));
+let flBusy = false;               // 防止两边 input 事件互相触发打成死循环
 
-const hex8 = (bytes, n) => [...bytes].map((x) => x.toString(16).toUpperCase().padStart(2, "0")).join("").slice(0, n * 2);
-let ieeeManual = false;         // 用户手动转过 IEEE 面板：同一个值就别被"实时"覆盖
-let ieeeManualValue = null;
+const flHex = (buf) => [...new Uint8Array(buf)].map((x) => x.toString(16).toUpperCase().padStart(2, "0")).join("");
 
-function ieeeRows(label, v, bitsHex, width) {
-  const rows = [];
+/** 浮点侧输入 → 计算位、写回位侧/BIN/明细 */
+function flFromFloat() {
+  const inp = $id("fl-float"), bitsIn = $id("fl-bits"), binIn = $id("fl-bin"), out = $id("fl-out");
+  if (!inp || !out) return;
+  const raw = String(inp.value || "").trim();
+  out.textContent = "";
+  if (!raw) { if (bitsIn) bitsIn.value = ""; if (binIn) binIn.value = ""; return; }
+  const low = raw.toLowerCase();
+  const v = low === "nan" ? NaN
+    : low === "inf" || low === "+inf" ? Infinity
+    : low === "-inf" ? -Infinity
+    : Number(raw.replace(/[,\s]/g, ""));
+  if (!(Number.isFinite(v) || Number.isNaN(v))) {
+    out.appendChild(el("div", "sub", T("这不是个数：") + raw));
+    return;
+  }
+  const f32 = Math.fround(v);
+  fd32.setFloat32(0, f32, false);
+  fd64.setFloat64(0, v, false);
+  const h32 = flHex(fd32.buffer), h64 = flHex(fd64.buffer);
+  const width = Number(($id("fl-width") || {}).dataset ? $id("fl-width").dataset.val : 32) || 32;
+  const h = width === 64 ? h64 : h32;
+  if (bitsIn && document.activeElement !== bitsIn) bitsIn.value = "0x" + h;
+  if (binIn) {
+    const bits = bigFromHex(h).toString(2).padStart(width, "0");
+    binIn.value = bits.replace(/(.{8})(?=.)/g, "$1 ");
+  }
+  flDetail(v, h32, h64);
+}
+
+/** 位侧输入 → 反推浮点，写回浮点侧 */
+function flFromBits() {
+  const inp = $id("fl-bits"), flIn = $id("fl-float"), binIn = $id("fl-bin"), out = $id("fl-out");
+  if (!inp || !out) return;
+  const raw = String(inp.value || "").trim().replace(/[\s_]/g, "");
+  out.textContent = "";
+  if (!raw) { if (flIn && document.activeElement !== flIn) flIn.value = ""; if (binIn) binIn.value = ""; return; }
+  try {
+    let hex, width;
+    if (/^0b[01]+$/i.test(raw)) {
+      const bits = raw.slice(2);
+      width = bits.length > 32 ? 64 : 32;
+      hex = bigFromBin(bits).toString(16).toUpperCase().padStart(width / 4, "0");
+    } else if (/^0x[0-9a-f]+$/i.test(raw)) {
+      const t = raw.slice(2);
+      width = t.length > 8 ? 64 : 32;
+      hex = t.toUpperCase().padStart(width / 4, "0");
+    } else if (/^[0-9a-f]+$/i.test(raw) && raw.length === 8 || raw.length === 16) {
+      width = raw.length === 16 ? 64 : 32;
+      hex = raw.toUpperCase().padStart(width / 4, "0");
+    } else {
+      // 纯十进制整数：按它自己的位宽（≤32 用 32，否则 64）
+      const n = dcParse(raw, 10);
+      width = (n < 0n ? -n : n) > 0xffffffffn ? 64 : 32;
+      hex = (n < 0n ? n + (1n << BigInt(width)) : n).toString(16).toUpperCase().padStart(width / 4, "0");
+    }
+    const bytes = new Uint8Array(width / 8);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    const dv = new DataView(bytes.buffer);
+    const v = width === 32 ? dv.getFloat32(0, false) : dv.getFloat64(0, false);
+    if (flIn && document.activeElement !== flIn) flIn.value = String(v);
+    if (binIn) binIn.value = bigFromHex(hex).toString(2).padStart(width, "0").replace(/(.{8})(?=.)/g, "$1 ");
+    fd32.setFloat32(0, Math.fround(v), false);
+    fd64.setFloat64(0, v, false);
+    flDetail(v, flHex(fd32.buffer), flHex(fd64.buffer));
+  } catch (e) {
+    out.appendChild(el("div", "sub", String(e.message || e)));
+  }
+}
+
+/** 下半边那块明细：两种精度都给，附符号/阶码/尾数 */
+function flDetail(v, h32, h64) {
+  const out = $id("fl-out");
+  if (!out) return;
+  out.textContent = "";
   const push = (k, val, cls) => {
     const r = el("div", "row");
     r.append(el("span", "k", k), el("span", "v" + (cls ? " " + cls : ""), val));
-    rows.push(r);
+    out.appendChild(r);
+    return r;
   };
-  push(label + " HEX", bitsHex);
-  push(T("十进制"), String(v));
-  push(T("科学计数"), Number.isFinite(v) ? v.toExponential(7) : String(v));
-  if (width === 32) {
-    // 注意：阶码/尾数是**按位**切的，不是按字节 —— 符号 1 位、阶码 8 位、尾数 23 位
-    const raw = parseInt(bitsHex, 16) >>> 0;
-    const sign = (raw >>> 31) & 1;
-    const exp = (raw >>> 23) & 0xff;
-    const mant = raw & 0x7fffff;
-    push(T("符号"), T(sign ? "-1（负数）" : "+1（正数）"));
-    push(T("阶码"), `${exp} - 127 = ${exp - 127} (0x${exp.toString(16).toUpperCase().padStart(2, "0")})`);
-    push(T("尾数"), "0x" + mant.toString(16).toUpperCase().padStart(6, "0"));
-    // 32 位二进制按字节隔开，肉眼好对
-    push(T("二进制"), bitsHex.match(/../g).map((h) => parseInt(h, 16).toString(2).padStart(8, "0")).join(" "));
-  }
-  return rows;
+  const row32 = push("float32", `0x${h32}  ·  ${Math.fround(v)}`, "calc-file-row");
+  row32.title = T("点一下复制");
+  const raw = parseInt(h32, 16) >>> 0;
+  const sign = (raw >>> 31) & 1, exp = (raw >>> 23) & 0xff, mant = raw & 0x7fffff;
+  push(T("符号"), sign ? T("-（负数）") : T("+（正数）"));
+  push(T("阶码"), `${exp} − 127 = ${exp - 127}  (0x${exp.toString(16).toUpperCase().padStart(2, "0")})`);
+  push(T("尾数"), "0x" + mant.toString(16).toUpperCase().padStart(6, "0"));
+  const row64 = push("float64", `0x${h64}  ·  ${v}`, "calc-file-row");
+  row64.title = T("点一下复制");
+  push(T("科学计数"), Number.isFinite(v) ? v.toExponential(9) : String(v));
 }
 
-function ieeeRenderRows(rows, boxId) {
-  const box = $id(boxId);
-  if (!box) return;
-  box.innerHTML = "";
-  rows.forEach((r) => box.appendChild(r));
-}
+/** 十六进制串 → BigInt（不经过 Number，64 位也不丢精度） */
+function bigFromHex(h) { return BigInt("0x" + (h || "0")); }
+function bigFromBin(b) { return BigInt("0b" + (b || "0")); }
 
+// 计算器里那个值也在实时喂过来（在计算器页按数字，这边跟着变）
 function ieeeRenderLive(v) {
-  // 结果区一变，顺手把"当前值的 float32 位"显示出来（不用按转换）
-  const box = $id("ieee-out");
-  if (!box || !Number.isFinite(v)) return;
-  if (ieeeManual && v === ieeeManualValue) return;   // 刚手动转过这个值，别覆盖
-  ieeeManual = false;
-  const f = Math.fround(v);
-  ieee32.view.setFloat32(0, f, false);
-  const cur = hex8(ieee32.buf, 4);
-  ieeeRenderRows(ieeeRows("float32", f, cur, 32), "ieee-out");
+  const pane = document.querySelector('[data-work="datacalc"]');
+  if (!pane || pane.hidden) return;
+  const flIn = $id("fl-float"), bitsIn = $id("fl-bits");
+  if (!flIn || !Number.isFinite(v)) return;
+  if (document.activeElement === flIn || document.activeElement === bitsIn) return;
+  flIn.value = String(v);
+  flFromFloat();
 }
 
-function ieeeConvert() {
-  const mode = $id("ieee-mode").value;
-  const raw = ($id("ieee-in").value || "").trim();
-  if (!raw) return;
-  ieeeManual = true;
-  ieeeManualValue = calcValue;
-  try {
-    if (mode === "f2b") {
-      const v = Number(raw.startsWith("0x") ? parseInt(raw, 16) : raw);
-      if (!Number.isFinite(v)) throw new Error("这不是个数：" + raw);
-      const f = Math.fround(v);
-      ieee32.view.setFloat32(0, f, false);
-      ieee64.view.setFloat64(0, v, false);
-      const rows = [
-        ...ieeeRows("float32（单精度）", f, hex8(ieee32.buf, 4), 32),
-        ...ieeeRows("float64（双精度）", v, hex8(ieee64.buf, 8), 64),
-      ];
-      ieeeRenderRows(rows, "ieee-out");
-    } else {
-      const hex = raw.replace(/^0x/i, "").replace(/\s+/g, "").toUpperCase();
-      if (!/^[0-9A-F]{8}$|^[0-9A-F]{16}$/.test(hex)) throw new Error("位模式下要填 8 位（float32）或 16 位（float64）十六进制");
-      const width = hex.length * 4;
-      const bytes = new Uint8Array(width / 8);
-      for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-      const view = new DataView(bytes.buffer);
-      const v = width === 32 ? view.getFloat32(0, false) : view.getFloat64(0, false);
-      ieeeRenderRows(ieeeRows(`float${width}`, v, hex, width), "ieee-out");
-      calcSetValue(v, true);
-    }
-  } catch (e) {
-    ieeeRenderRows([el("div", "sub", String(e.message || e))], "ieee-out");
-  }
+/** 位侧/浮点侧互相喂的时候会各自触发 input，用 flBusy 掐掉回环 */
+function flBindBoth() {
+  const a = $id("fl-float"), b = $id("fl-bits");
+  const guard = (fn) => () => {
+    if (flBusy) return;
+    flBusy = true;
+    try { fn(); } finally { flBusy = false; }
+  };
+  if (a) a.addEventListener("input", guard(flFromFloat));
+  if (b) b.addEventListener("input", guard(flFromBits));
 }
 
-/* ------------------------- 文件校验（右栏） ------------------------- */
+/* ------------------------- 文件校验 / 哈希 ------------------------- */
 
 let calcFile = "";
+/** 能算的校验算法：key 与后端 file_digest 的字段同名，label 是显示名 */
+const DC_ALGS = [
+  ["crc32", "CRC32"],
+  ["crc16ccitt", "CRC16/CCITT"],
+  ["crc16modbus", "CRC16/MODBUS"],
+  ["md5", "MD5"],
+  ["sha1", "SHA1"],
+  ["sha256", "SHA256"],
+];
+let dcFileRes = null;          // 最近一次算出来的结果（核对用）
 
 function digestRow(k, v, mono) {
   const r = el("div", "row");
@@ -1207,9 +1287,58 @@ function digestRow(k, v, mono) {
   return r;
 }
 
-async function calcFileGo() {
+/** 算完了往结果区写：只写选中的那几项 */
+function dcFileRender(r, mark) {
   const box = $id("calc-file-out");
   if (!box) return;
+  box.innerHTML = "";
+  const picked = dcChipVal("dc-algs", true);
+  const head = el("div", "row");
+  head.append(el("span", "k", T("文件")), el("span", "v", `${r.path.split(/[\\/]/).pop()} · ${Number(r.size).toLocaleString()} ${T("字节")} · ${T("范围")} ${r.offset}+${r.length}`));
+  head.title = r.path;
+  box.appendChild(head);
+  for (const [key, label] of DC_ALGS) {
+    if (picked.length && !picked.includes(key)) continue;
+    const val = String(r[key] == null ? "" : r[key]);
+    const row = digestRow(label, val, true);
+    if (mark) {
+      const hit = mark.has(normHash(val));
+      row.classList.add(hit ? "dchit" : "dcmiss");
+      const flag = el("span", "flag", hit ? "✓" : "✗");
+      row.appendChild(flag);
+    }
+    box.appendChild(row);
+  }
+  const line = el("div", "trow");
+  const copyAll = el("button", "btn small", T("复制全部"));
+  const toCalc = el("button", "btn small", T("→ 计算器"));
+  line.append(copyAll, toCalc);
+  box.appendChild(line);
+  copyAll.onclick = async () => {
+    const text = [...box.querySelectorAll(".row")].map((x) => x.textContent.replace(/[✓✗]$/, "")).join("\n");
+    try { await navigator.clipboard.writeText(text); toastMini(T("已复制")); } catch (_) { toastMini(T("复制失败")); }
+  };
+  toCalc.onclick = () => {
+    // 能当数看的（CRC32 / CRC16）才能进计算器
+    const key = (picked.length ? picked : ["crc32"]).find((k) => k === "crc32" || k.startsWith("crc16")) || "crc32";
+    const raw = String(r[key] == null ? "" : r[key]).replace(/[^0-9a-fA-Fx]/g, "");
+    if (!raw) { toastMini(T("这一项没法当数算")); return; }
+    calcExprSet(/^0x/i.test(raw) ? raw : "0x" + raw);
+    calcRun(/^0x/i.test(raw) ? raw : "0x" + raw);
+    toastMini(T("已填进计算器") + "：" + key);
+  };
+}
+
+/** 归一化：小写、去掉 0x / 空格 / 冒号 / 横线，方便"粘一个值来核对" */
+const normHash = (s) => String(s || "").toLowerCase().replace(/0x/g, "").replace(/[\s:\-]/g, "");
+
+async function calcFileGo() {
+  const box = $id("calc-file-out");
+  const hint = $id("calc-file-hint");
+  if (!box) return;
+  // 路径可以直接粘（也可以点「选文件…」）
+  const typed = ($id("calc-file-path") || {}).value;
+  if (typed != null && String(typed).trim()) calcFile = String(typed).trim();
   if (!calcFile) { box.innerHTML = ""; return; }
   box.innerHTML = "";
   box.appendChild(el("div", "sub", T("计算中…")));
@@ -1219,38 +1348,134 @@ async function calcFileGo() {
       offset: Number($id("calc-file-off").value) || 0,
       length: Number($id("calc-file-len").value) || 0,
     });
+    dcFileRes = r;
     if (!box) return;
-    box.innerHTML = "";
-    box.append(
-      digestRow(T("文件大小"), `${Number(r.size).toLocaleString()} ${T("字节")}`),
-      digestRow(T("算的范围"), `${r.offset} + ${r.length}`),
-      digestRow("CRC32", r.crc32),
-      digestRow("CRC16/CCITT", r.crc16Ccitt),
-      digestRow("CRC16/MODBUS", r.crc16Modbus),
-      digestRow("MD5", r.md5, true),
-      digestRow("SHA1", r.sha1, true),
-      digestRow("SHA256", r.sha256, true),
-    );
-    const copy = el("button", "btn small", "复制全部");
-    const line = el("div", "trow");
-    line.appendChild(copy);
-    copy.onclick = async () => {
-      const text = [
-        `文件: ${r.path}`, `大小: ${r.size}`, `范围: ${r.offset}+${r.length}`,
-        `CRC32: ${r.crc32}`, `CRC16/CCITT: ${r.crc16Ccitt}`, `CRC16/MODBUS: ${r.crc16Modbus}`,
-        `MD5: ${r.md5}`, `SHA1: ${r.sha1}`, `SHA256: ${r.sha256}`,
-      ].join("\n");
-      try { await navigator.clipboard.writeText(text); copy.textContent = "已复制"; }
-      catch (_) { copy.textContent = "复制失败"; }
-    };
-    box.appendChild(line);
+    dcFileRender(r, dcVerifyMark());
+    if (hint) hint.textContent = T("算完了") + " · " + new Date().toLocaleTimeString();
     if ($id("calc-file-into").checked) {
-      const v = Number(r.crc32Int) >>> 0;
-      $id("calc-expr").value = u32hex(v);
-      calcRun(u32hex(v));
+      const picked = dcChipVal("dc-algs", true);
+      const key = (picked.length ? picked : ["crc32"]).find((k) => k === "crc32" || k.startsWith("crc16")) || "crc32";
+      const raw = String(r[key] == null ? "" : r[key]).replace(/[^0-9a-fA-Fx]/g, "");
+      if (raw) { const x = /^0x/i.test(raw) ? raw : "0x" + raw; calcExprSet(x); calcRun(x); }
     }
   } catch (e) {
     if (box) { box.innerHTML = ""; box.appendChild(el("div", "sub", String(e))); }
+    if (hint) hint.textContent = "";
+  }
+}
+
+/** 核对框里粘了个值 → 返回"匹配上的那些值的集合"（没填就 null） */
+function dcVerifyMark() {
+  const inp = $id("dc-verify");
+  const want = normHash(inp && inp.value);
+  if (!want) return null;
+  const set = new Set();
+  for (const [key] of DC_ALGS) {
+    if (dcFileRes && normHash(dcFileRes[key]) === want) set.add(want);
+  }
+  return set;
+}
+
+function dcVerifyGo() {
+  if (!dcFileRes) { toastMini(T("先点「计算」")); return; }
+  const mark = dcVerifyMark();
+  if (!mark) { toastMini(T("先粘一个期望值")); return; }
+  dcFileRender(dcFileRes, mark);
+  const names = DC_ALGS.filter(([k]) => normHash(dcFileRes[k]) === normHash($id("dc-verify").value)).map(([, l]) => l);
+  toastMini(names.length ? `${T("对得上")}：${names.join(" / ")}` : T("六项都对不上 —— 文件或范围可能不对"));
+}
+
+/* --------------------------- JSON 整理 --------------------------- */
+
+/** 键排序（递归） */
+function dcSortKeys(v) {
+  if (Array.isArray(v)) return v.map(dcSortKeys);
+  if (v && typeof v === "object") {
+    const out = {};
+    for (const k of Object.keys(v).sort()) out[k] = dcSortKeys(v[k]);
+    return out;
+  }
+  return v;
+}
+
+/** JSON 报错里那句 "at position 12 (line 3 column 4)" → 顺手把出错那一行也带出来 */
+function dcJsonErrMsg(e, src) {
+  const msg = String((e && e.message) || e);
+  const m = /position (\d+)/.exec(msg);
+  if (!m) return msg;
+  const pos = Number(m[1]);
+  const upto = src.slice(0, pos);
+  const line = upto.split(/\r?\n/).length;
+  const col = pos - upto.lastIndexOf("\n");
+  const bad = src.split(/\r?\n/)[line - 1] || "";
+  return `${msg}\n${T("第")} ${line} ${T("行第")} ${col} ${T("列")}${bad ? "：" + bad.trim().slice(0, 80) : ""}`;
+}
+
+function dcJson(mode) {
+  const inp = $id("dc-json-in"), out = $id("dc-json-out"), hint = $id("dc-json-hint");
+  if (!inp || !out) return;
+  let src = String(inp.value || "");
+  if (!src.trim()) { out.value = ""; if (hint) hint.textContent = T("先粘点 JSON"); return; }
+  try {
+    if (mode === "un") {                       // 反转义：把 \n \" \uXXXX 还原
+      let t = src.trim();
+      if (!/^["']/.test(t)) t = '"' + t.replace(/"/g, '\\"') + '"';
+      out.value = JSON.parse(t);
+      if (hint) hint.textContent = T("反转义完成");
+      return;
+    }
+    if (mode === "esc") {                      // 转义：整段变成一个字符串字面量
+      out.value = JSON.stringify(src.trim());
+      if (hint) hint.textContent = T("已转义（可直接塞进代码）");
+      return;
+    }
+    // 从代码里粘出来的往往整段是"字符串形式的 JSON"，先试着剥一层
+    let text = src.trim();
+    if (/^["']/.test(text) && text.includes("\\")) {
+      try { const unwrapped = JSON.parse(text); if (typeof unwrapped === "string") text = unwrapped; } catch (_) {}
+    }
+    let data = JSON.parse(text);
+    if ($id("dc-json-sort") && $id("dc-json-sort").checked) data = dcSortKeys(data);
+    if (mode === "check") {
+      out.value = "";
+      if (hint) hint.textContent = T("✅ JSON 合法");
+      return;
+    }
+    const indent = Number(($id("dc-json-indent") || {}).dataset ? $id("dc-json-indent").dataset.val : 2) || 0;
+    out.value = mode === "min" ? JSON.stringify(data) : JSON.stringify(data, null, indent);
+    if (hint) {
+      const n = out.value.split(/\r?\n/).length;
+      hint.textContent = (mode === "min" ? T("压缩完成") : T("格式化完成")) + ` · ${n} ${T("行")} · ${out.value.length} ${T("字符")}`;
+    }
+  } catch (e) {
+    out.value = "";
+    if (hint) hint.textContent = dcJsonErrMsg(e, src);
+  }
+}
+
+/* --------------------------- 文本哈希 / HMAC --------------------------- */
+
+async function dcHashGo() {
+  const out = $id("hm-out");
+  if (!out) return;
+  out.innerHTML = "";
+  const text = String(($id("hm-in") || {}).value || "");
+  const key = String(($id("hm-key") || {}).value || "");
+  const data = new TextEncoder().encode(text);
+  try {
+    for (const alg of ["SHA-1", "SHA-256", "SHA-384", "SHA-512"]) {
+      const buf = await crypto.subtle.digest(alg, data);
+      const hex = dcBytesHex(new Uint8Array(buf));
+      out.appendChild(digestRow(alg, hex, true));
+    }
+    if (key) {
+      const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+      const sig = await crypto.subtle.sign("HMAC", k, data);
+      out.appendChild(digestRow("HMAC-SHA256", dcBytesHex(new Uint8Array(sig)), true));
+    }
+    out.appendChild(el("div", "sub", T("点一行复制")));
+  } catch (e) {
+    out.appendChild(el("div", "sub", String(e.message || e)));
   }
 }
 
@@ -1404,6 +1629,41 @@ function dcGo() {
   push("ASCII", ascii);
 }
 
+/* ---------- 小选择器（chips）：单选看着像"标签"，比下拉/复选框紧凑也好认 ---------- */
+const dcChipSel = {};                    // id -> Set(选中的值)
+function dcChips(id, items, opts) {
+  const box = $id(id);
+  if (!box) return;
+  const multi = !!(opts && opts.multi);
+  const def = box.dataset.val || (items[0] && items[0][0]);
+  dcChipSel[id] = new Set(multi ? String(def).split(",").filter(Boolean) : [String(def)]);
+  box.textContent = "";
+  for (const [val, label] of items) {
+    const b = el("button", "chip", label);
+    b.type = "button";
+    b.dataset.val = val;
+    b.onclick = () => {
+      const sel = dcChipSel[id];
+      if (multi) { if (sel.has(val)) sel.delete(val); else sel.add(val); }
+      else { sel.clear(); sel.add(val); box.dataset.val = val; }
+      dcChipPaint(id);
+      if (opts && opts.onChange) opts.onChange(dcChipVal(id, multi));
+    };
+    box.appendChild(b);
+  }
+  dcChipPaint(id);
+}
+function dcChipPaint(id) {
+  const box = $id(id);
+  if (!box) return;
+  const sel = dcChipSel[id] || new Set();
+  for (const b of box.querySelectorAll("button")) b.classList.toggle("on", sel.has(b.dataset.val));
+}
+function dcChipVal(id, multi) {
+  const arr = [...(dcChipSel[id] || new Set())];
+  return multi ? arr : (arr[0] || "");
+}
+
 /* ---------- AES（WebCrypto） ---------- */
 const dcB64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
 function dcUnB64(s) {
@@ -1430,6 +1690,31 @@ function dcBytes(s, what) {
   if (/^[0-9a-fA-F]+$/.test(bare) && bare.length % 2 === 0) return dcHexBytes(bare);
   return dcUnB64(t);
 }
+/** 按用户选的格式解析输入；auto = 像 hex 就 hex、像 base64 就 base64、其余按文本 */
+function dcParseBytes(s, fmt, what) {
+  const t = String(s == null ? "" : s);
+  if (!t.trim()) throw new Error(T("先填") + what);
+  if (fmt === "hex") return dcHexBytes(t);
+  if (fmt === "b64") return dcUnB64(t);
+  if (fmt === "text") return new TextEncoder().encode(t);
+  const bare = t.trim().replace(/[\s:]/g, "");
+  if (/^[0-9a-fA-F]+$/.test(bare) && bare.length % 2 === 0 && bare.length >= 16) return dcHexBytes(bare);
+  if (/^[A-Za-z0-9+/=\s]+$/.test(t) && t.trim().length % 4 === 0 && t.trim().length >= 16) {
+    try { return dcUnB64(t); } catch (_) { /* 落回文本 */ }
+  }
+  return new TextEncoder().encode(t);
+}
+/** 密钥：HEX / Base64 / 正好那么长的文本都认（在线工具一般也这么干） */
+function dcKeyBytes(s, nbytes) {
+  const t = String(s == null ? "" : s).trim();
+  if (!t) throw new Error(T("先填密钥"));
+  const bare = t.replace(/[\s:]/g, "");
+  if (/^[0-9a-fA-F]+$/.test(bare) && bare.length === nbytes * 2) return dcHexBytes(bare);
+  try { const u = dcUnB64(t); if (u.length === nbytes) return u; } catch (_) {}
+  const utf = new TextEncoder().encode(t);
+  if (utf.length === nbytes) return utf;
+  throw new Error(T("密钥长度不对") + `：要 ${nbytes} ${T("字节")}（HEX ${nbytes * 2} 个字符 / Base64 / 正好 ${nbytes} 字节的文本），现在是 HEX ${bare.length} 个字符或文本 ${utf.length} 字节`);
+}
 const dcRandomBytes = (n) => { const u = new Uint8Array(n); crypto.getRandomValues(u); return u; };
 
 async function dcAes(dir) {
@@ -1437,31 +1722,48 @@ async function dcAes(dir) {
   if (!out) return;
   out.innerHTML = "";
   try {
-    const mode = $id("aes-mode").value;                 // GCM / CBC
-    const bits = Number($id("aes-bits").value) || 256;
-    const keyBytes = dcBytes($id("aes-key").value, T("密钥"));
-    if (keyBytes.length * 8 !== bits) throw new Error(T("密钥长度不对") + "：" + keyBytes.length * 8 + " bit ≠ " + bits);
+    const mode = dcChipVal("aes-mode") || "GCM";        // CBC / CTR / GCM
+    const bits = Number(dcChipVal("aes-bits") || 256);
+    const keyBytes = dcKeyBytes($id("aes-key").value, bits / 8);
     const iv = dcBytes($id("aes-iv").value, "IV");
     const okIv = mode === "GCM" ? [8, 12, 16] : [16];
-    if (!okIv.includes(iv.length)) throw new Error("IV " + T("长度不对") + "：" + iv.length + " " + T("字节"));
-    const alg = mode === "GCM" ? { name: "AES-GCM" } : { name: "AES-CBC" };
+    if (!okIv.includes(iv.length)) {
+      throw new Error("IV " + T("长度不对") + "：" + iv.length + " " + T("字节") +
+        (mode === "GCM" ? "（GCM 要 12 字节，8/16 也收）" : "（" + mode + " 要 16 字节）"));
+    }
+    const alg = { name: "AES-" + mode };
     const key = await crypto.subtle.importKey("raw", keyBytes, alg, false, [dir === "enc" ? "encrypt" : "decrypt"]);
-    const params = mode === "GCM" ? { name: "AES-GCM", iv } : { name: "AES-CBC", iv };
+    // 注意：CTR 的参数叫 counter（不是 iv），而且还要给 length —— 传错 WebCrypto 直接抛错
+    const params = mode === "GCM" ? { name: "AES-GCM", iv, tagLength: 128 }
+      : mode === "CTR" ? { name: "AES-CTR", counter: iv, length: 64 }
+      : { name: "AES-CBC", iv };
+    const infmt = dcChipVal("aes-infmt") || "auto";
+    const outfmt = dcChipVal("aes-outfmt") || "both";
     if (dir === "enc") {
-      const data = new TextEncoder().encode($id("aes-in").value);
+      const data = dcParseBytes($id("aes-in").value, infmt === "auto" ? "text" : infmt, T("明文"));
       const buf = await crypto.subtle.encrypt(params, key, data);
-      out.append(digestRow("base64", dcB64(buf), true), digestRow("hex", dcBytesHex(new Uint8Array(buf)), true));
-      if (hint) hint.textContent = T("加密完成") + "：" + data.length + " → " + buf.byteLength + " " + T("字节");
+      dcAesOut(out, new Uint8Array(buf), outfmt);
+      if (hint) hint.textContent = T("加密完成") + `：${data.length} → ${buf.byteLength} ${T("字节")}`;
     } else {
-      const buf = await crypto.subtle.decrypt(params, key, dcUnB64($id("aes-in").value));
-      out.append(digestRow(T("明文"), new TextDecoder().decode(buf), true), digestRow("hex", dcBytesHex(new Uint8Array(buf)), true));
-      if (hint) hint.textContent = T("解密完成") + "：" + buf.byteLength + " " + T("字节");
+      const buf = await crypto.subtle.decrypt(params, key, dcParseBytes($id("aes-in").value, infmt, T("密文")));
+      dcAesOut(out, new Uint8Array(buf), outfmt === "text" ? "text" : outfmt, true);
+      if (hint) hint.textContent = T("解密完成") + `：${buf.byteLength} ${T("字节")}`;
     }
   } catch (e) {
     const msg = String((e && e.name) === "OperationError" ? T("解密失败：密钥 / IV / 密文对不上，或者数据被改过") : (e.message || e));
     out.append(digestRow(T("出错"), msg, true));
     if (hint) hint.textContent = "";
   }
+}
+
+/** 结果按选定的输出格式写（both = base64 + hex 都给；解密时还能给文本） */
+function dcAesOut(out, u8, fmt, fromDecrypt) {
+  if (fmt === "both" || fmt === "b64") out.appendChild(digestRow("base64", dcB64(u8), true));
+  if (fmt === "both" || fmt === "hex") out.appendChild(digestRow("hex", dcBytesHex(u8), true));
+  if (fmt === "text" || (fromDecrypt && fmt === "both")) {
+    try { out.appendChild(digestRow(T("文本"), new TextDecoder().decode(u8), true)); } catch (_) {}
+  }
+  out.appendChild(el("div", "sub", T("点一行复制")));
 }
 
 /* ---------- RSA（WebCrypto：OAEP 加解密 + PKCS1 签名验签） ---------- */
@@ -1479,11 +1781,69 @@ async function dcRsaKey(which, use) {   // which: pub/prv；use: enc/sign
   if (!String(pem).trim()) throw new Error(T("先把 PEM 密钥粘进来（或选文件）"));
   const fmt = which === "pub" ? "spki" : "pkcs8";
   if (use === "sign") {
-    return crypto.subtle.importKey(fmt, dcPemToBuf(pem), { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false,
+    return crypto.subtle.importKey(fmt, dcPemToBuf(pem), { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, true,
       [which === "pub" ? "verify" : "sign"]);
   }
-  return crypto.subtle.importKey(fmt, dcPemToBuf(pem), { name: "RSA-OAEP", hash: "SHA-256" }, false,
+  return crypto.subtle.importKey(fmt, dcPemToBuf(pem), { name: "RSA-OAEP", hash: "SHA-256" }, true,
     [which === "pub" ? "encrypt" : "decrypt"]);
+}
+
+/** 顺手报一下这把钥匙多少位（导入成功就拿得到 modulusLength） */
+async function dcRsaKeyInfo() {
+  const el2 = $id("rsa-keyinfo");
+  if (!el2) return;
+  const pem = String(($id("rsa-key") || {}).value || "");
+  if (!pem.trim()) { el2.textContent = ""; return; }
+  // 注意：私钥只能用 decrypt/sign 这类用途导入（拿 ["encrypt"] 导私钥会直接抛错）
+  for (const [fmt, label, use] of [["spki", T("公钥"), "encrypt"], ["pkcs8", T("私钥"), "decrypt"]]) {
+    try {
+      const k = await crypto.subtle.importKey(fmt, dcPemToBuf(pem), { name: "RSA-OAEP", hash: "SHA-256" }, true, [use]);
+      el2.textContent = `${label} · RSA ${k.algorithm.modulusLength} ${T("位")} · ${(k.algorithm.publicExponent ? "e=65537" : "")}`;
+      return;
+    } catch (_) {}
+  }
+  el2.textContent = T("这把钥匙认不出来（要 SPKI/PKCS#8 的 PEM 或 DER）");
+}
+
+/** 生成一对 RSA 密钥（同一个模数既能 OAEP 加密也能 PKCS#1 签名，跟在线工具一致） */
+async function dcRsaGen() {
+  const out = $id("rsa-out"), hint = $id("rsa-hint");
+  if (!out) return;
+  const bits = Number(dcChipVal("rsa-genbits") || 2048);
+  out.innerHTML = "";
+  if (hint) hint.textContent = T("正在生成…") + `（${bits} ${T("位")}，可能要一两秒）`;
+  try {
+    const kp = await crypto.subtle.generateKey(
+      { name: "RSA-OAEP", modulusLength: bits, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true, ["encrypt", "decrypt"],
+    );
+    const spki = await crypto.subtle.exportKey("spki", kp.publicKey);
+    const pkcs8 = await crypto.subtle.exportKey("pkcs8", kp.privateKey);
+    const pubPem = dcPem("PUBLIC KEY", spki), prvPem = dcPem("PRIVATE KEY", pkcs8);
+    $id("rsa-key").value = prvPem;          // 默认把私钥放进框里（签名/解密都要它）
+    out.appendChild(el("div", "sub", T("密钥对已生成（框里放的是私钥；公钥在下面，复制给对方）")));
+    for (const [label, pem] of [[T("公钥"), pubPem], [T("私钥"), prvPem]]) {
+      const row = digestRow(label, pem.replace(/\r?\n/g, " ⏎ "), true);
+      const b = el("button", "btn small", T("复制"));
+      b.onclick = async (ev) => {
+        ev.stopPropagation();
+        try { await navigator.clipboard.writeText(pem); toastMini(T("已复制") + " " + label); } catch (_) { toastMini(T("复制失败")); }
+      };
+      row.appendChild(b);
+      out.appendChild(row);
+    }
+    if (hint) hint.textContent = T("生成完成") + `：RSA ${bits}`;
+    dcRsaKeyInfo();
+  } catch (e) {
+    out.appendChild(digestRow(T("出错"), String(e.message || e), true));
+    if (hint) hint.textContent = "";
+  }
+}
+
+/** 导出成 PEM（64 列换行） */
+function dcPem(label, buf) {
+  const b64 = dcB64(buf).replace(/(.{64})/g, "$1\n").replace(/\n$/, "");
+  return `-----BEGIN ${label}-----\n${b64}\n-----END ${label}-----`;
 }
 
 async function dcRsa(op) {
@@ -1523,31 +1883,121 @@ async function dcRsa(op) {
 /** 数据计算页的绑定（跟计算器一起在 initCalc 里挂一次） */
 function initDataCalc() {
   dcBindSections();
-  dcBindRowCopy("dc-out");
-  dcBindRowCopy("calc-file-out");
-  dcBindRowCopy("ieee-out");
-  dcBindRowCopy("aes-out");
-  dcBindRowCopy("rsa-out");
+  for (const id of ["dc-out", "calc-file-out", "fl-out", "aes-out", "hm-out", "rsa-out"]) dcBindRowCopy(id);
+
+  // 小选择器
+  dcChips("dc-algs", DC_ALGS.map(([k, l]) => [k, l]), { multi: true });
+  dcChips("dc-json-indent", [["0", T("不缩进")], ["2", "2 " + T("空格")], ["4", "4 " + T("空格")]]);
+  dcChips("fl-width", [["32", "float32"], ["64", "float64"]], { onChange: () => flFromFloat() });
+  dcChips("dc-bits", [["8", "8 位"], ["16", "16 位"], ["32", "32 位"], ["64", "64 位"]], { onChange: dcGo });
+  dcChips("aes-mode", [["CBC", "CBC"], ["CTR", "CTR"], ["GCM", "GCM"]]);
+  dcChips("aes-bits", [["128", "128 位"], ["192", "192 位"], ["256", "256 位"]], { onChange: () => dcAesIvHint() });
+  dcChips("aes-infmt", [["auto", T("自动")], ["text", T("文本")], ["hex", "HEX"], ["b64", "Base64"]]);
+  dcChips("aes-outfmt", [["both", T("都要")], ["b64", "Base64"], ["hex", "HEX"], ["text", T("文本")]]);
+  dcChips("rsa-genbits", [["2048", "2048"], ["3072", "3072"], ["4096", "4096"]]);
+  dcAesIvHint();
+
+  // 文件校验
   if ($id("dc-go")) $id("dc-go").onclick = dcGo;
   if ($id("dc-num")) $id("dc-num").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); dcGo(); } };
-  if ($id("dc-bits")) $id("dc-bits").onchange = dcGo;
+  if ($id("calc-file-go")) $id("calc-file-go").onclick = calcFileGo;
+  if ($id("calc-file-pick")) {
+    $id("calc-file-pick").onclick = async () => {
+      try {
+        const p = await dlgOpen({ title: T("选要算 CRC / 哈希的文件"), multiple: false, directory: false });
+        const path = typeof p === "string" ? p : (p && p.path);
+        if (!path) return;
+        calcFile = path;
+        if ($id("calc-file-path")) $id("calc-file-path").value = path;
+        if ($id("calc-file-off")) $id("calc-file-off").value = 0;
+        if ($id("calc-file-len")) $id("calc-file-len").value = 0;
+        calcFileGo();
+      } catch (e) { toastMini(String(e).slice(0, 60)); }
+    };
+  }
+  if ($id("calc-file-path")) {
+    $id("calc-file-path").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); calcFileGo(); }
+    });
+  }
+  if ($id("dc-verify-go")) $id("dc-verify-go").onclick = dcVerifyGo;
+  if ($id("dc-verify")) $id("dc-verify").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); dcVerifyGo(); } };
+
+  // JSON
+  if ($id("dc-json-fmt")) $id("dc-json-fmt").onclick = () => dcJson("fmt");
+  if ($id("dc-json-min")) $id("dc-json-min").onclick = () => dcJson("min");
+  if ($id("dc-json-check")) $id("dc-json-check").onclick = () => dcJson("check");
+  if ($id("dc-json-esc")) $id("dc-json-esc").onclick = () => dcJson("esc");
+  if ($id("dc-json-un")) $id("dc-json-un").onclick = () => dcJson("un");
+  if ($id("dc-json-copy")) {
+    $id("dc-json-copy").onclick = async () => {
+      const v = String(($id("dc-json-out") || {}).value || "");
+      if (!v) { toastMini(T("结果还是空的")); return; }
+      try { await navigator.clipboard.writeText(v); toastMini(T("已复制")); } catch (_) { toastMini(T("复制失败")); }
+    };
+  }
+  if ($id("dc-json-toin")) {
+    $id("dc-json-toin").onclick = () => {
+      const v = String(($id("dc-json-out") || {}).value || "");
+      if (v) $id("dc-json-in").value = v;
+    };
+  }
+
+  // 浮点 ↔ 数值：两边互相喂
+  flBindBoth();
+  document.querySelectorAll(".dccopy").forEach((b) => {
+    b.onclick = async (ev) => {
+      ev.stopPropagation();
+      const t = $id(b.dataset.copy);
+      const v = t ? (t.value != null ? t.value : t.textContent) : "";
+      try { await navigator.clipboard.writeText(v); toastMini(T("已复制") + "：" + String(v).slice(0, 40)); } catch (_) {}
+    };
+  });
+  if ($id("fl-use-calc")) {
+    $id("fl-use-calc").onclick = () => {
+      const flIn = $id("fl-float");
+      if (flIn) flIn.value = calcNum(calcValue);
+      flFromFloat();
+      toastMini(T("已取计算器当前值") + "：" + calcNum(calcValue));
+    };
+  }
+
   // AES
   if ($id("aes-enc")) $id("aes-enc").onclick = () => dcAes("enc");
   if ($id("aes-dec")) $id("aes-dec").onclick = () => dcAes("dec");
   if ($id("aes-key-gen")) $id("aes-key-gen").onclick = () => {
-    const bits = Number($id("aes-bits").value) || 256;
+    const bits = Number(dcChipVal("aes-bits") || 256);
     $id("aes-key").value = dcBytesHex(dcRandomBytes(bits / 8));
     toastMini(T("随机密钥已生成（hex）"));
   };
   if ($id("aes-iv-gen")) $id("aes-iv-gen").onclick = () => {
-    const n = $id("aes-mode").value === "GCM" ? 12 : 16;
+    const n = dcChipVal("aes-mode") === "GCM" ? 12 : 16;
     $id("aes-iv").value = dcBytesHex(dcRandomBytes(n));
     toastMini(T("随机 IV 已生成（hex）"));
   };
-  if ($id("aes-mode")) $id("aes-mode").onchange = () => { if ($id("aes-iv")) $id("aes-iv").value = ""; };
+
+  // 文本哈希 / HMAC
+  if ($id("hm-go")) $id("hm-go").onclick = dcHashGo;
+
   // RSA
   for (const [id, op] of [["rsa-enc", "enc"], ["rsa-dec", "dec"], ["rsa-sign", "sign"], ["rsa-verify", "verify"]]) {
     if ($id(id)) $id(id).onclick = () => dcRsa(op);
+  }
+  if ($id("rsa-gen")) $id("rsa-gen").onclick = dcRsaGen;
+  if ($id("rsa-key-clear")) {
+    $id("rsa-key-clear").onclick = () => {
+      $id("rsa-key").value = "";
+      if ($id("rsa-key-file")) $id("rsa-key-file").value = "";
+      const o = $id("rsa-out"); if (o) o.innerHTML = "";
+      dcRsaKeyInfo();
+    };
+  }
+  let rsaTimer = null;
+  if ($id("rsa-key")) {
+    $id("rsa-key").addEventListener("input", () => {
+      if (rsaTimer) clearTimeout(rsaTimer);
+      rsaTimer = setTimeout(() => dcRsaKeyInfo(), 500);
+    });
   }
   if ($id("rsa-key-pick")) {
     $id("rsa-key-pick").onclick = async () => {
@@ -1557,11 +2007,20 @@ function initDataCalc() {
         if (!path) return;
         $id("rsa-key").value = await readTextFile(path);
         if ($id("rsa-key-file")) $id("rsa-key-file").value = path;
+        dcRsaKeyInfo();
       } catch (e) {
         if ($id("rsa-hint")) $id("rsa-hint").textContent = String(e.message || e).slice(0, 80);
       }
     };
   }
+}
+
+/** IV 长度的提示跟着模式走 */
+function dcAesIvHint() {
+  const el2 = $id("aes-ivhint");
+  if (!el2) return;
+  const mode = dcChipVal("aes-mode") || "GCM";
+  el2.textContent = mode === "GCM" ? T("GCM：IV 12 字节，密文自带 16 字节认证标签") : T(mode + "：IV 16 字节，密文长度是 16 的整数倍");
 }
 
 /** 数据计算页的折叠区块：状态记在本机；标题里的按钮/下拉只干活，不顺手把这块收起来 */
@@ -1681,32 +2140,7 @@ export function initCalc() {
     calcHistSave();
     calcRenderHist();
   };
-  // 「→ 发送框」已删（直接复制结果就行）
-  // IEEE
-  $id("ieee-go").onclick = ieeeConvert;
-  $id("ieee-in").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); ieeeConvert(); } };
-  $id("ieee-use-calc").onclick = () => {
-    $id("ieee-mode").value = Number.isInteger(calcValue) ? "b2f" : "f2b";
-    $id("ieee-in").value = Number.isInteger(calcValue) ? u32hex(calcValue) : String(calcValue);
-    ieeeConvert();
-  };
-
-  // 文件校验
-  $id("calc-file-pick").onclick = async () => {
-    try {
-      const p = await dlgOpen({ title: "选要算 CRC/哈希的文件", multiple: false, directory: false });
-      const path = typeof p === "string" ? p : (p && p.path);
-      if (!path) return;
-      calcFile = path;
-      const nm = $id("calc-file-name");
-      nm.textContent = path.replace(/.*[\\/]/, "");
-      nm.title = path;
-      calcFileGo();
-    } catch (e) {
-      $id("calc-file-name").textContent = "选文件失败：" + String(e).slice(0, 50);
-    }
-  };
-  $id("calc-file-go").onclick = calcFileGo;
+  // （浮点转换 / 文件校验都搬到「数据计算」页了，绑定见 initDataCalc）
 
   box.value = "0x1F & 0x0F << 2";
   calcSetBase("dec", true);
@@ -1720,7 +2154,6 @@ export function initCalc() {
     calcRenderBaud();
     calcRenderBits();
     calcRenderRadix(calcValue);
-    ieeeManual = false;                     // 切语言后让"实时"那份重画一次（纯显示，无副作用）
     ieeeRenderLive(calcValue);
     $id("calc-pad-hint").textContent = T("直接按数字和运算符，= 出结果；结果和上面的控制板实时同步。");
   });
