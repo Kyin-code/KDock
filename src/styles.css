@@ -1957,8 +1957,8 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 
 /* min-height:auto（不是 0）：窗口矮的时候键区不能一直被压 —— 压不住就让计算器整页滚 */
 .calcops { flex: 1 1 0; min-height: auto; display: flex; flex-direction: column; gap: 4px; }
-.calcctl { flex: 0 0 auto; }
-.calcbody { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; }
+.calcctl { flex: 0 0 auto; min-height: 24px; }
+.calcbody { flex: 1 1 auto; min-height: 11.6rem; display: flex; gap: 10px; }   /* = 键卡下限（9×16+8×3+内边距） */
 .calcbasebtn.on {
   background: hsl(var(--primary) / 0.16); border-color: hsl(var(--primary) / 0.55); color: hsl(var(--primary));
 }
@@ -1966,12 +1966,19 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .calcgrid {
   flex: 1 1 58%; min-width: 0; display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  grid-auto-rows: minmax(26px, 46px); align-content: stretch; gap: 4px;
+  grid-auto-rows: minmax(16px, 1fr); align-content: stretch; gap: 3px;   /* 1fr：按可用高度平分，不写死上限 */
 }
 /* 键盘里的"进制显示 / 浮点 / 位板操作"这几排：底色区分一下，别跟数字键混在一起 */
 .calcgrid button.base, .calcgrid button.bit {
-  background: var(--surface-2); color: hsl(var(--muted-foreground)); font-size: 11.5px; font-weight: 500;
+  background: var(--surface-2); color: hsl(var(--muted-foreground)); font-weight: 500;
 }
+/* 键区字号跟窗口/缩放同比（vw）—— 格子小了字也小，任何缩放/字号下标签都不会撑出去；
+   真放不下给省略号，绝不出框。 */
+.calcgrid button {
+  font-size: clamp(11px, 1.15vw, 17px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  line-height: 1; padding: 0; min-height: 0;   /* 归零后行才能真正压到 20px，窗口小了才不看丢 */
+}
+.calcgrid button.base, .calcgrid button.bit, .calcgrid button.hi { font-size: clamp(8.5px, 0.85vw, 13px); }
 /* 最上面那排"进制显示 / 浮点"：单独高亮，别跟数字键长一样 */
 .calcgrid button.hi {
   background: hsl(var(--primary) / 0.12); border-color: hsl(var(--primary) / 0.35);
@@ -2033,16 +2040,16 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .calcpane { gap: 0; }                      /* 上下两块自己拼，缝交给拖动条 */
 
 /* 表达式那一行（挪到下面了）：标签 + 输入 + 插入键 + = */
-.calcexprctl { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 5px 0; }
-.calcexprctl .calcexprin { flex: 1 1 auto; height: 40px; font-size: 14.5px; }
+.calcexprctl { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 1px 0; }
+.calcexprctl .calcexprin { flex: 1 1 auto; height: 32px; font-size: 13.5px; }
 .calcexprctl #calc-go {
-  flex: 0 0 auto; height: 40px; min-width: 64px; font-size: 20px; font-weight: 600;
-  padding: 0 18px; border-radius: 10px;
+  flex: 0 0 auto; height: 32px; min-width: 54px; font-size: 18px; font-weight: 600;
+  padding: 0 14px; border-radius: 9px;
 }
 
 /* 左右两块都做成同样的卡片，顶端对齐 */
 .calcpadcard {
-  flex: 1 1 50%; min-width: 0; min-height: 17.2rem;   /* 9 行 × 26 + 8 × 4 + 内边距，用 rem 跟字号缩放 */
+  flex: 1 1 50%; min-width: 0; min-height: 0;   /* 高度由 JS 按可用空间算死（见 calcFitBits） */
   display: flex; padding: 8px 10px; border-radius: 12px;
   background: var(--surface-1); border: 1px solid var(--surface-line);
 }
@@ -2061,7 +2068,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
    ========================================================================== */
 .calcview {
   /* 下限用 rem：用户在设置里调"字号/放大倍数"时，这块跟着长，不会被固定 px 卡住 */
-  flex: 0 0 33.333%; min-height: 7.4rem; display: flex; flex-direction: column; gap: 0.15rem;
+  flex: 0 0 33.333%; min-height: 4rem; display: flex; flex-direction: column; gap: 0.1rem;
   padding: 0.65rem 0.9rem; border-radius: 12px; overflow: hidden;
   background: var(--surface-1); border: 1px solid var(--surface-line);
   container-type: size; container-name: calcview;
@@ -2085,7 +2092,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .calcbigline {
-  flex: 0 0 auto; display: flex; align-items: baseline; justify-content: flex-end;
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-end;   /* 别用 baseline：等号会被顶出行外 */
   gap: clamp(0.35rem, calc(0.2rem + 2cqh), 1.1rem);
 }
 .calceq {
@@ -2101,10 +2108,10 @@ summary.tb-icon::-webkit-details-marker { display: none; }
    border:1px solid …; background: var(--surface-1) }` 的权重是 (0,1,1)，比 .calcout (0,1,0) 高，
    只写 .calcout 会被它整条吃掉 —— 大字就会被按 30px 高裁掉、还套上一个框（这就是"显示区不对"的真凶）。 */
 input.calcout {
-  flex: 1 1 auto; min-width: 0; width: 100%;
+  flex: 1 1 0; min-width: 0; width: auto;
   height: auto; padding: 0; border: none; border-radius: 0; outline: none;
   background: transparent; color: hsl(var(--foreground)); text-align: right;
-  font-family: inherit; font-weight: 600; line-height: 1.05;
+  font-family: inherit; font-weight: 600; line-height: 1.15;
   font-size: clamp(1.7rem, calc(1.3rem + 20cqh), 6rem);
 }
 .calcout:focus { outline: none; box-shadow: inset 0 -1px 0 hsl(var(--primary) / 0.6); }

@@ -474,11 +474,11 @@ const PAD_KEYS = [
   // 第 1 行：进制显示 + 浮点 —— 单独高亮一排，放最上面
   [["以 16 进制显示", "base:hex", "base hi", 2], ["以 10 进制显示", "base:dec", "base hi", 2], ["以 2 进制显示", "base:bin", "base hi", 2], ["→ 浮点", "float", "base hi"]],
   [["A", "d:A", "hexd"], ["B", "d:B", "hexd"], ["C", "d:C", "hexd"], ["D", "d:D", "hexd"], ["E", "d:E", "hexd"], ["F", "d:F", "hexd"], ["⌫", "back", ""]],
-  [["<<", "op:<<", "op"], [">>", "op:>>", "op"], ["AND", "op:&", "op"], ["OR", "op:|", "op"], ["XOR", "op:^", "op"], ["NOT", "op:~", "op"], ["位反转", "bits:bitrev", "base"]],
+  [["<<", "op:<<", "op"], [">>", "op:>>", "op"], ["AND", "op:&", "op"], ["OR", "op:|", "op"], ["XOR", "op:^", "op"], ["NOT", "op:~", "op"], ["AC", "clear", "danger"]],
   [["7", "d:7", ""], ["8", "d:8", ""], ["9", "d:9", ""], ["÷", "op:/", "op"], ["×", "op:*", "op"], ["%", "pct", ""], ["±", "neg", ""]],
   [["4", "d:4", ""], ["5", "d:5", ""], ["6", "d:6", ""], ["−", "op:-", "op"], ["+", "op:+", "op"], ["x²", "sqr", "op"], ["√", "sqrt", ""]],
   [["1", "d:1", ""], ["2", "d:2", ""], ["3", "d:3", ""], ["=", "eq", "eq"], ["xʸ", "op:**", "op"], ["1/x", "inv", ""], ["MOD", "op:%", "op"]],
-  [["0", "d:0", ""], [".", "dot", ""], ["(", "ins:(", ""], [")", "ins:)", ""], ["字节交换", "bits:bswap", "base"], ["AC", "clear", "danger"], ["CE", "ce", ""]],
+  [["0", "d:0", ""], [".", "dot", ""], ["(", "ins:(", ""], [")", "ins:)", ""], ["字节交换", "bits:bswap", "base"], ["位反转", "bits:bitrev", "base"], ["CE", "ce", ""]],
   [["清零", "bits:zero", "bit"], ["取反", "bits:not", "bit"], ["<< 1", "bits:shl", "bit"], [">> 1", "bits:shr", "bit"], ["↺ 1", "bits:rol", "bit"], ["↻ 1", "bits:ror", "bit"], ["全反", "bits:not32", "bit"]],
 ];
 
@@ -955,6 +955,20 @@ function calcRenderRadix(v) {
 /** 位板按可用高度自动折叠：4 行（32 位）放不下时只留 2 行（低 16 位），高 16 位用小字标在上面。
  *  阈值 176px ≈ 4 行 × (位按钮最小 30 + 标号 + 半字节标 + 缝)。 */
 function calcFitBits() {
+  // 键卡高度由这里"算死"（见下面的 calcFitPad）—— 不靠浏览器的固有尺寸推导，
+  // 因为那一套在窗口/缩放变化时会把整页顶出可视区（"有个控件在外面"就是这么来的）。
+  const pane = document.querySelector('.workpane[data-work="calc"]');
+  const ops = pane && pane.querySelector(".calcops");
+  const pad = pane && pane.querySelector(".calcpadcard");
+  if (pane && ops && pad) {
+    const cs = getComputedStyle(pane);
+    const inner = pane.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    const outside = [...pane.children].filter((c) => c !== ops).reduce((a, c) => a + c.getBoundingClientRect().height, 0);
+    const rows = [".calcexprctl", ".calcctl"].map((sel) => { const e = ops.querySelector(sel); return e ? e.getBoundingClientRect().height : 0; }).reduce((a, b) => a + b, 0);
+    const gaps = parseFloat(getComputedStyle(ops).rowGap || "0") * 2;
+    const h = Math.max(178, Math.floor(inner - outside - rows - gaps) - 20);
+    if (Math.abs(pad.getBoundingClientRect().height - h) > 1) pad.style.height = h + "px";
+  }
   const box = $id("calc-bits");
   const card = document.querySelector(".calcprog");
   if (!box || !card) return;
