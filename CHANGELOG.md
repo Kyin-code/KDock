@@ -64,6 +64,14 @@
   口吻 / 自我介绍这类，不只是硬件操作。
 
 ### 修复
+- 启动前检查 **WebView2 Runtime**：缺了它 Tauri 在 Windows 上起不来，而 release 是 `windows_subsystem =
+  "windows"` —— panic 既没有控制台也没有对话框，用户看到的就是"双击了没反应"。现在 `run()` 一进来就先
+  查注册表（口径与静态链接进 exe 的 WebView2 loader 一致：WebView2 Runtime + Edge 四个通道的 GUID，
+  32 / 64 位注册表视图都查；实测本机 0.6ms 内出结果、不弹框），缺了就弹一个按用户语言显示的对话框：
+  「是」自动下载官方 Evergreen Bootstrapper 并安装（`/passive`，带进度条、不需要管理员，装完复查注册表
+  再继续）、「否」打开官方下载页、「取消」退出；自动安装失败时给下载页兜底。
+  排查 / 内网三个开关：`KDOCK_SKIP_WEBVIEW2_CHECK`、`KDOCK_FAKE_NO_WEBVIEW2`、
+  `KDOCK_WEBVIEW2_BOOTSTRAPPER_URL`（支持 http(s)、`file://`、UNC 或本地路径的内网镜像）。
 - 示波器：截屏与波形按 IEEE 488.2 定长块**按长度读字节**（之前按行读 + 当 UTF-8 文本处理，
   PNG 里的 0x0A 会把数据截断）；`:DISP:DATA? ON,OFF,PNG` 现在能正确落盘 800x480 的 PNG。
 - 示波器：出栈命令统一限速（DS1000Z 命令缓冲区小，连发会吞掉 `:WAV:DATA?`）、掉线自动重连、

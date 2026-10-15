@@ -9,6 +9,7 @@ mod scope;
 mod storage;
 mod transport;
 mod upgrade;
+mod webview2;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -3198,6 +3199,11 @@ fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) -> std::io::Result
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 先确认起得来：缺 WebView2 时 Tauri 在 windows 子系统里是静默失败（双击没反应、没提示），
+    // 这里在建任何窗口之前查一次注册表，缺了就弹框 —— 可以直接帮用户装好。
+    if !webview2::ensure() {
+        return;
+    }
     // 目录名从 com.kyin.serialtool 换成了 com.kyin.kdock（应用改名）。老用户第一次跑新版时把
     // 旧的配置/会话/技能/密钥整份搬过去一次，别让人白配一遍。
     // 必须在建任何窗口/插件之前做：window-state 和 store 都是在 setup 阶段读这些文件的。
