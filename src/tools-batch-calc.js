@@ -1,7 +1,7 @@
 // ── 工具页：批量文本 / 计算器 ─────────────────────────────────────────
 // 两个纯本地页（不进 agent、不需要设备）。main.js 只在切页时调 init。
 import { save as dlgSave, open as dlgOpen } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
 
 const $id = (id) => document.getElementById(id);
@@ -430,26 +430,88 @@ export function initBatch(opts) {
 
 /* ============================== 计算器 ============================== */
 
-let calcHist = [];
-let calcValue = 0;          // 当前值：结果区 / 位板 / 浮点区都读它
+let calcValue = 0;          // 当前值：显示区 / 位板 / 浮点区都读它
 let calcEntry = "0";        // 传统计算器正在输入的数
 let calcAcc = null;         // 累积值
 let calcOp = null;          // 待执行的运算符
 let calcFresh = true;       // 下一个数字是不是重新开始
-let calcHexPad = false;
+let calcHexPad = false;     // 键盘按十六进制解释（跟着显示进制走）
 let calcPadError = "";
+let calcBase = "dec";       // 显示进制：dec / hex / oct / bin
+let calcFloatShow = false;  // 显示区是不是在看 IEEE-754 单精度解释
+const CALC_MARK_KEY = "kdock_calc_marked";   // 只有标记过的历史才写这里
+const CALC_SPLIT_KEY = "kdock_calc_split";   // 上下比例
+
+/** 历史：内存里是全部；只有 marked=true 的会写盘（没标记的关掉软件就没了） */
+function calcHistLoad() {
+  try {
+    const a = JSON.parse(localStorage.getItem(CALC_MARK_KEY) || "[]");
+    if (Array.isArray(a)) {
+      return a.filter((x) => x && x.e != null).map((x) => ({ e: String(x.e), v: String(x.v), base: x.base || "dec", marked: true }));
+    }
+  } catch (_) {}
+  return [];
+}
+function calcHistSave() {
+  try {
+    localStorage.setItem(CALC_MARK_KEY, JSON.stringify(calcHist.filter((h) => h.marked).map((h) => ({ e: h.e, v: h.v, base: h.base }))));
+  } catch (_) {}
+}
+let calcHist = calcHistLoad();
+/** 超长了先丢最老的没标记的（标记过的一律留着） */
+function calcHistTrim() {
+  while (calcHist.length > 200) {
+    const i = calcHist.findLastIndex((h) => !h.marked);
+    if (i < 0) break;
+    calcHist.splice(i, 1);
+  }
+  if (calcHist.length > 400) calcHist = calcHist.slice(0, 400);
+}
 
 const PAD_KEYS = [
-  // 前四行是程序员模式那套（位运算 + A-F），后面才是普通算数
-  ["AC", "clear", "danger"], ["⌫", "back", ""], ["(", "ins:(", ""], [")", "ins:)", ""], ["÷", "op:/", "op"],
-  ["A", "d:A", "hexd"], ["B", "d:B", "hexd"], ["C", "d:C", "hexd"], ["D", "d:D", "hexd"], ["E", "d:E", "hexd"],
-  ["F", "d:F", "hexd"], ["AND", "op:&", "op"], ["OR", "op:|", "op"], ["XOR", "op:^", "op"], ["NOT", "op:~", "op"],
-  ["7", "d:7", ""], ["8", "d:8", ""], ["9", "d:9", ""], ["%", "pct", ""], ["×", "op:*", "op"],
-  ["4", "d:4", ""], ["5", "d:5", ""], ["6", "d:6", ""], ["±", "neg", ""], ["−", "op:-", "op"],
-  ["1", "d:1", ""], ["2", "d:2", ""], ["3", "d:3", ""], ["xʸ", "op:**", "op"], ["+", "op:+", "op"],
-  ["0", "d:0", ""], [".", "dot", ""], ["<<", "op:<<", "op"], [">>", "op:>>", "op"], ["√", "sqrt", ""],
-  ["1/x", "inv", ""], ["=", "eq", "eq"], ["Lsh", "ins:<<", "op"], ["Rsh", "ins:>>", "op"], ["HEX/…", "hexmode", "op"],
+  // 6 列 × 6 行：左边这一坨 = 标准计算器该有的算式符号 + 程序员要的 A-F / 位运算
+  ["A", "d:A", "hexd"], ["B", "d:B", "hexd"], ["C", "d:C", "hexd"], ["D", "d:D", "hexd"], ["E", "d:E", "hexd"], ["F", "d:F", "hexd"],
+  ["<<", "op:<<", "op"], [">>", "op:>>", "op"], ["(", "ins:(", ""], [")", "ins:)", ""], ["%", "pct", ""], ["÷", "op:/", "op"],
+  ["7", "d:7", ""], ["8", "d:8", ""], ["9", "d:9", ""], ["AND", "op:&", "op"], ["OR", "op:|", "op"], ["XOR", "op:^", "op"],
+  ["4", "d:4", ""], ["5", "d:5", ""], ["6", "d:6", ""], ["×", "op:*", "op"], ["−", "op:-", "op"], ["+", "op:+", "op"],
+  ["1", "d:1", ""], ["2", "d:2", ""], ["3", "d:3", ""], ["xʸ", "op:**", "op"], ["√", "sqrt", ""], ["1/x", "inv", ""],
+  ["0", "d:0", ""], [".", "dot", ""], ["±", "neg", ""], ["⌫", "back", ""], ["AC", "clear", "danger"], ["=", "eq", "eq"],
 ];
+
+/** 这个数字/字母键在当前进制下能不能按（跟 Windows 计算器一样：二进制只留 0/1） */
+function calcDigitAllowed(ch) {
+  if (/^[0-9]$/.test(ch)) return Number(ch) <= (calcBase === "bin" ? 1 : calcBase === "oct" ? 7 : 9);
+  if (/^[A-F]$/.test(ch)) return calcBase === "hex";
+  return true;
+}
+
+/** 从右往左每 n 个字符插一个分隔符："DEADBEEF" → "DEAD BEEF"、"1234567" → "1,234,567" */
+function calcGroup(str, n, sep) {
+  const raw = String(str).replace(/\s+/g, "");
+  const sign = /^-/.test(raw) ? "-" : "";
+  const a = sign ? raw.slice(1) : raw;
+  let out = "";
+  for (let i = 0; i < a.length; i++) {
+    if (i && (a.length - i) % n === 0) out += sep;
+    out += a[i];
+  }
+  return sign + out;
+}
+/** 这个值在当前（或指定）进制下人看的样子：10 进制 3 位一逗号，16/2 进制 4 位一空格，8 进制 3 位一空格 */
+function calcFmt(v, base) {
+  const b = base || calcBase;
+  if (typeof v === "string") return v;
+  if (!Number.isFinite(v)) return String(v);
+  const iv = Math.trunc(v);
+  const sign = iv < 0 ? "-" : "";
+  const a = Math.abs(iv);
+  if (b === "hex") return sign + "0x" + calcGroup(a.toString(16).toUpperCase(), 4, " ");
+  if (b === "oct") return sign + "0o" + calcGroup(a.toString(8), 3, " ");
+  if (b === "bin") return sign + "0b" + calcGroup(a.toString(2), 4, " ");
+  return sign + calcGroup(String(a), 3, ",");
+}
+/** 当前进制的基数 + 小数/整数字面"看着像几进制" */
+const calcBaseRadix = () => (calcBase === "hex" ? 16 : calcBase === "bin" ? 2 : calcBase === "oct" ? 8 : 10);
 
 const calcNum = (v) => {
   if (!Number.isFinite(v)) return String(v);
@@ -460,12 +522,54 @@ const u32 = (v) => (Math.trunc(Number(v) || 0) >>> 0);
 const u32hex = (v) => "0x" + u32(v).toString(16).toUpperCase().padStart(8, "0");
 
 function calcEntryValue() {
-  if (calcHexPad) {
-    const n = parseInt(calcEntry || "0", 16);
+  const radix = calcBaseRadix();
+  if (radix !== 10) {
+    const n = parseInt(String(calcEntry || "0").replace(/^0[xbo]/i, ""), radix);
     return Number.isFinite(n) ? n : 0;
   }
   const n = Number(calcEntry);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** 显示区（大字）= 小字算式下面那一行；按当前进制/浮点模式画 */
+function calcRenderBig() {
+  const out = $id("calc-out");
+  if (!out) return;
+  const v = calcValue;
+  const tag = $id("calc-base");
+  if (calcFloatShow && Number.isFinite(v)) {
+    out.textContent = String(Math.fround(v));
+    if (tag) tag.textContent = "FLOAT32";
+  } else {
+    out.textContent = calcFmt(v);
+    if (tag) tag.textContent = calcBase.toUpperCase();
+  }
+  const sub = $id("calc-sub");
+  if (sub) {
+    if (!Number.isFinite(v)) sub.textContent = "";
+    else {
+      const u = u32(v);
+      sub.textContent = (calcFloatShow ? "FLOAT32 " + Math.fround(v) + " · " : "float " + Math.fround(v) + " · ") +
+        "U32 " + calcFmt(u, "hex") + " · " + calcGroup(String(u), 3, ",");
+    }
+  }
+}
+
+/** 换显示进制（同时把键盘的输入进制、能用哪些数字键跟着换） */
+function calcSetBase(base, silent) {
+  calcBase = ["hex", "oct", "bin", "dec"].includes(base) ? base : "dec";
+  calcHexPad = calcBase === "hex";
+  document.querySelectorAll(".calcbasebtn").forEach((b) => b.classList.toggle("on", b.dataset.base === calcBase));
+  const pad = $id("calc-pad");
+  if (pad) pad.classList.toggle("hexmode", calcHexPad);
+  calcRenderPad();
+  if (!silent) {
+    const hint = $id("calc-pad-hint");
+    if (hint) hint.textContent = T(calcBase === "hex" ? "0x（十六进制输入）" : calcBase === "bin" ? "二进制输入" : calcBase === "oct" ? "八进制输入" : "十进制输入");
+    calcSetValue(calcValue, false);
+  } else {
+    calcRenderBig();
+  }
 }
 
 /** 更新结果区 / 进制 / 位板 / IEEE 读数；writeExpr=true 时把值回填表达式 */
@@ -475,8 +579,10 @@ function calcSetValue(v, writeExpr) {
   if (out) {
     const bad = !Number.isFinite(v) && typeof v !== "string";
     out.classList.toggle("bad", bad);
-    out.textContent = typeof v === "string" ? v : calcNum(v);
+    if (bad) out.textContent = typeof v === "string" ? v : calcNum(v);
   }
+  calcRenderBig();
+  if (out && !Number.isFinite(v) && typeof v !== "string") return;   // 出错时别覆盖错误文字
   calcRenderRadix(v);
   calcRenderBits();
   ieeeRenderLive(v);
@@ -503,6 +609,12 @@ function calcRenderPad() {
     box.appendChild(b);
   }
   box.classList.toggle("hexmode", calcHexPad);
+  // 当前进制用不上的数字键直接禁用（二进制里按 9 没意义）
+  box.querySelectorAll("button").forEach((b) => {
+    const act = b.dataset.act || "";
+    const ch = act.startsWith("d:") ? act.slice(2) : "";
+    if (ch.length === 1) b.disabled = !calcDigitAllowed(ch);
+  });
 }
 
 function calcPadKey(act) {
@@ -559,11 +671,12 @@ function calcPadKey(act) {
     const cur = calcEntryValue();
     const v = calcOp === null ? cur : calcFold(calcAcc, cur, calcOp);
     if (v === null) return;
+    const label = calcOp === null
+      ? (calcBaseRadix() === 10 ? calcNum(cur) : calcFmt(cur))
+      : calcFmt(calcAcc) + " " + ({ "&": "AND", "|": "OR", "^": "XOR", "<<": "<<", ">>": ">>" }[calcOp] || calcOp) + " " + calcFmt(cur);
     calcAcc = null; calcOp = null; calcFresh = true;
     calcEntry = String(v);
-    calcHist.unshift({ e: $id("calc-pad-hint").textContent, v: calcNum(v) });
-    calcHist = calcHist.slice(0, 40);
-    calcRenderHist();
+    calcHistPush(label, v);
     $id("calc-pad-hint").textContent = calcNum(v);
     calcSetValue(v, true);
   }
@@ -680,11 +793,7 @@ function calcRun(expr, record) {
   }
   const width = Number($id("calc-width").value) || 0;
   if (width && Number.isFinite(v)) v = Math.trunc(v) & (2 ** width - 1);
-  if (record !== false) {
-    calcHist.unshift({ e: src, v: calcNum(v) });
-    calcHist = calcHist.slice(0, 40);
-    calcRenderHist();
-  }
+  if (record !== false) calcHistPush(src, v);
   calcEntry = String(v);
   calcFresh = true;
   calcSetValue(v, false);
@@ -700,23 +809,17 @@ function calcRenderRadix(v) {
     r.append(el("span", "k", k), el("span", "v" + (cls ? " " + cls : ""), val));
     rows.push(r);
   };
-  // 大显示区那四行（HEX / DEC / OCT / BIN）
-  const setDisp = (id, txt) => { const n = $id(id); if (n) n.textContent = txt; };
+  // 右栏「各进制一览」：四种进制各一行，数值自带分隔符（10 进制 3 位一逗号、16/2 进制 4 位一空格）
   if (Number.isFinite(v)) {
     const iv = Math.trunc(v);
-    const neg = iv < 0 ? "-" : "";
-    setDisp("disp-dec", String(iv));
-    setDisp("disp-hex", neg + "0x" + Math.abs(iv).toString(16).toUpperCase());
-    setDisp("disp-oct", neg + "0o" + Math.abs(iv).toString(8));
-    setDisp("disp-bin", neg + "0b" + Math.abs(iv).toString(2));
+    push("HEX", calcFmt(iv, "hex"));
+    push("DEC", calcFmt(iv, "dec"));
+    push("OCT", calcFmt(iv, "oct"));
+    push("BIN", calcFmt(iv, "bin"), "wrap");
     if (iv >= 0 && iv <= 0xffffffff) push(T("字节"), T(iv <= 0xff ? "1 字节" : iv <= 0xffff ? "2 字节" : "4 字节"));
-    push(T("无符号 32 位"), `${u32hex(iv)}（${u32(iv)}）`);
+    push(T("无符号 32 位"), `${u32hex(iv)}（${calcGroup(String(u32(iv)), 3, ",")}）`);
     push("float32", String(Math.fround(iv)));
   } else {
-    setDisp("disp-dec", String(v));
-    setDisp("disp-hex", "—");
-    setDisp("disp-oct", "—");
-    setDisp("disp-bin", "—");
     push(T("值"), String(v), "bad");
   }
   const r2 = $id("calc-radix2");
@@ -951,14 +1054,46 @@ function calcRenderHist() {
   const box = $id("calc-hist");
   if (!box) return;
   box.innerHTML = "";
-  if (!calcHist.length) { box.appendChild(el("div", "sub", T("（还没算过）"))); return; }
-  for (const h of calcHist) {
-    const r = el("div", "r");
-    r.append(el("span", "e", h.e), el("span", "v", h.v));
-    r.title = "点一下填回输入框";
+  if (!calcHist.length) box.appendChild(el("div", "sub", T("（还没算过）")));
+  calcHist.forEach((h) => {
+    const r = el("div", "r" + (h.marked ? " marked" : ""));
+    const star = el("button", "star", h.marked ? "★" : "☆");
+    star.type = "button";
+    star.title = T(h.marked ? "取消标记（下次开机就不留了）" : "标记：高亮，并且保留到下次开机");
+    star.onclick = (ev) => { ev.stopPropagation(); h.marked = !h.marked; calcHistSave(); calcRenderHist(); };
+    r.append(star, el("span", "e", h.e), el("span", "v", h.v));
+    r.title = T("点一下填回算式");
     r.onclick = () => { $id("calc-expr").value = h.e; calcRun(h.e, false); };
     box.appendChild(r);
+  });
+  const c = $id("calc-hist-count");
+  if (c) c.textContent = calcHist.length ? calcHist.length + " 条 · ★ " + calcHist.filter((x) => x.marked).length : "";
+}
+
+/** 记一条历史（只有标记过才会落盘） */
+function calcHistPush(e, v) {
+  const val = calcNum(v);
+  const dup = calcHist.find((h) => h.e === e && h.v === val && !h.marked);
+  if (!dup) calcHist.unshift({ e: String(e), v: val, base: calcBase, marked: false });
+  calcHistTrim();
+  calcRenderHist();
+}
+
+/** 标记/取消标记"当前这条"（显示区的算式 + 结果） */
+function calcMarkCurrent() {
+  const e = ($id("calc-expr").value || "").trim() || String(calcValue);
+  const val = calcNum(calcValue);
+  if (!Number.isFinite(calcValue)) return T("现在这个值没法标记");
+  const hit = calcHist.find((h) => h.e === e && h.v === val);
+  if (hit) {
+    hit.marked = !hit.marked;
+    hit.base = calcBase;
+    calcHistSave(); calcRenderHist();
+    return hit.marked ? T("已标记（会保留到下次开机）") : T("已取消标记");
   }
+  calcHist.unshift({ e, v: val, base: calcBase, marked: true });
+  calcHistTrim(); calcHistSave(); calcRenderHist();
+  return T("已标记（会保留到下次开机）");
 }
 
 function calcRenderBaud() {
@@ -973,27 +1108,290 @@ function calcRenderBaud() {
   }
 }
 
+
+/* ============================== 数据计算（二级菜单） ==============================
+   文件校验 / IEEE 浮点在下面各自的函数里；这里放：进制·字节序、AES、RSA。
+   AES / RSA 走系统 WebCrypto —— 全在本机算，密钥只在这个框里，不写盘、不外发。 */
+
+/** 点一行就把那一行的值复制走（各进制一览 / 换算结果都用它） */
+function dcBindRowCopy(boxId) {
+  const box = $id(boxId);
+  if (!box) return;
+  box.addEventListener("click", async (ev) => {
+    const row = ev.target.closest(".row");
+    if (!row) return;
+    const v = (row.querySelector(".v") || {}).textContent || "";
+    try { await navigator.clipboard.writeText(v); toastMini(T("已复制：") + v); } catch (_) { toastMini(v); }
+  });
+}
+function toastMini(text) {
+  const h = $id("calc-pad-hint");
+  if (h) h.textContent = text;
+}
+
+/** 任意进制写法的数值字面量 → BigInt（0x / 0b / 0o / 逗号 / 下划线 / 空格 都认） */
+function dcParse(str, defRadix) {
+  let t = String(str == null ? "" : str).trim().replace(/[,\s_]/g, "");
+  if (!t) throw new Error(T("先填一个数"));
+  let radix = defRadix;
+  if (/^0[xX]/.test(t)) { radix = 16; t = t.slice(2); }
+  else if (/^0[bB]/.test(t)) { radix = 2; t = t.slice(2); }
+  else if (/^0[oO]/.test(t)) { radix = 8; t = t.slice(2); }
+  const neg = t.startsWith("-");
+  if (neg) t = t.slice(1);
+  if (!t) throw new Error(T("先填一个数"));
+  const digits = "0123456789abcdefghijklmnopqrstuvwxyz";
+  let v = 0n;
+  for (const ch of t.toLowerCase()) {
+    const d = digits.indexOf(ch);
+    if (d < 0 || d >= radix) throw new Error(radix + " " + T("进制里没有这个字符：") + ch);
+    v = v * BigInt(radix) + BigInt(d);
+  }
+  return neg ? -v : v;
+}
+
+function dcGo() {
+  const out = $id("dc-out");
+  if (!out) return;
+  out.innerHTML = "";
+  const bits = Number($id("dc-bits").value) || 32;
+  let v;
+  try { v = dcParse($id("dc-num").value, 10); } catch (e) { out.append(digestRow(T("出错"), String(e.message || e))); return; }
+  const mask = (1n << BigInt(bits)) - 1n;
+  const u = v & mask;
+  const signed = (u >> BigInt(bits - 1)) & 1n ? u - (1n << BigInt(bits)) : u;
+  const hex = u.toString(16).toUpperCase().padStart(bits / 4, "0");
+  const bin = u.toString(2).padStart(bits, "0");
+  const oct = u.toString(8).padStart(Math.ceil(bits / 3), "0");
+  const nbytes = bits / 8;
+  const be = [];
+  for (let i = nbytes - 1; i >= 0; i--) be.push(((u >> BigInt(i * 8)) & 0xffn).toString(16).padStart(2, "0"));
+  const push = (k, val) => out.append(digestRow(k, val, true));
+  push(bits + " " + T("位"), "0x" + calcGroup(hex, 4, " "));
+  push("DEC（" + T("有符号") + "）", calcGroup(signed.toString(), 3, ","));
+  push("DEC（" + T("无符号") + "）", calcGroup(u.toString(), 3, ","));
+  push("OCT", calcGroup(oct, 3, " "));
+  push("BIN", calcGroup(bin, 4, " "));
+  const beUp = be.map((b) => b.toUpperCase());
+  push(T("字节序") + "（大端）", "0x" + beUp.join(" "));
+  push(T("字节序") + "（小端）", "0x" + beUp.slice().reverse().join(" "));
+  // ASCII 可打印字符（不可打印用 .）
+  const ascii = be.map((b) => { const c = parseInt(b, 16); return c >= 32 && c < 127 ? String.fromCharCode(c) : "."; }).join("");
+  push("ASCII", ascii);
+}
+
+/* ---------- AES（WebCrypto） ---------- */
+const dcB64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+function dcUnB64(s) {
+  const t = String(s || "").replace(/\s+/g, "");
+  if (!t) throw new Error(T("先填内容"));
+  const bin = atob(t);
+  const u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u;
+}
+function dcHexBytes(s) {
+  const t = String(s || "").replace(/[^0-9a-fA-F]/g, "");
+  if (!t || t.length % 2) throw new Error(T("hex 得是偶数个字符"));
+  const u = new Uint8Array(t.length / 2);
+  for (let i = 0; i < u.length; i++) u[i] = parseInt(t.slice(i * 2, i * 2 + 2), 16);
+  return u;
+}
+const dcBytesHex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, "0")).join("");
+/** 输入框里那坨：整段都是 hex 字符（可带空格/冒号）且长度为偶数 → 按 hex；否则按 base64 */
+function dcBytes(s, what) {
+  const t = String(s == null ? "" : s).trim();
+  if (!t) throw new Error(T("先填") + what);
+  const bare = t.replace(/[\s:]/g, "");
+  if (/^[0-9a-fA-F]+$/.test(bare) && bare.length % 2 === 0) return dcHexBytes(bare);
+  return dcUnB64(t);
+}
+const dcRandomBytes = (n) => { const u = new Uint8Array(n); crypto.getRandomValues(u); return u; };
+
+async function dcAes(dir) {
+  const out = $id("aes-out"), hint = $id("aes-hint");
+  if (!out) return;
+  out.innerHTML = "";
+  try {
+    const mode = $id("aes-mode").value;                 // GCM / CBC
+    const bits = Number($id("aes-bits").value) || 256;
+    const keyBytes = dcBytes($id("aes-key").value, T("密钥"));
+    if (keyBytes.length * 8 !== bits) throw new Error(T("密钥长度不对") + "：" + keyBytes.length * 8 + " bit ≠ " + bits);
+    const iv = dcBytes($id("aes-iv").value, "IV");
+    const okIv = mode === "GCM" ? [8, 12, 16] : [16];
+    if (!okIv.includes(iv.length)) throw new Error("IV " + T("长度不对") + "：" + iv.length + " " + T("字节"));
+    const alg = mode === "GCM" ? { name: "AES-GCM" } : { name: "AES-CBC" };
+    const key = await crypto.subtle.importKey("raw", keyBytes, alg, false, [dir === "enc" ? "encrypt" : "decrypt"]);
+    const params = mode === "GCM" ? { name: "AES-GCM", iv } : { name: "AES-CBC", iv };
+    if (dir === "enc") {
+      const data = new TextEncoder().encode($id("aes-in").value);
+      const buf = await crypto.subtle.encrypt(params, key, data);
+      out.append(digestRow("base64", dcB64(buf), true), digestRow("hex", dcBytesHex(new Uint8Array(buf)), true));
+      if (hint) hint.textContent = T("加密完成") + "：" + data.length + " → " + buf.byteLength + " " + T("字节");
+    } else {
+      const buf = await crypto.subtle.decrypt(params, key, dcUnB64($id("aes-in").value));
+      out.append(digestRow(T("明文"), new TextDecoder().decode(buf), true), digestRow("hex", dcBytesHex(new Uint8Array(buf)), true));
+      if (hint) hint.textContent = T("解密完成") + "：" + buf.byteLength + " " + T("字节");
+    }
+  } catch (e) {
+    const msg = String((e && e.name) === "OperationError" ? T("解密失败：密钥 / IV / 密文对不上，或者数据被改过") : (e.message || e));
+    out.append(digestRow(T("出错"), msg, true));
+    if (hint) hint.textContent = "";
+  }
+}
+
+/* ---------- RSA（WebCrypto：OAEP 加解密 + PKCS1 签名验签） ---------- */
+function dcPemToBuf(pem) {
+  const m = String(pem).match(/-----BEGIN [^-]+-----([\s\S]*?)-----END [^-]+-----/);
+  const body = (m ? m[1] : String(pem)).replace(/[^A-Za-z0-9+/=]/g, "");
+  if (!body) throw new Error(T("PEM 里没找到 base64 正文"));
+  const bin = atob(body);
+  const u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u.buffer;
+}
+async function dcRsaKey(which, use) {   // which: pub/prv；use: enc/sign
+  const pem = $id("rsa-key").value;
+  if (!String(pem).trim()) throw new Error(T("先把 PEM 密钥粘进来（或选文件）"));
+  const fmt = which === "pub" ? "spki" : "pkcs8";
+  if (use === "sign") {
+    return crypto.subtle.importKey(fmt, dcPemToBuf(pem), { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false,
+      [which === "pub" ? "verify" : "sign"]);
+  }
+  return crypto.subtle.importKey(fmt, dcPemToBuf(pem), { name: "RSA-OAEP", hash: "SHA-256" }, false,
+    [which === "pub" ? "encrypt" : "decrypt"]);
+}
+
+async function dcRsa(op) {
+  const out = $id("rsa-out"), hint = $id("rsa-hint");
+  if (!out) return;
+  out.innerHTML = "";
+  try {
+    const text = $id("rsa-in").value;
+    if (op === "enc") {
+      const k = await dcRsaKey("pub", "enc");
+      const buf = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, k, new TextEncoder().encode(text));
+      out.append(digestRow("base64", dcB64(buf), true), digestRow("hex", dcBytesHex(new Uint8Array(buf)), true));
+      if (hint) hint.textContent = T("加密完成") + "：" + buf.byteLength + " " + T("字节");
+    } else if (op === "dec") {
+      const k = await dcRsaKey("prv", "enc");
+      const buf = await crypto.subtle.decrypt({ name: "RSA-OAEP" }, k, dcUnB64(text));
+      out.append(digestRow(T("明文"), new TextDecoder().decode(buf), true));
+      if (hint) hint.textContent = T("解密完成") + "：" + buf.byteLength + " " + T("字节");
+    } else if (op === "sign") {
+      const k = await dcRsaKey("prv", "sign");
+      const sig = await crypto.subtle.sign({ name: "RSASSA-PKCS1-v1_5" }, k, new TextEncoder().encode(text));
+      out.append(digestRow("base64", dcB64(sig), true), digestRow("hex", dcBytesHex(new Uint8Array(sig)), true));
+      if (hint) hint.textContent = T("签名完成") + "：" + sig.byteLength + " " + T("字节");
+    } else {
+      const k = await dcRsaKey("pub", "sign");
+      const msg = new TextEncoder().encode($id("rsa-msg").value);
+      const ok = await crypto.subtle.verify({ name: "RSASSA-PKCS1-v1_5" }, k, dcUnB64(text), msg);
+      out.append(digestRow(T("验签结果"), ok ? T("✅ 通过（签名对得上）") : T("❌ 不通过（改了内容或不是这把公钥）"), true));
+      if (hint) hint.textContent = "";
+    }
+  } catch (e) {
+    out.append(digestRow(T("出错"), String(e.message || e), true));
+    if (hint) hint.textContent = "";
+  }
+}
+
+/** 数据计算页的绑定（跟计算器一起在 initCalc 里挂一次） */
+function initDataCalc() {
+  dcBindRowCopy("dc-out");
+  dcBindRowCopy("calc-file-out");
+  dcBindRowCopy("ieee-out");
+  dcBindRowCopy("aes-out");
+  dcBindRowCopy("rsa-out");
+  if ($id("dc-go")) $id("dc-go").onclick = dcGo;
+  if ($id("dc-num")) $id("dc-num").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); dcGo(); } };
+  if ($id("dc-bits")) $id("dc-bits").onchange = dcGo;
+  // AES
+  if ($id("aes-enc")) $id("aes-enc").onclick = () => dcAes("enc");
+  if ($id("aes-dec")) $id("aes-dec").onclick = () => dcAes("dec");
+  if ($id("aes-key-gen")) $id("aes-key-gen").onclick = () => {
+    const bits = Number($id("aes-bits").value) || 256;
+    $id("aes-key").value = dcBytesHex(dcRandomBytes(bits / 8));
+    toastMini(T("随机密钥已生成（hex）"));
+  };
+  if ($id("aes-iv-gen")) $id("aes-iv-gen").onclick = () => {
+    const n = $id("aes-mode").value === "GCM" ? 12 : 16;
+    $id("aes-iv").value = dcBytesHex(dcRandomBytes(n));
+    toastMini(T("随机 IV 已生成（hex）"));
+  };
+  if ($id("aes-mode")) $id("aes-mode").onchange = () => { if ($id("aes-iv")) $id("aes-iv").value = ""; };
+  // RSA
+  for (const [id, op] of [["rsa-enc", "enc"], ["rsa-dec", "dec"], ["rsa-sign", "sign"], ["rsa-verify", "verify"]]) {
+    if ($id(id)) $id(id).onclick = () => dcRsa(op);
+  }
+  if ($id("rsa-key-pick")) {
+    $id("rsa-key-pick").onclick = async () => {
+      try {
+        const p = await dlgOpen({ title: T("选 PEM 密钥文件"), multiple: false, directory: false });
+        const path = typeof p === "string" ? p : (p && p.path);
+        if (!path) return;
+        $id("rsa-key").value = await readTextFile(path);
+        if ($id("rsa-key-file")) $id("rsa-key-file").value = path;
+      } catch (e) {
+        if ($id("rsa-hint")) $id("rsa-hint").textContent = String(e.message || e).slice(0, 80);
+      }
+    };
+  }
+}
+
 export function initCalc() {
   const box = $id("calc-expr");
   if (!box || box.__bound) return;
   box.__bound = true;
 
   calcRenderPad();
+  initDataCalc();
   box.oninput = () => calcRun(box.value, false);
   box.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); calcRun(box.value); } };
   $id("calc-go").onclick = () => calcRun(box.value);
-  $id("calc-hexmode").onchange = (e) => {
-    calcHexPad = e.target.checked;
-    if ($id("calc-pad-hex")) $id("calc-pad-hex").checked = calcHexPad;
-    calcEntry = calcHexPad ? u32(calcEntryValue()).toString(16).toUpperCase() : String(calcEntryValue());
-    calcRenderPad();
-    $id("calc-pad-hint").textContent = T(calcHexPad ? "0x（十六进制输入）" : "十进制输入");
+  // 显示进制那三个按钮：换进制 = 换显示 + 换键盘输入进制（跟 Windows 计算器一个逻辑）
+  document.querySelectorAll(".calcbasebtn").forEach((b) => { b.onclick = () => calcSetBase(b.dataset.base); });
+  // → 浮点数：把当前结果按 IEEE-754 单精度解释一次（再点回到整数显示）
+  $id("calc-to-float").onclick = () => {
+    calcFloatShow = !calcFloatShow;
+    $id("calc-to-float").classList.toggle("on", calcFloatShow);
+    calcRenderBig();
+    $id("calc-pad-hint").textContent = T(calcFloatShow ? "显示：IEEE-754 单精度解释" : "显示：整数");
   };
-  if ($id("calc-pad-hex")) {
-    $id("calc-pad-hex").onchange = (e) => {
-      $id("calc-hexmode").checked = e.target.checked;
-      $id("calc-hexmode").dispatchEvent(new Event("change"));
+  // ☆ 标记这个数据：右侧历史高亮 + 写进本机（没标记的不写盘）
+  $id("calc-mark").onclick = () => { $id("calc-pad-hint").textContent = calcMarkCurrent(); };
+  // 上下比例（默认 1/3，拖动改、双击复位）
+  (function bindCalcSplit() {
+    const view = $id("calc-view"), grip = $id("calc-split");
+    if (!view || !grip) return;
+    const saved = Number(localStorage.getItem(CALC_SPLIT_KEY) || 0);
+    if (saved >= 18 && saved <= 70) view.style.flexBasis = saved + "%";
+    let drag = false;
+    grip.addEventListener("pointerdown", (e) => { drag = true; try { grip.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault(); });
+    grip.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const r = view.parentElement.getBoundingClientRect();
+      const pct = Math.max(18, Math.min(70, ((e.clientY - r.top) / r.height) * 100));
+      view.style.flexBasis = Math.round(pct * 10) / 10 + "%";
+    });
+    const done = () => {
+      if (!drag) return;
+      drag = false;
+      const pct = parseFloat(view.style.flexBasis) || 0;
+      if (pct) localStorage.setItem(CALC_SPLIT_KEY, String(Math.round(pct * 10) / 10));
     };
+    grip.addEventListener("pointerup", done);
+    grip.addEventListener("pointercancel", done);
+    grip.addEventListener("dblclick", () => { view.style.flexBasis = ""; localStorage.removeItem(CALC_SPLIT_KEY); });
+  })();
+  // 各进制一览：点一行复制那一行的值
+  if ($id("calc-radix2")) {
+    $id("calc-radix2").addEventListener("click", async (ev) => {
+      const row = ev.target.closest(".row");
+      if (!row) return;
+      const v = (row.querySelector(".v") || {}).textContent || "";
+      try { await navigator.clipboard.writeText(v); $id("calc-pad-hint").textContent = T("已复制：") + v; } catch (_) { $id("calc-pad-hint").textContent = v; }
+    });
   }
   document.querySelectorAll(".calc-quick").forEach((b) => {
     b.onclick = () => { box.value += b.dataset.q || ""; box.focus(); calcRun(box.value, false); };
@@ -1019,18 +1417,20 @@ export function initCalc() {
     if (n) n.onclick = () => calcBitsOp(kind);
   }
   $id("calc-width").onchange = () => calcRun(box.value, false);
-  $id("calc-hist-clear").onclick = () => { calcHist = []; calcRenderHist(); };
+  $id("calc-hist-clear").onclick = () => {                 // 只清没标记的
+    calcHist = calcHist.filter((h) => h.marked);
+    calcRenderHist();
+  };
+  $id("calc-hist-clear-all").onclick = () => {             // 连标记一起清（连本机那份一起删）
+    calcHist = [];
+    calcHistSave();
+    calcRenderHist();
+  };
   $id("calc-insert").onclick = () => {
     const v = Number.isFinite(calcValue) ? calcNum(calcValue) : $id("calc-out").textContent;
     const tx = $id("tx");
     if (tx) { tx.value = v; tx.focus(); }
   };
-  $id("calc-result-to-support").onclick = () => {
-    $id("ieee-mode").value = "f2b";
-    $id("ieee-in").value = Number.isFinite(calcValue) ? String(calcValue) : "";
-    ieeeConvert();
-  };
-
   // IEEE
   $id("ieee-go").onclick = ieeeConvert;
   $id("ieee-in").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); ieeeConvert(); } };
@@ -1058,6 +1458,7 @@ export function initCalc() {
   $id("calc-file-go").onclick = calcFileGo;
 
   box.value = "0x1F & 0x0F << 2";
+  calcSetBase("dec", true);
   calcRun(box.value, false);
   calcRenderHist();
   calcRenderBaud();

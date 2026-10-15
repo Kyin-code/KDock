@@ -376,7 +376,8 @@
           <button class="navitem" data-tab="chart"><i>∿</i><span>实时图表</span></button>
           <button class="navitem" data-tab="seq"><i>≣</i><span>中控编排</span></button>
           <button class="navitem" data-tab="batch" title="多行文本批量处理 / 逐行发到串口"><i>▤</i><span>批量文本</span></button>
-          <button class="navitem" data-tab="calc" title="表达式计算：进制、位运算、常用换算"><i>∑</i><span>计算器</span></button>
+          <button class="navitem" data-tab="calc" title="程序员计算器：表达式、32 位控制板、历史记录"><i>∑</i><span>计算器</span></button>
+          <button class="navitem" data-tab="datacalc" title="文件校验 / 哈希、浮点、进制字节序、AES / RSA"><i>#</i><span>数据计算</span></button>
           <button class="navitem" data-tab="scope"><i>⌁</i><span>示波器</span></button>
           <button class="navitem" data-tab="capture"><i>⛶</i><span>屏幕捕获</span></button>
           <button class="navitem" data-tab="debug" title="内嵌调试：GDB（MI）+ GDB Server（openocd / J-Link）"><i>⛯</i><span>调试</span></button>
@@ -595,87 +596,166 @@
           </div>
         </div>
 
-        <!-- 计算器 -->
-        <div class="workpane" data-work="calc" hidden>
-          <!-- ① 表达式（C 风格）：单独一个控件，跟位控制板/键盘分开 -->
-          <div class="calccard">
-            <div class="cardtitle">表达式（C 风格）<span class="grow"></span>
-              <span class="lb">0x / 0b / 0o · 位移 · 位与或 · 乘方 **</span></div>
-            <div class="trow">
-              <input id="calc-expr" class="calcin"
-                placeholder="0x1F &amp; (0x0F &lt;&lt; 2)  ·  1.5e3 * 2  ·  (1&lt;&lt;16)-1  ·  ~0 &amp; 0xFF" />
-              <button id="calc-go" class="btn primary">=</button>
+        <!-- 计算器：上部 1/3 只显示（小字算式 + 大字结果），下部 2/3 = 控制行 + 左键盘 / 右 32 位控制板 -->
+        <div class="workpane calcpane" data-work="calc" hidden>
+          <div class="calcview" id="calc-view">
+            <div class="calcexprrow">
+              <input id="calc-expr" class="calcexprin" spellcheck="false"
+                placeholder="0x1F &amp; (0x0F &lt;&lt; 2)   ·   1.5e3 * 2   ·   (1&lt;&lt;16)-1   ·   ~0 &amp; 0xFF" />
+              <button class="btn small calc-quick" data-q="0x" title="插入 0x">0x</button>
+              <button class="btn small calc-quick" data-q="0b" title="插入 0b">0b</button>
+              <button id="calc-go" class="btn small primary" title="算一次（回车同效）">=</button>
             </div>
-            <div class="trow calcquick">
-              <span class="lb">插入</span>
-              <button class="btn small calc-quick" data-q="0x">0x</button>
-              <button class="btn small calc-quick" data-q="0b">0b</button>
-              <button class="btn small calc-quick" data-q="&lt;&lt;">&lt;&lt;</button>
-              <button class="btn small calc-quick" data-q="&gt;&gt;">&gt;&gt;</button>
-              <button class="btn small calc-quick" data-q="&amp;">&amp;</button>
-              <button class="btn small calc-quick" data-q="|">|</button>
-              <button class="btn small calc-quick" data-q="~">~</button>
-              <button class="btn small calc-quick" data-q="%">%</button>
-              <span class="grow"></span>
-              <button id="calc-result-to-support" class="btn small" title="把结果送进右边的浮点/IEEE 转换">→ 浮点转换</button>
+            <div class="calcbigline">
+              <span class="calcbase" id="calc-base">DEC</span>
+              <span id="calc-out" class="calcout">0</span>
             </div>
+            <div class="calcsubline"><span id="calc-sub" class="lb"></span></div>
           </div>
+          <div class="vsplit" id="calc-split" title="拖动调整上下比例（双击回到 1/3）"></div>
 
-          <!-- ② 32 位位控制板：一位一个大按钮，按半字节分组（Windows 程序员模式那种排法） -->
-          <div class="calccard">
-            <div class="cardtitle">32 位控制板
+          <div class="calcops">
+            <div class="trow calcctl">
+              <button id="calc-to-float" class="btn small" title="把当前结果按 IEEE-754 单精度解释一次（再点回到整数显示）">→ 浮点数</button>
+              <span class="sep"></span>
+              <button id="calc-base-hex" class="btn small calcbasebtn" data-base="hex">以 16 进制显示</button>
+              <button id="calc-base-dec" class="btn small calcbasebtn" data-base="dec">以 10 进制显示</button>
+              <button id="calc-base-bin" class="btn small calcbasebtn" data-base="bin">以 2 进制显示</button>
+              <span class="sep"></span>
+              <button id="calc-mark" class="btn small" title="标记这条数据：右侧历史里高亮，并且保留到下次开机（没标记的关掉就没了）">☆ 标记这个数据</button>
               <span class="grow"></span>
-              <select id="calc-width" class="tight" title="限定位宽：结果会被掩到这么多位">
-                <option value="0">不限位宽</option>
-                <option value="8">8 位</option>
-                <option value="16">16 位</option>
-                <option value="32">32 位</option>
-              </select>
-              <button id="bit-zero" class="btn small">清零</button>
-              <button id="bit-not" class="btn small">取反 ~</button>
-              <button id="bit-shl" class="btn small" title="左移一位">&lt;&lt; 1</button>
-              <button id="bit-shr" class="btn small" title="右移一位">&gt;&gt; 1</button>
-              <button id="bit-rol" class="btn small" title="循环左移">↺ 1</button>
-              <button id="bit-ror" class="btn small" title="循环右移">↻ 1</button>
-              <button id="bit-byte-not" class="btn small" title="反相（异或 0xFFFFFFFF）">全反</button>
-              <button id="bit-feed" class="btn small primary" title="把这一行的值写进上面的表达式">→ 表达式</button>
+              <span id="calc-pad-hint" class="lb"></span>
             </div>
-            <div id="calc-bits" class="bitboard"></div>
-            <div class="bithint">点任意一位就能翻它；结果会立刻同步到下面的显示区、表达式和右边的进制明细。</div>
-          </div>
-
-          <!-- ③ 程序员计算器：显示区（HEX/DEC/OCT/BIN）+ 键盘 + 历史 -->
-          <div class="calccard">
-            <div class="calcpanel">
-              <div class="calcpadcol">
-                <div class="calcdisp">
-                  <div class="calcoutline"><span id="calc-out" class="calcout">—</span></div>
-                  <div class="radixgrid">
-                    <div class="radixrow" data-radix="hex"><span class="k">HEX</span><span class="v" id="disp-hex">0</span></div>
-                    <div class="radixrow" data-radix="dec"><span class="k">DEC</span><span class="v" id="disp-dec">0</span></div>
-                    <div class="radixrow" data-radix="oct"><span class="k">OCT</span><span class="v" id="disp-oct">0</span></div>
-                    <div class="radixrow" data-radix="bin"><span class="k">BIN</span><span class="v" id="disp-bin">0</span></div>
-                  </div>
+            <div class="calcbody">
+              <div id="calc-pad" class="calcgrid"></div>
+              <div class="calcprog">
+                <div class="trow calcprogtop">
+                  <select id="calc-width" class="tight" title="限定位宽：结果会被掩到这么多位">
+                    <option value="0">不限位宽</option>
+                    <option value="8">8 位</option>
+                    <option value="16">16 位</option>
+                    <option value="32">32 位</option>
+                  </select>
+                  <button id="bit-zero" class="btn small">清零</button>
+                  <button id="bit-not" class="btn small">取反 ~</button>
+                  <button id="bit-shl" class="btn small" title="左移一位">&lt;&lt; 1</button>
+                  <button id="bit-shr" class="btn small" title="右移一位">&gt;&gt; 1</button>
+                  <button id="bit-rol" class="btn small" title="循环左移">↺ 1</button>
+                  <button id="bit-ror" class="btn small" title="循环右移">↻ 1</button>
+                  <button id="bit-byte-not" class="btn small" title="反相（异或 0xFFFFFFFF）">全反</button>
+                  <button id="bit-feed" class="btn small primary" title="把当前值写进上面的算式">→ 算式</button>
                 </div>
-                <div id="calc-pad" class="calcgrid"></div>
-                <div class="trow">
-                  <label class="chk" title="键盘按十六进制解释：打 1F 就是 0x1F，A-F 也算数字"><input type="checkbox" id="calc-hexmode" /> 十六进制输入</label>
-                  <span class="grow"></span>
-                  <span id="calc-pad-hint" class="lb"></span>
-                </div>
-                <div class="trow">
+                <div id="calc-bits" class="bitboard"></div>
+                <div class="trow calcprogfoot">
+                  <span class="bithint">点任意一位就能翻它；结果会立刻同步到上面的显示区和右侧历史。</span>
                   <span class="grow"></span>
                   <button id="calc-insert" class="btn small" title="把结果填进串口发送框">→ 发送框</button>
                 </div>
               </div>
-              <div class="calcpanel-side">
-                <div class="cardtitle">历史<span class="grow"></span>
-                  <button id="calc-hist-clear" class="btn small">清空</button></div>
-                <div id="calc-hist" class="calchist"></div>
-                <div class="cardtitle">进制明细</div>
-                <div id="calc-radix2" class="aginfo"></div>
-              </div>
             </div>
+          </div>
+        </div>
+
+        <!-- 数据计算：文件校验 / 浮点 / 进制 / AES / RSA / 串口换算 -->
+        <div class="workpane" data-work="datacalc" hidden>
+          <div class="calccard">
+            <div class="cardtitle">文件校验（CRC16 / CRC32 / MD5 / SHA-1 / SHA-256）
+              <span class="grow"></span>
+              <button id="calc-file-pick" class="btn small">选文件…</button></div>
+            <div class="field"><label>文件</label><span id="calc-file-name" class="lb ell" title="">（还没选）</span></div>
+            <div class="trow">
+              <label class="chk ell">偏移 <input type="number" id="calc-file-off" class="num" value="0" min="0" /> </label>
+              <label class="chk ell">长度 <input type="number" id="calc-file-len" class="num" value="0" min="0" /></label>
+              <button id="calc-file-go" class="btn small primary">计算</button>
+              <label class="chk"><input type="checkbox" id="calc-file-into" checked /> CRC32 填进计算器</label>
+            </div>
+            <div id="calc-file-out" class="aginfo"></div>
+            <p class="hint">长度填 0 = 从偏移算到文件末尾。固件查分段有没有被改过时很好用。</p>
+          </div>
+
+          <div class="calccard">
+            <div class="cardtitle">IEEE 754 浮点</div>
+            <div class="trow">
+              <select id="ieee-mode" class="tight">
+                <option value="f2b">浮点 → 位</option>
+                <option value="b2f">位 → 浮点</option>
+              </select>
+              <input id="ieee-in" class="dirinput" placeholder="3.14 或 0x4048F5C3" />
+              <button id="ieee-go" class="btn small primary">转换</button>
+              <button id="ieee-use-calc" class="btn small" title="拿计算器当前的值来转">用计算器当前值</button>
+            </div>
+            <div id="ieee-out" class="aginfo"></div>
+          </div>
+
+          <div class="calccard">
+            <div class="cardtitle">进制 / 字节序</div>
+            <div class="trow">
+              <input id="dc-num" class="dirinput" placeholder="随便哪种进制：0x1F · 0b1010 · 0o17 · 1234 或 1,234" />
+              <select id="dc-bits" class="tight" title="按多少位解释（影响有符号/无符号与翻转）">
+                <option value="8">8 位</option>
+                <option value="16">16 位</option>
+                <option value="32" selected>32 位</option>
+                <option value="64">64 位</option>
+              </select>
+              <button id="dc-go" class="btn small primary">换算</button>
+            </div>
+            <div id="dc-out" class="aginfo"></div>
+          </div>
+
+          <div class="calccard">
+            <div class="cardtitle">AES 加解密（WebCrypto）
+              <span class="grow"></span>
+              <select id="aes-mode" class="tight"><option value="GCM">AES-GCM</option><option value="CBC">AES-CBC</option></select>
+              <select id="aes-bits" class="tight"><option value="256">256 位</option><option value="128">128 位</option></select>
+            </div>
+            <div class="trow">
+              <span class="lb ell">密钥</span>
+              <input id="aes-key" class="dirinput" placeholder="hex（32 / 64 个十六进制字符）或 base64" />
+              <button id="aes-key-gen" class="btn small" title="随机生成一个密钥">随机</button>
+            </div>
+            <div class="trow">
+              <span class="lb ell">IV</span>
+              <input id="aes-iv" class="dirinput" placeholder="GCM 12 字节 / CBC 16 字节，hex 或 base64" />
+              <button id="aes-iv-gen" class="btn small" title="随机生成 IV">随机</button>
+            </div>
+            <div class="trow">
+              <input id="aes-in" class="dirinput" placeholder="要加密的明文，或要解密的 base64 密文" />
+            </div>
+            <div class="trow">
+              <button id="aes-enc" class="btn small primary">加密 → base64</button>
+              <button id="aes-dec" class="btn small">base64 解密</button>
+              <span class="grow"></span>
+              <span id="aes-hint" class="lb"></span>
+            </div>
+            <div id="aes-out" class="aginfo"></div>
+          </div>
+
+          <div class="calccard">
+            <div class="cardtitle">RSA（RSA-OAEP-SHA256 / RSASSA-PKCS1-SHA256）
+              <span class="grow"></span>
+              <select id="rsa-keykind" class="tight"><option value="pub">用公钥</option><option value="prv">用私钥</option></select>
+            </div>
+            <div class="trow">
+              <span class="lb ell">密钥</span>
+              <input id="rsa-key-file" class="dirinput" placeholder="PEM/BER 文件路径，或直接粘在下面" />
+              <button id="rsa-key-pick" class="btn small">选文件…</button>
+            </div>
+            <textarea id="rsa-key" class="dcpem" spellcheck="false" placeholder="-----BEGIN PUBLIC KEY-----&#10;…&#10;-----END PUBLIC KEY-----"></textarea>
+            <div class="trow">
+              <input id="rsa-in" class="dirinput" placeholder="明文 / base64 密文 / 待签名文本 / base64 签名" />
+            </div>
+            <div class="trow">
+              <input id="rsa-msg" class="dirinput" placeholder="验签用的原文（只验签时填）" />
+            </div>
+            <div class="trow">
+              <button id="rsa-enc" class="btn small primary">公钥加密</button>
+              <button id="rsa-dec" class="btn small">私钥解密</button>
+              <button id="rsa-sign" class="btn small">私钥签名</button>
+              <button id="rsa-verify" class="btn small">公钥验签</button>
+              <span class="grow"></span>
+              <span id="rsa-hint" class="lb"></span>
+            </div>
+            <div id="rsa-out" class="aginfo"></div>
           </div>
         </div>
 
@@ -1204,41 +1284,28 @@
           <p class="hint">「逐行发送」按上面的间隔一条条发到当前串口，发完自动停；中途再点一次就停。</p>
         </div>
 
-        <!-- 计算器参数 -->
+        <!-- 计算器参数：这里只放历史记录（标记过的才会留下），值本身在中间显示区 -->
         <div class="parampane" data-param="calc" hidden>
-          <div class="cardtitle">文件校验（CRC / 哈希）
-            <button id="calc-file-pick" class="btn small">选文件…</button></div>
-          <div class="field"><label>文件</label><span id="calc-file-name" class="lb ell" title="">（还没选）</span></div>
-          <div class="trow">
-            <label class="chk ell">偏移 <input type="number" id="calc-file-off" class="num" value="0" min="0" /> </label>
-            <label class="chk ell">长度 <input type="number" id="calc-file-len" class="num" value="0" min="0" /></label>
+          <div class="cardtitle">历史记录
+            <span class="grow"></span>
+            <span id="calc-hist-count" class="lb"></span>
+            <button id="calc-hist-clear" class="btn small" title="只清没标记的（★ 的留下）">清未标记</button>
+            <button id="calc-hist-clear-all" class="btn small danger" title="连标记的一起清掉">清空</button>
           </div>
-          <div class="trow">
-            <button id="calc-file-go" class="btn small primary">计算</button>
-            <label class="chk"><input type="checkbox" id="calc-file-into" checked /> CRC32 填进计算区</label>
-          </div>
-          <div id="calc-file-out" class="aginfo"></div>
-          <p class="hint">长度填 0 = 从偏移算到文件末尾。固件查分段有没有被改过时很好用。</p>
-
-          <div class="cardtitle">IEEE 754 浮点</div>
-          <div class="trow">
-            <select id="ieee-mode" class="tight">
-              <option value="f2b">浮点 → 位</option>
-              <option value="b2f">位 → 浮点</option>
-            </select>
-            <input id="ieee-in" class="dirinput" placeholder="3.14 或 0x4048F5C3" />
-          </div>
-          <div class="trow">
-            <button id="ieee-go" class="btn small primary">转换</button>
-            <button id="ieee-use-calc" class="btn small" title="拿计算区当前的值来转">用计算区当前值</button>
-          </div>
-          <div id="ieee-out" class="aginfo"></div>
-
-          <div class="cardtitle">进制换算</div>
+          <p class="hint">点一行 = 填回上面的算式。点 ☆/★ 切换标记：**标记过的才写进本机、下次开机还在**，没标记的关掉软件就没了。</p>
+          <div id="calc-hist" class="calchist"></div>
+          <div class="cardtitle">各进制一览</div>
           <div id="calc-radix2" class="aginfo"></div>
+        </div>
+
+        <!-- 数据计算参数：串口常用换算（原来在计算器右栏） -->
+        <div class="parampane" data-param="datacalc" hidden>
           <div class="cardtitle">串口常用换算</div>
           <div id="calc-baud" class="aginfo"></div>
           <p class="hint">位时间 = 1 / 波特率。开 8N1 时一个字节 10 位，所以 115200 下发一个字节约 86.8 µs。</p>
+          <div class="cardtitle">说明</div>
+          <p class="hint">左边是「文件校验 / 浮点 / 进制字节序 / AES / RSA」。AES 与 RSA 走系统的 WebCrypto（
+            浏览器内实现，不发到网上）；密钥只在你本机的框里，不写盘。</p>
         </div>
 
         <!-- 图表参数 -->
