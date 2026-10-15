@@ -1975,6 +1975,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 /* 键区字号跟窗口/缩放同比（vw）—— 格子小了字也小，任何缩放/字号下标签都不会撑出去；
    真放不下给省略号，绝不出框。 */
 .calcgrid button {
+  font-family: inherit;                        /* 别再钉 Consolas：中文标签宽度不可控会把列顶宽 */
   font-size: clamp(11px, 1.15vw, 17px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   line-height: 1; padding: 0; min-height: 0;
   /* height 必须显式覆盖：上面那条老规则写死了 38px，行高压到 16px 时按钮就溢出到下一行外面（
