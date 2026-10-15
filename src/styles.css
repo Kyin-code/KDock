@@ -1746,9 +1746,11 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .calcgrid button:hover { background: var(--surface-3); border-color: hsl(var(--border)); }
 .calcgrid button.op { color: hsl(var(--primary)); font-weight: 600; }
-/* A-F 那排：非十六进制模式下占着格子但不可用（别让键盘排版跳来跳去） */
-.calcgrid button.hexd { visibility: hidden; }
-.calcgrid.hexmode button.hexd { visibility: visible; }
+/* A-F 那排：**一直显示**，非十六进制模式下置灰禁用即可。
+   原来写的是 visibility: hidden —— 格子虽然占着，但键是看不见的，于是那一行只剩下最右边的 AC，
+   看着就像"AC 一个人向右看齐、跑出队伍"。现在交给 :disabled 的置灰样式。 */
+.calcgrid button.hexd { opacity: 1; }
+.calcgrid:not(.hexmode) button.hexd:disabled { opacity: .32; }
 .calcgrid button.eq { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-weight: 700; }
 .calcgrid button.danger { color: hsl(var(--destructive)); }
 .calcpanel-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
