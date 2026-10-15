@@ -477,7 +477,7 @@ const PAD_KEYS = [
   [["<<", "op:<<", "op"], [">>", "op:>>", "op"], ["AND", "op:&", "op"], ["OR", "op:|", "op"], ["XOR", "op:^", "op"], ["NOT", "op:~", "op"], ["AC", "clear", "danger"]],
   [["7", "d:7", ""], ["8", "d:8", ""], ["9", "d:9", ""], ["÷", "op:/", "op"], ["×", "op:*", "op"], ["%", "pct", ""], ["±", "neg", ""]],
   [["4", "d:4", ""], ["5", "d:5", ""], ["6", "d:6", ""], ["−", "op:-", "op"], ["+", "op:+", "op"], ["x²", "sqr", "op"], ["√", "sqrt", ""]],
-  [["1", "d:1", ""], ["2", "d:2", ""], ["3", "d:3", ""], ["xʸ", "op:**", "op"], ["1/x", "inv", ""], ["☆ 标记", "mark", "base hi", 2]],
+  [["1", "d:1", ""], ["2", "d:2", ""], ["3", "d:3", ""], ["xʸ", "op:**", "op"], ["1/x", "inv", ""], ["x³", "pow3", "op"], ["n!", "fact", "op"]],
   [["0", "d:0", ""], [".", "dot", ""], ["(", "ins:(", ""], [")", "ins:)", ""], ["字节交换", "bits:bswap", "base"], ["MOD", "op:%", "op"], ["CE", "ce", ""]],
   [["清零", "bits:zero", "bit"], ["取反", "bits:not", "bit"], ["<< 1", "bits:shl", "bit"], [">> 1", "bits:shr", "bit"], ["↺ 1", "bits:rol", "bit"], ["↻ 1", "bits:ror", "bit"], ["全反", "bits:not32", "bit"]],
 ];
@@ -664,6 +664,27 @@ function calcPadKey(act) {
     calcFresh = true;
     $id("calc-pad-hint").textContent = T("重新开始");
     calcSetValue(0, false);
+    return;
+  }
+  if (kind === "pow3") {
+    const v = calcEntryValue() ** 3;
+    calcEntry = String(v);
+    calcFresh = true;
+    $id("calc-pad-hint").textContent = calcNum(v);
+    calcSetValue(v, false);
+    calcLogPush(T("立方") + " " + calcFmt(v), v);
+    return;
+  }
+  if (kind === "fact") {
+    const n0 = Math.trunc(calcEntryValue());
+    if (n0 < 0 || n0 > 170) { $id("calc-pad-hint").textContent = T("阶乘只支持 0~170 的整数"); return; }
+    let v = 1;
+    for (let i = 2; i <= n0; i++) v *= i;
+    calcEntry = String(v);
+    calcFresh = true;
+    $id("calc-pad-hint").textContent = calcNum(v);
+    calcSetValue(v, false);
+    calcLogPush(T("阶乘") + " " + n0 + "!", v);
     return;
   }
   if (kind === "sqr") {

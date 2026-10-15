@@ -1976,8 +1976,11 @@ summary.tb-icon::-webkit-details-marker { display: none; }
    真放不下给省略号，绝不出框。 */
 .calcgrid button {
   font-size: clamp(11px, 1.15vw, 17px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  line-height: 1; padding: 0; min-height: 0;   /* 归零后行才能真正压到 17px，窗口小了才不看丢 */
-  min-width: 0;                                /* 关键：默认 auto 会让长标签把整列顶宽，右边几列就被挤出卡片 */
+  line-height: 1; padding: 0; min-height: 0;
+  /* height 必须显式覆盖：上面那条老规则写死了 38px，行高压到 16px 时按钮就溢出到下一行外面（
+     "退格键在外面"就是这么来的）。auto = 跟着格子走。 */
+  height: auto;
+  min-width: 0;                                /* 默认 auto 会让长标签把整列顶宽，右边几列被挤出卡片 */
   max-width: 100%;
 }
 .calcgrid button.base, .calcgrid button.bit, .calcgrid button.hi { font-size: clamp(8.5px, 0.85vw, 13px); }
