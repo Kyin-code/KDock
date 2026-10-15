@@ -7014,6 +7014,39 @@ const AG_HOST = {
     showPane(tab);
     return "已切到「" + tab + "」页";
   },
+  /** 把节点类型注册表整理成"给 agent 看的格式说明"：每种类型有哪些输入/输出端口。
+   *  这样它不用猜字段名，而且这份清单是跟着 SQ_KINDS 走的，代码改了它自动跟着变。 */
+  flowKindsBrief() {
+    const out = {};
+    for (const [k, v] of Object.entries(SQ_KINDS || {})) {
+      if (!v) continue;
+      const name = (x) => (typeof x === "string" ? x : Array.isArray(x) ? x[0] : String(x));
+      out[k] = {
+        label: v.label || v.name || k,
+        ins: (Array.isArray(v.ins) ? v.ins : []).map(name),
+        outs: (Array.isArray(v.outs) ? v.outs : []).map(name),
+      };
+    }
+    return out;
+  },
+  async flow_get() {
+    return JSON.stringify({
+      graph: sqGraph,
+      kinds: this.flowKindsBrief(),
+      note: "edges 是 {from:'节点id',port:'输出端口名',to:'节点id'}；端口名取自上面 kinds 里各类型的 outs。",
+    });
+  },
+  async flow_set(a) {
+    const g = a && a.graph;
+    if (!g || !Array.isArray(g.nodes)) return "graph.nodes 必须是数组";
+    const before = sqGraph;
+    sqGraph = { nodes: g.nodes, edges: Array.isArray(g.edges) ? g.edges : [] };
+    sqSanitize();                                  // 已有体检：丢掉不认识的类型、重复 id、悬空连线
+    if (!sqGraph.nodes.length) { sqGraph = before; return "导入失败：没有一个节点是认识的类型（可以先 flow_get 看 kinds）"; }
+    sqSave(); sqRender(); sqFitView && sqFitView();
+    showPane("seq");
+    return `已导入画布：${sqGraph.nodes.length} 个节点 / ${sqGraph.edges.length} 条连线（不认识的类型和悬空连线已丢掉），已经切到「中控编排」页，用户可以直接改或跑。`;
+  },
   async flow_run(a) {
     if (a && a.graph) {
       const backup = JSON.stringify(sqGraph);

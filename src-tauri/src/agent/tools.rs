@@ -229,6 +229,12 @@ pub fn catalog() -> Vec<ToolDef> {
             "graph":{"type":"object","description":"可选，直接给编排 JSON"},
             "wait":{"type":"boolean","description":"等它跑完再返回，默认 true"}
         }}), true);
+    push("flow_get", "读**当前画布上的编排**：节点（含各自参数与坐标）+ 连线（from/port/to）+ 可用的节点类型清单（每种类型有哪些输入/输出端口）。想看懂/复述用户画的流程、或者要自己排一条，先调它拿格式。",
+        json!({"type":"object","properties":{}}), true);
+    push("flow_set", "把一份编排**导入画布**（替换当前画布并保存，用户在界面上直接能看到/编辑/运行）。格式：{nodes:[{id,type,x,y,...该类型的参数}],edges:[{from:'节点id',port:'输出端口名',to:'节点id'}]}；不认识的类型和悬空连线会被自动丢掉并在返回值里说明。会动用户的画布，所以要先说清楚你要导入什么。",
+        json!({"type":"object","properties":{
+            "graph":{"type":"object","description":"{nodes:[…],edges:[…]}"}
+        },"required":["graph"]}), true);
     push("flow_status", "看中控编排跑到哪了／日志尾巴。", json!({"type":"object","properties":{}}), true);
     push("flow_stop", "停掉正在跑的中控编排。", json!({"type":"object","properties":{}}), true);
     push("capture_save", "抓一张屏幕（存到工作区）。",
@@ -611,7 +617,7 @@ mod tests {
 pub fn is_dangerous(name: &str) -> bool {
     matches!(
         name,
-        "link_send" | "device_push" | "firmware_upgrade" | "flash" | "local_run" | "port_write"
+        "link_send" | "device_push" | "firmware_upgrade" | "flash" | "local_run" | "port_write" | "flow_set"
             | "port_open" | "port_close"
             | "workspace_write" | "workspace_mkdir" | "skill_create" | "skill_update"
             | "skill_delete" | "flow_run" | "capture_save"
