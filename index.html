@@ -457,17 +457,6 @@
                     </div>
                   </section>
                   <section class="msec">
-                    <div class="msec-h">快捷发送</div>
-                    <div id="qs-list" class="qslist"></div>
-                    <div class="trow">
-                      <input id="qs-label" class="num" style="width:80px" placeholder="按钮名" />
-                      <input id="qs-payload" class="qsinput" placeholder="要发送的内容（HEX 形如 41 54 0D 0A）" />
-                      <label class="chk" title="勾上后按 HEX 发送"><input type="checkbox" id="qs-hex" /> HEX</label>
-                      <button id="qs-add" class="btn small">添加</button>
-                    </div>
-                    <span class="mhint">加进去的按钮常驻在输出区上方，点一下就发；右键按钮可以删除。</span>
-                  </section>
-                  <section class="msec">
                     <div class="msec-h">会话日志</div>
                     <div class="mline">
                       <label class="lb" for="sess-dir">目录</label>
@@ -974,6 +963,27 @@
           </div>
           <div class="cardtitle">统计</div>
           <div id="stats" class="stats">—</div>
+
+          <!-- 快捷发送：常用命令一张表（增 / 删 / 改 / 查），点行直接发 -->
+          <div class="cardtitle">快捷发送
+            <span class="grow"></span>
+            <input id="qs-filter" class="num qsfilter" placeholder="搜索…" />
+            <span id="qs-count" class="lb"></span>
+          </div>
+          <div class="qstable">
+            <div class="qshead">
+              <span>名称</span><span>内容</span><span>类型</span><span></span>
+            </div>
+            <div id="qs-list" class="qsbody"></div>
+          </div>
+          <div class="trow qsedit">
+            <input id="qs-label" class="num qsname" placeholder="名称" />
+            <input id="qs-payload" class="qsinput" placeholder="内容（HEX 形如 41 54 0D 0A）" />
+            <label class="chk" title="勾上后按 HEX 发送"><input type="checkbox" id="qs-hex" /> HEX</label>
+            <button id="qs-save" class="btn small primary">添加</button>
+            <button id="qs-cancel" class="btn small" hidden>取消</button>
+          </div>
+          <span class="mhint">点某一行=直接发出去；✎ 改、✕ 删（改的时候上面那行变成编辑框，改完点「保存」）。</span>
         </div>
 
         <!-- 升级参数 -->

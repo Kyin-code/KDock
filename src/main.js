@@ -3826,48 +3826,108 @@ function refreshHistory() {
   });
 }
 
+let qsEditIdx = -1;                  // -1 = 正在新增；>=0 = 正在改第几条
+
+function qsCell(cls, text, tip) {
+  const e = document.createElement("span");
+  e.className = "c " + cls;
+  e.textContent = text;
+  if (tip) e.title = tip;
+  return e;
+}
+function qsActBtn(icon, tip, fn, cls) {
+  const b = document.createElement("button");
+  b.className = "qsic" + (cls ? " " + cls : "");
+  b.textContent = icon;
+  b.title = en(tip);
+  b.onclick = (ev) => { ev.stopPropagation(); fn(); };
+  return b;
+}
+/** 上方那行输入框跟着"现在是在加还是改"变样子 */
+function qsSyncForm() {
+  $("qs-save").textContent = en(qsEditIdx >= 0 ? "保存" : "添加");
+  $("qs-save").classList.toggle("primary", qsEditIdx < 0);
+  $("qs-cancel").hidden = qsEditIdx < 0;
+}
+function qsResetForm() {
+  qsEditIdx = -1;
+  $("qs-label").value = "";
+  $("qs-payload").value = "";
+  $("qs-hex").checked = false;
+}
 function qsRender() {
   const box = $("qs-list");
+  const q = ($("qs-filter").value || "").trim().toLowerCase();
+  const hit = (it) => !q || (it.label + " " + it.payload).toLowerCase().includes(q);
+  const shown = qsItems.map((it, i) => ({ it, i })).filter((x) => hit(x.it));
   box.innerHTML = "";
-  qsItems.forEach((it, i) => {
-    const b = document.createElement("button");
-    b.className = "btn small";
-    b.textContent = en(it.label || it.payload);
-    b.title = (it.hex ? "HEX: " : "") + it.payload;
-    b.onclick = () => sendPayload(it.payload, it.hex);
-    const del = document.createElement("button");
-    del.className = "qsdel";
-    del.textContent = "✕";
-    del.title = "删除这一条";
-    del.onclick = (ev) => {
-      ev.stopPropagation();
-      qsItems.splice(i, 1);
-      qsSave();
-      qsRender();
-    };
-    const wrap = document.createElement("span");
-    wrap.style.display = "inline-flex";
-    wrap.appendChild(b);
-    wrap.appendChild(del);
-    box.appendChild(wrap);
-  });
-  if (!qsItems.length) box.innerHTML = '<span class="lb">（还没有快捷项，下面加一条）</span>';
+  if (!shown.length) {
+    box.appendChild(qsCell("muted", en(qsItems.length ? "没有匹配的条目" : "（还没有快捷项，下面加一条）")));
+  }
+  for (const { it, i } of shown) {
+    const row = document.createElement("div");
+    row.className = "qsrow" + (i === qsEditIdx ? " sel" : "");
+    row.title = en("点这一行 = 直接发出去");
+    row.append(
+      qsCell("lab", en(it.label || it.payload)),
+      qsCell("pay", it.payload, (it.hex ? "HEX: " : "") + it.payload),
+      qsCell("kind", it.hex ? "HEX" : en("文本")),
+    );
+    const acts = document.createElement("span");
+    acts.className = "acts";
+    acts.append(
+      qsActBtn("▶", "直接发送", () => sendPayload(it.payload, it.hex)),
+      qsActBtn("✎", "改这一条", () => qsStartEdit(i)),
+      qsActBtn("✕", "删除这一条", () => qsDelItem(i), "del"),
+    );
+    row.appendChild(acts);
+    row.onclick = () => sendPayload(it.payload, it.hex);
+    box.appendChild(row);
+  }
+  if ($("qs-count")) {
+    $("qs-count").textContent = q ? shown.length + " / " + qsItems.length : (qsItems.length ? String(qsItems.length) : "");
+  }
+  qsSyncForm();
+  if (LANG === "en") langWalk();       // 行是现拼的，英文界面下补翻一次
+}
+function qsStartEdit(i) {
+  const it = qsItems[i];
+  if (!it) return;
+  qsEditIdx = i;
+  $("qs-label").value = it.label || "";
+  $("qs-payload").value = it.payload || "";
+  $("qs-hex").checked = !!it.hex;
+  qsRender();
+  $("qs-payload").focus();
+}
+function qsDelItem(i) {
+  qsItems.splice(i, 1);
+  if (qsEditIdx === i) qsResetForm();
+  else if (qsEditIdx > i) qsEditIdx--;
+  qsSave();
+  qsRender();
 }
 
 function bindQuickSend() {
   qsRender();
-  $("qs-add").onclick = () => {
+  $("qs-save").onclick = () => {
     const payload = $("qs-payload").value;
     if (!payload.trim()) return toast("先填要发送的内容");
-    qsItems.push({ label: $("qs-label").value.trim() || payload.slice(0, 12), payload, hex: $("qs-hex").checked });
+    const item = { label: $("qs-label").value.trim() || payload.slice(0, 12), payload, hex: $("qs-hex").checked };
+    if (qsEditIdx >= 0) { qsItems[qsEditIdx] = item; toast("已保存"); }
+    else qsItems.push(item);
     qsSave();
+    qsResetForm();
     qsRender();
-    $("qs-label").value = "";
-    $("qs-payload").value = "";
-    $("qs-hex").checked = false;
   };
+  $("qs-cancel").onclick = () => { qsResetForm(); qsRender(); };
+  $("qs-filter").oninput = () => qsRender();
+  // 名称那格回车 → 跳到内容那格；内容那格回车 → 保存
+  $("qs-label").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); $("qs-payload").focus(); }
+  });
   $("qs-payload").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); $("qs-add").click(); }
+    if (e.key === "Enter") { e.preventDefault(); $("qs-save").click(); }
   });
 }
 
@@ -3889,14 +3949,30 @@ function bindErrorBanner() {
  *  上限只由"另外两栏还得留出自己的最小宽度"算出来 —— 不再有写死的 max。 */
 function bindOneGutter(id, cssVar, storeKey, min, otherVar, otherMin, centerMin, fromLeft) {
   const root = document.documentElement;
-  const maxFor = () => {
-    const total = (document.querySelector(".split") || document.body).clientWidth || window.innerWidth;
-    const other = parseInt(getComputedStyle(root).getPropertyValue(otherVar)) || otherMin;
-    return Math.max(min, total - Math.max(other, otherMin) - centerMin);
+  /** 窄窗（≤1180px）里参数区被挪到第二行、不再占横向空间 —— 网格轨道从 5 条变 3 条。
+   *  判错了会怎样：继续减掉参数区的 min，左栏能拉的上限就被算小一大截（900px 窗口只剩 220px，
+   *  而窄窗的默认宽度就是 260px，一拖反而变窄），而且媒体查询里写的是 --left-w，JS 写的是
+   *  --nav-w，两边对不上 —— 干脆拖了没反应。 */
+  const stacked = () => {
+    const sp = document.querySelector(".split");
+    if (!sp) return false;
+    return getComputedStyle(sp).gridTemplateColumns.trim().split(/s+/).length <= 3;
   };
+  const maxFor = () => {
+    const sp = document.querySelector(".split");
+    const cs = sp ? getComputedStyle(sp) : null;
+    const total = sp
+      ? sp.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
+      : window.innerWidth;
+    const other = parseInt(cs ? cs.getPropertyValue(otherVar) : "") || otherMin;
+    const reserve = stacked() ? 0 : Math.max(other, otherMin);   // 并排时才需要给另一栏留位置
+    // 别忘了中间那条分隔条自己也有宽度，漏掉它中间栏就会差几个像素被压到 min 以下
+    const gutter = el ? el.getBoundingClientRect().width : 0;
+    return Math.max(min, Math.floor(total - reserve - gutter - centerMin));
+  };
+  const el = $(id);
   const saved = Number(localStorage.getItem(storeKey) || 0);
   if (saved >= min) root.style.setProperty(cssVar, Math.min(saved, maxFor()) + "px");
-  const el = $(id);
   if (!el) return;
   let dragging = false;
   const onMove = (e) => {
@@ -7633,6 +7709,13 @@ const EN = {
   // 悬停提示
   "关闭（按设置可收进托盘）": "Close (may go to tray)",
   "删除这一条": "Delete this row",
+  "名称": "Name", "内容": "Payload", "类型": "Kind",
+  "内容（HEX 形如 41 54 0D 0A）": "Payload (HEX like 41 54 0D 0A)",
+  "搜索…": "Search…", "没有匹配的条目": "no match", "（还没有快捷项，下面加一条）": "(no quick-send items yet — add one below)",
+  "点这一行 = 直接发出去": "Click a row to send it right away",
+  "改这一条": "Edit this one",
+  "点某一行=直接发出去；✎ 改、✕ 删（改的时候上面那行变成编辑框，改完点「保存」）。":
+    "Click a row to send it; ✎ edit, ✕ delete (the row above turns into an edit box — press Save when done).",
   "回到最新（上翻时自动停住跟随）": "Jump to latest (auto-follow stops when you scroll up)",
   "填进输入框": "Fill into the input", "怎么用": "How to use",
   "打开后可以直接在右边输出区敲键盘跟设备交互": "Type in the output area to talk to the device",

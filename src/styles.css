@@ -507,7 +507,9 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
      原来只改了列数没改行数，5 个子项会被挤成两行，而 grid-template-rows 只定义了第一行，
      结果中间工作区塌成 0 高（整个界面看着就"空"了）。 */
   .split {
-    grid-template-columns: var(--left-w, 300px) 6px minmax(0, 1fr);
+    /* 这里必须用 --nav-w：JS 拖左栏写的就是它（以前写 --left-w，这个变量没人写，
+       结果 ≤1180px 的窗口里拖左栏完全没反应） */
+    grid-template-columns: var(--nav-w, 300px) 6px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
   }
   .split > #gutter-r { display: none; }
@@ -517,12 +519,10 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
      工作区 348px、参数区 180px（它自己会滚，内容 343px）：输出区停在 96px 下限、输入区 129px，
      两边都完整，谁都不裁。 */
   .split > .params { grid-column: 1 / -1; grid-row: 2; max-height: 30vh; }
-  /* 窄窗下输出区的下限再低一点：先让它让位，输入区就能保住完整高度 */
-  .shellcard .outpane { min-height: 64px; }
   .cardtitle { margin: 10px 0 6px; }
 }
 @media (max-width: 1000px) {
-  .split { grid-template-columns: var(--left-w, 260px) 6px minmax(0, 1fr); padding: 0 8px 8px; }
+  .split { grid-template-columns: var(--nav-w, 260px) 6px minmax(0, 1fr); padding: 0 8px 8px; }
   .topbar { padding: 0 10px; height: 42px; }
   #status-chip { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .trow { gap: 6px; }
@@ -1887,3 +1887,49 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .outchip:hover { background: hsl(var(--primary) / 0.26); color: hsl(var(--foreground)); }
 .outchip[hidden] { display: none; }
+
+/* ==========================================================================
+   快捷发送表（传输页 → 右栏底部）：名称 | 内容 | 类型 | 操作
+   —— 点行直接发；✎ 改、✕ 删；上面那行输入框兼"新增/编辑"
+   ========================================================================== */
+.qstable {
+  display: flex; flex-direction: column;
+  border: 1px solid hsl(var(--border) / 0.55); border-radius: 10px; overflow: hidden;
+  background: var(--surface-2);
+}
+.qshead, .qsrow {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 40px 76px;
+  align-items: center; gap: 6px; padding: 4px 8px; font-size: 12px;
+}
+.qshead {
+  background: var(--surface-3); color: hsl(var(--muted-foreground));
+  font-size: 11px; letter-spacing: .3px; padding: 3px 8px;
+}
+.qsbody { max-height: 216px; overflow: auto; }
+.qsrow { border-top: 1px solid var(--surface-line-soft); cursor: pointer; }
+.qsrow:hover { background: hsl(var(--primary) / 0.10); }
+.qsrow.sel { background: hsl(var(--primary) / 0.18); }
+.qsrow .c { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qsrow .pay { font-family: Consolas, "Cascadia Mono", monospace; color: hsl(var(--muted-foreground)); }
+.qsrow .kind { color: hsl(var(--muted-foreground)); font-size: 11px; }
+.qsrow .muted { grid-column: 1 / -1; color: hsl(var(--muted-foreground)); cursor: default; }
+.qsrow .acts { display: flex; gap: 2px; justify-content: flex-end; }
+.qsic {
+  width: 22px; height: 22px; padding: 0; border: none; border-radius: 6px;
+  background: transparent; color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.qsic:hover { background: var(--surface-3); color: hsl(var(--foreground)); }
+.qsic.del:hover { color: hsl(var(--destructive)); }
+.qsedit { margin-top: 6px; gap: 6px; }
+.qsname { flex: 0 0 auto; width: 84px; height: 26px; }
+.qsfilter { flex: 0 0 auto; width: 84px; height: 22px; font-size: 12px; }
+.cardtitle .lb { font-size: 11px; }
+
+/* ---------- 窄窗（≤1180px）：这两条必须写在文件最后 ----------
+   媒体查询不加权重，同选择器谁在后面谁赢；"卡片里输出区 min-height:96px" 在文件靠后，
+   所以窄窗这条放前面等于没写（实测：900x600 + 中间栏 420 时，卡片差 4px 装不下，收口条被顶出去）。 */
+@media (max-width: 1180px) {
+  /* 输出区下限再低一点：先让它让位，输入区就能保住完整高度（98px 里装得下 textarea 的 44px） */
+  .shellcard .outpane { min-height: 64px; }
+}
