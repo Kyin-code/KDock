@@ -11,6 +11,93 @@ import { initBatch, initCalc } from "./tools-batch-calc.js";
 
 const $ = (id) => document.getElementById(id);
 
+/* ── 悬停提示：自绘气泡（接管原生 title）─────────────────────────────────────
+   原生 title 的气泡是系统画的：延迟 ~1 秒才出来、样式跟系统走（Windows 上是个
+   发白的方框），而且卡片是 overflow:hidden 的，气泡还会被裁掉一半。
+   这里统一接管，全项目照旧写 title 就行：
+     · MutationObserver 盯着 title 属性 —— 读到就搬进 dataset.tip 并把 title 抹掉
+       （抹掉只是为了让系统别再画那个丑框，文本一条不丢）
+     · 真气泡是挂在 body 上的浮层（position:fixed），不受任何容器裁剪
+     · 悬停 380ms 才出（CLion 那种"停一下才出来"）；移开 / 滚动 / 点击 / 按键立刻收
+   翻译：langWalk 认 dataset.tip（见那里的注释）。 */
+const TIP_DELAY = 380;
+let tipBox = null, tipTimer = null, tipOwner = null;
+
+function tipOf(el) {
+  if (!el || el.nodeType !== 1) return "";
+  const t = el.dataset.tip != null ? el.dataset.tip : el.getAttribute("title");
+  return String(t == null ? "" : t).trim();
+}
+/** title → data-tip：抹掉给系统看的 title，文本转存到 dataset.tip */
+function adoptTip(el) {
+  if (!el || el.nodeType !== 1) return;
+  const t = el.getAttribute("title");
+  if (t === null) return;
+  el.dataset.tip = t;
+  el.removeAttribute("title");
+}
+function tipHide() {
+  if (tipTimer !== null) { clearTimeout(tipTimer); tipTimer = null; }
+  tipOwner = null;
+  if (tipBox) { tipBox.classList.remove("on"); tipBox.hidden = true; }
+}
+function tipShow() {
+  const el = tipOwner;
+  if (!el) return;
+  const text = tipOf(el);
+  if (!text || !el.isConnected || !el.getClientRects().length) { tipHide(); return; }
+  if (!tipBox) {
+    tipBox = document.createElement("div");
+    tipBox.className = "kdtip";
+    tipBox.setAttribute("aria-hidden", "true");
+    document.body.appendChild(tipBox);
+  }
+  tipBox.textContent = text;
+  tipBox.hidden = false;
+  // 先摆位再淡入：量尺寸要它已经在文档里（hidden=false），但这时候别让人看见误差一帧
+  const r = el.getBoundingClientRect();
+  const b = tipBox.getBoundingClientRect();
+  const gap = 8;
+  let top = r.bottom + gap;
+  if (top + b.height > window.innerHeight - 6 && r.top - gap - b.height > 6) top = r.top - gap - b.height;
+  let left = r.width < 240 ? r.left + r.width / 2 - b.width / 2 : r.left;
+  left = Math.max(6, Math.min(left, window.innerWidth - b.width - 6));
+  tipBox.style.top = Math.max(6, Math.round(top)) + "px";
+  tipBox.style.left = Math.round(left) + "px";
+  tipBox.classList.add("on");
+}
+function bindTooltips() {
+  document.querySelectorAll("[title]").forEach(adoptTip);   // 静态那一批
+  // 运行时冒出来的两类都要认，不然它们还挂着系统那个原生 title：
+  //   · attributes：JS 直接 el.title = "..."（模型名、状态、路径……）
+  //   · childList ：innerHTML 拼出来的片段（里面写了 title="..."）—— 建节点不会触发属性变更
+  new MutationObserver((recs) => {
+    for (const r of recs) {
+      if (r.type === "attributes") { adoptTip(r.target); continue; }
+      for (const n of r.addedNodes) {
+        if (!(n instanceof Element)) continue;
+        adoptTip(n);
+        n.querySelectorAll("[title]").forEach(adoptTip);
+      }
+    }
+  }).observe(document.body, { attributes: true, attributeFilter: ["title"], childList: true, subtree: true });
+
+  document.addEventListener("pointerover", (e) => {
+    const el = e.target instanceof Element ? e.target.closest("[data-tip],[title]") : null;
+    if (el === tipOwner) return;              // 在同一个元素内部挪动：别闪
+    tipHide();
+    if (!el || !tipOf(el)) return;
+    tipOwner = el;
+    tipTimer = setTimeout(() => { tipTimer = null; tipShow(); }, TIP_DELAY);
+  });
+  // 用户已经在干别的了：立刻把气泡收掉
+  document.addEventListener("pointerdown", tipHide, true);
+  document.addEventListener("keydown", tipHide, true);
+  document.addEventListener("wheel", tipHide, true);
+  document.addEventListener("scroll", tipHide, true);
+  window.addEventListener("blur", tipHide);
+}
+
 /**
  * 一次性迁移：早期版本把本地设置存在 `h7test_*` 名下（那时项目还叫别的名字）。
  * 现在统一成 `kdock_*` —— 老用户升级上来时把值搬过去一次，别让人白设一遍主题/配色。
@@ -73,10 +160,9 @@ function pushEntry(e) {
 }
 
 // 跟随最新：只有"本来就在底部"才自动滚；用户上翻时停下并亮出"↓ 最新"徽章
+// （贴底统一在 redrawRx 里做 —— 必须"重画完再滚"：先滚会被重画带回原位，
+//   表现出来就是"数据一多滚轮滚不上去"，详见那里的注释）
 let stickBottom = true;
-function maybeScrollBottom() {
-  if ($("autoscroll").checked && stickBottom) $("rx").scrollTop = $("rx").scrollHeight;
-}
 function bindScrollFollow() {
   const el = $("rx");
   el.addEventListener("scroll", () => {
@@ -86,6 +172,17 @@ function bindScrollFollow() {
       $("rx-jump").hidden = atBottom;
     }
   });
+  // 滚轮往上翻：**立刻**停掉"跟随最新"。只等 scroll 事件是不够的 —— 数据还在流的时候，
+  // 下一块先重画+贴底，手感就是"滚轮滚不上去，只能拉进度条"（实测反馈）。
+  el.addEventListener("wheel", (e) => {
+    if (e.deltaY < 0) {
+      stickBottom = false;
+      $("rx-jump").hidden = false;
+    } else if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) {
+      stickBottom = true;
+      $("rx-jump").hidden = true;
+    }
+  }, { passive: true });
   $("rx-jump").onclick = () => {
     stickBottom = true;
     $("rx-jump").hidden = true;
@@ -441,10 +538,18 @@ function lineHtml(e) {
 }
 
 function redrawRx() {
+  const box = $("rx");
+  // 重画会重建整段内容：先记住用户现在看的位置，画完再放回去（跟随最新时才跳到底部）
+  const keepTop = box.scrollTop;
+  const wasBottom = stickBottom || keepTop + box.clientHeight >= box.scrollHeight - 8;
   const tail = tailEntry ? lineHtml(tailEntry) : "";
-  if (asciiMode) $("rx").textContent = termRender();      // 终端就是纯文本，不走 HTML
-  else $("rx").innerHTML = rxBuffer.map(lineHtml).join("") + tail;
-  maybeScrollBottom();
+  if (asciiMode) box.textContent = termRender();          // 终端就是纯文本，不走 HTML
+  else box.innerHTML = rxBuffer.map(lineHtml).join("") + tail;
+  if (wasBottom && $("autoscroll").checked) {
+    box.scrollTop = box.scrollHeight;
+  } else {
+    box.scrollTop = keepTop;                              // 用户在上翻：原地不动，别跟人抢
+  }
 }
 
 function pushSys(text) {
@@ -2214,6 +2319,11 @@ function bindInpaneResize() {
   };
   grip.addEventListener("pointerup", done);
   grip.addEventListener("pointercancel", done);
+  // 双击复位（跟左栏 / 日志 / agent 那几条拖动条一个手感）；角手的提示语里写了这条
+  grip.addEventListener("dblclick", () => {
+    box.style.height = "";
+    localStorage.removeItem("kdock_inpane_h");
+  });
 }
 
 // ---------------- 中控编排：步骤节点画布 ----------------
@@ -4242,6 +4352,7 @@ function bindAsciiMode() {
   $("ascii-mode").onchange = (e) => {
     asciiMode = e.target.checked;
     $("rx").classList.toggle("typing", asciiMode);
+    $("rx-hint").hidden = !asciiMode;         // 顶栏那个小标只在真开着的时候亮
     if (asciiMode) {
       $("rx").focus();
       if (!$("local-echo").checked) {
@@ -4253,6 +4364,13 @@ function bindAsciiMode() {
     } else {
       pushSys("ASCII 交互已关闭");
     }
+  };
+  // 输出区顶栏那个小标：点一下就退出 ASCII 交互（不用再翻「更多」面板找开关）
+  $("rx-hint").onclick = () => {
+    const cb = $("ascii-mode");
+    if (!cb.checked) return;
+    cb.checked = false;
+    cb.dispatchEvent(new Event("change"));
   };
   // ASCII 交互时，点右边这块任意空白也把焦点还给输出区（不然点完按钮就敲不动了）
   document.querySelector(".work").addEventListener("mousedown", (ev) => {
@@ -4336,10 +4454,13 @@ function langWalk() {
         if (LANG === "en" && ph) { n.dataset.zhPh = n.dataset.zhPh || n.placeholder; n.placeholder = ph; }
         else if (LANG === "zh" && n.dataset.zhPh) n.placeholder = n.dataset.zhPh;
       }
-      if (n.title) {
-        const ti = EN[n.title] || EN[n.title.trim().replace(/\s+/g, " ")];
-        if (LANG === "en" && ti) { n.dataset.zhTi = n.dataset.zhTi || n.title; n.title = ti; }
-        else if (LANG === "zh" && n.dataset.zhTi) n.title = n.dataset.zhTi;
+      // 提示文本：bindTooltips 把 title 搬进了 dataset.tip（为了不让系统画那个丑气泡），
+      // 两个地方都要认，不然切语言时提示会漏翻
+      const tipRaw = n.dataset.tip || n.getAttribute("title");
+      if (tipRaw) {
+        const ti = EN[tipRaw] || EN[tipRaw.trim().replace(/\s+/g, " ")];
+        if (LANG === "en" && ti) { n.dataset.zhTi = n.dataset.zhTi || tipRaw; n.dataset.tip = ti; }
+        else if (LANG === "zh" && n.dataset.zhTi) n.dataset.tip = n.dataset.zhTi;
       }
       continue;
     }
@@ -7507,6 +7628,8 @@ const EN = {
   // 传输页顶部那行
   "点一下在资源管理器里打开这个目录": "Click to open this folder in Explorer",
   "当前时间": "Current time", "会话开始": "session started", "已运行": "elapsed",
+  "直接在输出区敲键盘，会按原始字节发给设备（Enter 发 CR、Backspace 发 0x08、Ctrl+C 发 0x03）；点这里关掉":
+    "Type right in the output area; bytes go to the device as-is (Enter = CR, Backspace = 0x08, Ctrl+C = 0x03). Click to turn off",
   "未设置": "not set",
   // 编排：节点配置面板
   "HEX（内容按十六进制解析）": "HEX (parse content as hex)",
@@ -7530,7 +7653,7 @@ const EN = {
   "正常结束。": "Normal end.", "失败结束（流程以失败收尾）。": "Fail end (the flow ends as failed).",
   "删除这个节点": "Delete this node", "删除这条线": "Delete this wire",
   "起点": "From", "终点": "To", "点一下选中并居中": "Click to select and center",
-  "拖动调整输入区高度": "Drag to resize the input area",
+  "拖动调整输入区高度（双击复位）": "Drag to resize the input area (double-click to reset)",
   "出口：成功 / 失败。": "Exits: ok / fail.",
   "出口：成功 / 失败(发送错) / 超时(等不到)。": "Exits: ok / fail(send error) / timeout(no data).",
   // 编排：期待匹配
@@ -8355,6 +8478,7 @@ async function main() {
   // 这一下只是兜底：窗口还在就把它再顶到最前，启动阶段已经收尾则什么都不做。
   invoke("splash_show").catch(() => {});
   initControls();
+  bindTooltips();               // 悬停提示改自绘（原生 title 的气泡又慢又丑）
   switchMode("serial");
 
   applyLang(LANG);

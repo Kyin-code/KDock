@@ -399,15 +399,18 @@
               <span class="crumbs" id="out-crumbs"></span>
             </button>
             <span class="grow"></span>
+            <!-- ASCII 交互开着时才亮的小标：以前是给整块输出区挂个 title，
+                 没开也提示"可以打字"，看着就像"这里现在是 ASCII 模式"，容易误解 -->
+            <button type="button" id="rx-hint" class="outchip" hidden
+                    title="直接在输出区敲键盘，会按原始字节发给设备（Enter 发 CR、Backspace 发 0x08、Ctrl+C 发 0x03）；点这里关掉">ASCII 交互</button>
             <span class="outclock" id="out-clock" title="当前时间">--:--:--</span>
           </div>
           <div class="outpane">
-            <pre id="rx" class="rx" tabindex="0" spellcheck="false"
-                 title="点这里；打开「ASCII 交互」后可以直接敲键盘跟设备对话"></pre>
+            <pre id="rx" class="rx" tabindex="0" spellcheck="false"></pre>
             <button id="rx-jump" class="jump" hidden title="回到最新（上翻时自动停住跟随）">↓ 最新</button>
             <!-- 拖这个小角手手改下面输入区的高度（放在**输出框**的右下角，
                  不要放输入框里，否则跟文本框自带的 resize 一样误导） -->
-            <div id="rx-grip" class="rxgrip" title="拖动调整输入区高度"></div>
+            <div id="rx-grip" class="rxgrip" title="拖动调整输入区高度（双击复位）"></div>
           </div>
 
           <div class="toolbar">

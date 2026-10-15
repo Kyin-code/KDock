@@ -1837,3 +1837,37 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .dbglist .r .v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: hsl(var(--muted-foreground)); }
 .dbglist .none { color: hsl(var(--muted-foreground)); }
 .dbgin { height: 30px; font-family: Consolas, "Cascadia Mono", monospace; }
+
+/* ==========================================================================
+   悬停提示：自绘气泡（接管原生 title，样子参考 CLion）
+   --------------------------------------------------------------------------
+   原生 title 的气泡是系统画的：延迟 ~1s、样式跟系统走（Windows 上是个发白的
+   方框），而且卡片是 overflow:hidden 的，气泡还会被裁掉。文本来源见 main.js 的
+   bindTooltips（DOM 上照旧写 title 就行，运行时赋值的也认）。
+   ========================================================================== */
+.kdtip {
+  position: fixed; z-index: 1000; pointer-events: none;
+  max-width: min(420px, 70vw);
+  padding: 4px 9px; border-radius: 8px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--surface-line);
+  color: hsl(var(--foreground));
+  font-size: 11.5px; line-height: 1.6; letter-spacing: .1px;
+  white-space: pre-line;                       /* 提示里带换行的（路径那种）照样断行 */
+  box-shadow: var(--shadow-1);
+  opacity: 0; transition: opacity .12s ease;
+}
+.kdtip.on { opacity: 1; }
+
+/* 输出区顶栏的「ASCII 交互」小标：只在真开着的时候亮。
+   （以前是给整块输出区挂 title —— 没开也提示"可以打字"，看着就像"这里现在就是
+   ASCII 模式"，是误读；现在改成开了才亮的小标，点一下就能退出。） */
+.outchip {
+  flex: 0 0 auto; height: 20px; padding: 0 9px; border-radius: 999px;
+  font: inherit; font-size: 11px; line-height: 1; white-space: nowrap; cursor: pointer;
+  color: hsl(var(--primary)); background: hsl(var(--primary) / 0.13);
+  border: 1px solid hsl(var(--primary) / 0.40);
+  transition: background .16s ease, color .16s ease;
+}
+.outchip:hover { background: hsl(var(--primary) / 0.26); color: hsl(var(--foreground)); }
+.outchip[hidden] { display: none; }
