@@ -14,6 +14,8 @@
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
 ![Rust](https://img.shields.io/badge/Rust-1.80%2B-orange)
 
+**中文** ｜ [English](README.en.md)
+
 </div>
 
 ---
@@ -278,5 +280,3 @@ A：设置 → 通用里可以切换中英文，切换是即时生效的。
   [RustCrypto](https://github.com/RustCrypto) 等开源项目提供的坚实基础。
 
 欢迎 issue / PR。
-
-<sub>English README: [README.en.md](README.en.md)</sub>

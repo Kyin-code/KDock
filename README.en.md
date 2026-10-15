@@ -14,7 +14,7 @@ live charts, flow orchestration — plus an Agent that can drive all of it. All 
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
 ![Rust](https://img.shields.io/badge/Rust-1.80%2B-orange)
 
-<sub>中文说明见 [README.md](README.md)</sub>
+[中文](README.md) ｜ **English**
 
 </div>
 
