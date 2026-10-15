@@ -90,6 +90,16 @@
               </div>
               <div class="cardtitle">配色</div>
               <div id="scheme-row" class="swrow"></div>
+              <div class="cardtitle">字号 / 放大 / 字体</div>
+              <div class="trow">
+                <label class="lb" for="ui-font-scale">字号</label>
+                <select id="ui-font-scale" class="tight"></select>
+                <label class="lb" for="ui-zoom">放大</label>
+                <select id="ui-zoom" class="tight"></select>
+                <label class="lb" for="ui-font">字体</label>
+                <select id="ui-font" class="tight"></select>
+              </div>
+              <p class="hint">整体按倍数缩放（控件 / 文本 / 字号一起变），并自动叠加系统的显示缩放；字体只替换正文那一族。</p>
             </div>
             <div class="setpane" data-setpane="model" hidden>
               <div class="segtabs" id="ag-prov-tabs">
@@ -266,6 +276,17 @@
 
             <!-- 技能：本机技能的全部管理（Agent 信息页只放开关） -->
             <div class="setpane" data-setpane="skills" hidden>
+              <div class="setcard">
+                <div class="cardtitle">斜杠指令（/xxx）</div>
+                <p class="hint">一条 .md 一条指令：frontmatter 写 <b>name</b> / <b>description</b>，正文就是提示词模板
+                  （里面的 <b>{{args}}</b> 会换成命令后面跟的参数）。把文件丢进下面的目录就行 ——
+                  技能作者也能随技能一起分发。</p>
+                <div class="trow">
+                  <span id="set-slash-dir" class="lb" title=""></span>
+                  <span class="grow"></span>
+                  <button id="set-slash-open" class="btn small">打开指令目录</button>
+                </div>
+              </div>
               <div class="setcard">
                 <div class="cardtitle">本机技能<span class="grow"></span>
                   <span id="set-skill-count" class="lb"></span></div>
@@ -506,10 +527,11 @@
               </div>
             </div>
           </div>
-          <div class="framebox grow agentbox">
+          <div class="framebox grow agentbox" id="ag-box">
             <div id="ag-chat" class="agentchat"></div>
             <div id="ag-rail" class="agrail" title="用户消息：悬停看前几个字，点一下跳过去"></div>
           </div>
+          <div class="vsplit" id="ag-chat-grip" title="拖动调整对话区高度（双击复位）"></div>
           <div class="inpane">
             <div class="trow">
               <span class="lb">说点什么</span>

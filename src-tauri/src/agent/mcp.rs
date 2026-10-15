@@ -422,7 +422,10 @@ pub fn all_tool_schemas_cached(app: &AppHandle) -> (Vec<Value>, bool) {
     let key = serde_json::to_string(&load(app)).unwrap_or_default();
     if let Ok(g) = TOOLS_CACHE.lock() {
         if let Some((k, at, v)) = g.as_ref() {
-            if *k == key && at.elapsed() < Duration::from_secs(600) {
+            // 10 分钟 → 60 分钟：工具清单在 prompt 前缀里，刷新一次整段前缀缓存就作废，
+            // 而 MCP 服务的工具列表本来就极少变（配置改动会另走失效路径）。宁可晚点发现变化，
+            // 也要少让用户的缓存命中率掉下来。
+            if *k == key && at.elapsed() < Duration::from_secs(3600) {
                 return (v.clone(), false);
             }
         }

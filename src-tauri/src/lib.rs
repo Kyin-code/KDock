@@ -2103,6 +2103,17 @@ fn get_log(state: State<'_, Arc<AppState>>) -> Vec<LogLine> {
     state.log.lock().expect("log mutex").lines().to_vec()
 }
 
+/// 页面缩放（设置里的"字号 × 放大"）。用 WebView 自己的页面缩放，所以控件、文本、字号一起变，
+/// 而且是**叠加**在系统显示缩放之上的（系统 125% + 用户 110% = 实际 137.5%）。
+#[tauri::command]
+fn window_set_zoom(app: AppHandle, scale: f64) -> Result<(), String> {
+    let s = if scale.is_finite() { scale.clamp(0.5, 3.0) } else { 1.0 };
+    if let Some(w) = app.get_webview_window("main") {
+        w.set_zoom(s).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// 本机 IPv4 地址（agent 开 TCP 服务端 / UDP 时要告诉用户连哪个地址）。
 /// 两条路：先按主机名解析（能拿到多张网卡的地址），拿不到再用"UDP connect 问路由"兜一下。
 pub(crate) fn local_ips() -> Vec<String> {
@@ -3482,6 +3493,10 @@ pub fn run() {
             agent::agent_skills_always,
             agent::agent_skill_import,
             agent::agent_skills_dir,
+            agent::agent_slash_list,
+            agent::agent_slash_dir,
+            agent::agent_slash_save,
+            agent::agent_slash_delete,
             agent::agent_tools,
             agent::agent_workspaces,
             agent::agent_workspace_new,
@@ -3498,7 +3513,8 @@ pub fn run() {
             agent::mcp_delete,
             agent::mcp_test,
             agent::mcp_tools,
-            agent::mcp_path_hint
+            agent::mcp_path_hint,
+            window_set_zoom
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

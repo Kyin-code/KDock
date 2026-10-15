@@ -137,6 +137,40 @@ pub fn to_anthropic_messages(messages: &[Value]) -> (String, Vec<Value>) {
     (system, out)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Anthropic 不做隐式缓存：system / tools / 倒数第二条消息必须都打了 cache_control，
+    /// 否则每轮都是全价重算（这是"缓存命中率"最直接的开关）。
+    #[test]
+    fn cache_breaks_are_marked() {
+        let provider: crate::agent::store::Provider = serde_json::from_value(json!({
+            "id": "t", "name": "t", "endpoint": "https://example.invalid", "model": "claude-x",
+            "supports_tools": true,
+        }))
+        .unwrap();
+        let messages = vec![
+            json!({"role": "system", "content": "你是助手"}),
+            json!({"role": "user", "content": "第一句"}),
+            json!({"role": "assistant", "content": "第一句的回复"}),
+            json!({"role": "user", "content": "第二句"}),
+        ];
+        // 传进去的是 OpenAI 风格（和真实调用一致），内部会转成 Anthropic 的 input_schema
+        let tools = vec![json!({
+            "type": "function",
+            "function": {"name": "t1", "description": "d", "parameters": {"type": "object", "properties": {}}}
+        })];
+        let body = request_body(&provider, &messages, &tools, false);
+
+        assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral", "system 没打缓存点");
+        assert_eq!(body["tools"][0]["cache_control"]["type"], "ephemeral", "tools 没打缓存点");
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 3, "system 应该被抽到顶层了");
+        assert_eq!(msgs[1]["content"][0]["cache_control"]["type"], "ephemeral", "历史尾巴没打缓存点");
+    }
+}
+
 pub fn request_body(
     provider: &Provider,
     messages: &[Value],
@@ -151,16 +185,57 @@ pub fn request_body(
         "messages": msgs,
         "stream": stream,
     });
+    // ── 前缀缓存（prompt caching）────────────────────────────────────────
+    // Anthropic 不做隐式缓存：**不打 cache_control 命中率就是 0**。所以这里显式打点，而且只打在
+    // "每次都一样"的地方：system（人设 + 技能索引 + AGENTS.md）、最后一个工具定义、以及最后一条
+    // 消息之前的那个位置 —— 这样下一轮请求的这段前缀就能整段命中，只有新长出来的尾巴要重新算。
+    // 破掉的常见原因（改这些会让整段前缀失效）：技能/常驻技能清单变化、MCP 工具清单刷新、工作区切换。
     if !system.trim().is_empty() {
-        body["system"] = json!(system);
+        body["system"] = json!([{
+            "type": "text",
+            "text": system,
+            "cache_control": { "type": "ephemeral" }
+        }]);
     }
     if provider.supports_tools {
-        let t = to_anthropic_tools(tools);
+        let mut t = to_anthropic_tools(tools);
+        if let Some(last) = t.last_mut() {
+            // 工具定义整体是稳定前缀，打在最后一个上就等于把整段 tools 都缓存了
+            if let Some(obj) = last.as_object_mut() {
+                obj.insert("cache_control".into(), json!({ "type": "ephemeral" }));
+            }
+        }
         if !t.is_empty() {
             body["tools"] = json!(t);
         }
     }
+    // 最后一条消息之前的最后一个内容块：把对话历史也纳入缓存（每轮只新增尾巴）
+    if let Some(msgs) = body["messages"].as_array_mut() {
+        if let Some(prev) = msgs.len().checked_sub(1).and_then(|n| n.checked_sub(1)) {
+            mark_cache_tail(&mut msgs[prev]);
+        }
+    }
     body
+}
+
+/// 给一条消息的最后一个内容块打缓存点（content 是字符串时先包成 block 数组）。
+fn mark_cache_tail(msg: &mut Value) {
+    let Some(obj) = msg.as_object_mut() else { return };
+    match obj.get_mut("content") {
+        Some(Value::String(s)) => {
+            let text = std::mem::take(s);
+            obj.insert(
+                "content".into(),
+                json!([{ "type": "text", "text": text, "cache_control": { "type": "ephemeral" } }]),
+            );
+        }
+        Some(Value::Array(arr)) => {
+            if let Some(last) = arr.last_mut().and_then(|v| v.as_object_mut()) {
+                last.insert("cache_control".into(), json!({ "type": "ephemeral" }));
+            }
+        }
+        _ => {}
+    }
 }
 
 fn usage_from(u: &Value) -> Usage {

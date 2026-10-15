@@ -389,6 +389,12 @@ pub struct SessionMeta {
     /// 用户用 `/goal` 设定的目标（一直生效，每轮都会进系统提示）
     #[serde(default)]
     pub goal: String,
+    /// 这个会话里怎么称呼用户（第一轮由模型从"用户自称 / 身份技能"里总结，≤16 字；空=用「你」）
+    #[serde(default)]
+    pub user_name: String,
+    /// 这个会话里 agent 自称什么（同上；空=用「Agent」）
+    #[serde(default)]
+    pub agent_name: String,
 }
 
 fn default_perm() -> String {
@@ -508,6 +514,8 @@ pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<Sess
         turns: 0,
         perm: default_perm(),
         goal: String::new(),
+        user_name: String::new(),
+        agent_name: String::new(),
     };
     std::fs::File::create(session_jsonl(app, &meta.id)?).map_err(|e| e.to_string())?;
     write_json(&session_meta(app, &meta.id)?, &meta)?;
@@ -783,7 +791,7 @@ pub fn slugify(name: &str) -> String {
 }
 
 /// 极简 frontmatter 解析：只认开头 `---` 里的 `key: value`
-fn parse_frontmatter(text: &str) -> (std::collections::BTreeMap<String, String>, String) {
+pub(crate) fn parse_frontmatter(text: &str) -> (std::collections::BTreeMap<String, String>, String) {
     let mut map = std::collections::BTreeMap::new();
     let t = text.strip_prefix('\u{feff}').unwrap_or(text);
     if let Some(rest) = t.strip_prefix("---") {

@@ -491,6 +491,97 @@ pub fn agent_skill_import(app: AppHandle, path: String) -> Result<Value, String>
     Ok(json!({ "ok": true, "path": p }))
 }
 
+// ── 斜杠指令（/xxx）─────────────────────────────────────────────────
+// 内置那些（/goal /compact /new /perm /stop /model /rename /skills /help）在前端 agSlash 里；
+// 这里管**用户自己加**的：一条 .md 一条指令，放 agent/slash/ 下，frontmatter 写 name / description，
+// 正文就是提示词模板 —— `{{args}}` 会替换成"斜杠指令后面跟的参数"，没写就附在末尾。
+// 「用 skill 或其它手段提供指令」就靠这个目录：把文件丢进去即可（技能作者也能随技能一起分发）。
+const SLASH_EXAMPLE: &str = "---\nname: explain\ndescription: 用三句话解释刚才那段输出（不跑工具）\n---\n\n用三句话解释上面最后一段输出或结果，别调用任何工具，中文，直接给结论。\n\n（提示：正文里写 {{args}} 的位置会被换成「/指令 后面跟的参数」；不写就附在末尾。）\n";
+
+fn slash_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let d = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("agent")
+        .join("slash");
+    std::fs::create_dir_all(&d).map_err(|e| format!("建 {} 失败: {e}", d.display()))?;
+    // 第一次跑：给一条示例，让用户知道格式
+    if std::fs::read_dir(&d).map(|mut i| i.next().is_none()).unwrap_or(false) {
+        let _ = std::fs::write(d.join("explain.md"), SLASH_EXAMPLE);
+    }
+    Ok(d)
+}
+
+#[derive(serde::Serialize)]
+pub struct SlashCmd {
+    pub name: String,
+    pub description: String,
+    pub body: String,
+    pub path: String,
+}
+
+/// 列出自定义斜杠指令（/help 与设置页都用它）
+#[tauri::command]
+pub fn agent_slash_list(app: AppHandle) -> Vec<SlashCmd> {
+    let Ok(dir) = slash_dir(&app) else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let mut out: Vec<SlashCmd> = Vec::new();
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("md") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&p) else { continue };
+        let (fm, body) = store::parse_frontmatter(&text);
+        let name = fm
+            .get("name")
+            .cloned()
+            .unwrap_or_else(|| p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default());
+        let name = name.trim().trim_start_matches('/').to_string();
+        if name.is_empty() {
+            continue;
+        }
+        out.push(SlashCmd {
+            name,
+            description: fm.get("description").cloned().unwrap_or_default().trim().to_string(),
+            body: body.trim().to_string(),
+            path: p.to_string_lossy().to_string(),
+        });
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
+}
+
+/// 斜杠指令目录（设置页「打开目录」用）
+#[tauri::command]
+pub fn agent_slash_dir(app: AppHandle) -> String {
+    slash_dir(&app).map(|p| p.to_string_lossy().to_string()).unwrap_or_default()
+}
+
+/// 存一条自定义斜杠指令
+#[tauri::command]
+pub fn agent_slash_save(app: AppHandle, name: String, description: String, body: String) -> Result<String, String> {
+    let slug = store::slugify(&name);
+    if slug.trim().is_empty() {
+        return Err("名字不能为空".into());
+    }
+    let p = slash_dir(&app)?.join(format!("{slug}.md"));
+    let text = format!("---\nname: {}\ndescription: {}\n---\n\n{}\n", name.trim(), description.trim(), body.trim());
+    std::fs::write(&p, text).map_err(|e| format!("写 {} 失败: {e}", p.display()))?;
+    Ok(p.to_string_lossy().to_string())
+}
+
+/// 删一条自定义斜杠指令
+#[tauri::command]
+pub fn agent_slash_delete(app: AppHandle, name: String) -> Result<(), String> {
+    let p = slash_dir(&app)?.join(format!("{}.md", store::slugify(&name)));
+    if p.exists() {
+        std::fs::remove_file(&p).map_err(|e| format!("删 {} 失败: {e}", p.display()))?;
+    }
+    Ok(())
+}
+
 /// 技能目录（"打开技能目录"用）
 #[tauri::command]
 pub fn agent_skills_dir(app: AppHandle) -> String {
@@ -731,11 +822,34 @@ fn always_skills_section(app: &AppHandle) -> String {
     format!("常驻技能（每个请求都在场；技能里写的自我设定、口吻与做事规则，优先于上面那句通用角色描述）：\n{blk}\n")
 }
 
-fn system_prompt(app: &AppHandle, workspace: &std::path::Path, perm: &str, goal: &str) -> String {
+/// 会话内称呼那一行（第一轮由模型从"用户自称 / 身份技能"里总结出来；没定下来就返回空串，
+/// 免得凭空编出真实姓名）。
+fn names_line(app: &AppHandle, session_id: &str) -> String {
+    let Some(m) = store::session_meta_of(app, session_id) else { return String::new() };
+    let u = m.user_name.trim();
+    let a = m.agent_name.trim();
+    if u.is_empty() && a.is_empty() {
+        return String::new();
+    }
+    format!(
+        "本会话里的称呼：{}（用户） / {}（你自己）。对话里就按这个称呼来回，别用别的名字。\n",
+        if u.is_empty() { "用户" } else { u },
+        if a.is_empty() { "Agent" } else { a },
+    )
+}
+
+fn system_prompt(
+    app: &AppHandle,
+    workspace: &std::path::Path,
+    perm: &str,
+    goal: &str,
+    names: &str,
+) -> String {
     let mut p = String::new();
     p.push_str("你是 KDock 里的设备调试助手，跑在用户的电脑上（桌面版上位机）。\n");
     p.push_str("KDock 已经内置：串口/网口收发、设备文件读写、固件升级(OTA)、烧录器写片、示波器控制、中控编排(时序流程)、屏幕捕获。你能直接调它们。\n\n");
     p.push_str(&format!("工作区（相对路径都相对它）：{}\n", workspace.to_string_lossy()));
+    p.push_str(names);
     p.push_str("注意：传输页那条主连接是用户自己的；要**互不干扰**就用你自己的 link_*（那条用户看不见）。\n");
     p.push_str("但**用户想看着你干**、或者你想跟用户看同一份设备返回时，用 port_* 直接操作主连接：\n");
     p.push_str("port_list 看本机有哪些串口（别去跑 PowerShell 扫）、port_state 看主连接状态、port_write 往主连接发、port_read 读主连接的收发记录（用户在传输页看到的就是这一份）。\n");
@@ -835,6 +949,7 @@ fn events_to_messages(
     workspace: &std::path::Path,
     perm: &str,
     goal: &str,
+    names: &str,
 ) -> Vec<Value> {
     fn flush(out: &mut Vec<Value>, text: &mut String) {
         let t = text.trim();
@@ -851,7 +966,7 @@ fn events_to_messages(
         .iter()
         .any(|e| matches!(e, Event::Assistant { reasoning, .. } if !reasoning.trim().is_empty()));
 
-    let mut out = vec![json!({ "role": "system", "content": system_prompt(app, workspace, perm, goal) })];
+    let mut out = vec![json!({ "role": "system", "content": system_prompt(app, workspace, perm, goal, names) })];
 
     // 压缩是"追加一条 summary + 跳过它覆盖的那段"，原文还在文件里（可以用 history_search 回查）。
     let skip = store::summary_upto(events).min(events.len());
@@ -946,7 +1061,7 @@ fn compact_if_needed(app: &AppHandle, provider: &Provider, key: &str, session_id
     let ws = workspace_of(app, session_id);
     let perm = store::session_meta_of(app, session_id).map(|m| m.perm).unwrap_or_else(|| "ask".into());
     let goal = store::session_meta_of(app, session_id).map(|m| m.goal).unwrap_or_default();
-    let messages = events_to_messages(app, &events, &ws, &perm, &goal);
+    let messages = events_to_messages(app, &events, &ws, &perm, &goal, &names_line(app, session_id));
     let budget = provider.context_window.saturating_sub(provider.reserve_output) as usize;
     if budget == 0 {
         return None;
@@ -1156,9 +1271,20 @@ fn maybe_auto_title(app: &AppHandle, session_id: &str, provider: &Provider, key:
         let one_line = first.split_whitespace().collect::<Vec<_>>().join(" ");
         one_line.chars().take(18).collect()
     };
-    // 让模型起个短名（很便宜：max_tokens 很小）；失败就用截断的原文
+    // 一次调用顺便把"会话内怎么称呼用户 / 怎么自称"也定下来（多要两行，几乎不加钱）。
+    // 依据只有用户自称与技能里的身份；明确要求**不要编造或使用真实姓名**。
+    let skills = store::skills_index(app);
+    let sys = format!(
+        "下面是一段对话的第一句。请输出**三行**，每行都不带引号、句号或序号：\n\
+         第一行：给这段对话起的标题，不超过 12 个字。\n\
+         第二行：在这个会话里怎么称呼「用户」，不超过 16 个字 —— 只根据用户自己的自称、或下面列出的\
+         技能里的身份信息来定；没有依据就写「用户」；**不要猜测、编造或使用真实姓名**。\n\
+         第三行：在这个会话里「你自己」叫什么，不超过 16 个字 —— 同样只根据用户的自称或技能里的身份\
+         （比如某个身份/人格技能规定了名字就用它）；没有依据就写「Agent」；**不要编造真实姓名**。\n\
+         只输出这三行，不要解释。\n\n已安装技能（仅供判断身份线索）：\n{skills}"
+    );
     let msgs = vec![
-        json!({"role":"system","content":"给下面这句任务起一个标题：不超过 12 个字，不要引号不要句号，只输出标题本身。"}),
+        json!({"role":"system","content": sys}),
         json!({"role":"user","content": first.chars().take(600).collect::<String>()}),
     ];
     // 起名字这步要小心：GLM 这类"先想再答"的模型，max_tokens 给小了会**只输出思考、正文为空**，
@@ -1169,15 +1295,24 @@ fn maybe_auto_title(app: &AppHandle, session_id: &str, provider: &Provider, key:
             .to_string()
     };
     let mut title = String::new();
+    let mut user_name = String::new();
+    let mut agent_name = String::new();
     for budget in [512u32, 2048u32] {
         let mut tiny = provider.clone();
         tiny.reserve_output = budget;
         let stop = AtomicBool::new(false);
         match llm::chat(&tiny, key, &msgs, &[], &stop, &mut llm::NullSink) {
             Ok(o) => {
-                let t = clean(o.content);
+                // 三行：标题 / 用户称呼 / agent 称呼（模型只给一行也能用，后两个走默认）
+                let mut lines = o.content.lines().map(|s| clean(s.to_string())).filter(|s| !s.is_empty());
+                let t = lines.next().unwrap_or_default();
+                let u = lines.next().unwrap_or_default();
+                let a = lines.next().unwrap_or_default();
+                let cut = |s: String, n: usize| s.chars().take(n).collect::<String>();
                 if !t.is_empty() && t.chars().count() <= 24 {
                     title = t;
+                    user_name = cut(u, 16);
+                    agent_name = cut(a, 16);
                     break;
                 }
             }
@@ -1189,6 +1324,12 @@ fn maybe_auto_title(app: &AppHandle, session_id: &str, provider: &Provider, key:
     }
     let mut meta = meta;
     meta.title = title.clone();
+    if !user_name.trim().is_empty() {
+        meta.user_name = user_name.trim().to_string();
+    }
+    if !agent_name.trim().is_empty() {
+        meta.agent_name = agent_name.trim().to_string();
+    }
     meta.updated = now_ms();
     if store::session_update_meta(app, &meta).is_ok() {
         // 只刷新标题，不往对话里塞系统消息（名字本来就显示在对话头上）
@@ -1297,7 +1438,7 @@ fn run_turn(
             let budget_now = provider.context_window.saturating_sub(provider.reserve_output) as usize;
             // 摘要之外的再裁一道（只影响这次请求）
             let messages = trim_for_request(
-                events_to_messages(&app, &events, &ws, &perm, &goal),
+                events_to_messages(&app, &events, &ws, &perm, &goal, &names_line(&app, &session_id)),
                 budget_now.max(1),
             );
             emit(&app, "agent://round", json!({ "session": session_id, "round": round + 1,
@@ -1736,7 +1877,7 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
     let est = |s: &str| llm::estimate_tokens(s);
 
     let goal = meta.as_ref().map(|m| m.goal.clone()).unwrap_or_default();
-    let sys = est(&system_prompt(&app, &ws, &perm, &goal));
+    let sys = est(&system_prompt(&app, &ws, &perm, &goal, &names_line(&app, &session_id)));
     // 常驻技能是系统提示的一部分（sys 里已经含了），这里单独报出来给界面标"其中"
     let skills_always = est(&always_skills_section(&app));
     let mut schema = tools::schema_json(&tools::catalog(), true);

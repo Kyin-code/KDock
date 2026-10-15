@@ -142,7 +142,8 @@
 [hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
-  font-family: "Segoe UI Variable", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  /* 字体可在「设置 → 主题与配色」里换（--ui-font 由 JS 写；没设就用原来这一族） */
+  font-family: var(--ui-font, "Segoe UI Variable", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-size: 13px; line-height: 1.5;
@@ -905,6 +906,8 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .split { background: var(--surface-1); }
 .work { padding: 0; }
 .workpane:not(.shell) { padding: 10px 12px; }
+/* Agent：对话区高度可拖（上面那条 vsplit），输入区始终贴底 */
+.workpane[data-work="agent"] > .inpane { margin-top: auto; }
 
 /* ==========================================================================
    1) 输入区高度：把手放到**输出框**右下角（原来靠 textarea 自带的 resize，
@@ -1441,7 +1444,9 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   flex: 0 0 auto; width: 14px; height: 14px; font-size: 9px; opacity: .7;
   display: inline-flex; align-items: center; justify-content: center; line-height: 1;
 }
-.navsub .wsrow .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+/* 名字和路径抢空间时要**优先给名字**：名字按内容参与收缩（min 60px 兜底），
+   路径可以一直缩到 0 —— 以前路径写死 max-width:46px，那一截永远显示不全。 */
+.navsub .wsrow .t { flex: 1 1 auto; min-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
 .navsub .wsrow .plus, .navsub .wsrow .del {
   /* 命中区从 18x18 放到 22x22，字形用 flex 居中（原来靠 line-height:16 摆，看着偏） */
   flex: 0 0 auto; width: 22px; height: 22px;
@@ -1451,7 +1456,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .navsub .wsrow .plus:hover { background: var(--surface-3); color: hsl(var(--primary)); }
 .navsub .wsrow .del:hover { background: var(--surface-3); color: hsl(var(--destructive)); }
-.navsub .wsrow .p { flex: 0 0 auto; font-size: 10px; opacity: .55; max-width: 46px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.navsub .wsrow .p { flex: 0 1 auto; min-width: 0; font-size: 10px; opacity: .55; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .navsub .sess { padding-left: 24px; }
 
 /* 对话头：名字 + 轮数 */

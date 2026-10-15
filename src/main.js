@@ -3736,18 +3736,24 @@ function bindErrorBanner() {
 }
 
 // ---------------- 左右分栏可拖动 ----------------
-function bindOneGutter(id, cssVar, storeKey, min, max, fromLeft) {
+/** 只保留**最小**限制：左中右各自不能被拖到 min 以下；除此之外不封顶（能一直拉大），
+ *  上限只由"另外两栏还得留出自己的最小宽度"算出来 —— 不再有写死的 max。 */
+function bindOneGutter(id, cssVar, storeKey, min, otherVar, otherMin, centerMin, fromLeft) {
   const root = document.documentElement;
+  const maxFor = () => {
+    const total = (document.querySelector(".split") || document.body).clientWidth || window.innerWidth;
+    const other = parseInt(getComputedStyle(root).getPropertyValue(otherVar)) || otherMin;
+    return Math.max(min, total - Math.max(other, otherMin) - centerMin);
+  };
   const saved = Number(localStorage.getItem(storeKey) || 0);
-  if (saved >= min && saved <= max) root.style.setProperty(cssVar, saved + "px");
+  if (saved >= min) root.style.setProperty(cssVar, Math.min(saved, maxFor()) + "px");
   const el = $(id);
   if (!el) return;
   let dragging = false;
   const onMove = (e) => {
     if (!dragging) return;
-    const w = fromLeft
-      ? Math.min(max, Math.max(min, e.clientX - 10))
-      : Math.min(max, Math.max(min, window.innerWidth - e.clientX - 10));
+    const raw = fromLeft ? e.clientX - 10 : window.innerWidth - e.clientX - 10;
+    const w = Math.max(min, Math.min(maxFor(), raw));
     root.style.setProperty(cssVar, Math.round(w) + "px");
   };
   const stop = () => {
@@ -3771,8 +3777,9 @@ function bindOneGutter(id, cssVar, storeKey, min, max, fromLeft) {
 }
 
 function bindGutter() {
-  bindOneGutter("gutter", "--nav-w", "kdock_nav_w", 96, 320, true);
-  bindOneGutter("gutter-r", "--param-w", "kdock_param_w", 260, 620, false);
+  // (id, cssVar, storeKey, min, 另一侧的 cssVar, 另一侧 min, 中间栏 min, 从左边拖)
+  bindOneGutter("gutter", "--nav-w", "kdock_nav_w", 96, "--param-w", 260, 420, true);
+  bindOneGutter("gutter-r", "--param-w", "kdock_param_w", 260, "--nav-w", 96, 420, false);
 }
 
 // ---------------- 工具选项：关闭到托盘 / 开机自启 ----------------
@@ -3868,6 +3875,57 @@ function applyTheme(mode) {
   applyScheme(localStorage.getItem("kdock_scheme") || "ocean");   // 亮/暗切换后主色要重算
 }
 
+// ── 字号 / 放大 / 字体 ─────────────────────────────────────────────
+// 缩放用 WebView 自己的"页面缩放"：它会**叠加**在系统显示缩放（DPI）之上，所以控件、文本、字号
+// 一起按倍数变化，而不是只动文本。字号是其中一档（和放大倍数相乘），字体只替换正文那一族。
+const UI_FONT_STEPS = [["small", "小", 0.9], ["normal", "标准", 1.0], ["large", "大", 1.12], ["xlarge", "特大", 1.25]];
+const UI_ZOOM_STEPS = [["0.8", "80%"], ["0.9", "90%"], ["1", "100%"], ["1.1", "110%"], ["1.25", "125%"], ["1.4", "140%"], ["1.6", "160%"]];
+const UI_FONTS = [
+  ["system", "系统默认", ""],
+  ["segoe", "Segoe UI Variable", '"Segoe UI Variable", "Segoe UI"'],
+  ["yahei", "微软雅黑", '"Microsoft YaHei UI", "Microsoft YaHei"'],
+  ["noto", "思源黑体 / Noto", '"Noto Sans SC", "Source Han Sans SC", "HarmonyOS Sans SC"'],
+  ["inter", "Inter / 系统无衬线", 'Inter, "Segoe UI Variable", system-ui'],
+];
+function uiScaleValue() {
+  const f = (UI_FONT_STEPS.find((x) => x[0] === (localStorage.getItem("kdock_font_scale") || "normal")) || UI_FONT_STEPS[1])[2];
+  const z = Number(localStorage.getItem("kdock_ui_zoom") || "1") || 1;
+  return Math.min(3, Math.max(0.5, Math.round(f * z * 1000) / 1000));
+}
+function applyUiScale() {
+  invoke("window_set_zoom", { scale: uiScaleValue() }).catch(() => {});
+  const id = localStorage.getItem("kdock_ui_font") || "system";
+  const fam = (UI_FONTS.find((x) => x[0] === id) || UI_FONTS[0])[2];
+  if (fam) document.documentElement.style.setProperty("--ui-font", fam);
+  else document.documentElement.style.removeProperty("--ui-font");
+}
+function syncUiScaleControls() {
+  const set = (id, v) => { const s = $(id); if (s && v != null) s.value = String(v); };
+  set("ui-font-scale", localStorage.getItem("kdock_font_scale") || "normal");
+  set("ui-zoom", String(Number(localStorage.getItem("kdock_ui_zoom") || "1")));
+  set("ui-font", localStorage.getItem("kdock_ui_font") || "system");
+}
+function bindUiScale() {
+  const fs = $("ui-font-scale"), zm = $("ui-zoom"), fm = $("ui-font");
+  if (fs) {
+    fillSelect(fs, UI_FONT_STEPS.map((x) => [x[0], x[1]]), localStorage.getItem("kdock_font_scale") || "normal");
+    fs.onchange = () => { localStorage.setItem("kdock_font_scale", fs.value); applyUiScale(); uiPrefsSave(); };
+  }
+  if (zm) {
+    fillSelect(zm, UI_ZOOM_STEPS.map((x) => [x[0], x[1]]), String(Number(localStorage.getItem("kdock_ui_zoom") || "1")));
+    zm.onchange = () => { localStorage.setItem("kdock_ui_zoom", zm.value); applyUiScale(); uiPrefsSave(); };
+  }
+  if (fm) {
+    fillSelect(fm, UI_FONTS.map((x) => [x[0], x[1]]), localStorage.getItem("kdock_ui_font") || "system");
+    fm.onchange = () => { localStorage.setItem("kdock_ui_font", fm.value); applyUiScale(); uiPrefsSave(); };
+  }
+  syncUiScaleControls();
+  applyUiScale();
+  // 换显示器 / 改系统缩放到 WebView 会重排：把用户那份再下发一次，保证是"叠加"而不是被顶掉
+  let t = 0;
+  window.addEventListener("resize", () => { clearTimeout(t); t = setTimeout(applyUiScale, 200); });
+}
+
 function bindTheme() {
   const row = $("scheme-row");
   for (const s of SCHEMES) {
@@ -3889,6 +3947,7 @@ function bindTheme() {
   matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
     if ((document.documentElement.dataset.theme || "dark") === "auto") applyScheme(localStorage.getItem("kdock_scheme") || "ocean");
   });
+  bindUiScale();
 }
 
 /* ── 界面偏好落一份到后端 ─────────────────────────────────────────
@@ -3903,12 +3962,15 @@ function uiPrefsSnapshot() {
     theme: localStorage.getItem("kdock_theme") || "dark",
     scheme: localStorage.getItem("kdock_scheme") || "ocean",
     lang: LANG,
+    fontScale: localStorage.getItem("kdock_font_scale") || "normal",
+    zoom: localStorage.getItem("kdock_ui_zoom") || "1",
+    font: localStorage.getItem("kdock_ui_font") || "system",
   };
 }
 function uiPrefsSave() {
   if (!uiPrefsReady) return;
   const p = uiPrefsSnapshot();
-  const key = p.theme + "|" + p.scheme + "|" + p.lang;
+  const key = [p.theme, p.scheme, p.lang, p.fontScale, p.zoom, p.font].join("|");
   if (key === uiPrefsLast) return;      // 没变就不写盘
   uiPrefsLast = key;
   invoke("ui_prefs_set", { prefs: p }).catch(() => {});
@@ -3925,11 +3987,51 @@ async function uiPrefsLoad() {
   if (p.theme) localStorage.setItem("kdock_theme", p.theme);
   if (p.scheme) localStorage.setItem("kdock_scheme", p.scheme);
   if (p.lang) localStorage.setItem("kdock_lang", p.lang);
+  if (p.fontScale) localStorage.setItem("kdock_font_scale", p.fontScale);
+  if (p.zoom) localStorage.setItem("kdock_ui_zoom", p.zoom);
+  if (p.font) localStorage.setItem("kdock_ui_font", p.font);
   uiPrefsReady = true;
   applyTheme(localStorage.getItem("kdock_theme") || "dark");   // 里面会带上 applyScheme
   applyScheme(localStorage.getItem("kdock_scheme") || "ocean");
   if (p.lang && p.lang !== LANG) applyLang(p.lang);
-  uiPrefsLast = uiPrefsSnapshot().theme + "|" + uiPrefsSnapshot().scheme + "|" + uiPrefsSnapshot().lang;
+  applyUiScale();
+  syncUiScaleControls();
+  const s2 = uiPrefsSnapshot();
+  uiPrefsLast = [s2.theme, s2.scheme, s2.lang, s2.fontScale, s2.zoom, s2.font].join("|");
+}
+
+/** Agent 对话区高度：拖动它上面那条把手（和传输页的输出框一个路子），双击复位。 */
+function bindAgentResize() {
+  const grip = $("ag-chat-grip"), box = $("ag-box");
+  if (!grip || !box) return;
+  const KEY = "kdock_agent_chat_h";
+  const apply = (h) => {
+    box.style.height = h ? h + "px" : "";
+    box.style.flex = h ? "0 0 auto" : "";      // 有显式高度时别让 flex 把它拉回满高
+  };
+  const saved = Number(localStorage.getItem(KEY) || 0);
+  if (saved > 80) apply(Math.round(saved));
+  let sy = 0, h0 = 0;
+  grip.addEventListener("pointerdown", (e) => {
+    sy = e.clientY; h0 = box.getBoundingClientRect().height;
+    grip.classList.add("dragging");
+    try { grip.setPointerCapture(e.pointerId); } catch (_) { /* 某些环境不支持 */ }
+    e.preventDefault();
+  });
+  grip.addEventListener("pointermove", (e) => {
+    if (!grip.classList.contains("dragging")) return;
+    const pane = box.parentElement.getBoundingClientRect().height;
+    const want = Math.max(120, Math.min(h0 - (e.clientY - sy), Math.round(pane * 0.9)));
+    apply(Math.round(want));
+  });
+  const stop = () => {
+    if (!grip.classList.contains("dragging")) return;
+    grip.classList.remove("dragging");
+    localStorage.setItem(KEY, String(Math.round(box.getBoundingClientRect().height)));
+  };
+  grip.addEventListener("pointerup", stop);
+  grip.addEventListener("pointercancel", stop);
+  grip.addEventListener("dblclick", () => { localStorage.removeItem(KEY); apply(0); });
 }
 
 // ---------------- 时间戳 / 方向标记开关 ----------------
@@ -4457,7 +4559,9 @@ function agMsgNode(kind, text, ev) {
   head.className = "head";
   const who = document.createElement("span");
   who.className = "who";
-  who.textContent = kind === "user" ? "你" : kind === "assistant" ? "Agent" : kind === "err" ? "出错" : "系统";
+  who.textContent = kind === "user" ? ((agMeta && agMeta.user_name) || "你")
+    : kind === "assistant" ? ((agMeta && agMeta.agent_name) || "Agent")
+    : kind === "err" ? "出错" : "系统";
   head.appendChild(who);
   const body = document.createElement("div");
   body.className = "bubble";
@@ -5085,13 +5189,69 @@ async function agSlash(text) {
       await invoke("agent_stop").catch(() => {});
       note("已请求停止这一轮。");
       return true;
-    case "help":
-      note("可用命令：\n/goal <目标>  设定长期目标（/goal clear 清除）\n/compact  压缩上下文\n" +
-           "/new  新建会话\n/perm ask|auto|read  切换权限\n/stop  停止这一轮\n/help  这条帮助");
+    case "model": {
+      const list = (agCfg && agCfg.providers) || [];
+      if (!arg) {
+        note("当前模型：" + ((list.find((x) => x.id === ((agCfg && agCfg.activeId) || "")) || {}).name || "（没选）") +
+             "\n用法：/model <名字或 id 的一部分>（可用的见输入框右边下拉）");
+        return true;
+      }
+      const q = arg.toLowerCase();
+      const hit = list.find((x) => x.id.toLowerCase() === q)
+        || list.find((x) => [x.id, x.name, x.model].join(" ").toLowerCase().includes(q));
+      if (!hit) { note(`没找到匹配「${arg}」的模型（可用：${list.map((x) => x.name || x.id).join(" / ") || "无"}）`); return true; }
+      await agUseProvider(hit.id);
+      note(`已切到模型：${hit.name || hit.id}`);
       return true;
-    default:
-      toast(`未知命令 /${cmd} —— 输入 /help 看有哪些`);
+    }
+    case "rename": {
+      if (!arg) { note(`用法：/rename 新标题（当前：${(agMeta && agMeta.title) || ""}）`); return true; }
+      try {
+        await invoke("agent_session_rename", { id: agMeta.id, title: arg });
+        agMeta.title = arg;
+        agUpdateHeader();
+        agLoadTree();
+        note(`标题已改为：${arg}`);
+      } catch (e) { toast(String(e)); }
       return true;
+    }
+    case "skills": {
+      const on = (agSkills || []).filter((s) => s.enabled);
+      note("已启用的技能：" + (on.length
+        ? "\n" + on.map((s) => `- ${s.slug}${s.description ? " — " + s.description.slice(0, 40) : ""}`).join("\n")
+        : "（没有）") + "\n\n（在「设置 → 技能」里导入 / 开关；勾「常驻」的会每轮注入）");
+      return true;
+    }
+    case "help": {
+      const custom = await invoke("agent_slash_list").catch(() => []);
+      const builtin = "/goal <目标>  设定长期目标（/goal clear 清除）\n/compact  压缩上下文\n" +
+        "/new  新建会话\n" +
+        "/model [名字]  看 / 切换当前模型\n/perm ask|auto|read  切换权限\n/stop  停止这一轮\n" +
+        "/rename <标题>  改会话标题\n/skills  列出已启用技能\n/help  这条帮助";
+      const mine = custom.length
+        ? "\n\n你自己加的（放在 agent/slash/ 下的 .md）：\n" +
+          custom.map((c) => `/${c.name}${c.description ? "  " + c.description : ""}`).join("\n")
+        : "\n\n（想在 / 里加自己的指令：设置 → 技能 → 打开指令目录，放一个 .md 进去）";
+      note("可用命令：\n" + builtin + mine);
+      return true;
+    }
+    default: {
+      // 自定义斜杠指令（agent/slash/*.md）：正文是提示词模板，{{args}} 换成参数
+      const custom = await invoke("agent_slash_list").catch(() => []);
+      const hit = custom.find((c) => c.name.toLowerCase() === (cmd || "").toLowerCase());
+      if (!hit) {
+        toast(`未知命令 /${cmd} —— 输入 /help 看有哪些`);
+        return true;
+      }
+      let text = hit.body || "";
+      if (text.includes("{{args}}")) text = text.split("{{args}}").join(arg);
+      else if (arg) text = text + "\n" + arg;
+      toast(`/${hit.name} → 已展开成提示词发出`);
+      const box = agEl("ag-input");
+      if (box) box.value = text;
+      await agSend();
+      return true;
+    }
   }
 }
 
@@ -5975,6 +6135,17 @@ function bindSkillsPage() {
   agEl("set-skill-open").onclick = async () => {
     try {
       const p = await invoke("agent_skills_dir");
+      await invoke("open_folder", { path: p });
+    } catch (e) { toast(String(e)); }
+  };
+  // 斜杠指令目录（自定义指令放这儿）
+  invoke("agent_slash_dir").then((p) => {
+    const el = agEl("set-slash-dir");
+    if (el) { el.textContent = p || "（未知）"; el.title = p || ""; }
+  }).catch(() => {});
+  if (agEl("set-slash-open")) agEl("set-slash-open").onclick = async () => {
+    try {
+      const p = await invoke("agent_slash_dir");
       await invoke("open_folder", { path: p });
     } catch (e) { toast(String(e)); }
   };
@@ -7130,6 +7301,9 @@ const EN = {
   "已被摘要压掉": "compressed away by the summary", "回复完成时间": "replied at",
   "已思考": "thought", "思考过程": "reasoning", "有未读回复": "unread reply",
   "方向标记": "Direction", "agent 连上了主连接：": "the agent connected the main link: ",
+  "字号 / 放大 / 字体": "Text size / zoom / font", "字号": "Text size", "放大": "Zoom", "字体": "Font",
+  "系统默认": "System default", "整体按倍数缩放（控件 / 文本 / 字号一起变），并自动叠加系统的显示缩放；字体只替换正文那一族。":
+    "Everything scales by this factor (controls, text and font size together) on top of the system display scaling; the font only replaces the UI text family.",
   "常驻": "Always on", "常驻技能": "Always-on skills", "其中常驻技能": "of which always-on skills",
   "先启用这个技能": "Enable the skill first",
   "常驻：技能正文每轮注入系统提示（身份 / 口吻类技能用这个）":
@@ -7947,6 +8121,7 @@ async function main() {
   bindSeq();
   bindErrorBanner();
   bindGutter();
+  bindAgentResize();
   bindDevHistory();             // 设备 IP / 端口历史（datalist 提示）
   bindFlash();
   bindCapture();
