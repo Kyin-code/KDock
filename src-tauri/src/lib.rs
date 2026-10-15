@@ -6,6 +6,7 @@
 mod agent;
 mod checksum;
 mod debug;
+mod kbview;
 mod scope;
 mod storage;
 mod transport;
@@ -1296,6 +1297,48 @@ fn flash_stop() {
             let _ = c.kill();
         }
     }
+}
+
+// ── 知识库页：把外部页面（管理界面 / 对话界面）贴进主窗口 ──
+// 位置与大小由前端按 DOM 占位区的实际坐标给（CSS 像素，相对窗口客户区）。
+
+#[tauri::command]
+async fn kb_show(
+    app: AppHandle,
+    kind: String,
+    url: String,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<(), String> {
+    kbview::show(&app, &kind, &url, x, y, w, h)
+}
+
+#[tauri::command]
+async fn kb_bounds(app: AppHandle, kind: String, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+    kbview::bounds(&app, &kind, x, y, w, h)
+}
+
+#[tauri::command]
+fn kb_hide(kind: String) {
+    kbview::hide(&kind);
+}
+
+#[tauri::command]
+fn kb_hide_all() {
+    kbview::hide_all();
+}
+
+#[tauri::command]
+fn kb_reload(kind: String) -> Result<(), String> {
+    kbview::reload(&kind)
+}
+
+/// 这块内置浏览器现在停在哪个地址（没开过就是 null）
+#[tauri::command]
+fn kb_url(kind: String) -> Option<String> {
+    kbview::current_url(&kind)
 }
 
 // ── 示波器：SCPI（RIGOL DS1000Z 系，裸 socket 5555）──
@@ -3455,6 +3498,13 @@ pub fn run() {
                 scope_screenshot,
                 scope_save_png,
                 scope_control,
+                // ── 知识库页的内置浏览器（WebView2 子视图）──
+                kb_show,
+                kb_bounds,
+                kb_hide,
+                kb_hide_all,
+                kb_reload,
+                kb_url,
             // ── Agent ──
             agent::agent_config_get,
             agent::agent_provider_save,

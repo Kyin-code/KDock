@@ -15,7 +15,9 @@ tauri-build = { version = "2", features = [] }
 image = { version = "0.24.9", features = ["jpeg"] }
 screenshots = "0.8.10"
 # image-png：内嵌 icons/icon.png 做兜底图标（任务栏/托盘都要）
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# unstable：多 WebView（窗口里嵌子 WebView）——「知识库」页要把外部页面（Dify 这类
+# 需要跑 JS 的界面）真渲染出来，只能靠 WebView2 子视图，HTML 里的 iframe 被 CSP 挡着用不了。
+tauri = { version = "2", features = ["tray-icon", "image-png", "unstable"] }
 # 原生文件对话框 + 文件读写（用来替代 WebView 里空实现的 window.prompt）
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"

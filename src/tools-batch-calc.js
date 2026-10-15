@@ -1522,6 +1522,7 @@ async function dcRsa(op) {
 
 /** 数据计算页的绑定（跟计算器一起在 initCalc 里挂一次） */
 function initDataCalc() {
+  dcBindSections();
   dcBindRowCopy("dc-out");
   dcBindRowCopy("calc-file-out");
   dcBindRowCopy("ieee-out");
@@ -1561,6 +1562,34 @@ function initDataCalc() {
       }
     };
   }
+}
+
+/** 数据计算页的折叠区块：状态记在本机；标题里的按钮/下拉只干活，不顺手把这块收起来 */
+const DC_OPEN_KEY = "kdock_dc_open";
+function dcBindSections() {
+  const secs = [...document.querySelectorAll(".dcsection")];
+  if (!secs.length) return;
+  let open = [];
+  try { open = JSON.parse(localStorage.getItem(DC_OPEN_KEY) || "[]") || []; } catch (_) { open = []; }
+  // 第一次用（没有记录）就打开第一块，别让整页看着是空的
+  const first = !localStorage.getItem(DC_OPEN_KEY);
+  secs.forEach((s, i) => { s.open = first ? i === 0 : open.includes(s.dataset.dcsec); });
+  const save = () => {
+    localStorage.setItem(DC_OPEN_KEY, JSON.stringify(secs.filter((s) => s.open).map((s) => s.dataset.dcsec)));
+  };
+  for (const s of secs) {
+    s.addEventListener("toggle", save);
+    const sum = s.querySelector("summary");
+    if (sum) {
+      sum.addEventListener("click", (e) => {
+        // 点在按钮/下拉/输入框上：这一下别触发折叠
+        if (e.target.closest("button, select, input, textarea, a")) e.preventDefault();
+      });
+    }
+  }
+  const all = (v) => { secs.forEach((s) => { s.open = v; }); save(); };
+  if ($id("dc-expand-all")) $id("dc-expand-all").onclick = () => all(true);
+  if ($id("dc-collapse-all")) $id("dc-collapse-all").onclick = () => all(false);
 }
 
 export function initCalc() {

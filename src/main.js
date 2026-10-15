@@ -1122,15 +1122,228 @@ function showPane(tab) {
   if (tab === "agent") agOnShow();
   if (tab === "batch") initBatch({ pushTx: pushEntry });
   if (tab === "calc") initCalc();
+  if (tab === "datacalc") initCalc();          // 折叠区块的初始化在 initCalc 里（只有一次）
   if (tab === "scope") { scSetView(scView); scResizePlot(); }
+  kbSyncSoon();                                 // 知识库页：进来就贴、离开就收（详见 kbSync）
   if (LANG === "en") langWalk();   // 这一页里"切过来才渲染"的文字（提示语/空态）再扫一遍
 }
 
-function bindTabs() {
 /** 调试页（GDB/MI）暂时隐藏：代码全都在（页面、后端 debug.rs、解析都保留），
  *  把这一行改成 true 就能把左导航的「调试」重新放出来。 */
 const DEBUG_UI = false;
 
+/* ==========================================================================
+   知识库页：中间 = 管理页面，右栏 = 对话页面
+   两块都用**内置浏览器**渲染 —— 真身是后端 kbview.rs 贴在主窗口上的 WebView2 子视图，
+   这里只负责：算占位区坐标、让子视图跟着布局走、没配地址时把人引到设置。
+   两个地址只存本机（localStorage），不进仓库、不上传。
+   ========================================================================== */
+const KB_MGMT_KEY = "kdock_kb_mgmt";
+const KB_CHAT_KEY = "kdock_kb_chat";
+let kbLastPlace = {};            // kind -> "x,y,w,h|url"，用来判断"要不要真的动它"
+let kbSyncing = false;
+
+const kbGet = (key) => (localStorage.getItem(key) || "").trim();
+
+/** 地址补全：没写协议就按 https 来（Dify 这类都是 https） */
+function kbNorm(u) {
+  const s = String(u || "").trim();
+  if (!s) return "";
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : "https://" + s;
+}
+
+/** 知识库页现在露着吗（还得不是在弹窗后面 —— 子视图是原生层，会盖住弹窗） */
+function kbVisible() {
+  const pane = document.querySelector('[data-work="kb"]');
+  if (!pane || pane.hidden) return false;
+  const modal = document.getElementById("settings-modal");
+  if (modal && !modal.hidden) return false;
+  const agdlg = document.getElementById("ag-dlg");
+  if (agdlg && !agdlg.hidden) return false;
+  return true;
+}
+
+/** 占位区（那块要被子视图盖住的矩形）在窗口客户区里的位置，CSS 像素 */
+function kbRect(id) {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  const b = el.getBoundingClientRect();
+  if (b.width < 60 || b.height < 60) return null;   // 没布局出来（页还没显示）就先不贴
+  return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) };
+}
+
+async function kbPlace(kind, hostId, url, emptyId, force) {
+  const empty = document.getElementById(emptyId);
+  const r = kbRect(hostId);
+  if (!url || !r) {
+    if (kbLastPlace[kind]) { await invoke("kb_hide", { kind }).catch(() => {}); kbLastPlace[kind] = ""; }
+    if (empty && !empty.hidden) { /* 空态文案由 kbEmptyText 管 */ }
+    return;
+  }
+  if (empty) empty.hidden = true;
+  const key = `${r.x},${r.y},${r.w},${r.h}|${url}`;
+  if (!force && kbLastPlace[kind] === key) return;      // 位置和地址都没变：这条不折腾
+  kbLastPlace[kind] = key;
+  try {
+    await invoke("kb_show", { kind, url, x: r.x, y: r.y, w: r.w, h: r.h });
+    kbStateText("");
+  } catch (e) {
+    kbLastPlace[kind] = "";
+    kbStateText(String(e).slice(0, 80), "err");
+    toast(String(e));
+  }
+}
+
+function kbStateText(t, cls) {
+  const el = $("kb-state");
+  if (!el) return;
+  el.textContent = t || "";
+  el.title = t || "";
+  el.style.color = cls === "err" ? "hsl(var(--destructive))" : "";
+}
+
+/** 空态那块提示（没配地址 / 还没建起来） */
+function kbEmptyText() {
+  const mgmt = kbNorm(kbGet(KB_MGMT_KEY));
+  const chat = kbNorm(kbGet(KB_CHAT_KEY));
+  const el1 = $("kb-empty");
+  if (el1) {
+    el1.innerHTML = "";
+    const a = document.createElement("div");
+    a.textContent = mgmt
+      ? en("还没打开：上面地址栏点「打开」，或者直接点这里")
+      : en("还没配「知识库管理页面」地址 —— 点这里去设置里填");
+    const b = document.createElement("div");
+    b.className = "lb";
+    b.textContent = mgmt ? mgmt : en("地址只存在本机，不会上传");
+    el1.append(a, b);
+    el1.hidden = !!mgmt && !!kbLastPlace.mgmt;
+  }
+  const el2 = $("kb-chat-empty");
+  if (el2) {
+    el2.innerHTML = "";
+    const a = document.createElement("div");
+    a.textContent = chat
+      ? en("还没打开：上面点「打开」，或者直接点这里")
+      : en("还没配「知识库对话页面」地址 —— 点这里去设置里填");
+    const b = document.createElement("div");
+    b.className = "lb";
+    b.textContent = chat ? chat : en("地址只存在本机，不会上传");
+    el2.append(a, b);
+    el2.hidden = !!chat && !!kbLastPlace.chat;
+  }
+}
+
+/** 贴 / 挪 / 收 —— 切页、改窗口大小、拖分栏都会调它（重复调不会重新加载页面） */
+async function kbSync(force) {
+  if (kbSyncing) return;
+  kbSyncing = true;
+  try {
+    if (!kbVisible()) {
+      if (kbLastPlace.mgmt || kbLastPlace.chat) {
+        await invoke("kb_hide_all").catch(() => {});
+        kbLastPlace = {};
+      }
+      return;
+    }
+    kbEmptyText();
+    const mgmt = kbNorm($("kb-url") && $("kb-url").value ? $("kb-url").value : kbGet(KB_MGMT_KEY));
+    const chat = kbNorm(kbGet(KB_CHAT_KEY));
+    await kbPlace("mgmt", "kb-host", mgmt, "kb-empty", force);
+    await kbPlace("chat", "kb-chat-host", chat, "kb-chat-empty", force);
+    if (force) kbEmptyText();
+  } finally {
+    kbSyncing = false;
+  }
+}
+
+/** 下一帧再同步（切页那一刻 DOM 刚显隐，直接量坐标会拿到 0） */
+function kbSyncSoon() {
+  setTimeout(() => { kbSync(false).catch(() => {}); }, 60);
+}
+
+function bindKb() {
+  if (!$("kb-url")) return;
+  const urlIn = $("kb-url");
+  urlIn.value = kbGet(KB_MGMT_KEY);
+  kbEmptyText();
+
+  const open = async () => {
+    const u = kbNorm(urlIn.value);
+    if (!u) { toast(en("先填个地址：已经在设置 → 知识库里等你")); openSettings("kb"); return; }
+    kbLastPlace = {};
+    await kbSync(true);
+    kbEmptyText();
+  };
+  $("kb-open").onclick = () => open().catch((e) => toast(String(e)));
+  urlIn.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); $("kb-open").click(); }
+  });
+  $("kb-reload").onclick = () => {
+    if (!kbLastPlace.mgmt) { toast(en("还没打开过")); return; }
+    invoke("kb_reload", { kind: "mgmt" }).catch((e) => toast(String(e)));
+  };
+  $("kb-external").onclick = () => {
+    const u = kbNorm(urlIn.value || kbGet(KB_MGMT_KEY));
+    if (!u) { toast(en("先填个地址")); return; }
+    invoke("browser_open_external", { path: u }).catch((e) => toast(String(e)));
+  };
+  const ce = $("kb-chat-empty");
+  if (ce) ce.onclick = () => openSettings("kb");
+  const me = $("kb-empty");
+  if (me) {
+    me.onclick = () => {
+      // 配了地址就"打开"，没配就去设置
+      if (kbNorm(urlIn.value || kbGet(KB_MGMT_KEY))) open().catch(() => {});
+      else openSettings("kb");
+    };
+  }
+  $("kb-chat-open").onclick = () => {
+    if (!kbNorm(kbGet(KB_CHAT_KEY))) { toast(en("先填「对话页面」地址：已经在设置 → 知识库里等你")); openSettings("kb"); return; }
+    kbLastPlace = {};
+    kbSync(true).then(kbEmptyText).catch(() => {});
+  };
+  $("kb-chat-reload").onclick = () => {
+    if (!kbLastPlace.chat) { toast(en("还没打开过")); return; }
+    invoke("kb_reload", { kind: "chat" }).catch((e) => toast(String(e)));
+  };
+  // 设置页里的两个输入
+  if ($("set-kb-mgmt")) $("set-kb-mgmt").value = kbGet(KB_MGMT_KEY);
+  if ($("set-kb-chat")) $("set-kb-chat").value = kbGet(KB_CHAT_KEY);
+  if ($("set-kb-save")) {
+    $("set-kb-save").onclick = () => {
+      const m = kbNorm($("set-kb-mgmt").value);
+      const c = kbNorm($("set-kb-chat").value);
+      if (m) localStorage.setItem(KB_MGMT_KEY, m); else localStorage.removeItem(KB_MGMT_KEY);
+      if (c) localStorage.setItem(KB_CHAT_KEY, c); else localStorage.removeItem(KB_CHAT_KEY);
+      $("set-kb-mgmt").value = m;
+      $("set-kb-chat").value = c;
+      urlIn.value = m;
+      kbLastPlace = {};
+      if ($("set-kb-state")) $("set-kb-state").textContent = en("已保存（只在本机）");
+      toast(en("知识库地址已保存"));
+    };
+  }
+  if ($("set-kb-go")) {
+    $("set-kb-go").onclick = () => {
+      closeSettings();
+      showPane("kb");
+    };
+  }
+  // 位置跟随：窗口缩放 / 拖分栏 / 抽屉式布局变化都算
+  window.addEventListener("resize", () => { if (kbVisible()) kbSyncSoon(); });
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => { if (kbVisible()) kbSyncSoon(); });
+    for (const id of ["kb-host", "kb-chat-host"]) {
+      const el = document.getElementById(id);
+      if (el) ro.observe(el);
+    }
+  }
+  // 兜底：有些变化（拖左栏/右栏的把手、改缩放）不会触发上面两个
+  setInterval(() => { if (kbVisible()) kbSync(false).catch(() => {}); }, 700);
+}
+
+function bindTabs() {
   // 只绑带 data-tab 的；底部那个"设置"齿轮不是页面切换，别把它的 onclick 覆盖了
   document.querySelectorAll(".navitem[data-tab]").forEach((btn) => {
     btn.onclick = () => showPane(btn.dataset.tab);
@@ -4595,11 +4808,13 @@ function openSettings(section) {
   // 打开模型页先落在「使用」面板；实时负载**不主动拉**（等用户展开免费模型那块再拉）
   if (section === "model") agProvTab("use");
   if (section === "about") agLoadTools();
+  kbSyncSoon();      // 知识库页那块是原生子视图，会盖住弹窗 —— 开设置就先收起来
 }
 
 function closeSettings() {
   const m = document.getElementById("settings-modal");
   if (m) m.hidden = true;
+  kbSyncSoon();      // 关掉设置再贴回来
 }
 
 function bindSettings() {
@@ -8405,6 +8620,43 @@ const EN = {
   "连上了，但状态没读到（示波器在忙？再点一次「连接」）":
     "connected, but the state could not be read (scope busy? click Connect again)",
   "已重连": "reconnected",
+
+  // ============ 知识库页（中间管理页面 + 右栏对话页面，内置浏览器渲染）============
+  "知识库": "Knowledge base",
+  "知识库：中间是管理页面、右边是对话页面（两个地址在设置里配）":
+    "Knowledge base: the admin page in the middle, the chat page on the right (both URLs are set in Settings)",
+  "管理页面地址（留空 = 用设置里配的那个）":
+    "Admin page URL (empty = the one from Settings)",
+  "重新加载": "Reload",
+  "用系统浏览器打开（登录 / 下载这类它更顺手）":
+    "Open in the system browser (handier for logins and downloads)",
+  "对话": "Chat", "知识库页面": "Knowledge base pages",
+  "管理页面": "Admin page", "对话页面": "Chat page",
+  "去知识库页": "Go to the knowledge base page",
+  "地址只存在本机，不会上传": "The URL is stored on this machine only and is never uploaded",
+  "还没配「知识库管理页面」地址 —— 点这里去设置里填":
+    "No \"admin page\" URL yet — click here to set it in Settings",
+  "还没配「知识库对话页面」地址 —— 点这里去设置里填":
+    "No \"chat page\" URL yet — click here to set it in Settings",
+  "还没打开：上面地址栏点「打开」，或者直接点这里":
+    "Not opened yet: press Open above, or just click here",
+  "还没打开：上面点「打开」，或者直接点这里":
+    "Not opened yet: press Open above, or just click here",
+  "还没打开过": "it has not been opened yet",
+  "先填个地址": "fill in a URL first",
+  "先填个地址：已经在设置 → 知识库里等你":
+    "Fill in a URL first — Settings → Knowledge base is waiting for you",
+  "先填「对话页面」地址：已经在设置 → 知识库里等你":
+    "Fill in the \"chat page\" URL first — Settings → Knowledge base is waiting for you",
+  "知识库地址已保存": "Knowledge base URLs saved",
+  "已保存（只在本机）": "saved (this machine only)",
+  "已打开：": "opened: ",
+
+  // ============ 数据计算页：折叠区块 ============
+  "全部展开": "Expand all", "全部折叠": "Collapse all",
+  "浮点 ↔ 位，含符号/阶码/尾数拆解": "float ↔ bits, with sign/exponent/mantissa breakdown",
+  "任意进制互转、有符号/无符号、大小端翻转":
+    "any radix, signed/unsigned and endianness flipping",
   "RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent":
     "The standard LAN port on RIGOL DS1000Z series scopes (TCP 5555, SCPI text). Once connected the agent",
   "工具干同样的事。": "can do the same things with the same tools.",
@@ -8663,6 +8915,7 @@ async function main() {
   bindAgent();
   bindAgentEvents();
   bindScope();
+  bindKb();
   bindDebug();
   listen("debug://gdb", (ev) => { if (window.__dbgOnGdb) window.__dbgOnGdb(String(ev.payload || "")); });
   listen("debug://server", (ev) => { dbgPrint("[server] " + String(ev.payload || "") + "\n"); });

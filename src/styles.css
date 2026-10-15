@@ -225,6 +225,12 @@ body {
 .capview {
   flex: 1; min-height: 0; overflow: hidden; position: relative;
   border-radius: 12px; border: 1px solid hsl(var(--border) / 0.5); background: #000;
+  display: flex;                       /* 让里面的空态提示能撑满整块（原来它只有一行高，虚线缩成一条窄条） */
+}
+/* 还没开始采集时那句提示：铺满整块、虚线也铺满、文字居中 */
+.capview > .placeholder {
+  flex: 1 1 auto; width: 100%; min-height: 100%;
+  text-align: center; align-items: center; justify-content: center;
 }
 /* 1:1 模式：img 用原始像素尺寸（把尺寸钉死，别被别的规则缩放），窗口不够大就由 .capview 裁掉右上/下半 */
 .capview img {
@@ -536,6 +542,29 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
 /* 图表容器：uPlot 需要明确尺寸 */
 .chartbox { flex: 1; min-height: 240px; margin-top: 8px; }
 .chartbox .u-legend { font-size: 11.5px; }
+
+/* ==========================================================================
+   知识库页：中间 + 右栏各贴一个内置浏览器（WebView2 子视图），
+   这里只负责"那块占位区"的尺寸与空态提示 —— 子视图会精确盖在上面。
+   ========================================================================== */
+.kbpane { gap: 8px; }
+/* 右栏那块要占满整列（不然只按 min-height 160px 显示，对话页会很矮） */
+.parampane.kbpane { flex: 1 1 auto; min-height: 0; }
+/* 右栏本身是"按内容高度滚动"的容器，普通 flex:1 在这里长不起来 —— 直接按视口算一个稳的高 */
+.parampane.kbpane #kb-chat-host { flex: 1 1 auto; height: max(160px, calc(100vh - 300px)); }
+.kbhost {
+  position: relative; min-height: 160px;
+  border-radius: 12px; border: 1px solid var(--surface-line); background: var(--surface-1);
+  overflow: hidden;
+}
+.kbhost > .kbempty {
+  position: absolute; inset: 0; margin: 0; border-radius: 0;
+  display: flex; flex-direction: column; gap: 10px; align-items: center; justify-content: center;
+  padding: 18px; text-align: center; line-height: 1.7; cursor: pointer;
+}
+.kbhost > .kbempty:hover { background: var(--surface-2); }
+.kbhost > .kbempty .kbbtn { pointer-events: none; }
+.kbpane #kb-url { min-width: 12rem; }
 
 /* 示波器页：波形 / 截屏 两个视图 + 每通道一张卡片 */
 #sc-plot { margin-top: 8px; }
@@ -2025,6 +2054,27 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .calchist .r.marked .star, .calchist .r.marked .v { color: hsl(var(--warning)); }
 
 /* 数据计算页：PEM 文本框 + 结果行可点复制 */
+.dctools { flex: 0 0 auto; }
+
+/* 数据计算：每块 = 标题 + 可折叠主体（原生 <details>，标题一行，展开才占地方） */
+.dcsection { padding: 0; overflow: hidden; margin-bottom: 8px; }
+.dcsection:last-child { margin-bottom: 0; }
+.dcsection > .dcsum {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
+  padding: 10px 12px; list-style: none; min-height: 2.4rem;
+}
+.dcsection > .dcsum::-webkit-details-marker { display: none; }
+.dcsection > .dcsum::before {
+  content: "▸"; flex: 0 0 auto; color: hsl(var(--muted-foreground));
+  transition: transform .15s ease; font-size: 12px;
+}
+.dcsection[open] > .dcsum::before { transform: rotate(90deg); }
+.dcsection > .dcsum .dcttl { font-weight: 650; font-size: 13px; }
+.dcsection > .dcsum .dchint { color: hsl(var(--muted-foreground)); font-size: 11.5px; }
+.dcsection > .dcsum:hover { background: var(--surface-2); }
+.dcbody { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
+.dcbody > .trow { gap: 6px; flex-wrap: wrap; }
+
 .dcpem {
   width: 100%; min-height: 78px; resize: vertical; padding: 8px 10px; border-radius: 10px;
   border: 1px solid var(--surface-line); background: var(--surface-0); color: hsl(var(--foreground));
@@ -2047,12 +2097,23 @@ summary.tb-icon::-webkit-details-marker { display: none; }
    ========================================================================== */
 .calcpane { gap: 0; }                      /* 上下两块自己拼，缝交给拖动条 */
 
-/* 表达式那一行（挪到下面了）：标签 + 输入 + 插入键 + = */
-.calcexprctl { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 1px 0; }
-.calcexprctl .calcexprin { flex: 1 1 auto; height: 32px; font-size: 13.5px; }
+/* 表达式那一行（挪到下面了）：标签 + 输入 + = 按钮。
+   这一行是"要敲的东西"，所以字号比别处大一档、上下留白也留足（原来 32px 高 / 13.5px 字太小）。 */
+.calcexprctl {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+  padding: 10px 0 12px;                                  /* 上下最小间距 */
+  min-height: 3.6rem;
+}
+.calcexprctl .lb { font-size: 15px; flex: 0 0 auto; }
+.calcexprctl .calcexprin {
+  flex: 1 1 auto; height: clamp(3.1rem, 6.5vh, 4.2rem);  /* 32px → 50px 起 */
+  font-size: clamp(1.65rem, 3.2vh, 2.1rem);              /* 13.5px → 26px 起（2 倍） */
+  padding: 0 0.9rem;
+}
 .calcexprctl #calc-go {
-  flex: 0 0 auto; height: 32px; min-width: 54px; font-size: 18px; font-weight: 600;
-  padding: 0 14px; border-radius: 9px;
+  flex: 0 0 auto; height: clamp(3.1rem, 6.5vh, 4.2rem);  /* 跟输入框一样高 */
+  min-width: clamp(4.6rem, 9vw, 6rem); font-size: clamp(1.9rem, 4vh, 2.5rem);
+  font-weight: 600; padding: 0 1.2rem; border-radius: 12px;
 }
 
 /* 左右两块都做成同样的卡片，顶端对齐 */
