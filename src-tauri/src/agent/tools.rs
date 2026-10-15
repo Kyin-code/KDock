@@ -231,7 +231,24 @@ pub fn catalog() -> Vec<ToolDef> {
         }}), true);
     push("flow_get", "读**当前画布上的编排**：节点（含各自参数与坐标）+ 连线（from/port/to）+ 可用的节点类型清单（每种类型有哪些输入/输出端口）。想看懂/复述用户画的流程、或者要自己排一条，先调它拿格式。",
         json!({"type":"object","properties":{}}), true);
-    push("flow_set", "把一份编排**导入画布**（替换当前画布并保存，用户在界面上直接能看到/编辑/运行）。格式：{nodes:[{id,type,x,y,...该类型的参数}],edges:[{from:'节点id',port:'输出端口名',to:'节点id'}]}；不认识的类型和悬空连线会被自动丢掉并在返回值里说明。会动用户的画布，所以要先说清楚你要导入什么。",
+    push("flow_add_node", "在**现有画布上新增一个节点**（不动别人已画的东西）。type 取自 flow_get 的 kinds；x/y 不给就自动摆在最右边节点的右侧；params 里的字段会并到该节点上（比如 label）。返回新节点的 id。",
+        json!({"type":"object","properties":{
+            "type":{"type":"string","description":"节点类型，如 start / step / cond …（先 flow_get 看 kinds）"},
+            "x":{"type":"integer","description":"可选，画布坐标"},
+            "y":{"type":"integer","description":"可选，画布坐标"},
+            "params":{"type":"object","description":"可选，要并到节点上的字段（label 等）"}
+        },"required":["type"]}), true);
+    push("flow_connect", "在**现有画布上连一条线**：from.port → to。端口名取自 flow_get 的 kinds[type].outs；自环、重复线、端口不存在都会被拦下。",
+        json!({"type":"object","properties":{
+            "from":{"type":"string","description":"起点节点 id"},
+            "port":{"type":"string","description":"起点节点的输出端口名"},
+            "to":{"type":"string","description":"终点节点 id"}
+        },"required":["from","port","to"]}), true);
+    push("flow_delete", "从画布上删掉一个节点或一条连线（id 传节点 id 或连线 key 都行；开始节点不能删）。",
+        json!({"type":"object","properties":{
+            "id":{"type":"string","description":"节点 id 或连线 key"}
+        },"required":["id"]}), true);
+    push("flow_set", "把一份编排**整体导入画布**（**会替换掉当前画布上原有的东西**并保存，用户在界面上直接能看到/编辑/运行）。格式：{nodes:[{id,type,x,y,...该类型的参数}],edges:[{from:'节点id',port:'输出端口名',to:'节点id'}]}；不认识的类型和悬空连线会被自动丢掉并在返回值里说明。会动用户的画布，所以要先说清楚你要导入什么。",
         json!({"type":"object","properties":{
             "graph":{"type":"object","description":"{nodes:[…],edges:[…]}"}
         },"required":["graph"]}), true);
@@ -617,7 +634,7 @@ mod tests {
 pub fn is_dangerous(name: &str) -> bool {
     matches!(
         name,
-        "link_send" | "device_push" | "firmware_upgrade" | "flash" | "local_run" | "port_write" | "flow_set"
+        "link_send" | "device_push" | "firmware_upgrade" | "flash" | "local_run" | "port_write" | "flow_set" | "flow_add_node" | "flow_connect" | "flow_delete"
             | "port_open" | "port_close"
             | "workspace_write" | "workspace_mkdir" | "skill_create" | "skill_update"
             | "skill_delete" | "flow_run" | "capture_save"

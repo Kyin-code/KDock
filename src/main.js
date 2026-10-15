@@ -7047,6 +7047,47 @@ const AG_HOST = {
     showPane("seq");
     return `已导入画布：${sqGraph.nodes.length} 个节点 / ${sqGraph.edges.length} 条连线（不认识的类型和悬空连线已丢掉），已经切到「中控编排」页，用户可以直接改或跑。`;
   },
+  async flow_add_node(a) {
+    const type = String((a && a.type) || "").trim();
+    if (!type) return "缺少 type（先 flow_get 看 kinds 里有哪些类型）";
+    if (!(SQ_KINDS || {})[type]) return `不认识的节点类型：${type}（可用：${Object.keys(SQ_KINDS || {}).join(", ")}）`;
+    const n = sqNewNode(type);
+    const xs = sqGraph.nodes.map((x) => Number(x.x) || 0);
+    n.x = Math.round(a && a.x != null ? Number(a.x) : (xs.length ? Math.max(...xs) + 260 : 40));
+    n.y = Math.round(a && a.y != null ? Number(a.y) : 60);
+    if (a && a.params && typeof a.params === "object") Object.assign(n, a.params);
+    sqGraph.nodes.push(n);
+    sqSave(); sqRender(); showPane("seq");
+    return `已新增节点 ${n.id}（type=${type}）坐标 ${n.x},${n.y}；连它用 flow_connect(from/port/to)`;
+  },
+  async flow_connect(a) {
+    const from = String((a && a.from) || "").trim();
+    const to = String((a && a.to) || "").trim();
+    const port = String((a && a.port) || "").trim();
+    if (!from || !to || !port) return "需要 from / port / to（端口名见 flow_get 的 kinds[type].outs）";
+    const fn = sqNode(from);
+    if (!fn) return `没有这个节点：${from}`;
+    if (!sqNode(to)) return `没有这个节点：${to}`;
+    const outs = sqOuts(fn).map((o) => o[0]);
+    if (!outs.includes(port)) return `节点 ${from} 没有输出端口「${port}」（它有：${outs.join(" / ") || "无"}）`;
+    if (sqGraph.edges.some((e) => e.from === from && e.port === port && e.to === to)) return "这条线已经存在（没重复加）";
+    sqGraph.edges.push({ from, port, to });
+    sqSanitize(); sqSave(); sqRender(); showPane("seq");
+    return `已连上：${from}.${port} → ${to}`;
+  },
+  async flow_delete(a) {
+    const id = String((a && a.id) || "").trim();
+    if (!id) return "需要 id（节点 id 或连线 key）";
+    const n = sqNode(id);
+    if (n) {
+      if (n.type === "start") return "开始节点不能删";
+      sqDeleteNode(id);
+      return `已删掉节点 ${id}`;
+    }
+    const e = sqGraph.edges.find((x) => sqKey(x) === id);
+    if (e) { sqDeleteEdge(id); return `已删掉连线 ${id}`; }
+    return `没找到 ${id}（节点 id 或连线 key 都可以；可以 flow_get 看现有的）`;
+  },
   async flow_run(a) {
     if (a && a.graph) {
       const backup = JSON.stringify(sqGraph);

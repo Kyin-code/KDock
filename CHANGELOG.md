@@ -70,6 +70,10 @@
   不认识的节点类型、重复 id、悬空连线沿用 `sqSanitize()` 自动丢掉并在返回值里说明；因为会动用户的画布，
   按危险动作走审批）。加上原有的 `flow_run`（还能直接传一份 graph 跑一次）、`flow_status`、`flow_stop`，
   现在"控制 / 知晓 / 导入（含连线逻辑）"齐了。
+- 编排**增量编辑**（不动用户已画的）：`flow_add_node`（新增节点，type 取自 `flow_get` 的 kinds；坐标不给
+  就自动摆在最右节点右侧）、`flow_connect`（连一条线，端口名取自 `kinds[type].outs`；自环 / 重复线 /
+  端口不存在会被拦下）、`flow_delete`（删节点或连线；开始节点不能删）。三个都直接落盘并重画，界面会切到
+  「中控编排」页，所以 agent 加的每一步用户都看得见、也能马上改。
 - **内嵌调试（第一版，暂时隐藏入口）**：代码完整保留（`src-tauri/src/debug.rs` + 调试页 + MI 解析），
   只因真机联调还在进行中，先在左导航里藏掉入口（`main.js` 里 `DEBUG_UI = false`，改 true 即恢复）。
   已用 J-Link V9.40 + `arm-none-eabi-gdb --interpreter=mi2` 在真机上验过：连上目标、读寄存器、拿调用栈、
