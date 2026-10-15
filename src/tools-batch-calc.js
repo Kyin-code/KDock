@@ -690,7 +690,7 @@ function calcPadKey(act) {
     if (v === null) return;
     const label = calcOp === null
       ? (calcBaseRadix() === 10 ? calcNum(cur) : calcFmt(cur))
-      : calcFmt(calcAcc) + " " + ({ "&": "AND", "|": "OR", "^": "XOR", "<<": "<<", ">>": ">>" }[calcOp] || calcOp) + " " + calcFmt(cur);
+      : calcFmt(calcAcc) + " " + (calcOp === "**" ? "^" : calcOp) + " " + calcFmt(cur);
     calcAcc = null; calcOp = null; calcFresh = true;
     calcEntry = String(v);
     calcLogPush(label, v);
@@ -934,7 +934,9 @@ function calcRenderBits() {
             calcEntry = String(nv >>> 0);
             calcFresh = true;
             calcExprClear();             // 手改了一位 = 原算式不成立了
+            const prev = u32(calcValue);
             calcSetValue(nv, false);
+            calcBitChanged(prev, u32(nv));
           };
           grp.appendChild(b);
           idxGrp.appendChild(el("span", "bi", String(bit)));
@@ -976,7 +978,9 @@ function calcBitsOp(kind) {
   calcEntry = String(nv);
   calcFresh = true;
   calcExprClear();                 // 手改过位 = 原算式不成立了，清掉
+  const prev = u32(calcValue);
   calcSetValue(nv, false);
+  calcBitChanged(prev, u32(nv));
 }
 
 /* --------------------------- IEEE 754 --------------------------- */
@@ -1135,20 +1139,37 @@ function calcRenderHist() {
   const box = $id("calc-hist");
   if (!box) return;
   box.innerHTML = "";
-  if (!calcHist.length) box.appendChild(el("div", "sub", T("（还没算过）")));
+  if (!calcHist.length) return;   // 只记录，不留说明文字
   calcHist.forEach((h) => {
     const r = el("div", "r" + (h.marked ? " marked" : ""));
     const star = el("button", "star", h.marked ? "★" : "☆");
     star.type = "button";
     star.title = T(h.marked ? "取消标记（下次开机就不留了）" : "标记：高亮，并且保留到下次开机");
     star.onclick = (ev) => { ev.stopPropagation(); h.marked = !h.marked; calcHistSave(); calcRenderHist(); };
-    r.append(star, el("span", "e", h.e), el("span", "v", h.v));
+    r.append(star, el("span", "e", h.e || ""), el("span", "v", h.v));
     r.title = T("点一下填回算式");
     r.onclick = () => { $id("calc-expr").value = h.e; calcRun(h.e, false); };
     box.appendChild(r);
   });
   const c = $id("calc-hist-count");
   if (c) c.textContent = calcHist.length ? calcHist.length + " 条 · ★ " + calcHist.filter((x) => x.marked).length : "";
+}
+
+/** 位板/位运算变化：等 700ms 不再动了再记一条（只记 from → to，纯数据） */
+let calcBitPend = null;      // {from, to, timer}
+function calcBitChanged(from, to) {
+  if (calcBitPend === null) calcBitPend = { from, timer: null };
+  calcBitPend.to = to;
+  if (calcBitPend.timer) clearTimeout(calcBitPend.timer);
+  calcBitPend.timer = setTimeout(() => {
+    const p = calcBitPend;
+    calcBitPend = null;
+    if (!p || p.from === p.to) return;
+    const val = calcFmt(p.from) + " → " + calcFmt(p.to);
+    calcHist.unshift({ e: val, v: "", base: calcBase, marked: false });
+    calcHistTrim();
+    calcRenderHist();
+  }, 700);
 }
 
 /** 记一条历史（只有标记过才会落盘） */
@@ -1162,10 +1183,10 @@ function calcHistPush(e, v) {
 
 /** 标记/取消标记"当前这条"（显示区的算式 + 结果） */
 function calcMarkCurrent() {
-  const e = ($id("calc-expr").value || "").trim() || String(calcValue);
+  const e = ($id("calc-expr").value || "").trim();      // 没算式就只记值
   const val = calcNum(calcValue);
   if (!Number.isFinite(calcValue)) return T("现在这个值没法标记");
-  const hit = calcHist.find((h) => h.e === e && h.v === val);
+  const hit = calcHist.find((h) => h.e === e && h.v === val && (h.e || h.v));
   if (hit) {
     hit.marked = !hit.marked;
     hit.base = calcBase;
@@ -1173,6 +1194,7 @@ function calcMarkCurrent() {
     return hit.marked ? T("已标记（会保留到下次开机）") : T("已取消标记");
   }
   calcHist.unshift({ e, v: val, base: calcBase, marked: true });
+  toastMini(e ? T("已标记（会保留到下次开机）") : T("已标记（会保留到下次开机）"));
   calcHistTrim(); calcHistSave(); calcRenderHist();
   return T("已标记（会保留到下次开机）");
 }

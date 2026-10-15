@@ -1693,36 +1693,37 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 /* 32 位控制板：**按半字节分组**（一个半字节 = 一个十六进制位），8 个半字节分两行、MSB 在左 ——
    读法就是 0xDEAD / 0xBEEF 那种两行四个十六进制位；半字节内部 4 个位，下面标位号。
    宽度不放 1fr：摊满整行会变成"一个坑一个字"，组之间只留 8px，整排靠左。 */
-.bitboard { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 4px; }
-.bitgrid { display: flex; flex-direction: column; gap: 8px; }
-.bitrow2 { display: flex; flex-wrap: wrap; gap: 8px; }
+.bitboard { flex: 1 1 auto; min-height: 150px; display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; }
+.bitgrid { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.bitrow2 { flex: 1 1 0; min-height: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 /* 每个半字节最宽 118px（4 个位 + 3 个 3px 缝）。基准写 78px 是有意的：
    flex-wrap 换行是按"基准"分行的，基准给大了（104）窗口一窄就变成 3+1 两行 ——
    78×4 + 3×8 = 336 在窄窗最小中间栏（420）里也放得下，永远 4 个一行；挤到极限才换行兜底。 */
-.bitcell { flex: 1 1 72px; max-width: 118px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.bitcell { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 /* 半字节值（D E A D…）+ 半字节序号（7…0） */
 .bitnib {
   display: flex; align-items: center; justify-content: center; gap: 5px;
   height: 18px; border-radius: 5px; background: var(--surface-3);
+  flex: 0 0 auto;
   font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; line-height: 1;
   color: hsl(var(--muted-foreground));
 }
 .bitnib .d { font-size: 12.5px; }
 .bitnib .n { font-size: 10px; opacity: .75; }
 .bitnib.on { color: hsl(var(--primary)); }
-.bitgrp { display: grid; grid-template-columns: repeat(4, minmax(16px, 1fr)); gap: 2px; }
+.bitgrp { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: repeat(4, minmax(16px, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 3px; }
 .bitboard .bit {
-  height: 28px; padding: 0; cursor: pointer; min-width: 0;
+  height: auto; min-height: 30px; padding: 0; cursor: pointer; min-width: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--surface-line); border-radius: 6px;
   background: var(--surface-1); color: hsl(var(--muted-foreground));
-  font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; font-weight: 600;
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: clamp(12px, 1.8vh, 20px); font-weight: 600;
 }
 .bitboard .bit:hover { border-color: hsl(var(--primary) / 0.6); background: var(--surface-2); }
 .bitboard .bit.on { background: hsl(var(--primary)); border-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
 .bitboard .bit.hot { outline: 2px solid hsl(var(--warning) / 0.45); outline-offset: 1px; }
 .bitidxgrp { display: grid; grid-template-columns: repeat(4, minmax(16px, 1fr)); gap: 2px; }
-.bitidxgrp .bi { text-align: center; font-size: 10px; color: hsl(var(--muted-foreground)); font-family: Consolas, monospace; }
+.bitidxgrp .bi { text-align: center; font-size: clamp(9px, 1.2vh, 12px); color: hsl(var(--muted-foreground)); font-family: Consolas, monospace; }
 .bithint { font-size: 11px; color: hsl(var(--muted-foreground)); margin: 6px 0 10px; line-height: 1.5; }
 
 /* 计算器这一页：每个功能块一张卡，别挤在一起 */
@@ -1980,7 +1981,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .calcout.bad { color: hsl(var(--destructive)); font-size: 17px; font-weight: 500; }
-.calcsubline { min-height: 15px; text-align: right; color: hsl(var(--muted-foreground)); font-size: 11px; }
+.calcsubline { flex: 0 0 auto; min-height: 14px; text-align: right; color: hsl(var(--muted-foreground)); font-size: clamp(10px, 4.5cqh, 11.5px); }
 .calcsubline .lb { font-family: Consolas, monospace; }
 
 /* 上下拖动条：只改计算器这条（#calc-split），别动 agent / 日志那几条 .vsplit 的样子 */
@@ -2009,8 +2010,12 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   flex: 1 1 50%; min-width: 0; display: flex; flex-direction: column; gap: 6px;
   padding: 8px 10px; border-radius: 12px; background: var(--surface-1); border: 1px solid var(--surface-line);
 }
-.calcprogtop { gap: 5px; }
+.calcprogtop { gap: 4px; }
+/* 位运算那一行按钮做小一点，把高度让给下面的位板（位板才是主角） */
+.calcprogtop .btn.small { height: 24px; padding: 0 8px; font-size: 11.5px; border-radius: 7px; }
 .calcprogfoot { align-items: center; gap: 6px; margin-top: auto; }
+/* 说明只占一行（放不下就省略号），别把位板的高度吃掉 */
+.calcprogfoot .bithint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .calcprog .bithint { margin: 0; }
 
 /* 历史记录：标记过的行高亮 + ☆/★ */
@@ -2042,24 +2047,34 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 
 /* ---- 计算器显示区（只显示：过程小字 + 算式小字 + = 大字结果，结果那行能直接打字） ---- */
+.calcview { container-type: size; container-name: calcview; }
 .calclog {
-  flex: 0 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 1px;
+  flex: 0 1 auto; min-height: 0; max-height: 42%; overflow: auto; display: flex; flex-direction: column; gap: 1px;
   text-align: right; color: hsl(var(--muted-foreground) / 0.75);
-  font-family: Consolas, "Cascadia Mono", monospace; font-size: 11.5px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: clamp(10px, 5cqh, 12.5px);
+}
+/* 算式 + 结果 这一组：整体在显示区里垂直居中，两者间距按块高自适应 */
+.calcmain {
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  justify-content: center; align-items: flex-end; gap: clamp(2px, 5cqh, 16px);
 }
 .calclog .l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .calcexprline {
-  flex: 0 0 auto; text-align: right; min-height: 16px;
-  color: hsl(var(--muted-foreground)); font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px;
+  flex: 0 0 auto; width: 100%; text-align: right; min-height: 14px;
+  color: hsl(var(--muted-foreground)); font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: clamp(11px, 7cqh, 15px);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .calceq {
-  flex: 0 0 auto; font-family: Consolas, "Cascadia Mono", monospace; font-size: 24px;
+  flex: 0 0 auto; font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: clamp(14px, 11cqh, 26px);
   color: hsl(var(--muted-foreground) / 0.8);
 }
 .calcout {
   flex: 1 1 auto; min-width: 0; width: 100%; padding: 0; border: none; outline: none;
   background: transparent; color: hsl(var(--foreground)); text-align: right;
+  font-size: clamp(20px, 19cqh, 46px);
 }
 .calcout:focus { outline: none; box-shadow: inset 0 -1px 0 hsl(var(--primary) / 0.6); }
 .calcout[readonly] { color: hsl(var(--muted-foreground)); }

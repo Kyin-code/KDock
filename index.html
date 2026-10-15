@@ -601,11 +601,13 @@
           <div class="calcview" id="calc-view">
             <!-- 上：只显示。历史计算过程（上一步一行小字）+ 这一步的算式 + = 结果；结果那行可以直接键盘输入 -->
             <div class="calclog" id="calc-log"></div>
-            <div class="calcexprline" id="calc-expr-line"></div>
-            <div class="calcbigline">
-              <span class="calceq">=</span>
-              <span class="calcbase" id="calc-base">DEC</span>
-              <input id="calc-out" class="calcout" spellcheck="false" autocomplete="off" />
+            <div class="calcmain">
+              <div class="calcexprline" id="calc-expr-line"></div>
+              <div class="calcbigline">
+                <span class="calceq">=</span>
+                <span class="calcbase" id="calc-base">DEC</span>
+                <input id="calc-out" class="calcout" spellcheck="false" autocomplete="off" />
+              </div>
             </div>
             <div class="calcsubline"><span id="calc-sub" class="lb"></span></div>
           </div>
@@ -1295,7 +1297,6 @@
             <button id="calc-hist-clear" class="btn small" title="只清没标记的（★ 的留下）">清未标记</button>
             <button id="calc-hist-clear-all" class="btn small danger" title="连标记的一起清掉">清空</button>
           </div>
-          <p class="hint">点一行 = 填回上面的算式。点 ☆/★ 切换标记：**标记过的才写进本机、下次开机还在**，没标记的关掉软件就没了。</p>
           <div id="calc-hist" class="calchist"></div>
           <div class="cardtitle">各进制一览</div>
           <div id="calc-radix2" class="aginfo"></div>
