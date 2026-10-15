@@ -1140,6 +1140,10 @@ const DEBUG_UI = false;
     const b = document.querySelector('.navitem[data-tab="debug"]');
     if (b) b.hidden = true;
   }
+  // 开局先把右栏对到当前页 —— 以前只有"点一下左导航"才会调 showPane，
+  // 所以冷启动时右边是空的（连接参数、统计全都不见），得先点别的页再点回来才出来。
+  const act = document.querySelector(".navitem.active[data-tab]");
+  if (act) showPane(act.dataset.tab);
 }
 
 // ---------------- 实时图表（移植 MICU-OmniProbe 的波形思路，用 uPlot 画） ----------------
@@ -2291,13 +2295,39 @@ function bindOutHead() {
   setInterval(outClockTick, 1000);
 }
 
+/** 输入区能长到多高：整张卡的高度刨掉"固定的那几块"，再给输出区留出它的最小高度。
+ *  OUT_MIN 必须跟 styles.css 里 .shellcard .outpane 的 min-height 一致（96px）—— 对不上的话，
+ *  窗口一矮 / 工具行一换行，输出区就会被挤到 min-height 以下、整张卡溢出、输入框被裁。 */
+const INPANE_MIN = 98;      // 跟 styles.css 里 .shellcard .inpane 的 min-height 一致
+const OUTPANE_MIN = 96;      // 跟 .shellcard .outpane 的 min-height 一致（窄窗那个 64 是更松的下限）
+function inpaneMaxH(box) {
+  const card = box.parentElement;
+  const h = (sel) => {
+    const el = card.querySelector(sel);
+    return el ? el.getBoundingClientRect().height : 0;
+  };
+  const rest = h(".outhead") + h(".toolbar") + h(".outfoot") + OUTPANE_MIN;
+  return Math.max(INPANE_MIN, Math.round(card.getBoundingClientRect().height - rest));
+}
+
 /** 拖输出框右下角那个小角手，改下面输入区的高度（存 localStorage，下次还记得） */
 function bindInpaneResize() {
   const grip = $("rx-grip");
   const box = document.querySelector(".workpane.shell .inpane");
   if (!grip || !box) return;
+  // 记下来的高度在别的窗口尺寸下可能"太高"（会把输出区挤没、把输入框顶出去），
+  // 所以每次都按当前卡片高度夹一下；窗口拉小 / 拖左右分栏 / 改缩放都会重新夹一遍。
+  const clamp = () => {
+    if (!box.style.height) return;
+    const cur = parseFloat(box.style.height) || 0;
+    const max = inpaneMaxH(box);
+    if (cur > max) box.style.height = max + "px";
+  };
   const saved = Number(localStorage.getItem("kdock_inpane_h") || 0);
   if (saved > 60) box.style.height = saved + "px";
+  clamp();
+  if (window.ResizeObserver) new ResizeObserver(clamp).observe(box.parentElement);
+  else window.addEventListener("resize", clamp);
   let sy = 0, h0 = 0;
   grip.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
@@ -2308,8 +2338,7 @@ function bindInpaneResize() {
   });
   grip.addEventListener("pointermove", (e) => {
     if (!grip.classList.contains("dragging")) return;
-    const pane = box.parentElement.getBoundingClientRect().height;
-    const want = Math.max(84, Math.min(h0 - (e.clientY - sy), pane - 180));
+    const want = Math.max(INPANE_MIN, Math.min(h0 - (e.clientY - sy), inpaneMaxH(box)));
     box.style.height = want + "px";
   });
   const done = () => {

@@ -511,7 +511,14 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
     grid-template-rows: minmax(0, 1fr) auto;
   }
   .split > #gutter-r { display: none; }
-  .split > .params { grid-column: 1 / -1; grid-row: 2; max-height: 42vh; }
+  /* 参数区这一行的高度：原来给到 42vh（600px 高的窗口就是 252px），把工作区挤到只剩 276px ——
+     传输卡自己就要 255px 打底（头 32 + 工具行 81 + 输入 132 + 收口 10），输出区直接没地方，
+     最后输入框下半截被切到窗口外面（实测 card 276 / 溢出 75px）。压到 30vh 之后 900x600 实测是
+     工作区 348px、参数区 180px（它自己会滚，内容 343px）：输出区停在 96px 下限、输入区 129px，
+     两边都完整，谁都不裁。 */
+  .split > .params { grid-column: 1 / -1; grid-row: 2; max-height: 30vh; }
+  /* 窄窗下输出区的下限再低一点：先让它让位，输入区就能保住完整高度 */
+  .shellcard .outpane { min-height: 64px; }
   .cardtitle { margin: 10px 0 6px; }
 }
 @media (max-width: 1000px) {
@@ -878,6 +885,12 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 /* 输出：卡片内不再自带边框/圆角，跟上下两块完全拼合 */
 .outpane { position: relative; flex: 1 1 auto; min-height: 140px; display: flex; }
+/* 卡片里的输出区是"吃掉剩余空间"的那一块，flex-basis 必须是 **0**：
+   basis:auto 时基准尺寸 = "pre 里那堆文字的总高度"，于是内容一多（或者刚出现竖向滚动条、
+   折行变多）基准就跟着变，弹性收缩的比例也跟着变 —— 实测输入区被压到 78px、里面的
+   textarea 溢出到框外，下半截直接被裁掉；滚动条一出现输出框还会当场长高 54px。
+   基准 0 = 输出只拿剩下的空间，内容多长都与布局无关。 */
+.shellcard .outpane { flex: 1 1 0; min-height: 96px; }
 .shellcard .outpane > .rx {
   border: none; border-radius: 0; background: var(--surface-0); box-shadow: none;
 }
@@ -893,9 +906,12 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   flex: 0 0 auto; height: 10px; border-radius: 0;
   background: var(--surface-1); border-top: 1px solid var(--surface-line);
 }
-/* 输入框被用户拖高、或者窗口变矮时：优先压缩输入区，别把上面的输出顶出窗口 */
-.shellcard .inpane { flex: 0 1 auto; min-height: 78px; }
-.shellcard .inpane > #tx { flex: 1 1 auto; min-height: 56px; }
+/* 输入区：给它的下限是"装得下自己"的那个高度（98px = 上下内边距 20 + 工具行 26 + 间距 6 +
+   textarea 最小 44），不是随便一个 78px —— 78px 装不下里面的内容，窗口一挤输入框下半截就被裁掉。
+   空间不够时它才让位（flex:0 1 auto），顺序是：先输出区（flex-basis 0 的那个），再输入区，
+   但都停在装得下自己的高度上，谁的内容都不会被切。拖动上限见 main.js 的 inpaneMaxH()。 */
+.shellcard .inpane { flex: 0 1 auto; min-height: 98px; }
+.shellcard .inpane > #tx { flex: 1 1 auto; min-height: 44px; }
 
 /* ==========================================================================
    最终布局：左 / 中 / 右 三栏拼成一整块
