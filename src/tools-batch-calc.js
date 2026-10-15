@@ -471,13 +471,14 @@ function calcHistTrim() {
 // 7 列 × 8 行 = 56 个键。左边这坨 = 传统计算器该有的算式符号 + 程序员要的 A-F / 位运算 / 位板操作，
 // 下面两行是"进制显示 + 浮点"这几个大键（2 格宽）。
 const PAD_KEYS = [
-  [["A", "d:A", "hexd"], ["B", "d:B", "hexd"], ["C", "d:C", "hexd"], ["D", "d:D", "hexd"], ["E", "d:E", "hexd"], ["F", "d:F", "hexd"], ["AC", "clear", "danger"]],
-  [["<<", "op:<<", "op"], [">>", "op:>>", "op"], ["AND", "op:&", "op"], ["OR", "op:|", "op"], ["XOR", "op:^", "op"], ["NOT", "op:~", "op"], ["⌫", "back", ""]],
+  // 第 1 行：进制显示 + 浮点 —— 单独高亮一排，放最上面
+  [["以 16 进制显示", "base:hex", "base hi", 2], ["以 10 进制显示", "base:dec", "base hi", 2], ["以 2 进制显示", "base:bin", "base hi", 2], ["→ 浮点", "float", "base hi"]],
+  [["A", "d:A", "hexd"], ["B", "d:B", "hexd"], ["C", "d:C", "hexd"], ["D", "d:D", "hexd"], ["E", "d:E", "hexd"], ["F", "d:F", "hexd"], ["⌫", "back", ""]],
+  [["<<", "op:<<", "op"], [">>", "op:>>", "op"], ["AND", "op:&", "op"], ["OR", "op:|", "op"], ["XOR", "op:^", "op"], ["NOT", "op:~", "op"], ["位反转", "bits:bitrev", "base"]],
   [["7", "d:7", ""], ["8", "d:8", ""], ["9", "d:9", ""], ["÷", "op:/", "op"], ["×", "op:*", "op"], ["%", "pct", ""], ["±", "neg", ""]],
   [["4", "d:4", ""], ["5", "d:5", ""], ["6", "d:6", ""], ["−", "op:-", "op"], ["+", "op:+", "op"], ["x²", "sqr", "op"], ["√", "sqrt", ""]],
   [["1", "d:1", ""], ["2", "d:2", ""], ["3", "d:3", ""], ["=", "eq", "eq"], ["xʸ", "op:**", "op"], ["1/x", "inv", ""], ["MOD", "op:%", "op"]],
-  [["0", "d:0", ""], [".", "dot", ""], ["(", "ins:(", ""], [")", "ins:)", ""], ["字节交换", "bits:bswap", "base"], ["位反转", "bits:bitrev", "base"], ["CE", "ce", ""]],
-  [["以 16 进制显示", "base:hex", "base", 2], ["以 10 进制显示", "base:dec", "base", 2], ["以 2 进制显示", "base:bin", "base", 2], ["→ 浮点", "float", "base"]],
+  [["0", "d:0", ""], [".", "dot", ""], ["(", "ins:(", ""], [")", "ins:)", ""], ["字节交换", "bits:bswap", "base"], ["AC", "clear", "danger"], ["CE", "ce", ""]],
   [["清零", "bits:zero", "bit"], ["取反", "bits:not", "bit"], ["<< 1", "bits:shl", "bit"], [">> 1", "bits:shr", "bit"], ["↺ 1", "bits:rol", "bit"], ["↻ 1", "bits:ror", "bit"], ["全反", "bits:not32", "bit"]],
 ];
 
@@ -1599,9 +1600,7 @@ export function initCalc() {
       }
     };
   });
-  // 位板那几个操作现在在键盘里（data-act="bits:xxx"），这里只剩「→ 算式」这一个按钮
-  const feed = $id("bit-feed");
-  if (feed) feed.onclick = () => calcBitsOp("feed");
+  // 位板的操作都在键盘里（data-act="bits:xxx"）
   calcBindOutInput();
   if (window.ResizeObserver) new ResizeObserver(() => calcFitBits()).observe(document.querySelector(".calcprog") || document.body);
   window.addEventListener("resize", calcFitBits);
@@ -1614,11 +1613,7 @@ export function initCalc() {
     calcHistSave();
     calcRenderHist();
   };
-  $id("calc-insert").onclick = () => {
-    const v = Number.isFinite(calcValue) ? calcNum(calcValue) : $id("calc-out").value;
-    const tx = $id("tx");
-    if (tx) { tx.value = v; tx.focus(); }
-  };
+  // 「→ 发送框」已删（直接复制结果就行）
   // IEEE
   $id("ieee-go").onclick = ieeeConvert;
   $id("ieee-in").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); ieeeConvert(); } };
