@@ -468,14 +468,17 @@ function calcHistTrim() {
   if (calcHist.length > 400) calcHist = calcHist.slice(0, 400);
 }
 
+// 7 列 × 8 行 = 56 个键。左边这坨 = 传统计算器该有的算式符号 + 程序员要的 A-F / 位运算 / 位板操作，
+// 下面两行是"进制显示 + 浮点"这几个大键（2 格宽）。
 const PAD_KEYS = [
-  // 6 列 × 6 行：左边这一坨 = 标准计算器该有的算式符号 + 程序员要的 A-F / 位运算
-  ["A", "d:A", "hexd"], ["B", "d:B", "hexd"], ["C", "d:C", "hexd"], ["D", "d:D", "hexd"], ["E", "d:E", "hexd"], ["F", "d:F", "hexd"],
-  ["<<", "op:<<", "op"], [">>", "op:>>", "op"], ["(", "ins:(", ""], [")", "ins:)", ""], ["%", "pct", ""], ["÷", "op:/", "op"],
-  ["7", "d:7", ""], ["8", "d:8", ""], ["9", "d:9", ""], ["AND", "op:&", "op"], ["OR", "op:|", "op"], ["XOR", "op:^", "op"],
-  ["4", "d:4", ""], ["5", "d:5", ""], ["6", "d:6", ""], ["×", "op:*", "op"], ["−", "op:-", "op"], ["+", "op:+", "op"],
-  ["1", "d:1", ""], ["2", "d:2", ""], ["3", "d:3", ""], ["xʸ", "op:**", "op"], ["√", "sqrt", ""], ["1/x", "inv", ""],
-  ["0", "d:0", ""], [".", "dot", ""], ["±", "neg", ""], ["⌫", "back", ""], ["AC", "clear", "danger"], ["=", "eq", "eq"],
+  [["A", "d:A", "hexd"], ["B", "d:B", "hexd"], ["C", "d:C", "hexd"], ["D", "d:D", "hexd"], ["E", "d:E", "hexd"], ["F", "d:F", "hexd"], ["AC", "clear", "danger"]],
+  [["<<", "op:<<", "op"], [">>", "op:>>", "op"], ["AND", "op:&", "op"], ["OR", "op:|", "op"], ["XOR", "op:^", "op"], ["NOT", "op:~", "op"], ["⌫", "back", ""]],
+  [["7", "d:7", ""], ["8", "d:8", ""], ["9", "d:9", ""], ["÷", "op:/", "op"], ["×", "op:*", "op"], ["%", "pct", ""], ["±", "neg", ""]],
+  [["4", "d:4", ""], ["5", "d:5", ""], ["6", "d:6", ""], ["−", "op:-", "op"], ["+", "op:+", "op"], ["x²", "sqr", "op"], ["√", "sqrt", ""]],
+  [["1", "d:1", ""], ["2", "d:2", ""], ["3", "d:3", ""], ["=", "eq", "eq"], ["xʸ", "op:**", "op"], ["1/x", "inv", ""], ["MOD", "op:%", "op"]],
+  [["0", "d:0", ""], [".", "dot", ""], ["(", "ins:(", ""], [")", "ins:)", ""], ["字节交换", "bits:bswap", "base"], ["位反转", "bits:bitrev", "base"], ["CE", "ce", ""]],
+  [["以 16 进制显示", "base:hex", "base", 2], ["以 10 进制显示", "base:dec", "base", 2], ["以 2 进制显示", "base:bin", "base", 2], ["→ 浮点", "float", "base"]],
+  [["清零", "bits:zero", "bit"], ["取反", "bits:not", "bit"], ["<< 1", "bits:shl", "bit"], [">> 1", "bits:shr", "bit"], ["↺ 1", "bits:rol", "bit"], ["↻ 1", "bits:ror", "bit"], ["全反", "bits:not32", "bit"]],
 ];
 
 /** 这个数字/字母键在当前进制下能不能按（跟 Windows 计算器一样：二进制只留 0/1） */
@@ -583,7 +586,7 @@ function calcRenderBig() {
 function calcSetBase(base, silent) {
   calcBase = ["hex", "oct", "bin", "dec"].includes(base) ? base : "dec";
   calcHexPad = calcBase === "hex";
-  document.querySelectorAll(".calcbasebtn").forEach((b) => b.classList.toggle("on", b.dataset.base === calcBase));
+  document.querySelectorAll('[data-act^="base:"]').forEach((b) => b.classList.toggle("on", b.dataset.act === "base:" + calcBase));
   const pad = $id("calc-pad");
   if (pad) pad.classList.toggle("hexmode", calcHexPad);
   calcRenderPad();
@@ -622,12 +625,15 @@ function calcRenderPad() {
   const box = $id("calc-pad");
   if (!box) return;
   box.innerHTML = "";
-  for (const [label, act, cls] of PAD_KEYS) {
-    const b = el("button", cls || "", label);
-    b.type = "button";
-    b.dataset.act = act;
-    b.onclick = () => calcPadKey(act);
-    box.appendChild(b);
+  for (const row of PAD_KEYS) {
+    for (const [label, act, cls, span] of row) {
+      const b = el("button", cls || "", label);
+      b.type = "button";
+      b.dataset.act = act;
+      if (span) b.style.gridColumn = "span " + span;
+      b.onclick = () => calcPadKey(act);
+      box.appendChild(b);
+    }
   }
   box.classList.toggle("hexmode", calcHexPad);
   // 当前进制用不上的数字键直接禁用（二进制里按 9 没意义）
@@ -640,6 +646,32 @@ function calcRenderPad() {
 
 function calcPadKey(act) {
   const [kind, arg] = act.split(":");
+  if (kind === "bits") { calcBitsOp(arg); return; }
+  if (kind === "base") { calcSetBase(arg); return; }
+  if (kind === "float") {
+    calcFloatShow = !calcFloatShow;
+    const fb = $id("calc-to-float");
+    if (fb) fb.classList.toggle("on", calcFloatShow);
+    calcRenderBig();
+    $id("calc-pad-hint").textContent = T(calcFloatShow ? "显示：IEEE-754 单精度解释" : "显示：整数");
+    return;
+  }
+  if (kind === "ce") {                        // CE：只清当前输入，不动累积值
+    calcEntry = "0";
+    calcFresh = true;
+    $id("calc-pad-hint").textContent = T("重新开始");
+    calcSetValue(0, false);
+    return;
+  }
+  if (kind === "sqr") {
+    const v = calcEntryValue() ** 2;
+    calcEntry = String(v);
+    calcFresh = true;
+    $id("calc-pad-hint").textContent = calcNum(v);
+    calcSetValue(v, false);
+    calcLogPush(T("平方") + " " + calcFmt(v), v);
+    return;
+  }
   if (kind === "hexmode") {                 // 切"键盘按十六进制解释"
     const cb = $id("calc-hexmode");
     if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event("change")); }
@@ -919,6 +951,27 @@ function calcRenderRadix(v) {
 /** 32 位控制板：**按半字节分组**（一个半字节 = 一个十六进制位），8 个半字节分两行、MSB 在左，
  *  读法就是 0xDEAD / 0xBEEF 那样两行四个十六进制位；每一组上面标这一组的十六进制值 + 序号，
  *  底下标位号。点一下就能翻那一位（组内 4 个位 MSB 在左）。 */
+/** 位板按可用高度自动折叠：4 行（32 位）放不下时只留 2 行（低 16 位），高 16 位用小字标在上面。
+ *  阈值 176px ≈ 4 行 × (位按钮最小 30 + 标号 + 半字节标 + 缝)。 */
+function calcFitBits() {
+  const box = $id("calc-bits");
+  const card = document.querySelector(".calcprog");
+  if (!box || !card) return;
+  const others = [...card.children].filter((c) => c !== box).reduce((a, c) => a + c.getBoundingClientRect().height, 0);
+  const avail = card.getBoundingClientRect().height - others - 20;
+  const fold = avail < 176;
+  if (box.classList.contains("fold16") !== fold) box.classList.toggle("fold16", fold);
+  const tag = $id("calc-fold-tag");
+  if (tag) {
+    if (fold) {
+      const hi = u32(calcValue) >>> 16;
+      tag.textContent = T("已折叠高 16 位") + " 0x" + hi.toString(16).toUpperCase().padStart(4, "0");
+    } else {
+      tag.textContent = T("32 位全显示");
+    }
+  }
+}
+
 function calcRenderBits() {
   const box = $id("calc-bits");
   if (!box) return;
@@ -969,6 +1022,7 @@ function calcRenderBits() {
     b.title = `bit ${bit}（${on ? "1" : "0"}）`;
   });
   // 半字节那行小标：把这一组的 4 位读成一个十六进制位（0xABCD 里那个 A）
+  calcFitBits();
   box.querySelectorAll(".bitnib").forEach((x) => {
     const nb = Number(x.dataset.nib);
     const d = (v >>> (nb * 4)) & 0xf;
@@ -990,6 +1044,17 @@ function calcBitsOp(kind) {
   else if (kind === "shr") nv = (v >>> 1) & mask;
   else if (kind === "rol") nv = (((v << 1) | (v >>> (bits - 1))) & mask) >>> 0;
   else if (kind === "ror") nv = (((v >>> 1) | (v << (bits - 1))) & mask) >>> 0;
+  else if (kind === "bitrev") {                                    // 位反转：本位宽内左右颠倒
+    let x = 0;
+    for (let i = 0; i < bits; i++) if ((v >>> i) & 1) x |= 1 << (bits - 1 - i);
+    nv = x >>> 0;
+  }
+  else if (kind === "bswap") {                                     // 字节交换：本位宽内按字节反序
+    let x = 0;
+    const nbytes = Math.max(1, bits / 8);
+    for (let i = 0; i < nbytes; i++) x |= ((v >>> (i * 8)) & 0xff) << ((nbytes - 1 - i) * 8);
+    nv = x >>> 0;
+  }
   else if (kind === "feed") { calcExprSet(u32hex(v)); calcRun(u32hex(v)); return; }
   if (kind !== "not32") nv = u32(nv) & (mask || 0xffffffff);   // 全反例外：它本来就是翻满 32 位
   calcEntry = String(nv);
@@ -1472,12 +1537,15 @@ export function initCalc() {
   // 显示进制那三个按钮：换进制 = 换显示 + 换键盘输入进制（跟 Windows 计算器一个逻辑）
   document.querySelectorAll(".calcbasebtn").forEach((b) => { b.onclick = () => calcSetBase(b.dataset.base); });
   // → 浮点数：把当前结果按 IEEE-754 单精度解释一次（再点回到整数显示）
-  $id("calc-to-float").onclick = () => {
-    calcFloatShow = !calcFloatShow;
-    $id("calc-to-float").classList.toggle("on", calcFloatShow);
-    calcRenderBig();
-    $id("calc-pad-hint").textContent = T(calcFloatShow ? "显示：IEEE-754 单精度解释" : "显示：整数");
-  };
+  const floatBtn = $id("calc-to-float");            // 老位置（已搬进键盘），有就还绑上
+  if (floatBtn) {
+    floatBtn.onclick = () => {
+      calcFloatShow = !calcFloatShow;
+      floatBtn.classList.toggle("on", calcFloatShow);
+      calcRenderBig();
+      $id("calc-pad-hint").textContent = T(calcFloatShow ? "显示：IEEE-754 单精度解释" : "显示：整数");
+    };
+  }
   // ☆ 标记这个数据：右侧历史高亮 + 写进本机（没标记的不写盘）
   $id("calc-mark").onclick = () => { $id("calc-pad-hint").textContent = calcMarkCurrent(); };
   // 上下比例（默认 1/3，拖动改、双击复位）
@@ -1531,12 +1599,12 @@ export function initCalc() {
       }
     };
   });
-  for (const [id, kind] of [["bit-zero", "zero"], ["bit-not", "not"], ["bit-shl", "shl"], ["bit-shr", "shr"],
-                            ["bit-rol", "rol"], ["bit-ror", "ror"], ["bit-byte-not", "not32"], ["bit-feed", "feed"]]) {
-    const n = $id(id);
-    if (n) n.onclick = () => calcBitsOp(kind);
-  }
+  // 位板那几个操作现在在键盘里（data-act="bits:xxx"），这里只剩「→ 算式」这一个按钮
+  const feed = $id("bit-feed");
+  if (feed) feed.onclick = () => calcBitsOp("feed");
   calcBindOutInput();
+  if (window.ResizeObserver) new ResizeObserver(() => calcFitBits()).observe(document.querySelector(".calcprog") || document.body);
+  window.addEventListener("resize", calcFitBits);
   $id("calc-hist-clear").onclick = () => {                 // 只清没标记的
     calcHist = calcHist.filter((h) => h.marked);
     calcRenderHist();

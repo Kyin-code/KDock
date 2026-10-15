@@ -619,20 +619,14 @@
               <span class="lb">算式</span>
               <input id="calc-expr" class="calcexprin" spellcheck="false"
                 placeholder="0x1F &amp; (0x0F &lt;&lt; 2)   ·   1.5e3 * 2   ·   (1&lt;&lt;16)-1   ·   ~0 &amp; 0xFF" />
-              <button class="btn small calc-quick" data-q="0x" title="插入 0x">0x</button>
-              <button class="btn small calc-quick" data-q="0b" title="插入 0b">0b</button>
               <button id="calc-go" class="btn small primary" title="算一次（回车同效）">=</button>
             </div>
             <div class="trow calcctl">
-              <button id="calc-to-float" class="btn small" title="把当前结果按 IEEE-754 单精度解释一次（再点回到整数显示）">→ 浮点数</button>
-              <span class="sep"></span>
-              <button id="calc-base-hex" class="btn small calcbasebtn" data-base="hex">以 16 进制显示</button>
-              <button id="calc-base-dec" class="btn small calcbasebtn" data-base="dec">以 10 进制显示</button>
-              <button id="calc-base-bin" class="btn small calcbasebtn" data-base="bin">以 2 进制显示</button>
-              <span class="sep"></span>
               <button id="calc-mark" class="btn small" title="标记这条数据：右侧历史里高亮，并且保留到下次开机（没标记的关掉就没了）">☆ 标记这个数据</button>
-              <span class="grow"></span>
+              <span class="sep"></span>
               <span id="calc-pad-hint" class="lb"></span>
+              <span class="grow"></span>
+              <span class="lb" id="calc-width-tag" title="位宽按你敲进去的数位自动定：如 0036 = 4 位十进制 → 16 位"></span>
             </div>
             <div class="calcbody">
               <div class="calcpadcard">
@@ -640,19 +634,13 @@
               </div>
               <div class="calcprog">
                 <div class="trow calcprogtop">
-                  <span class="lb" id="calc-width-tag" title="位宽按你敲进去的数位自动定：如 0036 = 4 位十进制 → 16 位"></span>
-                  <button id="bit-zero" class="btn small">清零</button>
-                  <button id="bit-not" class="btn small">取反 ~</button>
-                  <button id="bit-shl" class="btn small" title="左移一位">&lt;&lt; 1</button>
-                  <button id="bit-shr" class="btn small" title="右移一位">&gt;&gt; 1</button>
-                  <button id="bit-rol" class="btn small" title="循环左移">↺ 1</button>
-                  <button id="bit-ror" class="btn small" title="循环右移">↻ 1</button>
-                  <button id="bit-byte-not" class="btn small" title="反相（异或 0xFFFFFFFF）">全反</button>
-                  <button id="bit-feed" class="btn small primary" title="把当前值写进上面的算式">→ 算式</button>
+                  <span class="lb" id="calc-fold-tag"></span>
+                  <span class="grow"></span>
+                  <span class="lb">点一位就能翻</span>
                 </div>
                 <div id="calc-bits" class="bitboard"></div>
                 <div class="trow calcprogfoot">
-                  <span class="bithint">点任意一位就能翻它；结果会立刻同步到上面的显示区和右侧历史。</span>
+                  <button id="bit-feed" class="btn small primary" title="把当前值写进上面的算式">→ 算式</button>
                   <span class="grow"></span>
                   <button id="calc-insert" class="btn small" title="把结果填进串口发送框">→ 发送框</button>
                 </div>

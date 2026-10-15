@@ -1686,6 +1686,8 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .bitboard { flex: 1 1 auto; min-height: 150px; display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; }
 .bitgrid { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
 .bitrow2 { flex: 1 1 0; min-height: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+/* 放不下 4 行时只留低 16 位（下面两行 = nibble 3..0） */
+.bitboard.fold16 .bitrow2:nth-child(1), .bitboard.fold16 .bitrow2:nth-child(2) { display: none; }
 /* 每个半字节最宽 118px（4 个位 + 3 个 3px 缝）。基准写 78px 是有意的：
    flex-wrap 换行是按"基准"分行的，基准给大了（104）窗口一窄就变成 3+1 两行 ——
    78×4 + 3×8 = 336 在窄窗最小中间栏（420）里也放得下，永远 4 个一行；挤到极限才换行兜底。 */
@@ -1953,7 +1955,8 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 #calc-split:hover::after { background: hsl(var(--primary)); }
 
-.calcops { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+/* min-height:auto（不是 0）：窗口矮的时候键区不能一直被压 —— 压不住就让计算器整页滚 */
+.calcops { flex: 1 1 0; min-height: auto; display: flex; flex-direction: column; gap: 4px; }
 .calcctl { flex: 0 0 auto; }
 .calcbody { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; }
 .calcbasebtn.on {
@@ -1961,17 +1964,26 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 /* 左：标准键盘（6 列 × 6 行，行高跟着可用高度伸缩） */
 .calcgrid {
-  flex: 1 1 50%; min-width: 0; display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  grid-auto-rows: minmax(30px, 54px); align-content: start; gap: 5px;
+  flex: 1 1 58%; min-width: 0; display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-auto-rows: minmax(28px, 52px); align-content: stretch; gap: 4px;
 }
+/* 键盘里的"进制显示 / 浮点 / 位板操作"这几排：底色区分一下，别跟数字键混在一起 */
+.calcgrid button.base, .calcgrid button.bit {
+  background: var(--surface-2); color: hsl(var(--muted-foreground)); font-size: 11.5px; font-weight: 500;
+}
+.calcgrid button.base.on {
+  background: hsl(var(--primary) / 0.18); border-color: hsl(var(--primary) / 0.6); color: hsl(var(--primary));
+}
+.calcgrid button.bit:hover, .calcgrid button.base:hover { background: var(--surface-3); color: hsl(var(--foreground)); }
 .calcgrid button:disabled { opacity: .3; cursor: not-allowed; }
 /* 右：32 位控制板 */
 .calcprog {
-  flex: 1 1 50%; min-width: 0; display: flex; flex-direction: column; gap: 6px;
+  flex: 1 1 42%; min-width: 0; display: flex; flex-direction: column; gap: 6px;
   padding: 8px 10px; border-radius: 12px; background: var(--surface-1); border: 1px solid var(--surface-line);
 }
-.calcprogtop { gap: 4px; }
+.calcprogtop { gap: 4px; min-height: 18px; }
+.calcprogtop .lb { font-size: 11px; }
 /* 位运算那一行按钮做小一点，把高度让给下面的位板（位板才是主角） */
 .calcprogtop .btn.small { height: 24px; padding: 0 8px; font-size: 11.5px; border-radius: 7px; }
 .calcprogfoot { align-items: center; gap: 6px; margin-top: auto; }
@@ -2013,12 +2025,13 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .calcpane { gap: 0; }                      /* 上下两块自己拼，缝交给拖动条 */
 
 /* 表达式那一行（挪到下面了）：标签 + 输入 + 插入键 + = */
-.calcexprctl { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
-.calcexprctl .calcexprin { flex: 1 1 auto; }
+.calcexprctl { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.calcexprctl .calcexprin { flex: 1 1 auto; height: 34px; font-size: 13.5px; }
 
 /* 左右两块都做成同样的卡片，顶端对齐 */
 .calcpadcard {
-  flex: 1 1 50%; min-width: 0; display: flex; padding: 8px 10px; border-radius: 12px;
+  flex: 1 1 50%; min-width: 0; min-height: 15.6rem;   /* 8 行 × 26 + 7 × 4 + 内边距，用 rem 跟字号缩放 */
+  display: flex; padding: 8px 10px; border-radius: 12px;
   background: var(--surface-1); border: 1px solid var(--surface-line);
 }
 .calcpadcard > .calcgrid { flex: 1 1 auto; }
