@@ -379,6 +379,7 @@
           <button class="navitem" data-tab="calc" title="表达式计算：进制、位运算、常用换算"><i>∑</i><span>计算器</span></button>
           <button class="navitem" data-tab="scope"><i>⌁</i><span>示波器</span></button>
           <button class="navitem" data-tab="capture"><i>⛶</i><span>屏幕捕获</span></button>
+          <button class="navitem" data-tab="debug" title="内嵌调试：GDB（MI）+ GDB Server（openocd / J-Link）"><i>⛯</i><span>调试</span></button>
           <button class="navitem" data-tab="logic"><i>▢</i><span>逻辑分析仪</span></button>
         </div>
         <div class="navfoot">
@@ -780,6 +781,35 @@
           <div id="cap-view" class="capview" tabindex="0"></div>
         </div>
 
+        <!-- 内嵌调试：GDB（MI）+ GDB Server -->
+        <div class="workpane dbgpane" data-work="debug" hidden>
+          <div class="trow">
+            <span class="lb">调试控制台</span>
+            <span id="dbg-state" class="dot"></span>
+            <span class="grow"></span>
+            <label class="chk" title="每次 gdb 停下来（断点/单步/异常）就自动刷新右侧面板"><input type="checkbox" id="dbg-auto" checked /> 停下就刷新面板</label>
+            <button id="dbg-refresh" class="btn small">刷新面板</button>
+            <button id="dbg-clear" class="btn small">清空</button>
+          </div>
+          <div class="dbggrid grow">
+            <pre id="dbg-out" class="dbgout"></pre>
+            <div class="dbgside">
+              <div class="cardtitle">断点<span class="grow"></span><button id="dbg-bkpt-add" class="btn small">加断点</button></div>
+              <div id="dbg-bkpt" class="dbglist"></div>
+              <div class="cardtitle">调用栈</div>
+              <div id="dbg-stack" class="dbglist"></div>
+              <div class="cardtitle">局部变量</div>
+              <div id="dbg-vars" class="dbglist"></div>
+              <div class="cardtitle">寄存器</div>
+              <div id="dbg-regs" class="dbglist"></div>
+            </div>
+          </div>
+          <div class="trow">
+            <input id="dbg-in" class="grow dbgin" placeholder="gdb 命令（回车发送）：target extended-remote :3333 / break main / continue …" />
+            <button id="dbg-send" class="btn small primary">发送</button>
+          </div>
+        </div>
+
         <!-- 逻辑分析仪（先留空） -->
         <div class="workpane" data-work="logic" hidden>
           <div class="placeholder">逻辑分析仪：先留空，等你定型号/协议再接</div>
@@ -827,6 +857,48 @@
 
             <div class="cardtitle">MCP 服务<button id="ag-mcp-refresh" class="btn small">↻</button><button id="ag-mcp-add" class="btn small" title="去设置里新增 MCP 服务">＋</button></div>
             <div id="ag-mcp-table" class="agtable"></div>
+          </div>
+
+          <!-- 调试参数 -->
+          <div class="parampane" data-param="debug" hidden>
+            <div class="cardtitle">GDB</div>
+            <div class="field"><label for="dbg-gdb-path">gdb 路径</label>
+              <input id="dbg-gdb-path" placeholder="arm-none-eabi-gdb（留空=用 PATH 里的 gdb）" /></div>
+            <div class="field"><label for="dbg-gdb-args">附加参数</label>
+              <input id="dbg-gdb-args" placeholder="可留空；例：-ex &quot;target extended-remote :3333&quot;" /></div>
+            <div class="btnrow">
+              <button id="dbg-gdb-start" class="btn primary">启动 gdb</button>
+              <button id="dbg-gdb-stop" class="btn">关闭 gdb</button>
+            </div>
+            <div class="cardtitle">GDB Server（openocd / J-Link）</div>
+            <div class="field"><label for="dbg-server-prog">可执行文件</label>
+              <input id="dbg-server-prog" placeholder="openocd（也可以 JLinkGDBServerCL / pyocd）" /></div>
+            <div class="field"><label for="dbg-server-args">参数</label>
+              <input id="dbg-server-args" placeholder="-f interface/cmsis-dap.cfg -f target/stm32h7x.cfg" /></div>
+            <div class="btnrow">
+              <button id="dbg-server-start" class="btn primary">启动 Server</button>
+              <button id="dbg-server-stop" class="btn">停 Server</button>
+            </div>
+            <div class="cardtitle">固件 / 运行控制</div>
+            <div class="field"><label for="dbg-elf">ELF / axf</label>
+              <div class="inline">
+                <input id="dbg-elf" placeholder="选一个 .elf（file + load）" />
+                <button id="dbg-elf-pick" class="btn icon" title="选择文件">…</button>
+              </div>
+            </div>
+            <div class="btnrow">
+              <button id="dbg-load" class="btn small">载入固件</button>
+              <button id="dbg-cont" class="btn small primary">▶ 继续</button>
+            </div>
+            <div class="btnrow">
+              <button id="dbg-halt" class="btn small">⏸ 暂停</button>
+              <button id="dbg-step" class="btn small">单步</button>
+              <button id="dbg-next" class="btn small">下一行</button>
+            </div>
+            <div class="btnrow">
+              <button id="dbg-finish" class="btn small">跳出函数</button>
+              <button id="dbg-reset" class="btn small danger" title="monitor reset halt（openocd 语法；J-Link 用 monitor reset）">复位</button>
+            </div>
           </div>
 
           <!-- ③ 文本 -->

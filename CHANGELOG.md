@@ -63,6 +63,18 @@
   「缓存与清理」页）。顺带把 `skill_read` 的工具描述写具体：匹配技能描述的问题都该先读，包含身份 /
   口吻 / 自我介绍这类，不只是硬件操作。
 
+### 新增
+- **内嵌调试（第一版，暂时隐藏入口）**：代码完整保留（`src-tauri/src/debug.rs` + 调试页 + MI 解析），
+  只因真机联调还在进行中，先在左导航里藏掉入口（`main.js` 里 `DEBUG_UI = false`，改 true 即恢复）。
+  已用 J-Link V9.40 + `arm-none-eabi-gdb --interpreter=mi2` 在真机上验过：连上目标、读寄存器、拿调用栈、
+  continue/暂停状态机、断点错误路径都正常；并据真机 MI 输出修掉了"寄存器 / 局部变量面板解析不出来"
+  （无逐项 key 的数组）。：新「调试」页 + `src-tauri/src/debug.rs`。后端把 GDB（`--interpreter=mi2`）和
+  GDB Server（openocd / JLinkGDBServer…）当子进程管起来，输出按行推给前端；控制台里敲普通命令会自动
+  包成 `-interpreter-exec console "…"`，所以用起来和裸 gdb 一样。右侧参数区有 gdb 路径 / 附加参数 /
+  Server 程序与参数 / 固件（file + load）；运行控制 continue·暂停·单步·下一行·跳出·复位；还有断点、
+  调用栈、局部变量、寄存器四个面板（走 MI：`-stack-list-frames` / `-stack-list-variables` /
+  `-data-list-register-values` / `-break-list`），gdb 每次停下来可自动刷新。路径与参数记在本地。
+
 ### 变更
 - **会话内称呼**：第一轮由模型从「用户自称 / 身份技能」里总结出**用户称呼**与 **agent 自称**（各 ≤16 字，
   明确要求不许编造或使用真实姓名，没依据就回「用户」「Agent」），并与"起标题"合并成**一次**调用；

@@ -5,6 +5,7 @@
 
 mod agent;
 mod checksum;
+mod debug;
 mod scope;
 mod storage;
 mod transport;
@@ -3384,6 +3385,7 @@ pub fn run() {
             Ok(())
         });
     builder
+        .manage(Arc::new(debug::DebugState::default()))
         .manage(Arc::new(AppState::default()))
         .manage(Arc::new(agent::AgentState::default()))
         .invoke_handler(tauri::generate_handler![
@@ -3514,7 +3516,13 @@ pub fn run() {
             agent::mcp_test,
             agent::mcp_tools,
             agent::mcp_path_hint,
-            window_set_zoom
+            window_set_zoom,
+            debug::debug_gdb_start,
+            debug::debug_gdb_stop,
+            debug::debug_gdb_cmd,
+            debug::debug_server_start,
+            debug::debug_server_stop,
+            debug::debug_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

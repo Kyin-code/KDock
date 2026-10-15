@@ -1814,3 +1814,26 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .cmdedit .dropb { box-shadow: inset 0 2px 0 hsl(var(--primary)); }
 .cmdedit .dropa { box-shadow: inset 0 -2px 0 hsl(var(--primary)); }
 .cmdedithr { height: 1px; background: var(--surface-line-soft); margin: 8px 0 2px; }
+
+/* ==========================================================================
+   内嵌调试页（GDB/MI + GDB Server）
+   ========================================================================== */
+.dbgpane { gap: 8px; }
+.dbggrid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 10px; min-height: 0; }
+.dbgout {
+  margin: 0; padding: 8px 10px; min-height: 0; overflow: auto;
+  background: var(--surface-0); border: 1px solid var(--surface-line); border-radius: 10px;
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-all;
+}
+.dbgside { display: flex; flex-direction: column; gap: 4px; min-height: 0; overflow: auto; }
+.dbglist {
+  border: 1px solid var(--surface-line); border-radius: 9px; background: var(--surface-2);
+  padding: 4px 6px; max-height: 148px; overflow: auto; font-size: 11.5px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+.dbglist .r { display: flex; gap: 8px; padding: 1px 0; }
+.dbglist .r .k { flex: 0 0 auto; color: hsl(var(--primary)); }
+.dbglist .r .v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: hsl(var(--muted-foreground)); }
+.dbglist .none { color: hsl(var(--muted-foreground)); }
+.dbgin { height: 30px; font-family: Consolas, "Cascadia Mono", monospace; }

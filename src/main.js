@@ -992,6 +992,7 @@ $("fl-up").onclick = () => {
 const WORK_OF = {
   link: "shell", upgrade: "shell", files: "files", cmds: "shell",
   chart: "chart", seq: "seq", flash: "flash", scope: "scope", capture: "capture", logic: "logic",
+  debug: "debug",
   agent: "agent",
 };
 
@@ -1021,10 +1022,19 @@ function showPane(tab) {
 }
 
 function bindTabs() {
+/** 调试页（GDB/MI）暂时隐藏：代码全都在（页面、后端 debug.rs、解析都保留），
+ *  把这一行改成 true 就能把左导航的「调试」重新放出来。 */
+const DEBUG_UI = false;
+
   // 只绑带 data-tab 的；底部那个"设置"齿轮不是页面切换，别把它的 onclick 覆盖了
   document.querySelectorAll(".navitem[data-tab]").forEach((btn) => {
     btn.onclick = () => showPane(btn.dataset.tab);
   });
+  if (!DEBUG_UI) {
+    // 只是藏起来：不显示入口，也就进不去（页面本体留着，重开时不用再写一遍）
+    const b = document.querySelector('.navitem[data-tab="debug"]');
+    if (b) b.hidden = true;
+  }
 }
 
 // ---------------- 实时图表（移植 MICU-OmniProbe 的波形思路，用 uPlot 画） ----------------
@@ -4034,6 +4044,172 @@ function bindAgentResize() {
   grip.addEventListener("dblclick", () => { localStorage.removeItem(KEY); apply(0); });
 }
 
+// ---------------- 内嵌调试（GDB/MI + GDB Server） ----------------
+// 前端负责：把 gdb 的 MI 输出解成人看的文本、认领面板查询的应答、记住路径与参数。
+// 后端只负责起进程和转发（见 src-tauri/src/debug.rs）。
+const miPairs = (s, key) => {
+  const out = [];
+  const re = new RegExp(key + "=\\{([^}]*)\\}", "g");
+  let m;
+  while ((m = re.exec(s))) {
+    const o = {};
+    const re2 = /([a-zA-Z_-]+)="((?:[^"\\]|\\.)*)"/g;
+    let x;
+    while ((x = re2.exec(m[1]))) o[x[1]] = x[2].replace(/\\(.)/g, "$1");
+    out.push(o);
+  }
+  return out;
+};
+// MI 里还有一类结果是没有逐项 key 的数组：
+//   variables=[{name="a",value="1"},…] / register-values=[{number="0",value="0x…"},…]
+// （真机验过：J-Link + arm-none-eabi-gdb 就是这么回的，所以这两种必须单独解）
+const miArray = (s, key) => {
+  const i = s.indexOf(key + "=[");
+  if (i < 0) return [];
+  const inner = s.slice(i + key.length + 2).split("]")[0];
+  const out = [];
+  const re = /\{([^}]*)\}/g;
+  let m;
+  while ((m = re.exec(inner))) {
+    const o = {};
+    const re2 = /([a-zA-Z_-]+)="((?:[^"\\]|\\.)*)"/g;
+    let x;
+    while ((x = re2.exec(m[1]))) o[x[1]] = x[2].replace(/\\(.)/g, "$1");
+    out.push(o);
+  }
+  return out;
+};
+// register-names=["r0","r1",…]：纯字符串数组
+const miNames = (s, key) => {
+  const i = s.indexOf(key + "=[");
+  if (i < 0) return [];
+  return s.slice(i + key.length + 2).split("]")[0].split(",").map((x) => x.trim().replace(/^"|"$/g, ""));
+};
+let dbgRegNames = [];
+const dbgRows = (box, rows, fmt) => {
+  const el = $(box);
+  if (!el) return;
+  el.innerHTML = rows.length
+    ? rows.map((r) => `<div class="r">${fmt(r)}</div>`).join("")
+    : '<div class="none">（空）</div>';
+};
+function dbgPrint(text) {
+  const o = $("dbg-out");
+  if (!o) return;
+  o.textContent += text;
+  o.scrollTop = o.scrollHeight;
+}
+function bindDebug() {
+  if (!$("dbg-out")) return;
+  const saved = (k, d) => localStorage.getItem("kdock_dbg_" + k) || d || "";
+  const wire = (id, key) => {
+    const el = $(id);
+    if (!el) return;
+    el.value = saved(key, el.value);
+    el.oninput = () => localStorage.setItem("kdock_dbg_" + key, el.value);
+  };
+  [["dbg-gdb-path", "gdb-path"], ["dbg-gdb-args", "gdb-args"], ["dbg-server-prog", "server-prog"],
+   ["dbg-server-args", "server-args"], ["dbg-elf", "elf"]].forEach(([id, k]) => wire(id, k));
+  const send = (line) => invoke("debug_gdb_cmd", { line }).catch((e) => dbgPrint(`\n[kdock] ${e}\n`));
+  const args = (v) => (v || "").match(/"[^"]*"|\S+/g)?.map((x) => x.replace(/^"|"$/g, "")) || [];
+  const paintState = (running) => {
+    const el = $("dbg-state");
+    if (!el) return;
+    el.textContent = running ? en("运行中…") : en("已停下");
+    el.className = "dot" + (running ? " ok" : "");
+  };
+  const refreshAll = () => {
+    if (!dbgRegNames.length) send("-data-list-register-names");
+    ["-stack-list-frames", "-stack-list-variables --simple-values", "-data-list-register-values x", "-break-list"]
+      .forEach((mi) => send(mi));
+  };
+  const onGdb = (raw) => {
+    const m = /^([~@&])"(.*)"$/.exec(raw);
+    if (m) { dbgPrint(m[2].replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\"/g, '"').replace(/\\\\/g, "\\")); return; }
+    if (raw.startsWith("*running")) { paintState(true); return; }
+    if (raw.startsWith("*stopped")) {
+      paintState(false);
+      if ($("dbg-auto") && $("dbg-auto").checked) setTimeout(refreshAll, 120);
+      return;
+    }
+    if (raw.startsWith("^done")) {
+      if (raw.includes("stack=[")) {
+        const rows = miPairs(raw, "frame");
+        dbgRows("dbg-stack", rows, (r) => `<span class="k">#${r.level || "?"}</span><span class="v">${r.func || "?"} ${r.addr || ""} ${r.file ? r.file + ":" + (r.line || "") : ""}</span>`);
+      }
+      if (raw.includes("bkpt=")) {
+        const rows = miPairs(raw, "bkpt");
+        dbgRows("dbg-bkpt", rows, (r) => `<span class="k">${r.number}</span><span class="v">${r.enabled === "n" ? "（停用）" : ""}${r.func || r.addr || ""} ${r.file ? r.file + ":" + (r.line || "") : ""} · ${r.times || 0} 次</span>`);
+      }
+      if (raw.includes("variables=[")) {
+        const rows = miArray(raw, "variables");
+        dbgRows("dbg-vars", rows, (r) => `<span class="k">${r.name}</span><span class="v">${r.value || r.type || ""}</span>`);
+      }
+      if (raw.includes("register-names=[")) {
+        dbgRegNames = miNames(raw, "register-names");
+      }
+      if (raw.includes("register-values=[")) {
+        const rows = miArray(raw, "register-values");
+        dbgRows("dbg-regs", rows, (r) => {
+          const n = dbgRegNames[Number(r.number)];
+          return `<span class="k">${n || "#" + r.number}</span><span class="v">${r.value || ""}</span>`;
+        });
+      }
+      return;
+    }
+    if (raw.startsWith("^error")) { dbgPrint(`\n[kdock] gdb 报错：${raw.slice(6).trim()}\n`); return; }
+    dbgPrint(raw + "\n");
+  };
+  window.__dbgOnGdb = onGdb;
+  paintState(false);
+
+  if ($("dbg-gdb-start")) $("dbg-gdb-start").onclick = async () => {
+    try { await invoke("debug_gdb_start", { path: $("dbg-gdb-path").value.trim(), args: args($("dbg-gdb-args").value), cwd: "" }); }
+    catch (e) { dbgPrint(`\n[kdock] ${e}\n`); }
+  };
+  if ($("dbg-gdb-stop")) $("dbg-gdb-stop").onclick = () => invoke("debug_gdb_stop").catch(() => {});
+  if ($("dbg-server-start")) $("dbg-server-start").onclick = async () => {
+    try { await invoke("debug_server_start", { program: $("dbg-server-prog").value.trim(), args: args($("dbg-server-args").value), cwd: "" }); }
+    catch (e) { dbgPrint(`\n[kdock] ${e}\n`); }
+  };
+  if ($("dbg-server-stop")) $("dbg-server-stop").onclick = () => invoke("debug_server_stop").catch(() => {});
+  if ($("dbg-elf-pick")) $("dbg-elf-pick").onclick = async () => {
+    try {
+      const p = await dlgOpen({ title: "选择 ELF / axf", multiple: false, directory: false,
+        filters: [{ name: "固件", extensions: ["elf", "axf", "out", "bin"] }, { name: "全部", extensions: ["*"] }] });
+      if (!p) return;
+      const path0 = typeof p === "string" ? p : p.path;
+      $("dbg-elf").value = path0;
+      localStorage.setItem("kdock_dbg_elf", path0);
+    } catch (e) { toast(String(e)); }
+  };
+  if ($("dbg-load")) $("dbg-load").onclick = async () => {
+    const f = $("dbg-elf").value.trim();
+    if (!f) return toast("先选一个 ELF");
+    await send(`file ${f}`);
+    await send("load");
+  };
+  [["dbg-cont", "-exec-continue"], ["dbg-halt", "-exec-interrupt"], ["dbg-step", "-exec-step"],
+   ["dbg-next", "-exec-next"], ["dbg-finish", "-exec-finish"], ["dbg-reset", "monitor reset halt"]]
+    .forEach(([id, mi]) => { if ($(id)) $(id).onclick = () => send(mi); });
+  if ($("dbg-send")) $("dbg-send").onclick = async () => {
+    const v = $("dbg-in").value.trim();
+    if (!v) return;
+    $("dbg-in").value = "";
+    await send(v);
+  };
+  if ($("dbg-in")) $("dbg-in").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("dbg-send").click(); }
+  });
+  if ($("dbg-clear")) $("dbg-clear").onclick = () => { $("dbg-out").textContent = ""; };
+  if ($("dbg-refresh")) $("dbg-refresh").onclick = () => refreshAll();
+  if ($("dbg-bkpt-add")) $("dbg-bkpt-add").onclick = async () => {
+    const v = await kdForm({ title: en("加断点"), fields: [{ id: "at", label: en("位置"), ph: "main / 文件:行号 / 地址" }] });
+    if (!v || !v.at.trim()) return;
+    await send(`break ${v.at.trim()}`);
+    await send("-break-list");
+  };
+}
 // ---------------- 时间戳 / 方向标记开关 ----------------
 function bindTimestamp() {
   $("show-ts").onchange = () => redrawRx();
@@ -8130,6 +8306,9 @@ async function main() {
   bindAgent();
   bindAgentEvents();
   bindScope();
+  bindDebug();
+  listen("debug://gdb", (ev) => { if (window.__dbgOnGdb) window.__dbgOnGdb(String(ev.payload || "")); });
+  listen("debug://server", (ev) => { dbgPrint("[server] " + String(ev.payload || "") + "\n"); });
   bindScrollFollow();
   bindTabs();
   bindTimestamp();
