@@ -2072,8 +2072,12 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   color: hsl(var(--muted-foreground)); letter-spacing: .6px;
   font-family: inherit; font-size: clamp(0.6rem, calc(0.5rem + 1.6cqh), 1rem);
 }
-.calcout {
-  flex: 1 1 auto; min-width: 0; width: 100%; padding: 0; border: none; outline: none;
+/* 注意选择器写成 input.calcout：全局那条 `input:not([type]) { height:30px; padding:0 10px;
+   border:1px solid …; background: var(--surface-1) }` 的权重是 (0,1,1)，比 .calcout (0,1,0) 高，
+   只写 .calcout 会被它整条吃掉 —— 大字就会被按 30px 高裁掉、还套上一个框（这就是"显示区不对"的真凶）。 */
+input.calcout {
+  flex: 1 1 auto; min-width: 0; width: 100%;
+  height: auto; padding: 0; border: none; border-radius: 0; outline: none;
   background: transparent; color: hsl(var(--foreground)); text-align: right;
   font-family: inherit; font-weight: 600; line-height: 1.05;
   font-size: clamp(1.7rem, calc(1.3rem + 20cqh), 6rem);
