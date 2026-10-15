@@ -524,8 +524,12 @@ const u32hex = (v) => "0x" + u32(v).toString(16).toUpperCase().padStart(8, "0");
 /** 位宽：跟着"敲进去的数位"或"这个值本身需要多少位"走，凑成 4 的倍数（8~64）。
  *  为什么要按数位：允许打 0036 这种前导零，数位本身就是用户想要的宽度。 */
 function calcAutoBits(entryText, v) {
-  const radix = calcBaseRadix();
-  const txt = String(entryText == null ? "" : entryText).replace(/^0[xbo]/i, "").replace(/^-/, "").replace(/[^0-9A-Fa-f]/g, "");
+  const raw = String(entryText == null ? "" : entryText).trim();
+  let radix = calcBaseRadix();
+  if (/^-?0[xX]/.test(raw)) radix = 16;
+  else if (/^-?0[bB]/.test(raw)) radix = 2;
+  else if (/^-?0[oO]/.test(raw)) radix = 8;
+  const txt = raw.replace(/^-?(0[xXbBoO])?/, "").replace(/[^0-9A-Fa-f]/g, "");
   let bits;
   if (txt) bits = Math.ceil((txt.length * Math.log2(radix)) / 4) * 4;
   else {
@@ -869,11 +873,20 @@ function calcRun(expr, record) {
   } catch (e) {
     return calcError(String(e.message || e));
   }
-  if (Number.isFinite(v)) calcBits = calcAutoBits(calcFresh ? null : calcEntry, v);
   if (record !== false) calcLogPush(src, v);
   calcEntry = String(v);
   calcFresh = true;
   calcSetValue(v, false);
+  // 表达式就是纯数字字面量时，位宽按它的数位来（0x001C → 16 位、0036 → 16 位）。
+  // 必须放在 calcSetValue 之后：那里会按"值需要多少位"重算一遍，放前面会被它覆盖掉。
+  if (Number.isFinite(v)) {
+    const srcTxt = String(src == null ? "" : src).trim();
+    const isLit = /^-?(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]+)$/.test(srcTxt);
+    if (isLit) {
+      const b = calcAutoBits(srcTxt, v);
+      if (b !== calcBits) { calcBits = b; calcRenderBig(); calcRenderBits(); }
+    }
+  }
   return v;
 }
 
@@ -967,14 +980,18 @@ function calcRenderBits() {
 
 function calcBitsOp(kind) {
   const v = u32(calcValue);
+  const bits = Math.max(1, Math.min(32, calcBits || 32));
+  const mask = bits >= 32 ? 0xffffffff : ((1 << bits) - 1) >>> 0;
   let nv = v;
   if (kind === "zero") nv = 0;
-  else if (kind === "not") nv = (~v) >>> 0;
-  else if (kind === "shl") nv = (v << 1) >>> 0;
-  else if (kind === "shr") nv = v >>> 1;
-  else if (kind === "rol") nv = ((v << 1) | (v >>> 31)) >>> 0;
-  else if (kind === "ror") nv = ((v >>> 1) | (v << 31)) >>> 0;
+  else if (kind === "not") nv = (~v) & mask;                  // 取反：**只翻当前位宽**
+  else if (kind === "not32") nv = (~v) >>> 0;                 // 全反：32 位都翻（面板上写的就是异或 0xFFFFFFFF）
+  else if (kind === "shl") nv = ((v << 1) & mask) >>> 0;
+  else if (kind === "shr") nv = (v >>> 1) & mask;
+  else if (kind === "rol") nv = (((v << 1) | (v >>> (bits - 1))) & mask) >>> 0;
+  else if (kind === "ror") nv = (((v >>> 1) | (v << (bits - 1))) & mask) >>> 0;
   else if (kind === "feed") { calcExprSet(u32hex(v)); calcRun(u32hex(v)); return; }
+  if (kind !== "not32") nv = u32(nv) & (mask || 0xffffffff);   // 全反例外：它本来就是翻满 32 位
   calcEntry = String(nv);
   calcFresh = true;
   calcExprClear();                 // 手改过位 = 原算式不成立了，清掉
@@ -1515,7 +1532,7 @@ export function initCalc() {
     };
   });
   for (const [id, kind] of [["bit-zero", "zero"], ["bit-not", "not"], ["bit-shl", "shl"], ["bit-shr", "shr"],
-                            ["bit-rol", "rol"], ["bit-ror", "ror"], ["bit-byte-not", "not"], ["bit-feed", "feed"]]) {
+                            ["bit-rol", "rol"], ["bit-ror", "ror"], ["bit-byte-not", "not32"], ["bit-feed", "feed"]]) {
     const n = $id(id);
     if (n) n.onclick = () => calcBitsOp(kind);
   }

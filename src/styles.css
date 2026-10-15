@@ -2035,50 +2035,53 @@ summary.tb-icon::-webkit-details-marker { display: none; }
    - 字号与间距全部按这一块自己的实际大小来（cqh），所以窗口变大变小观感一致
    ========================================================================== */
 .calcview {
-  flex: 0 0 33.333%; min-height: 116px; display: flex; flex-direction: column; gap: 2px;
-  padding: 10px 14px; border-radius: 12px; overflow: hidden;
+  /* 下限用 rem：用户在设置里调"字号/放大倍数"时，这块跟着长，不会被固定 px 卡住 */
+  flex: 0 0 33.333%; min-height: 7.4rem; display: flex; flex-direction: column; gap: 0.15rem;
+  padding: 0.65rem 0.9rem; border-radius: 12px; overflow: hidden;
   background: var(--surface-1); border: 1px solid var(--surface-line);
   container-type: size; container-name: calcview;
+  /* 字体沿用设置里选的那一族（没选 = 等宽，数字对齐好看） */
+  font-family: var(--ui-font, Consolas, "Cascadia Mono", monospace);
 }
 .calclog {
-  flex: 0 1 auto; min-height: 0; max-height: 34%; overflow: auto;
+  flex: 0 1 auto; min-height: 1.1rem; max-height: 34%; overflow: auto;
   display: flex; flex-direction: column; gap: 1px; text-align: right;
   color: hsl(var(--muted-foreground) / 0.7);
-  font-family: Consolas, "Cascadia Mono", monospace; font-size: clamp(8px, 4.5cqh, 14px);
+  font-family: inherit; font-size: clamp(0.62rem, calc(0.5rem + 2cqh), 1rem);
 }
 .calclog .l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .calcmain {
   flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
-  justify-content: center; gap: clamp(2px, 5cqh, 20px);
+  justify-content: center; gap: clamp(0.15rem, calc(0.1rem + 3.5cqh), 1.2rem);
 }
 .calcexprline {
   flex: 0 0 auto; text-align: right; color: hsl(var(--muted-foreground));
-  font-family: Consolas, "Cascadia Mono", monospace; font-size: clamp(9px, 9cqh, 24px);
+  font-family: inherit; font-size: clamp(0.72rem, calc(0.5rem + 5cqh), 1.9rem);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .calcbigline {
   flex: 0 0 auto; display: flex; align-items: baseline; justify-content: flex-end;
-  gap: clamp(6px, 3cqh, 14px);
+  gap: clamp(0.35rem, calc(0.2rem + 2cqh), 1.1rem);
 }
 .calceq {
   flex: 0 0 auto; line-height: 1; color: hsl(var(--muted-foreground) / 0.85);
-  font-family: Consolas, "Cascadia Mono", monospace; font-size: clamp(11px, 16cqh, 48px);
+  font-family: inherit; font-size: clamp(1.1rem, calc(0.9rem + 6cqh), 3.4rem);
 }
 .calcbase {
   flex: 0 0 auto; padding: 2px 8px; border-radius: 999px; background: var(--surface-3);
   color: hsl(var(--muted-foreground)); letter-spacing: .6px;
-  font-family: Consolas, "Cascadia Mono", monospace; font-size: clamp(9px, 6cqh, 15px);
+  font-family: inherit; font-size: clamp(0.6rem, calc(0.5rem + 1.6cqh), 1rem);
 }
 .calcout {
   flex: 1 1 auto; min-width: 0; width: 100%; padding: 0; border: none; outline: none;
   background: transparent; color: hsl(var(--foreground)); text-align: right;
-  font-family: Consolas, "Cascadia Mono", monospace; font-weight: 600; line-height: 1.05;
-  font-size: clamp(16px, 34cqh, 96px);
+  font-family: inherit; font-weight: 600; line-height: 1.05;
+  font-size: clamp(1.7rem, calc(1.3rem + 20cqh), 6rem);
 }
 .calcout:focus { outline: none; box-shadow: inset 0 -1px 0 hsl(var(--primary) / 0.6); }
-.calcout.bad { color: hsl(var(--destructive)); font-size: clamp(12px, 13cqh, 30px); font-weight: 500; }
+.calcout.bad { color: hsl(var(--destructive)); font-size: clamp(0.85rem, calc(0.6rem + 6cqh), 2rem); font-weight: 500; }
 .calcsubline {
-  flex: 0 0 auto; min-height: 12px; text-align: right; color: hsl(var(--muted-foreground));
-  font-size: clamp(8px, 4cqh, 13px);
+  flex: 0 0 auto; min-height: 1.1rem; text-align: right; color: hsl(var(--muted-foreground));
+  font-size: clamp(0.6rem, calc(0.5rem + 1.6cqh), 0.95rem);
 }
-.calcsubline .lb { font-family: Consolas, monospace; }
+.calcsubline .lb { font-family: inherit; }
