@@ -688,6 +688,26 @@ pub fn agent_skill_delete(app: AppHandle, name: String) -> Result<Value, String>
     Ok(json!({ "ok": true }))
 }
 
+/// 开关技能的"常驻"：勾上就每轮把正文注入系统提示（身份 / 口吻 / 说话规则这类技能用这个）
+#[tauri::command]
+pub fn agent_skill_set_always(app: AppHandle, name: String, on: bool) -> Result<Value, String> {
+    store::skill_set_always(&app, &name, on)?;
+    Ok(json!({
+        "ok": true, "slug": name, "always": on,
+        "bytes": store::skills_always_bytes(&app), "limit": store::SKILLS_ALWAYS_LIMIT,
+    }))
+}
+
+/// 常驻技能清单（界面显示开关状态和"已用多少 KB"）
+#[tauri::command]
+pub fn agent_skills_always(app: AppHandle) -> Result<Value, String> {
+    Ok(json!({
+        "slugs": store::skills_always(&app),
+        "bytes": store::skills_always_bytes(&app),
+        "limit": store::SKILLS_ALWAYS_LIMIT,
+    }))
+}
+
 #[tauri::command]
 pub fn agent_tools() -> Vec<Value> {
     tools::catalog()
@@ -698,12 +718,28 @@ pub fn agent_tools() -> Vec<Value> {
 
 // ── 上下文组装 / 压缩 ───────────────────────────────────────────────
 
+/// 系统提示里的"常驻技能"那一段（没有常驻技能就返回空串）。
+/// 单独抽出来是因为 `agent_context_breakdown` 要按同一份文本算它占多少 token。
+/// 那句"优先于上面的通用角色描述"是**通用**优先级，不是给某个技能写死的：
+/// 用户丢进来一个身份技能并勾上常驻，人格就该压过 KDock 的默认角色设定（和 opencode 里
+/// "装了人格技能就自称那个人格"是一个效果）。但它不去动那句默认角色描述本身。
+fn always_skills_section(app: &AppHandle) -> String {
+    let blk = store::always_skills_block(app);
+    if blk.is_empty() {
+        return String::new();
+    }
+    format!("常驻技能（每个请求都在场；技能里写的自我设定、口吻与做事规则，优先于上面那句通用角色描述）：\n{blk}\n")
+}
+
 fn system_prompt(app: &AppHandle, workspace: &std::path::Path, perm: &str, goal: &str) -> String {
     let mut p = String::new();
     p.push_str("你是 KDock 里的设备调试助手，跑在用户的电脑上（桌面版上位机）。\n");
     p.push_str("KDock 已经内置：串口/网口收发、设备文件读写、固件升级(OTA)、烧录器写片、示波器控制、中控编排(时序流程)、屏幕捕获。你能直接调它们。\n\n");
     p.push_str(&format!("工作区（相对路径都相对它）：{}\n", workspace.to_string_lossy()));
-    p.push_str("注意：传输页那条主连接是用户自己的，你的 link_* 是另一条独立连接，互不干扰。\n\n");
+    p.push_str("注意：传输页那条主连接是用户自己的；要**互不干扰**就用你自己的 link_*（那条用户看不见）。\n");
+    p.push_str("但**用户想看着你干**、或者你想跟用户看同一份设备返回时，用 port_* 直接操作主连接：\n");
+    p.push_str("port_list 看本机有哪些串口（别去跑 PowerShell 扫）、port_state 看主连接状态、port_write 往主连接发、port_read 读主连接的收发记录（用户在传输页看到的就是这一份）。\n");
+    p.push_str("你在主连接上做的事会实时出现在用户的传输页里，所以那是「看得见」的通道。\n\n");
     p.push_str(&format!(
         "权限级别：{}\n",
         match perm {
@@ -728,6 +764,7 @@ fn system_prompt(app: &AppHandle, workspace: &std::path::Path, perm: &str, goal:
     p.push_str("已安装技能（任务匹配到某个技能时，先用 skill_read 读全文，再照它做；也可以自己 skill_create 新技能）：\n");
     p.push_str(&idx);
     p.push('\n');
+    p.push_str(&always_skills_section(app));
     let instr = workspace.join(WORKSPACE_INSTRUCTIONS);
     if let Ok(text) = std::fs::read_to_string(&instr) {
         if !text.trim().is_empty() {
@@ -1161,6 +1198,8 @@ fn maybe_auto_title(app: &AppHandle, session_id: &str, provider: &Provider, key:
 
 enum SinkMsg {
     Delta(String),
+    /// 思考内容（推理模型才有）：前端拿它显示"思考过程"块
+    Reasoning(String),
 }
 
 /// 把流式增量按 ~40ms 合批推给前端，避免一个字一个事件
@@ -1176,24 +1215,33 @@ impl BatchedSink {
         Self { tx, buf: String::new(), last: std::time::Instant::now(), kind: "content" }
     }
     fn flush(&mut self) {
-        if !self.buf.is_empty() {
-            let _ = self.tx.send(SinkMsg::Delta(self.buf.clone()));
-            self.buf.clear();
-            self.last = std::time::Instant::now();
+        if self.buf.is_empty() {
+            return;
+        }
+        let text = std::mem::take(&mut self.buf);
+        let msg = if self.kind == "reason" { SinkMsg::Reasoning(text) } else { SinkMsg::Delta(text) };
+        let _ = self.tx.send(msg);
+        self.last = std::time::Instant::now();
+    }
+    /// 正文和思考共用一条通道：换种类时先把上一段冲出去（顺序不能乱）
+    fn push(&mut self, text: &str, kind: &'static str) {
+        if self.kind != kind {
+            self.flush();
+            self.kind = kind;
+        }
+        self.buf.push_str(text);
+        if self.buf.len() >= 24 || self.last.elapsed() > Duration::from_millis(40) {
+            self.flush();
         }
     }
 }
 
 impl llm::ChatSink for BatchedSink {
     fn delta(&mut self, text: &str) {
-        self.kind = "content";
-        self.buf.push_str(text);
-        if self.buf.len() >= 24 || self.last.elapsed() > Duration::from_millis(40) {
-            self.flush();
-        }
+        self.push(text, "content");
     }
     fn reasoning(&mut self, text: &str) {
-        let _ = text;   // 思考过程暂时不推（DeepSeek 会发，先不用）
+        self.push(text, "reason");
     }
 }
 
@@ -1263,6 +1311,7 @@ fn run_turn(
                 while let Ok(msg) = rx.recv() {
                     match msg {
                         SinkMsg::Delta(t) => emit(&app2, "agent://delta", json!({ "session": sid, "text": t })),
+                        SinkMsg::Reasoning(t) => emit(&app2, "agent://reason", json!({ "session": sid, "text": t })),
                     }
                 }
             });
@@ -1277,7 +1326,8 @@ fn run_turn(
             // 有思考也要落盘：带工具调用的那一轮，下一轮必须把 reasoning_content 带回去
             if !out.content.trim().is_empty() || !out.reasoning.trim().is_empty() {
                 store::session_append(&app, &session_id, &Event::Assistant {
-                    text: out.content.clone(), reasoning: out.reasoning.clone(), ts: 0 })?;
+                    text: out.content.clone(), reasoning: out.reasoning.clone(), ts: 0,
+                    model: provider.model.clone() })?;
             }
             emit(&app, "agent://usage", json!({ "session": session_id,
                 "prompt": out.usage.prompt_tokens, "completion": out.usage.completion_tokens,
@@ -1687,6 +1737,8 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
 
     let goal = meta.as_ref().map(|m| m.goal.clone()).unwrap_or_default();
     let sys = est(&system_prompt(&app, &ws, &perm, &goal));
+    // 常驻技能是系统提示的一部分（sys 里已经含了），这里单独报出来给界面标"其中"
+    let skills_always = est(&always_skills_section(&app));
     let mut schema = tools::schema_json(&tools::catalog(), true);
     // 别漏掉 MCP 工具：它们也在 prompt 前缀里（用缓存的那份，不会为此再起进程）
     let (mcp_schemas, _) = mcp::all_tool_schemas_cached(&app);
@@ -1729,6 +1781,7 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
 
     json!({
         "system": sys,
+        "skillsAlways": skills_always,
         "tools": tools_tok,
         "summary": summary,
         "user": user,

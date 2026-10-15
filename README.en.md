@@ -31,7 +31,7 @@ live charts, flow orchestration — plus an Agent that can drive all of it. All 
 | **Device files** | List directories, pull/push files, CRC verification (serial uses base64, network uses offset-based reads/writes) |
 | **Visualization** | Live charts (multi-channel), screen capture, **oscilloscope** (RIGOL DS1000Z series over SCPI: state, 13 auto-measurements, multi-channel waveform, screenshot, timebase/trigger control), logic analyzer slot |
 | **Flow** | Chain local commands / TCP / UDP / serial into a timed flow with branches, run it with one click |
-| **AI Agent** | Built-in assistant that can call all of the above; OpenAI-compatible and Anthropic protocols, skills (`SKILL.md`), MCP servers, context compaction, throughput and cost stats |
+| **AI Agent** | Built-in assistant that can call all of the above; OpenAI-compatible and Anthropic protocols, skills (`SKILL.md`, each can be marked "Always on" = its body goes into the system prompt every turn, which is how you shape a persona / tone), MCP servers, context compaction, throughput and cost stats |
 
 ## Screenshots
 
@@ -170,6 +170,11 @@ between them and shows live load (AMD Radeon Cloud free models) plus the measure
 
 **Skills**: one `SKILL.md` each (name/description from the frontmatter go into the system prompt, the body is read
 on demand). The Agent info page only toggles them; paths, import and editing live in Settings → Skills.
+**Always on**: flipping the "Always on" switch on a skill row injects that skill's body into the system prompt
+**every turn** (the system prompt is never trimmed or compacted) — that is what makes an identity / tone /
+house-rules skill actually stick, i.e. "drop in a persona skill and the agent becomes that persona", without
+editing the `SKILL.md` or the built-in role description. Combined limit 16 KB (enforced on both ends); its
+token cost shows up as its own row in the context breakdown.
 
 **MCP**: add stdio servers in Settings → MCP (`command` + `args` + `env`; the `command` array + `environment`
 style used by other tools is accepted too). The Agent info page only toggles them. Remote HTTP servers are not

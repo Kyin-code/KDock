@@ -350,6 +350,11 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
   box-shadow: 0 6px 16px hsl(var(--primary) / 0.22);
 }
 .btn.primary:hover { filter: brightness(1.06); }
+/* 「连接」按钮连上后的样子（连上=已连接，点不动；要重连先断开） */
+.btn.connected {
+  background: hsl(var(--success) / 0.14); border-color: hsl(var(--success) / 0.45);
+  color: hsl(var(--success)); cursor: default;
+}
 .btn.small { height: 26px; padding: 0 10px; font-size: 12px; border-radius: 8px; }
 .btn.icon { width: 30px; padding: 0; font-size: 14px; line-height: 1; }
 .btn.file { width: 100%; }
@@ -1037,6 +1042,10 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   flex: 1 1 auto; min-height: 0; overflow: auto;
   display: flex; flex-direction: column; gap: 12px; padding: 10px 12px;
 }
+/* 关键：聊天区是 flex 纵向容器，内容超高时 flex 项默认**会被压缩**；而 .agtool 带 overflow:hidden，
+   它的自动最小尺寸就成了 0 —— 整张工具卡会被压成一条 2px 高、100 多像素宽的横线
+   （就是"左侧那条异常横线"，实测 126x2 / 151x2）。这里统一禁止收缩，超高交给容器滚动。 */
+.agentchat > * { flex: 0 0 auto; }
 .agmsg { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .agmsg > .head { display: flex; align-items: center; gap: 7px; font-size: 11px; color: hsl(var(--muted-foreground)); }
 .agmsg > .head .who { font-weight: 650; letter-spacing: .3px; }
@@ -1067,6 +1076,48 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   padding: 8px 10px; margin: 6px 0; overflow: auto; max-height: 320px; white-space: pre;
 }
 .agmsg .bubble b { font-weight: 650; }
+/* 每条回复下面那行小字：模型 · 回复完成时间 */
+.agmsg > .agmeta { font-size: 10.5px; color: hsl(var(--muted-foreground)); opacity: .85; padding-left: 2px; }
+/* Agent 状态灯：空闲=绿灯、思考/工具=转圈、出错=红点、等你批准=黄点；后面能挂"未读"角标 */
+.agst { display: inline-flex; align-items: center; gap: 5px; height: 20px; flex: 0 0 auto; }
+.agst > .led { width: 8px; height: 8px; border-radius: 50%; background: hsl(var(--success)); box-shadow: 0 0 0 3px hsl(var(--success) / .16); flex: 0 0 auto; }
+.agst > .spin { display: none; width: 12px; height: 12px; border-width: 2px; }
+.agst.busy > .led { display: none; }
+.agst.busy > .spin { display: block; }
+.agst.err > .led { background: hsl(var(--destructive)); box-shadow: 0 0 0 3px hsl(var(--destructive) / .16); }
+.agst.wait > .led { background: hsl(var(--warning)); box-shadow: 0 0 0 3px hsl(var(--warning) / .18); }
+.agst > .badge {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 999px; background: var(--surface-3); border: 1px solid var(--surface-line);
+  color: hsl(var(--muted-foreground)); font-size: 10px; font-weight: 650; line-height: 1; cursor: pointer;
+}
+.agst > .badge:hover { color: hsl(var(--foreground)); border-color: hsl(var(--primary) / .6); }
+/* 思考过程（像 Codex）：**不画框** —— 收起来时只是窄窄一行（转圈 + 已思考 N 字 + 箭头），
+   展开时正文缩进、挂一条左侧竖线。之前用满宽虚线框，它的上边框看上去就是一条"异常横线"。 */
+.agthink { align-self: flex-start; max-width: 92%; font-size: 11.5px; color: hsl(var(--muted-foreground)); }
+.agthink > .th { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
+.agthink > .th .spin { display: none; width: 11px; height: 11px; border-width: 2px; }
+.agthink.busy > .th .spin { display: block; }
+.agthink > .bd {
+  display: none; margin: 4px 0 0 5px; padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--surface-line);
+  max-height: 260px; overflow: auto; white-space: pre-wrap; line-height: 1.6;
+}
+.agthink.open > .bd { display: block; }
+/* 表格：agent 常拿表格列能力/参数/结果，原来只能当一堆竖线看。
+   bubble 是 white-space:pre-wrap，所以表格自己要把 white-space 收回 normal，否则单元里的空格会被当成排版。 */
+.agmsg .bubble table {
+  border-collapse: collapse; margin: 6px 0; max-width: 100%;
+  white-space: normal; font-size: 12px; line-height: 1.5;
+  background: var(--surface-0); border: 1px solid var(--surface-line); border-radius: 8px;
+}
+.agmsg .bubble th, .agmsg .bubble td {
+  border: 1px solid var(--surface-line); padding: 3px 8px; vertical-align: top; text-align: left;
+}
+.agmsg .bubble th { background: hsl(var(--accent)); font-weight: 650; white-space: nowrap; }
+/* 对齐：GFM 的 :--- 左 / :---: 中 / ---: 右 */
+.agmsg .bubble th.md-c, .agmsg .bubble td.md-c { text-align: center; }
+.agmsg .bubble th.md-r, .agmsg .bubble td.md-r { text-align: right; }
 /* 工具调用卡片 */
 .agtool {
   border: 1px solid var(--surface-line); border-radius: 10px; background: var(--surface-2);
@@ -1161,6 +1212,9 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agtable .agrow .d.ok { color: hsl(var(--success)); }
 .agtable .agrow .d.warn { color: hsl(var(--warning)); }
 .agtable .agrow .d.bad { color: hsl(var(--destructive)); }
+/* 技能行上的「常驻」小标签（勾上 = 技能正文每轮注入系统提示） */
+.agtable .agrow .swtag { flex: 0 0 auto; font-size: 10.5px; color: hsl(var(--muted-foreground)); }
+.agtable .agrow .swtag.on { color: hsl(var(--primary)); font-weight: 650; }
 .agtable .sw {
   width: 32px; height: 18px; flex: 0 0 auto; appearance: none; position: relative; cursor: pointer;
   border-radius: 999px; background: var(--surface-3); border: 1px solid var(--surface-line);
@@ -1743,5 +1797,15 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .cmdeditgrp b { font-size: 12.5px; }
 .cmdeditgrp .lb { font-size: 11px; }
-.cmdrow.ed { grid-template-columns: 118px minmax(0, 1fr) 30px 30px; }
+/* 第一列是拖动抓手（⋮⋮），所以比主页面那排多一格 */
+.cmdrow.ed { grid-template-columns: 16px 118px minmax(0, 1fr) 30px 30px; }
+/* 指令表编辑器：拖动排序的抓手 + 落点提示 */
+.cmdedit .grip {
+  flex: 0 0 auto; cursor: grab; user-select: none; -webkit-user-select: none;
+  color: hsl(var(--muted-foreground)); font-size: 11px; letter-spacing: -1px; opacity: .6;
+}
+.cmdedit .grip:active { cursor: grabbing; opacity: 1; }
+.cmdedit .dragging { opacity: .45; }
+.cmdedit .dropb { box-shadow: inset 0 2px 0 hsl(var(--primary)); }
+.cmdedit .dropa { box-shadow: inset 0 -2px 0 hsl(var(--primary)); }
 .cmdedithr { height: 1px; background: var(--surface-line-soft); margin: 8px 0 2px; }

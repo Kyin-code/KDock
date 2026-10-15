@@ -306,7 +306,9 @@ pub enum Event {
     /// 模型说的（可能是空文本 + 只有工具调用）。
     /// `reasoning` 是"思考"内容：DeepSeek/GLM 这类推理模型，**带工具调用时必须原样带回去**，
     /// 否则下一轮会直接 400（The `reasoning_content` in the thinking mode must be passed back）。
-    Assistant { text: String, #[serde(default)] reasoning: String, #[serde(default)] ts: i64 },
+    /// `model` 是**当时**用的模型名（界面在每条回复下面显示"模型 · 完成时间"；
+    /// 老会话没有这个字段，反序列化成空串 → 界面只显示时间）
+    Assistant { text: String, #[serde(default)] reasoning: String, #[serde(default)] ts: i64, #[serde(default)] model: String },
     /// 模型要调一个工具
     ToolCall { id: String, name: String, args: serde_json::Value, #[serde(default)] ts: i64 },
     /// 工具跑完的结果
@@ -883,6 +885,120 @@ pub fn skill_set_enabled(app: &AppHandle, slug: &str, on: bool) -> Result<String
     Ok(to.to_string_lossy().to_string())
 }
 
+// ── 常驻技能（每轮把正文注入系统提示的技能）──────────────────────────
+// 技能正文平时是"按需读"：系统提示里只有一行索引（见 skills_index），正文要模型自己 skill_read。
+// 这对"身份 / 口吻 / 说话规则"这类技能不够用 —— 问"你是谁"时没有任何线索提示它去读，读了也会
+// 随轮次被 trim、被摘要挤掉。所以单独记一份"常驻"清单：勾上的技能，正文每轮拼进系统提示
+// （系统提示永远不被裁剪和压缩，人格才能一直生效）。
+// 三个"不动"：不动 SKILL.md（用户的原始技能一个字不用改）、不动 skills/ 目录结构（enabled 照旧）、
+// 不动系统提示里那句通用角色描述（优先级由注入段自己声明）。
+//
+// 存成一串 slug 的 JSON 数组，**写之前排序去重**：系统提示是要吃前缀缓存的，顺序一变前缀就废。
+pub const SKILLS_ALWAYS_LIMIT: usize = 16 * 1024;
+
+fn skills_always_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(agent_dir(app)?.join("skills-always.json"))
+}
+
+/// 常驻技能的 slug 清单（没文件 / 文件坏了都当"没有"）。排序去重，读的是纯文件，好测。
+fn skills_always_read(path: &std::path::Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return Vec::new() };
+    let mut out: Vec<String> = v
+        .as_array()
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn skills_always_write_to(path: &std::path::Path, slugs: &[String]) -> Result<(), String> {
+    let mut v: Vec<String> = slugs.to_vec();
+    v.sort();
+    v.dedup();
+    let text = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| format!("写 {} 失败: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("改名到 {} 失败: {e}", path.display()))
+}
+
+pub fn skills_always(app: &AppHandle) -> Vec<String> {
+    match skills_always_path(app) {
+        Ok(p) => skills_always_read(&p),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn skills_always_write(app: &AppHandle, slugs: &[String]) -> Result<(), String> {
+    let path = skills_always_path(app)?;
+    skills_always_write_to(&path, slugs)
+}
+
+/// 常驻技能的字节数合计（只算启用的；上限判断和界面显示都用它）
+pub fn skills_always_bytes(app: &AppHandle) -> usize {
+    let always = skills_always(app);
+    skills_list(app)
+        .iter()
+        .filter(|s| s.enabled && always.contains(&s.slug))
+        .map(|s| s.size as usize)
+        .sum()
+}
+
+/// 开关一个技能的"常驻"。开的时候要过上限 —— 不然勾一个几十 KB 的大技能，每轮请求都被顶爆。
+pub fn skill_set_always(app: &AppHandle, slug: &str, on: bool) -> Result<(), String> {
+    let Some(info) = skills_list(app).into_iter().find(|s| s.slug == slug) else {
+        return Err(format!("没有这个技能：{slug}"));
+    };
+    if on && !info.enabled {
+        return Err("先启用这个技能，再设常驻".into());
+    }
+    let mut cur = skills_always(app);
+    if on {
+        let used = skills_always_bytes(app);
+        if used + info.size as usize > SKILLS_ALWAYS_LIMIT {
+            return Err(format!(
+                "常驻技能合计不能超过 {} KB（已用 {:.1} KB，这个 {:.1} KB）",
+                SKILLS_ALWAYS_LIMIT / 1024,
+                used as f64 / 1024.0,
+                info.size as f64 / 1024.0
+            ));
+        }
+        if !cur.contains(&slug.to_string()) {
+            cur.push(slug.to_string());
+        }
+    } else {
+        cur.retain(|s| s != slug);
+    }
+    skills_always_write(app, &cur)
+}
+
+/// 拼进系统提示的常驻技能正文（没有常驻技能就返回空串）。
+/// 只放正文，不放 frontmatter（name/description 已经在技能索引里了）。
+pub fn always_skills_block(app: &AppHandle) -> String {
+    always_block_of(&skills_always(app), &skills_list(app))
+}
+
+/// 纯逻辑部分：按清单挑出启用的技能，把**正文**（不含 frontmatter）拼成一段。
+/// 顺序跟着传进来的 list 走 —— 调用方是 skills_list（已按 slug 排序），顺序稳定，
+/// 系统提示的前缀缓存才不会每轮失效。
+fn always_block_of(always: &[String], list: &[SkillInfo]) -> String {
+    if always.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    for s in list.iter().filter(|s| s.enabled && always.contains(&s.slug)) {
+        let Ok(text) = std::fs::read_to_string(&s.path) else { continue };
+        let (_, body) = parse_frontmatter(&text);
+        let body = body.trim();
+        if body.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("\n### 常驻技能：{}\n{}\n", s.slug, body));
+    }
+    out
+}
+
 /// 从本机导入一个技能：给 `SKILL.md` 的路径，或者"装着 SKILL.md 的目录"
 pub fn skill_import(app: &AppHandle, src: &str) -> Result<String, String> {
     let p = PathBuf::from(src.trim());
@@ -964,4 +1080,66 @@ pub fn resolve_in_workspace(root: &Path, rel: &str) -> Result<PathBuf, String> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("kdock-store-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// 造一个真文件，返回跟 skills_list 同形状的 SkillInfo
+    fn mk_skill(dir: &std::path::Path, slug: &str, body: &str, enabled: bool) -> SkillInfo {
+        let d = dir.join(slug);
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("SKILL.md");
+        std::fs::write(&p, format!("---\nname: {slug}\ndescription: 描述不该进正文\n---\n\n{body}\n")).unwrap();
+        SkillInfo {
+            slug: slug.into(),
+            name: slug.into(),
+            description: "描述不该进正文".into(),
+            path: p.to_string_lossy().to_string(),
+            size: std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0),
+            enabled,
+        }
+    }
+
+    #[test]
+    fn always_list_round_trips_sorts_and_tolerates_garbage() {
+        let d = tmp_dir("always");
+        let p = d.join("skills-always.json");
+        assert!(skills_always_read(&p).is_empty(), "没文件就该是空");
+        skills_always_write_to(&p, &["b".into(), "a".into(), "a".into()]).unwrap();
+        assert_eq!(skills_always_read(&p), vec!["a".to_string(), "b".to_string()], "要排序去重");
+        std::fs::write(&p, "这不是 json").unwrap();
+        assert!(skills_always_read(&p).is_empty(), "坏了当空，不能炸");
+        std::fs::write(&p, r#"["a", 7, {"x":1}, null]"#).unwrap();
+        assert_eq!(skills_always_read(&p), vec!["a".to_string()], "非字符串项跳过");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn always_block_takes_only_enabled_bodies() {
+        let d = tmp_dir("block");
+        // 顺序照 skills_list（先启用的、再按 slug），块里就按这个顺序
+        let list = vec![
+            mk_skill(&d, "xiaoka", "我是小卡，说话简短，先给结论。", true),
+            mk_skill(&d, "off-one", "这条不该出现", false),
+            SkillInfo { slug: "ghost".into(), path: d.join("没有这个文件").to_string_lossy().to_string(), ..mk_skill(&d, "ghost-src", "x", true) },
+        ];
+        let always: Vec<String> = ["xiaoka", "off-one", "ghost"].iter().map(|s| s.to_string()).collect();
+        let blk = always_block_of(&always, &list);
+        assert!(blk.contains("### 常驻技能：xiaoka"));
+        assert!(blk.contains("我是小卡，说话简短，先给结论。"));
+        assert!(!blk.contains("这条不该出现"), "停用的技能不能注入");
+        assert!(!blk.contains("描述不该进正文"), "frontmatter 不能混进正文");
+        assert!(!blk.contains("ghost"), "文件没了就跳过，不能炸");
+        assert!(always_block_of(&[], &list).is_empty(), "没勾任何技能就是空串");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

@@ -61,6 +61,36 @@ pub fn catalog() -> Vec<ToolDef> {
             "until":{"type":"string","description":"命中这个子串就立刻返回"},
             "max_bytes":{"type":"integer","description":"最多读多少字节，默认 65536"}
         }}), false);
+    // ── 用户那条主连接（传输页里开的那条）：agent 也能用，而且用户全程看得见 ──
+    push("port_list", "列出本机串口（含友好名 / VID:PID）。要看有哪些口就用这个，别去跑 PowerShell 扫。",
+        json!({"type":"object","properties":{}}), false);
+    push("port_state", "看**用户在传输页开的那条主连接**的状态：类型 / 参数 / 是否连着 / 收发字节数。",
+        json!({"type":"object","properties":{}}), false);
+    push("port_write", "往**主连接**（用户在传输页开的那条）发数据，文本或 HEX。发出去的内容会实时显示在用户的传输页里（TX 行），所以这是「用户看得见」的通道。",
+        json!({"type":"object","properties":{
+            "data":{"type":"string","description":"要发的内容"},
+            "hex":{"type":"boolean","description":"true 表示 data 是十六进制，如 '41 54'"},
+            "line_ending":{"type":"string","enum":["none","cr","lf","crlf"],"description":"行尾，默认 cr"}
+        },"required":["data"]}), false);
+    push("port_read", "读**主连接**最近的收发记录（用户在传输页看到的就是这一份）：每行给方向 + 毫秒时间戳 + 内容。",
+        json!({"type":"object","properties":{"tail":{"type":"integer","description":"取最近多少条，默认 40，最多 400"}}}), false);
+    push("port_open", "打开**主连接**（用户在传输页那条）：串口 / TCP 客户端 / TCP 服务端 / UDP。连上之后界面里的方式和参数会同步过去，用户看得见。已经连着时要先 port_close。",
+        json!({"type":"object","properties":{
+            "mode":{"type":"string","enum":["serial","tcp_client","tcp_server","udp"],"description":"连接类型"},
+            "port":{"type":"string","description":"串口名（mode=serial），如 COM7；先用 port_list 看有哪些"},
+            "baud":{"type":"integer","description":"波特率（serial），默认 115200"},
+            "data_bits":{"type":"string","enum":["five","six","seven","eight"],"description":"数据位，默认 eight（8）"},
+            "stop_bits":{"type":"string","enum":["one","two"],"description":"停止位，默认 one（1）"},
+            "parity":{"type":"string","enum":["none","odd","even"],"description":"校验位，默认 none"},
+            "flow_control":{"type":"string","enum":["none","hardware","software"],"description":"流控，默认 none"},
+            "host":{"type":"string","description":"tcp_client=远端 IP；tcp_server=本机监听地址（不填 0.0.0.0，表示所有网卡）"},
+            "remote_port":{"type":"integer","description":"tcp_client 的远端端口 / udp 的远端端口"},
+            "local_port":{"type":"integer","description":"tcp_server 要监听的端口 / udp 的本地端口"},
+            "remote_host":{"type":"string","description":"udp 的远端 IP"}
+        },"required":["mode"]}), false);
+    push("port_close", "断开**主连接**（用户在传输页那条）。", json!({"type":"object","properties":{}}), false);
+    push("net_local_ips", "列本机 IPv4 地址：开 TCP 服务端 / UDP 时该填哪个本机地址、该让用户连哪个地址，用这个看（0.0.0.0 表示所有网卡）。",
+        json!({"type":"object","properties":{}}), false);
     push("device_list", "列设备上的目录（串口走 cshell ls，网口走 6666 服务通道）。",
         json!({"type":"object","properties":{"path":{"type":"string","description":"设备上的路径，默认 /"}}}), false);
     push("device_pull", "把设备上的文件取回本机（带 CRC32 校验）。",
@@ -152,8 +182,9 @@ pub fn catalog() -> Vec<ToolDef> {
         },"required":["path","content"]}), false);
     push("workspace_mkdir", "在工作区里建目录。",
         json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}), false);
-    push("skill_list", "列出已安装的技能（名字 + 描述）。", json!({"type":"object","properties":{}}), false);
-    push("skill_read", "读一个技能的完整 SKILL.md。",
+    push("skill_list", "列出已安装的技能（名字 + 描述；标了「常驻」的技能每轮都注入全文）。",
+        json!({"type":"object","properties":{}}), false);
+    push("skill_read", "读一个技能的完整 SKILL.md。任务或问题匹配某个技能的描述时就该先读它 —— 包括身份、口吻、自我介绍、闲聊这类问题，不是只有硬件操作才读技能。",
         json!({"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}), false);
     push("skill_create", "新建一个技能（一份带 frontmatter 的 SKILL.md）。",
         json!({"type":"object","properties":{
@@ -545,10 +576,43 @@ fn is_serial(ctx: &ToolCtx) -> bool {
 }
 
 /// 会改设备/改盘上东西的工具：权限管的就是这些
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_tools_are_registered_and_gated() {
+        let names: Vec<&str> = catalog().iter().map(|d| d.name).collect();
+        for n in ["port_list", "port_state", "port_write", "port_read", "port_open", "port_close", "net_local_ips"] {
+            assert!(names.contains(&n), "缺工具 {n}");
+        }
+        // 三个只读的不该要审批，写入的要
+        assert!(!is_dangerous("port_list"));
+        assert!(!is_dangerous("port_state"));
+        assert!(!is_dangerous("port_read"));
+        assert!(!is_dangerous("net_local_ips"));
+        assert!(is_dangerous("port_write"));
+        assert!(is_dangerous("port_open") && is_dangerous("port_close"));
+        // 都是 Rust 侧实现（host=false）；标成 host 会走 agent://host_call 那条路，前端没有对应实现
+        assert!(!is_host("port_write") && !is_host("port_read") && !is_host("port_list"));
+        // port_open 的参数要覆盖：连接类型 / 串口 + 串口参数 / 本机地址 / 本机端口 / 远端地址 / 远端端口
+        let po = catalog().into_iter().find(|d| d.name == "port_open").unwrap();
+        let props = po.schema["properties"].as_object().unwrap();
+        for k in [
+            "mode", "port", "baud", "data_bits", "stop_bits", "parity", "flow_control",
+            "host", "local_port", "remote_host", "remote_port",
+        ] {
+            assert!(props.contains_key(k), "port_open 缺参数 {k}");
+        }
+        assert!(po.schema["required"].as_array().unwrap().iter().any(|v| v == "mode"));
+    }
+}
+
 pub fn is_dangerous(name: &str) -> bool {
     matches!(
         name,
-        "link_send" | "device_push" | "firmware_upgrade" | "flash" | "local_run"
+        "link_send" | "device_push" | "firmware_upgrade" | "flash" | "local_run" | "port_write"
+            | "port_open" | "port_close"
             | "workspace_write" | "workspace_mkdir" | "skill_create" | "skill_update"
             | "skill_delete" | "flow_run" | "capture_save"
     )
@@ -575,6 +639,113 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         return (ctx.host)(name, args, 120_000);
     }
     match name {
+        "port_list" => {
+            let ports = crate::list_ports()?;
+            if ports.is_empty() {
+                return Ok("（本机没有可用串口）".into());
+            }
+            Ok(ports
+                .iter()
+                .map(|p| {
+                    let mut s = format!(
+                        "{}  {}{}",
+                        p.port_name,
+                        p.port_type,
+                        p.friendly.as_ref().map(|f| format!("  {f}")).unwrap_or_default()
+                    );
+                    if let (Some(v), Some(d)) = (p.vid, p.pid) {
+                        s.push_str(&format!("  (VID:PID {v:04X}:{d:04X})"));
+                    }
+                    s
+                })
+                .collect::<Vec<_>>()
+                .join("\n"))
+        }
+        "port_state" => {
+            let st = crate::stats_of(ctx.app)?;
+            let mut s = String::new();
+            s.push_str(&format!(
+                "主连接：{}\n",
+                if st.connected {
+                    "已连接"
+                } else if st.listening {
+                    "监听中（等客户端接入）"
+                } else {
+                    "未连接"
+                }
+            ));
+            if let (Some(m), Some(l)) = (&st.mode, &st.label) {
+                s.push_str(&format!("类型 / 参数：{m} {l}\n"));
+            }
+            s.push_str(&format!(
+                "收发：TX {} 字节 / RX {} 字节（共 {} 行记录）\n",
+                st.tx_bytes, st.rx_bytes, st.log_lines
+            ));
+            if st.elapsed_ms > 0 {
+                s.push_str(&format!("已持续：{:.1} 秒\n", st.elapsed_ms as f64 / 1000.0));
+            }
+            Ok(s)
+        }
+        "port_write" => {
+            let data = arg_str(args, "data").ok_or("缺少 data")?;
+            let is_hex = args.get("hex").and_then(|v| v.as_bool()).unwrap_or(false);
+            let le = arg_str(args, "line_ending").unwrap_or_else(|| "cr".to_string());
+            let ack = crate::write_main(ctx.app, &data, if is_hex { "hex" } else { "text" }, &le, false)?;
+            // 让用户在传输页里实时看到 agent 发出去的东西（补一条 TX 行）
+            let _ = ctx.app.emit(
+                "log://tx",
+                json!({ "ts_ms": kdock_core::session::now_ms(),
+                        "hex": ack.hex, "text": ack.text, "ascii": ack.ascii }),
+            );
+            Ok(format!("已发 {} 字节到主连接：{}", ack.bytes, ack.hex))
+        }
+        "port_read" => {
+            let tail = args.get("tail").and_then(|v| v.as_u64()).unwrap_or(40).clamp(1, 400) as usize;
+            Ok(crate::main_log_text(ctx.app, tail))
+        }
+        "port_open" => {
+            let mode = arg_str(args, "mode").ok_or("缺少 mode")?;
+            let mut ep = json!({ "mode": mode });
+            let sarg = |k: &str| arg_str(args, k);
+            let uarg = |k: &str| args.get(k).and_then(|v| v.as_u64());
+            match mode.as_str() {
+                "serial" => {
+                    ep["port"] = json!(sarg("port").ok_or("mode=serial 需要 port（先用 port_list 看有哪些）")?);
+                    ep["config"] = json!({
+                        "baud": uarg("baud").unwrap_or(115_200),
+                        "data_bits": sarg("data_bits").unwrap_or_else(|| "eight".into()),
+                        "stop_bits": sarg("stop_bits").unwrap_or_else(|| "one".into()),
+                        "parity": sarg("parity").unwrap_or_else(|| "none".into()),
+                        "flow_control": sarg("flow_control").unwrap_or_else(|| "none".into()),
+                    });
+                }
+                "tcp_client" => {
+                    ep["host"] = json!(sarg("host").ok_or("mode=tcp_client 需要 host（远端 IP）")?);
+                    ep["port"] = json!(uarg("remote_port").ok_or("mode=tcp_client 需要 remote_port")?);
+                }
+                "tcp_server" => {
+                    ep["host"] = json!(sarg("host").unwrap_or_else(|| "0.0.0.0".into()));
+                    ep["port"] = json!(uarg("local_port").ok_or("mode=tcp_server 需要 local_port（要监听的端口）")?);
+                }
+                "udp" => {
+                    ep["local_port"] = json!(uarg("local_port").unwrap_or(0));
+                    ep["remote_host"] = json!(sarg("remote_host").unwrap_or_default());
+                    ep["remote_port"] = json!(uarg("remote_port").unwrap_or(0));
+                }
+                other => return Err(format!("不认识的 mode: {other}（serial / tcp_client / tcp_server / udp）")),
+            }
+            let endpoint: crate::transport::Endpoint =
+                serde_json::from_value(ep).map_err(|e| format!("参数不对: {e}"))?;
+            crate::open_main(ctx.app, endpoint, "agent")
+        }
+        "port_close" => crate::close_main(ctx.app),
+        "net_local_ips" => {
+            let ips = crate::local_ips();
+            if ips.is_empty() {
+                return Ok("（没查到本机 IPv4；开服务端可以填 0.0.0.0 = 所有网卡）".into());
+            }
+            Ok(format!("{}\n（0.0.0.0 = 所有网卡）", ips.join("\n")))
+        }
         "link_open" => link_open(ctx, args),
         "link_close" => {
             let mut g = ctx.state.link.lock().map_err(|_| "link mutex".to_string())?;
@@ -654,7 +825,19 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
             if list.is_empty() {
                 return Ok("（还没有技能）".into());
             }
-            Ok(list.iter().map(|s| format!("{} — {}", s.slug, s.description)).collect::<Vec<_>>().join("\n"))
+            let always = store::skills_always(ctx.app);
+            Ok(list
+                .iter()
+                .map(|s| {
+                    format!(
+                        "{} — {}{}",
+                        s.slug,
+                        s.description,
+                        if always.contains(&s.slug) { "（常驻：正文每轮都在系统提示里）" } else { "" }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n"))
         }
         "skill_read" => store::skill_read(ctx.app, &arg_str(args, "name").ok_or("缺少 name")?),
         "skill_create" => {

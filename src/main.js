@@ -166,6 +166,38 @@ function buildEndpoint() {
   };
 }
 
+/** agent 用 port_open 连上主连接后，把界面里的「方式 / 参数」也切到它用的那套
+ *  （不然用户看到的参数和实际连接对不上；状态和按钮本来就是轮询 get_stats 的，会自动跟上）。 */
+function applyEndpointToUi(ep) {
+  try {
+    const t = ep.mode;
+    if (!["serial", "tcp_client", "tcp_server", "udp"].includes(t)) return;
+    const sel = $("mode");
+    if (sel) sel.value = t;
+    switchMode(t);
+    const setSel = (id, v) => {
+      const s = $(id);
+      if (!s) return;
+      const o = [...s.options].find((x) => x.value === String(v));
+      if (o) s.value = String(v);
+    };
+    if (t === "serial") {
+      setSel("ports", ep.port || "");
+      if (ep.config) setSel("baud", ep.config.baud || "");
+    } else if (t === "tcp_client") {
+      $("tcp-client-host").value = ep.host || "";
+      $("tcp-client-port").value = ep.port ?? "";
+    } else if (t === "tcp_server") {
+      $("tcp-server-host").value = ep.host || "0.0.0.0";
+      $("tcp-server-port").value = ep.port ?? "";
+    } else {
+      $("udp-local-port").value = ep.local_port ?? "";
+      $("udp-remote-host").value = ep.remote_host || "";
+      $("udp-remote-port").value = ep.remote_port ?? "";
+    }
+  } catch (_) { /* 界面字段对不上就算了，别因为这个报错 */ }
+}
+
 function num(v) {
   const n = Number(v);
   if (!Number.isInteger(n) || n < 0 || n > 65535) throw new Error(`端口不合法: ${v}`);
@@ -397,8 +429,14 @@ function termRender() {
 
 function lineHtml(e) {
   const cls = e.dir === "TX" ? "tx" : e.dir === "SYS" ? "sys" : "rx-l";
-  const ts = $("show-ts").checked ? `<span class="ts">[${fmtTs(e.ts_ms)}]</span> ` : "";
-  const pfx = `${ts}<span class="${cls}">${e.dir}</span> `;
+  const tsOn = $("show-ts") && $("show-ts").checked;
+  const dirOn = $("show-dir") && $("show-dir").checked;
+  const dir = `<span class="${cls}">${e.dir}</span>`;
+  // 方向标记跟时间戳绑在一起（一个方括号前缀，SSCOM 那样）；只有方向没时间戳时才单独占一个词
+  let pfx = "";
+  if (tsOn && dirOn) pfx = `<span class="ts">[${fmtTs(e.ts_ms)} ${dir}]</span> `;
+  else if (tsOn) pfx = `<span class="ts">[${fmtTs(e.ts_ms)}]</span> `;
+  else if (dirOn) pfx = dir + " ";
   return entryLines(e).map((l) => pfx + l).join("\n") + "\n";
 }
 
@@ -475,6 +513,19 @@ async function refreshStats() {
       ? `${s.label || ""}`
       : s.listening ? en("监听中（等对端接入）") : en("未连接");
     $("fl-link").className = "dot" + (s.connected ? " ok" : "");
+    // 「连接」按钮跟着**真实状态**走：连上（不管谁连的：用户点的还是 agent 的 port_open）就变成
+    // 「已连接」并点不动，断开之后才回到「连接」。
+    const openBtn = $("open");
+    if (openBtn) {
+      const busy = !!(s.connected || s.listening);
+      const label = s.connected ? "已连接" : s.listening ? "监听中" : "连接";
+      if (openBtn.textContent !== en(label)) openBtn.textContent = en(label);
+      openBtn.className = busy ? "btn connected" : "btn primary";
+      openBtn.disabled = busy;
+      openBtn.title = busy ? en("已连上，要换连接先点「断开」") : "";
+    }
+    const closeBtn = $("close");
+    if (closeBtn) closeBtn.disabled = !(s.connected || s.listening);
   } catch (_) {
     /* 还没连接时拿不到，忽略 */
   }
@@ -950,6 +1001,7 @@ function showPane(tab) {
   if (btn) document.querySelectorAll(".navitem").forEach((b) => b.classList.toggle("active", b === btn));
   const work = WORK_OF[tab] || tab;
   document.querySelectorAll("[data-work]").forEach((p) => { p.hidden = p.dataset.work !== work; });
+  if (work === "agent") agUnreadClear();      // 切过来就算看过了，清掉未读角标
   document.querySelectorAll("[data-param]").forEach((p) => { p.hidden = p.dataset.param !== tab; });
   if (tab === "upgrade") syncUpgCtl();
   if (tab === "files") {
@@ -3408,6 +3460,59 @@ function cmdOpenEditor() {
   const list = document.createElement("div");
   list.className = "cmdlistscroll scrollable";
 
+  // ── 拖动排序（HTML5 DnD）：指令组之间能拖动排顺序，组内的指令也能 ──
+  // 只在行首的抓手「⋮⋮」上起拖：整行可拖会和"点名字填进输入框 / 选中代码"打架。
+  let drag = null;                      // { kind: "group", g } | { kind: "item", g, it }
+  const clearDrop = () => list.querySelectorAll(".dropb,.dropa").forEach((e) => e.classList.remove("dropb", "dropa"));
+  const mkGrip = (title, target, onStart) => {
+    const el = document.createElement("span");
+    el.className = "grip";
+    el.textContent = "⋮⋮";
+    el.title = title;
+    el.draggable = true;
+    el.ondragstart = (e) => {
+      onStart();
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setDragImage(target, 10, 10); } catch (_) { /* 某些环境不给设拖影 */ }
+      target.classList.add("dragging");
+    };
+    el.ondragend = () => { drag = null; target.classList.remove("dragging"); clearDrop(); };
+    return el;
+  };
+  /** 只接"同类"的拖动：拖组时高亮组头，拖指令时只高亮同组的指令行 */
+  const dragOver = (e, node, kind, g) => {
+    if (!drag || drag.kind !== kind) return;
+    if (kind === "item" && drag.g !== g) return;
+    e.preventDefault();
+    const r = node.getBoundingClientRect();
+    const after = e.clientY > r.top + r.height / 2;
+    node.classList.toggle("dropb", !after);
+    node.classList.toggle("dropa", after);
+  };
+  const dropOn = async (e, node, kind, g, it) => {
+    if (!drag || drag.kind !== kind) return;
+    if (kind === "item" && drag.g !== g) return;
+    e.preventDefault();
+    const r = node.getBoundingClientRect();
+    const after = e.clientY > r.top + r.height / 2;
+    if (kind === "group") {
+      const from = CMD_TABLE.groups.indexOf(drag.g);
+      if (from < 0 || drag.g === g) { clearDrop(); return; }
+      CMD_TABLE.groups.splice(from, 1);
+      const to = CMD_TABLE.groups.indexOf(g) + (after ? 1 : 0);
+      CMD_TABLE.groups.splice(to, 0, drag.g);
+    } else {
+      const items = g.items || (g.items = []);
+      const from = items.indexOf(drag.it);
+      if (from < 0 || drag.it === it) { clearDrop(); return; }
+      items.splice(from, 1);
+      const to = items.indexOf(it) + (after ? 1 : 0);
+      items.splice(to, 0, drag.it);
+    }
+    drag = null; clearDrop();
+    await cmdTableSave(); buildCmdTable(); redraw();
+  };
+
   const closeMask = () => { mask.remove(); document.removeEventListener("keydown", onKey); };
   const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); closeMask(); } };
   document.addEventListener("keydown", onKey);
@@ -3433,7 +3538,11 @@ function cmdOpenEditor() {
       const gRen = mkBtn("✎", "", en("改组名"));
       const gDel = mkBtn("✕", "danger", en("删掉这个组（连同组里的指令）"));
       const addHere = mkBtn(en("+ 加一条到本组"), "", en("往这个组里加一条指令"));
-      gh.append(gt, gn, gSp, addHere, gRen, gDel);
+      const gGrip = mkGrip(en("拖动排序（整个指令组）"), gh, () => { drag = { kind: "group", g }; });
+      gh.ondragover = (e) => dragOver(e, gh, "group", null);
+      gh.ondragleave = () => gh.classList.remove("dropb", "dropa");
+      gh.ondrop = (e) => dropOn(e, gh, "group", g, null);
+      gh.append(gGrip, gt, gn, gSp, addHere, gRen, gDel);
       list.appendChild(gh);
       gRen.onclick = async () => {
         const v = await kdForm({ title: en("改指令组名"), fields: [{ id: "name", label: en("组名"), value: g.name }] });
@@ -3472,7 +3581,11 @@ function cmdOpenEditor() {
           g.items = (g.items || []).filter((x) => x !== it);
           await cmdTableSave(); buildCmdTable(); redraw();
         };
-        row.append(nm, d2, ed, del);
+        const grip = mkGrip(en("拖动排序（同一组内）"), row, () => { drag = { kind: "item", g, it }; });
+        row.ondragover = (e) => dragOver(e, row, "item", g);
+        row.ondragleave = () => row.classList.remove("dropb", "dropa");
+        row.ondrop = (e) => dropOn(e, row, "item", g, it);
+        row.append(grip, nm, d2, ed, del);
         list.appendChild(row);
       }
       const hr = document.createElement("div");
@@ -3819,9 +3932,16 @@ async function uiPrefsLoad() {
   uiPrefsLast = uiPrefsSnapshot().theme + "|" + uiPrefsSnapshot().scheme + "|" + uiPrefsSnapshot().lang;
 }
 
-// ---------------- 时间戳开关 ----------------
+// ---------------- 时间戳 / 方向标记开关 ----------------
 function bindTimestamp() {
   $("show-ts").onchange = () => redrawRx();
+  if ($("show-dir")) {
+    $("show-dir").checked = localStorage.getItem("kdock_show_dir") === "1";
+    $("show-dir").onchange = () => {
+      localStorage.setItem("kdock_show_dir", $("show-dir").checked ? "1" : "0");
+      redrawRx();
+    };
+  }
 }
 
 // ---------------- ASCII 交互：直接在输出区敲键盘跟设备对话 ----------------
@@ -4051,8 +4171,12 @@ let agMeta = null;                // 当前会话元信息
 let agEvents = [];                // 当前会话事件
 let agStreamNode = null;          // 正在流式写入的正文节点
 let agStreamText = "";
+let agThinkNode = null;           // 正在流式写入的"思考过程"块
+let agReasonText = "";
 let agRunning = false;
 let agSkills = [];
+let agAlways = { slugs: [], bytes: 0, limit: 16384 };   // 常驻技能：正文每轮注入系统提示的那些
+const agIsAlways = (slug) => (agAlways.slugs || []).includes(slug);
 let agTools = [];
 let agToolCards = {};             // call id -> 卡片元素
 let agToolArgs = {};              // call id -> 参数（结果事件不带参数，替换卡片时要沿用）
@@ -4147,7 +4271,50 @@ function agEscape(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
-/** 极简 markdown：代码块 / 行内代码 / 粗体。其余按纯文本，绝不直接 innerHTML 模型输出 */
+/** GFM 表格：表头行 + `|---|:--:|` 分隔行才算表格，之后跟着的带 `|` 的行都是表体。
+ *  只在纯文本行上生效（代码块在这之前已经被抽成占位符了，所以不会误伤代码里的 `|`）。
+ *  单元内容不在这里做行内语法 —— 后面 `code` / `**粗体**` 的替换是在整串上做的，会一起处理。 */
+function agMdTable(s) {
+  const lines = s.split("\n");
+  const out = [];
+  // 分隔行必须带 `|`：否则单独一行 `---`（分隔线）会被当成单列表格
+  const isDelim = (ln) =>
+    ln.includes("-") && ln.includes("|") && /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/.test(ln);
+  const cells = (ln) => {
+    // 先保护 `\|`（表格里写命令时经常有），再按 | 切
+    const t = ln.trim().replace(/^\|/, "").replace(/\|$/, "").replace(/\\\|/g, "\u0000P\u0000");
+    return t.split("|").map((c) => c.trim().replace(/\u0000P\u0000/g, "|"));
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const head = lines[i];
+    const delim = lines[i + 1];
+    if (!head.includes("|") || delim == null || !isDelim(delim)) { out.push(head); continue; }
+    const hcells = cells(head);
+    const aligns = cells(delim).map((d) =>
+      d.startsWith(":") && d.endsWith(":") ? "md-c" : d.endsWith(":") ? "md-r" : "");
+    let j = i + 2;
+    const rows = [];
+    for (; j < lines.length; j++) {
+      if (!lines[j].includes("|") || isDelim(lines[j])) break;
+      rows.push(cells(lines[j]));
+    }
+    const al = (n) => (aligns[n] ? ' class="' + aligns[n] + '"' : "");
+    let html = "<table><thead><tr>";
+    hcells.forEach((c, n) => { html += "<th" + al(n) + ">" + c + "</th>"; });
+    html += "</tr></thead><tbody>";
+    for (const r of rows) {
+      html += "<tr>";
+      for (let n = 0; n < hcells.length; n++) html += "<td" + al(n) + ">" + (r[n] || "") + "</td>";
+      html += "</tr>";
+    }
+    html += "</tbody></table>";
+    out.push(html);            // 整段合成一行：bubble 是 white-space:pre-wrap，换行会变成空行
+    i = j - 1;                 // 表体已经吃掉
+  }
+  return out.join("\n");
+}
+
+/** 极简 markdown：代码块 / 表格 / 行内代码 / 粗体。其余按纯文本，绝不直接 innerHTML 模型输出 */
 function agMd(text) {
   let s = agEscape(text);
   const blocks = [];
@@ -4155,6 +4322,7 @@ function agMd(text) {
     blocks.push(code.replace(/\n$/, ""));
     return "\u0000B" + (blocks.length - 1) + "\u0000";
   });
+  s = agMdTable(s);
   s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
   s = s.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
   s = s.replace(/\u0000B(\d+)\u0000/g, (_m, i) => "<pre>" + blocks[Number(i)] + "</pre>");
@@ -4173,11 +4341,89 @@ function agSetSendDisabled(on) {
   if (t) t.disabled = false;
 }
 
-function agState(text, cls) {
+// 状态灯：空闲 = 绿灯，思考中/跑工具 = 转圈，出错 = 红点，等你批准 = 黄点。
+// 文字不再显示，改成 tooltip（详细信息仍然能看）；后面还能挂一个"未读回复"的灰色角标。
+let agStateText = "";
+let agStateKind = "";
+let agUnread = 0;
+function agStatePaint() {
   const el = agEl("ag-state");
   if (!el) return;
-  el.textContent = text;
-  el.className = "dot" + (cls ? " " + cls : "");
+  el.className = "agst" + (agStateKind ? " " + agStateKind : "");
+  el.title = agStateText;
+  el.innerHTML = '<span class="led"></span><span class="spin"></span>' +
+    (agUnread ? `<span class="badge" title="${en("有未读回复")}">${agUnread > 9 ? "9+" : agUnread}</span>` : "");
+}
+function agState(text, cls) {
+  agStateText = text ? en(text) : "";
+  agStateKind = cls === "ok" ? "busy" : cls === "err" ? "err" : cls === "wait" ? "wait" : "";
+  agStatePaint();
+}
+/** agent 页现在是不是可见（用户有没有可能正看着它） */
+const agAgentVisible = () => { const p = document.querySelector('.workpane[data-work="agent"]'); return !!p && !p.hidden; };
+const agWatching = () => agAgentVisible() && !document.hidden && document.hasFocus();
+function agUnreadBump() { agUnread = Math.min(99, agUnread + 1); agStatePaint(); }
+function agUnreadClear() { if (!agUnread) return; agUnread = 0; agStatePaint(); }
+
+// ---- 4a：思考过程块（像 Codex：思考时展开、正文开始后自动收起）----
+function agThinkPaint() {
+  const n = agThinkNode;
+  if (!n || !n.isConnected) return;
+  const lb = n.querySelector(".lb");
+  const n2 = agReasonText.trim().length;
+  if (lb) lb.textContent = n2 ? `${en("已思考")} ${n2} 字` : en("思考中…");
+  const bd = n.querySelector(".bd");
+  if (bd) bd.textContent = agReasonText;
+}
+function agThinkBind(node) {
+  const th = node.querySelector(".th");
+  if (th) th.onclick = () => {
+    node.classList.toggle("open");
+    const c = node.querySelector(".chev");
+    if (c) c.textContent = node.classList.contains("open") ? "▾" : "▸";
+  };
+}
+function agThinkEnsure() {
+  if (agThinkNode && agThinkNode.isConnected) return agThinkNode;
+  const box = agEl("ag-chat");
+  if (!box) return null;
+  const node = document.createElement("div");
+  node.className = "agthink open busy";
+  node.innerHTML =
+    '<div class="th"><span class="spin"></span><span class="lb"></span><span class="grow"></span><span class="chev">▾</span></div>' +
+    '<div class="bd"></div>';
+  agThinkBind(node);
+  box.appendChild(node);
+  agThinkNode = node;
+  agThinkPaint();
+  return node;
+}
+/** 正文开始 / 这一段结束：收起思考块（没内容的直接删掉） */
+function agThinkSettle() {
+  const n = agThinkNode;
+  agThinkNode = null;
+  agReasonText = "";
+  if (!n || !n.isConnected) return;
+  const bd = n.querySelector(".bd");
+  const text = bd ? bd.textContent.trim() : "";
+  if (!text) { n.remove(); return; }
+  n.classList.remove("busy", "open");
+  const c = n.querySelector(".chev");
+  if (c) c.textContent = "▸";
+  const lb = n.querySelector(".lb");
+  if (lb) lb.textContent = `${en("已思考")} ${text.length} 字`;
+}
+/** 历史里的思考过程：渲染成一个默认收起的块 */
+function agThinkNodeFrom(text) {
+  const node = document.createElement("div");
+  node.className = "agthink";
+  node.innerHTML =
+    '<div class="th"><span class="lb"></span><span class="grow"></span><span class="chev">▸</span></div><div class="bd"></div>';
+  const t = String(text).trim();
+  node.querySelector(".lb").textContent = `${en("思考过程")} · ${t.length} 字`;
+  node.querySelector(".bd").textContent = t;
+  agThinkBind(node);
+  return node;
 }
 
 function agScrollTail(force) {
@@ -4187,7 +4433,24 @@ function agScrollTail(force) {
   if (force || nearBottom) box.scrollTop = box.scrollHeight;
 }
 
-function agMsgNode(kind, text) {
+/** 每条回复下面那行小字：**当时**用的模型 + 回复完成时间。
+ *  模型是后端往会话里记的（`Event::Assistant.model`），所以翻历史也准；
+ *  老会话没这个字段就只显示时间（时间取事件落盘时的 ts）。 */
+function agMsgMetaText(ev) {
+  const parts = [];
+  if (ev && ev.model) parts.push(String(ev.model));
+  const ts = Number((ev && ev.ts) || 0);
+  if (ts > 0) {
+    const d = new Date(ts);
+    const p2 = (n) => String(n).padStart(2, "0");
+    const hm = `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    const sameDay = d.toDateString() === new Date().toDateString();
+    parts.push(sameDay ? `${hm}:${p2(d.getSeconds())}` : `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${hm}`);
+  }
+  return parts.join(" · ");
+}
+
+function agMsgNode(kind, text, ev) {
   const wrap = document.createElement("div");
   wrap.className = "agmsg " + kind;
   const head = document.createElement("div");
@@ -4202,6 +4465,16 @@ function agMsgNode(kind, text) {
   else body.textContent = text;
   wrap.appendChild(head);
   wrap.appendChild(body);
+  if (kind === "assistant") {
+    const mt = agMsgMetaText(ev);
+    if (mt) {
+      const meta = document.createElement("div");
+      meta.className = "agmeta";
+      meta.textContent = mt;
+      meta.title = en("模型") + " · " + en("回复完成时间");
+      wrap.appendChild(meta);
+    }
+  }
   return wrap;
 }
 
@@ -4347,7 +4620,8 @@ function agAppendEvent(ev, scroll = true) {
     box.appendChild(node);
   }
   else if (t === "assistant") {
-    if (String(ev.text || "").trim()) box.appendChild(agMsgNode("assistant", ev.text));
+    if (String(ev.reasoning || "").trim()) box.appendChild(agThinkNodeFrom(ev.reasoning));
+    if (String(ev.text || "").trim()) box.appendChild(agMsgNode("assistant", ev.text, ev));
   } else if (t === "tool_call") {
     agToolArgs[ev.id] = ev.args || {};
     const node = agToolNode({ name: ev.name, args: ev.args });
@@ -4636,6 +4910,9 @@ function agRenderBreakdown() {
     `<div class="agctx-legend">${legend}` +
     `<div class="r"><span class="dot" style="background:var(--surface-3)"></span><span class="n">${en("剩余可用")}</span>` +
     `<span class="v">${agK(b.free || 0)} · ${freePct.toFixed(0)}%</span></div></div>` +
+    (b.skillsAlways
+      ? `<div class="sub">${en("其中常驻技能")}: ${agK(b.skillsAlways)} tokens · ${en("正文每轮注入，不会被压缩掉")}</div>`
+      : "") +
     (b.dropped
       ? `<div class="sub">${en("已被摘要压掉")}: ${agK(b.dropped)} tokens · ${b.coveredEvents} ${en("条旧事件；原文仍在会话文件里，可用 history_search 回查")}</div>`
       : "") +
@@ -4989,10 +5266,12 @@ async function bindAgent() {
     };
   }
   agEl("ag-input").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      agSend();               // 跑着的时候也发：算"补充"，后端排队
-    }
+    if (e.key !== "Enter") return;
+    // Enter 直接发（跟传输页、其它 agent 工具一致）；Shift+Enter 才是换行。
+    // 跑着的时候也发：算"补充"，后端排队并入下一轮。
+    if (e.shiftKey) return;
+    e.preventDefault();
+    agSend();
   });
   // 打 "/" 时把可用命令提示出来
   if (agEl("ag-input") && agEl("ag-cmd-hint")) {
@@ -5085,6 +5364,9 @@ async function bindAgent() {
   bindMcpPage();
   if (agEl("ag-skill-refresh")) agEl("ag-skill-refresh").onclick = () => agLoadSkills();
   if (agEl("ag-mcp-refresh")) agEl("ag-mcp-refresh").onclick = () => agLoadMcps();
+  // 「＋」：技能 / MCP 的导入与新增都在设置页，直接跳过去（这一页只管开关）
+  if (agEl("ag-skill-add")) agEl("ag-skill-add").onclick = () => openSettings("skills");
+  if (agEl("ag-mcp-add")) agEl("ag-mcp-add").onclick = () => openSettings("mcp");
 }
 
 async function agLoadConfig() {
@@ -5480,6 +5762,7 @@ async function agImportProviders() {
 
 async function agLoadSkills() {
   agSkills = await invoke("agent_skills").catch(() => []);
+  agAlways = await invoke("agent_skills_always").catch(() => ({ slugs: [], bytes: 0, limit: 16384 }));
   agRenderSkillTable();   // Agent 信息页：只展示 + 开关
   renderSkillsPage();     // 设置 → 技能：全部管理
 }
@@ -5515,8 +5798,42 @@ function agRenderSkillTable() {
       }
       await agLoadSkills();
     };
-    row.appendChild(nm); row.appendChild(d); row.appendChild(sz); row.appendChild(sw);
+    // 「常驻」：勾上就每轮把技能正文注入系统提示（身份 / 口吻 / 说话规则这类技能用这个）。
+    // 技能没启用时不给勾 —— 后端也拦（常驻只对启用的技能生效）。
+    const awLbl = document.createElement("span");
+    awLbl.className = "swtag" + (agIsAlways(s.slug) ? " on" : "");
+    awLbl.textContent = en("常驻");
+    const aw = document.createElement("input");
+    aw.type = "checkbox"; aw.className = "sw"; aw.checked = agIsAlways(s.slug);
+    aw.disabled = !s.enabled;
+    aw.title = !s.enabled
+      ? en("先启用这个技能")
+      : en("常驻：技能正文每轮注入系统提示（身份 / 口吻类技能用这个）");
+    aw.onchange = async () => {
+      // 先在前端拦一道上限（按"常驻技能字节合计"算），后端还会再拦一次
+      if (aw.checked && agAlways.bytes + (s.size || 0) > agAlways.limit) {
+        aw.checked = false;
+        return toast(`常驻技能合计不能超过 ${(agAlways.limit / 1024).toFixed(0)} KB（已用 ${(agAlways.bytes / 1024).toFixed(1)} KB）`);
+      }
+      try {
+        await invoke("agent_skill_set_always", { name: s.slug, on: aw.checked });
+        toast(aw.checked ? `已常驻 ${s.slug}（正文每轮注入）` : `已取消常驻 ${s.slug}`);
+      } catch (e) {
+        toast(String(e)); aw.checked = !aw.checked;
+      }
+      await agLoadSkills();
+    };
+    row.appendChild(nm); row.appendChild(d); row.appendChild(sz);
+    row.appendChild(awLbl); row.appendChild(aw); row.appendChild(sw);
     box.appendChild(row);
+  }
+  if (agAlways.slugs.length) {
+    const foot = document.createElement("div");
+    foot.className = "agrow empty";
+    foot.textContent = en("常驻技能") + ": " + agAlways.slugs.join(", ") + " · " +
+      (agAlways.bytes / 1024).toFixed(1) + " / " + (agAlways.limit / 1024).toFixed(0) + " KB · " +
+      en("每轮注入系统提示，一直占上下文");
+    box.appendChild(foot);
   }
 }
 
@@ -5569,7 +5886,8 @@ function renderSkillsPage() {
     nm.className = "nm"; nm.textContent = s.slug;
     const tag = document.createElement("span");
     tag.className = "tag";
-    tag.textContent = (s.enabled ? "" : "停用 · ") + (s.size + 0 === s.size ? (s.size / 1024).toFixed(1) + " KB" : "");
+    tag.textContent = (s.enabled ? "" : "停用 · ") + (agIsAlways(s.slug) ? en("常驻") + " · " : "")
+      + (s.size + 0 === s.size ? (s.size / 1024).toFixed(1) + " KB" : "");
     row.appendChild(nm); row.appendChild(tag);
     row.title = (s.description || "") + "\n" + (s.path || "");
     row.onclick = async () => {
@@ -6440,12 +6758,29 @@ async function bindAgentEvents() {
   if (!agEl("ag-chat")) return;
   await agOn("agent://state", (ev) => {
     agRunning = !!(ev.payload && ev.payload.running);
-    if (agRunning) agState("思考中…", "ok");
-    else { agState("空闲"); agFlushStream(); agStreamNode = null; }
+    if (agRunning) {
+      agState("思考中…", "ok");
+      agThinkEnsure();          // 先摆一个"思考中…"；模型真吐思考就往上长
+    } else {
+      agState("空闲");
+      agFlushStream();
+      agStreamNode = null;
+      agThinkSettle();
+    }
+  });
+  // 思考过程（推理模型会发）：往那个"思考块"里长，正文一开始它就收起来
+  await agOn("agent://reason", (ev) => {
+    const p = ev.payload || {};
+    if (agMeta && p.session !== agMeta.id) return;
+    agThinkEnsure();
+    agReasonText += p.text || "";
+    agThinkPaint();
+    agScrollTail(false);
   });
   await agOn("agent://delta", (ev) => {
     const p = ev.payload || {};
     if (agMeta && p.session !== agMeta.id) return;
+    if (agThinkNode) agThinkSettle();      // 正文开始了：把思考块收起来
     agStreamText += p.text || "";
     const node = agEnsureStreamNode();
     node.querySelector(".bubble").innerHTML = agMd(agStreamText);
@@ -6460,9 +6795,13 @@ async function bindAgentEvents() {
     const p = ev.payload || {};
     if (agMeta && p.session !== agMeta.id) return;
     if (agRunning) agState(`正在跑工具：${p.name}`, "ok");
+    agThinkSettle();                          // 这一段结束了：思考块收起来
     // 有工具调用说明这一轮的正文结束了
     if (agStreamNode) { agStreamNode.classList.remove("streaming"); agStreamNode = null; }
-    if (agStreamText.trim()) agEvents.push({ type: "assistant", text: agStreamText });
+    // 这一轮的正文结束了（后面还有工具调用）：本地这条也带上模型和时间，别等 done 才显示
+    if (agStreamText.trim()) {
+      agEvents.push({ type: "assistant", text: agStreamText, model: (agMeta && agMeta.model) || "", ts: Date.now() });
+    }
     agStreamText = "";
     agEvents.push({ type: "tool_call", id: p.id, name: p.name, args: p.args });
     agRender();
@@ -6483,6 +6822,7 @@ async function bindAgentEvents() {
     if (agMeta && p.session !== agMeta.id) return;
     agAppendEvent({ type: "err", text: p.text });
     agState("出错", "err");
+    if (!agWatching()) agUnreadBump();
   });
   await agOn("agent://usage", (ev) => {
     const p = ev.payload || {};
@@ -6553,7 +6893,8 @@ async function bindAgentEvents() {
     card.appendChild(ttl); card.appendChild(pre); card.appendChild(acts);
     box.appendChild(card);
     agScrollTail(true);
-    agState("等你批准…", "err");
+    agState("等你批准…", "wait");
+    if (!agWatching()) agUnreadBump();
   });
   await agOn("agent://browser", (ev) => {
     agRenderPage(ev.payload);     // agent 打开网页时，右侧「浏览器」跟着显示
@@ -6561,6 +6902,8 @@ async function bindAgentEvents() {
   await agOn("agent://done", async () => {
     agRunning = false;
     agState("空闲");
+    agThinkSettle();
+    if (!agWatching()) agUnreadBump();         // 没在看这一页 → 挂个"有未读"角标
     agSetSendDisabled(false);
     if (agStreamNode) agStreamNode.classList.remove("streaming");
     agStreamNode = null;
@@ -6580,6 +6923,12 @@ async function bindAgentEvents() {
       agRefreshBalance();
     }
   });
+  // 状态灯上的未读角标：点一下跳回对话；窗口重新获得焦点且正看着 agent 页时自动清掉
+  if (agEl("ag-state")) {
+    agEl("ag-state").onclick = () => { agUnreadClear(); showPane("agent"); };
+    window.addEventListener("focus", () => { if (agWatching()) agUnreadClear(); });
+    document.addEventListener("visibilitychange", () => { if (agWatching()) agUnreadClear(); });
+  }
 }
 // ---------------- 中英文切换 ----------------
 // 说明：按"元素文本(中文) -> 英文"的字典做替换（叶子元素/placeholder/title），
@@ -6778,7 +7127,15 @@ const EN = {
   "摘要": "Summary", "用户消息": "User msgs", "助手回复": "Assistant", "工具调用/结果": "Tool calls/results",
   "剩余可用": "Free", "余额": "Balance", "已配置": "Configured", "接口格式": "API format",
   "本机估算": "local estimate", "模型上报": "provider-reported", "窗口预算": "budget",
-  "已被摘要压掉": "compressed away by the summary",
+  "已被摘要压掉": "compressed away by the summary", "回复完成时间": "replied at",
+  "已思考": "thought", "思考过程": "reasoning", "有未读回复": "unread reply",
+  "方向标记": "Direction", "agent 连上了主连接：": "the agent connected the main link: ",
+  "常驻": "Always on", "常驻技能": "Always-on skills", "其中常驻技能": "of which always-on skills",
+  "先启用这个技能": "Enable the skill first",
+  "常驻：技能正文每轮注入系统提示（身份 / 口吻类技能用这个）":
+    "Always on: inject the skill body into the system prompt every turn (use this for identity / tone skills)",
+  "每轮注入系统提示，一直占上下文": "injected every turn (always occupies context)",
+  "正文每轮注入，不会被压缩掉": "injected every turn, never trimmed away",
   "不是 git 仓库": "not a git repo", " · 干净": " · clean", "读取中…": "loading…",
   "按": "estimated with", "的价格估算（元/百万 token），可在 main.js 的 AG_PRICE 里改":
     "pricing (CNY per 1M tokens); edit AG_PRICE in main.js",
@@ -7151,7 +7508,8 @@ const EN = {
   "删除并重启": "Delete and restart", "已删除，正在重启…": "deleted, restarting…",
   "先勾选要删的项": "tick something first", "一个都没勾": "nothing selected",
   // 后端返回的缓存项文案
-  "界面偏好（主题 / 配色 / 语言 / 栏宽）": "UI preferences (theme / accent / language / pane widths)",
+  "界面偏好（主题 / 配色 / 语言；栏宽那些存在浏览器本地存储里）":
+    "UI preferences (theme / accent / language; pane widths live in browser local storage)",
   "会回到默认外观（深色 + 海洋蓝 + 英文）": "resets the look to the default (dark, ocean blue, English)",
   "窗口位置与大小": "Window position and size",
   "下次启动窗口回到屏幕中央的默认尺寸": "next launch uses the default size, centred",
@@ -7569,7 +7927,8 @@ function bindTitleBar() {
 
 async function main() {
   migrateLocalPrefs();          // 老版本的 h7test_* 设置搬成 kdock_*（只搬一次）
-  // 先把启动画面放出来（后端建，建完立刻做无边框处理；主窗口还在 hidden，等第一屏画完再亮）
+  // 启动画面这会儿**早就顶上去了**（tauri.conf.json 里声明、后端 setup 里显示，比这里早得多）；
+  // 这一下只是兜底：窗口还在就把它再顶到最前，启动阶段已经收尾则什么都不做。
   invoke("splash_show").catch(() => {});
   initControls();
   switchMode("serial");
@@ -7827,6 +8186,19 @@ async function main() {
     } else {
       redrawRx();
     }
+  });
+  // agent 用 port_open 连上了主连接：界面里的连接参数也跟着切过去
+  await listen("main://opened", (ev) => {
+    const p = ev.payload || {};
+    if (p.by !== "agent" || !p.endpoint) return;
+    applyEndpointToUi(p.endpoint);
+    toast(en("agent 连上了主连接：") + (p.endpoint.mode || ""));
+  });
+  // agent 用 port_write 往"主连接"里发的东西：也补一条 TX 行进用户的日志（不然用户不知道它发了啥）
+  await listen("log://tx", (ev) => {
+    const p = ev.payload || {};
+    if (rxPaused) return;
+    pushEntry({ dir: "TX", ts_ms: p.ts_ms || Date.now(), text: p.text || "", hex: p.hex || "", ascii: p.ascii || "" });
   });
   await listen("link://tail", (ev) => {
     let p = ev.payload;

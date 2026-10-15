@@ -88,7 +88,7 @@ pub fn cache_items(app: AppHandle) -> Vec<Value> {
     };
 
     if let Some(d) = &data {
-        push("ui-prefs", "界面偏好（主题 / 配色 / 语言 / 栏宽）", Some(d.join("ui-prefs.json")),
+        push("ui-prefs", "界面偏好（主题 / 配色 / 语言；栏宽那些存在浏览器本地存储里）", Some(d.join("ui-prefs.json")),
              "file", "会回到默认外观（深色 + 海洋蓝 + 英文）", json!({}));
         push("window-state", "窗口位置与大小", Some(d.join(".window-state.json")),
              "file", "下次启动窗口回到屏幕中央的默认尺寸", json!({}));
@@ -107,6 +107,8 @@ pub fn cache_items(app: AppHandle) -> Vec<Value> {
              "dir", "只删这个副本目录（你自己的原始 SKILL.md 不在里面）", json!({ "confirm": true }));
         push("skills-off", "已关闭的技能副本", Some(d.join("skills-off")),
              "dir", "同上，只删副本", json!({}));
+        push("skills-always", "常驻技能清单（哪几个技能的正文每轮注入系统提示）", Some(d.join("skills-always.json")),
+             "file", "只清「常驻」标记，技能文件本身不动", json!({}));
         push("mcp", "MCP 服务配置", Some(d.join("mcp.json")), "file", "MCP 列表会清空", json!({}));
         push("commands", "指令表配置（指令组 / 指令）", Some(d.join("commands.json")),
              "file", "回到内置的标准 Linux 指令集", json!({}));
@@ -144,6 +146,7 @@ pub fn cache_delete(app: AppHandle, keys: Vec<String>) -> Result<Value, String> 
             "sessions" => vec![agent.join("sessions")],
             "skills" => vec![agent.join("skills")],
             "skills-off" => vec![agent.join("skills-off")],
+            "skills-always" => vec![agent.join("skills-always.json")],
             "mcp" => vec![agent.join("mcp.json")],
             "commands" => vec![agent.join("commands.json")],
             "workspaces" => vec![agent.join("workspaces.json")],

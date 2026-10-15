@@ -12,6 +12,21 @@
   "app": {
     "windows": [
       {
+        "label": "splash",
+        "title": "KDock",
+        "url": "splash.html",
+        "width": 380,
+        "height": 260,
+        "resizable": false,
+        "decorations": false,
+        "focus": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": true,
+        "visible": false,
+        "backgroundColor": "#131B20"
+      },
+      {
         "label": "main",
         "title": "KDock",
         "decorations": false,

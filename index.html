@@ -403,6 +403,7 @@
               <button id="clear" class="btn small">清屏</button>
               <span class="grow"></span>
               <label class="chk" title="每行前面显示时间戳"><input type="checkbox" id="show-ts" checked /> 时间戳</label>
+              <label class="chk" title="每行前面标出 RX/TX/SYS 方向；开着时间戳时会并进同一个方括号里（SSCOM 那种一个前缀）"><input type="checkbox" id="show-dir" /> 方向标记</label>
               <details class="more" id="more-panel">
                 <summary class="btn small" title="显示 / 交互 / 快捷发送 / 会话日志 / 回放">更多 ⋯</summary>
                 <div class="morebox panelbox">
@@ -487,10 +488,10 @@
         <!-- Agent：对话 + 工具调用 -->
         <div class="workpane" data-work="agent" hidden>
           <div class="trow">
-            <span id="ag-state" class="dot">空闲</span>
             <span id="ag-title" class="agtitle">（还没选对话）</span>
-            <span id="ag-goal" class="aggoal" hidden></span>
             <span id="ag-turns" class="agturn"></span>
+            <span id="ag-state" class="agst" title="空闲"><span class="led"></span><span class="spin"></span></span>
+            <span id="ag-goal" class="aggoal" hidden></span>
             <span class="grow"></span>
             <button id="ag-stop" class="btn small" hidden>⏹ 停止</button>
             <div class="aghistwrap">
@@ -799,14 +800,11 @@
             <div id="ag-info" class="aginfo"></div>
             <div class="cardtitle">上下文成分</div>
             <div id="ag-ctx" class="aginfo"></div>
-            <div class="cardtitle">技能<button id="ag-skill-refresh" class="btn small">↻</button></div>
+            <div class="cardtitle">技能<button id="ag-skill-refresh" class="btn small">↻</button><button id="ag-skill-add" class="btn small" title="去设置里导入 / 新建技能">＋</button></div>
             <div id="ag-skill-table" class="agtable"></div>
-            <p class="hint">这里只管**开关**（关掉的技能不进口令索引，agent 也看不到）。
-              路径 / 导入 / 编辑都在 <b>设置 → 技能</b>。</p>
 
-            <div class="cardtitle">MCP 服务<button id="ag-mcp-refresh" class="btn small">↻</button></div>
+            <div class="cardtitle">MCP 服务<button id="ag-mcp-refresh" class="btn small">↻</button><button id="ag-mcp-add" class="btn small" title="去设置里新增 MCP 服务">＋</button></div>
             <div id="ag-mcp-table" class="agtable"></div>
-            <p class="hint">这里只管**开关**。新增 / 参数 / 测试都在 <b>设置 → MCP</b>。</p>
           </div>
 
           <!-- ③ 文本 -->

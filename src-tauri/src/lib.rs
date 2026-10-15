@@ -1877,11 +1877,22 @@ fn list_ports() -> Result<Vec<PortInfo>, String> {
 /// 打开连接。串口 / TCP Client / UDP 立刻建立；TCP Server 先监听，
 /// 有客户端连进来后再把状态推给前端。
 #[tauri::command]
-async fn open_transport(
-    app: AppHandle,
-    state: State<'_, Arc<AppState>>,
-    endpoint: Endpoint,
-) -> Result<String, String> {
+async fn open_transport(app: AppHandle, endpoint: Endpoint) -> Result<String, String> {
+    open_main(&app, endpoint, "user")
+}
+
+/// 打开主连接。界面的「连接」按钮和 agent 的 `port_open` 共用这一条 ——
+/// agent 连的也是**用户那条连接**，所以状态、日志、按钮全都一致。
+/// `by` = "user" / "agent"：前端收到 `main://opened` 会把界面里的连接参数同步过去。
+pub(crate) fn open_main(app: &AppHandle, endpoint: Endpoint, by: &str) -> Result<String, String> {
+    let ep_json = serde_json::to_value(&endpoint).unwrap_or_default();
+    let msg = open_main_inner(app, endpoint)?;
+    let _ = app.emit("main://opened", serde_json::json!({ "by": by, "endpoint": ep_json }));
+    Ok(msg)
+}
+
+fn open_main_inner(app: &AppHandle, endpoint: Endpoint) -> Result<String, String> {
+    let state = app.state::<Arc<AppState>>();
     if state.is_busy() {
         return Err("已有一个连接，请先断开".into());
     }
@@ -1975,7 +1986,13 @@ async fn open_transport(
 
 /// 断开 / 停止监听。
 #[tauri::command]
-async fn close_transport(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+async fn close_transport(app: AppHandle) -> Result<String, String> {
+    close_main(&app)
+}
+
+/// 断开主连接（界面「断开」和 agent 的 `port_close` 共用）
+pub(crate) fn close_main(app: &AppHandle) -> Result<String, String> {
+    let state = app.state::<Arc<AppState>>();
     let stop = state.reader_stop.lock().expect("stop mutex").take();
     if let Some(flag) = &stop {
         flag.store(true, Ordering::Relaxed);
@@ -2008,31 +2025,44 @@ async fn close_transport(state: State<'_, Arc<AppState>>) -> Result<String, Stri
 /// 发送。`mode` 取 `text` / `hex`，四种传输共用同一条路径。
 #[tauri::command]
 async fn write_data(
-    state: State<'_, Arc<AppState>>,
+    app: AppHandle,
     payload: String,
     mode: String,
     line_ending: String,
     raw: Option<bool>,
 ) -> Result<WriteAck, String> {
+    write_main(&app, &payload, &mode, &line_ending, raw.unwrap_or(false))
+}
+
+/// 主连接写数据的核心：前端"发送"按钮和 agent 的 `port_write` 工具共用这一条 ——
+/// agent 也走这里发，它的 TX 才会落进用户在传输页看到的那份日志。
+pub(crate) fn write_main(
+    app: &AppHandle,
+    payload: &str,
+    mode: &str,
+    line_ending: &str,
+    raw: bool,
+) -> Result<WriteAck, String> {
+    let state = app.state::<Arc<AppState>>();
     // `raw = true`：ASCII 交互(终端)模式专用 —— 一个字符都不加工，原样写出去。
     // 关键是"不剥末尾换行"：终端里敲回车本来就只发一个 "\r"，
     // 如果交给 `LineEnding::encode`，它会把末尾换行当成"用户多打的回车"剥掉，
     // 结果编码成空串，设备永远收不到回车（ASCII 模式下敲不动的根因）。
-    let bytes: Vec<u8> = if raw.unwrap_or(false) {
-        payload.into_bytes()
+    let bytes: Vec<u8> = if raw {
+        payload.as_bytes().to_vec()
     } else {
         let le =
-            LineEnding::parse(&line_ending).ok_or_else(|| format!("未知行尾: {line_ending}"))?;
-        match mode.as_str() {
+            LineEnding::parse(line_ending).ok_or_else(|| format!("未知行尾: {line_ending}"))?;
+        match mode {
             "hex" => {
                 let mut v =
-                    hex::hex_to_bytes(&payload).map_err(|e| format!("HEX 解析失败: {e}"))?;
+                    hex::hex_to_bytes(payload).map_err(|e| format!("HEX 解析失败: {e}"))?;
                 v.extend_from_slice(le.bytes());
                 v
             }
             // 行尾完全由"行尾"设置决定：末尾的换行会先被剥掉，
             // 中间换行保留（`encode` 里有单测）
-            "text" => le.encode(&payload),
+            "text" => le.encode(payload),
             other => return Err(format!("未知发送模式: {other}")),
         }
     };
@@ -2072,13 +2102,138 @@ fn get_log(state: State<'_, Arc<AppState>>) -> Vec<LogLine> {
     state.log.lock().expect("log mutex").lines().to_vec()
 }
 
+/// 本机 IPv4 地址（agent 开 TCP 服务端 / UDP 时要告诉用户连哪个地址）。
+/// 两条路：先按主机名解析（能拿到多张网卡的地址），拿不到再用"UDP connect 问路由"兜一下。
+pub(crate) fn local_ips() -> Vec<String> {
+    use std::net::ToSocketAddrs;
+    let mut out: Vec<String> = Vec::new();
+    if let Ok(name) = std::env::var("COMPUTERNAME") {
+        if let Ok(list) = (format!("{name}:0"), 0u16).to_socket_addrs() {
+            for a in list {
+                if let std::net::IpAddr::V4(v4) = a.ip() {
+                    let s = v4.to_string();
+                    if !out.contains(&s) {
+                        out.push(s);
+                    }
+                }
+            }
+        }
+    }
+    if out.is_empty() {
+        if let Ok(s) = std::net::UdpSocket::bind("0.0.0.0:0") {
+            // UDP 的 connect 只是记下对端/问一下路由表，不会真的发包
+            if s.connect("8.8.8.8:80").is_ok() {
+                if let Ok(a) = s.local_addr() {
+                    out.push(a.ip().to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 主连接最近的收发记录（agent 的 `port_read` 读的就是用户在传输页看到的那一份）
+pub(crate) fn main_log_lines(app: &AppHandle, tail: usize) -> Vec<LogLine> {
+    let state = app.state::<Arc<AppState>>();
+    let log = state.log.lock().expect("log mutex");
+    let lines = log.lines();
+    let from = lines.len().saturating_sub(tail.max(1));
+    lines[from..].to_vec()
+}
+
+/// 把主连接最近的收发记录排成人话：`[14:32:05.123] RX 内容`
+pub(crate) fn main_log_text(app: &AppHandle, tail: usize) -> String {
+    let lines = main_log_lines(app, tail);
+    if lines.is_empty() {
+        return "（主连接还没有任何收发记录 —— 用户可能还没连接，或者还没收发过）".to_string();
+    }
+    let mut out = String::new();
+    for l in &lines {
+        let dir = match l.dir {
+            Direction::Rx => "RX",
+            Direction::Tx => "TX",
+            Direction::Sys => "SYS",
+        };
+        let stamp = match local_hms(l.ts_ms) {
+            Some((h, m, s, ms)) => format!("{h:02}:{m:02}:{s:02}.{ms:03}"),
+            None => format!("{}", l.ts_ms),
+        };
+        let text = String::from_utf8_lossy(&l.data);
+        let clean = text.replace('\r', "");
+        let printable = !clean.trim().is_empty() && clean.chars().all(|c| !c.is_control());
+        let body = if printable {
+            clean.replace('\n', "↵")
+        } else {
+            hex::bytes_to_hex(&l.data)
+        };
+        out.push_str(&format!("[{stamp}] {dir} {body}\n"));
+    }
+    out
+}
+
+/// 毫秒时间戳 → 本地钟点（Windows 的 FileTime 转换帮忙算时区/夏令时，不引时间库）
+#[cfg(windows)]
+fn local_hms(ts_ms: i64) -> Option<(u16, u16, u16, u16)> {
+    #[repr(C)]
+    #[derive(Default, Clone, Copy)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct SystemTimeW {
+        year: u16,
+        month: u16,
+        dow: u16,
+        day: u16,
+        hour: u16,
+        minute: u16,
+        second: u16,
+        ms: u16,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn FileTimeToLocalFileTime(inp: *const FileTime, out: *mut FileTime) -> i32;
+        fn FileTimeToSystemTime(ft: *const FileTime, st: *mut SystemTimeW) -> i32;
+    }
+    if ts_ms <= 0 {
+        return None;
+    }
+    // 1601-01-01 到 1970-01-01 的 100ns 数
+    let ticks = (ts_ms as i128) * 10_000 + 116_444_736_000_000_000i128;
+    let ft = FileTime { low: (ticks as u64 & 0xFFFF_FFFF) as u32, high: (ticks >> 32) as u32 };
+    let mut lt = FileTime::default();
+    let mut st = SystemTimeW::default();
+    unsafe {
+        if FileTimeToLocalFileTime(&ft, &mut lt) == 0 {
+            return None;
+        }
+        if FileTimeToSystemTime(&lt, &mut st) == 0 {
+            return None;
+        }
+    }
+    Some((st.hour, st.minute, st.second, st.ms))
+}
+
+#[cfg(not(windows))]
+fn local_hms(_ts_ms: i64) -> Option<(u16, u16, u16, u16)> {
+    None
+}
+
 #[tauri::command]
 fn clear_log(state: State<'_, Arc<AppState>>) {
     state.log.lock().expect("log mutex").clear();
 }
 
 #[tauri::command]
-async fn get_stats(state: State<'_, Arc<AppState>>) -> Result<Stats, String> {
+async fn get_stats(app: AppHandle) -> Result<Stats, String> {
+    stats_of(&app)
+}
+
+/// 主连接状态（界面的 get_stats 与 agent 的 port_state 共用）
+pub(crate) fn stats_of(app: &AppHandle) -> Result<Stats, String> {
+    let state = app.state::<Arc<AppState>>();
     let log = state.log.lock().expect("log mutex");
     // try_lock：设备读写/升级这类"独占连接"的操作会把 link 占住很久，
     // 而 get_stats 是前端每 500ms 轮询一次的 —— 用 lock() 会把主线程（同步命令跑在主线程）冻住，
@@ -2822,9 +2977,82 @@ fn clamp_to_work_area(w: &tauri::WebviewWindow) {
 }
 
 // ── 启动画面 ──────────────────────────────────────────────────────
-// 主窗口在 tauri.conf.json 里是 visible:false（先让 splash 顶着），前端把第一屏画完
-// 会调 `ui_ready`：关掉 splash、把主窗口放出来。另有 6 秒兜底（见 setup）。
+// 启动画面是 tauri.conf.json 的 `app.windows[0]`（label = "splash"）：Tauri 在 setup 之前就把它
+// 建好了，比"前端跑起来"更早 —— "主窗口藏着、前端还没画出来"那段空白靠它顶着。主窗口在同配置里
+// 也是 visible:false；前端把第一屏画完会调 `ui_ready`：关掉 splash、把主窗口放出来（另有 6 秒兜底）。
+//
+// 为什么不照以前那样由前端 invoke("splash_show") 来建：那条路上它必须等 index.html + main.js
+// 下载解析执行完（实测温启动 ~900ms 才轮到它出现），而它又在第一屏画完时立刻被关掉，于是只活
+// 0.35~0.55 秒 —— 看起来就像"没有启动画面"（实测时间线：0→940ms 屏幕上什么都没有）。
+/// 启动阶段是否已经收尾（`ui_ready` 跑过）。启动画面只属于"启动那一下"：收尾之后再放出来，
+/// 就是一个没边框、不在任务栏、还置顶的小窗，用户关不掉（它没有标题栏）。
+static UI_READY_DONE: AtomicBool = AtomicBool::new(false);
+
+// 启动画面的底色。WebView2 画出第一帧之前窗口里是**默认白底**（实测 t+0 整窗 #FFFFFF，
+// t+120ms 才画上深色卡片），暗色界面上等于闪一下白，所以窗口一建好就把底色按用户主题定下来。
+fn splash_bg_hsl(app: &AppHandle) -> (f64, f64, f64) {
+    let prefs = ui_prefs_get(app.clone());
+    let theme = prefs.get("theme").and_then(|v| v.as_str()).unwrap_or("dark");
+    if theme == "light" {
+        // 亮色主题：splash.html 的 --bg 不跟着配色走（保持 220 43% 97%）
+        return (220.0, 43.0, 97.0);
+    }
+    // 主色相表要和 src/main.js 里的 SCHEMES、splash.html 里的 HUES 同步（三处同源）
+    let scheme = prefs.get("scheme").and_then(|v| v.as_str()).unwrap_or("ocean");
+    let hue = match scheme {
+        "slate" => 220.0,
+        "ocean" => 205.0,
+        "mint" => 167.0,
+        "forest" => 128.0,
+        "twilight" => 255.0,
+        "amber" => 35.0,
+        "sakura" => 338.0,
+        _ => 205.0,
+    };
+    // dark / auto 都按暗色走：auto 要知道系统深浅色，为 WebView 首帧那几十毫秒去读注册表不值
+    (hue, 24.0, 10.0)
+}
+
+/// HSL(h 0-360, s/l 0-100) → RGBA，和 CSS 的 hsl() 同一套算法。
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> tauri::window::Color {
+    let s = (s / 100.0).clamp(0.0, 1.0);
+    let l = (l / 100.0).clamp(0.0, 1.0);
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let hp = h.rem_euclid(360.0) / 60.0;
+    let x = c * (1.0 - (hp % 2.0 - 1.0).abs());
+    let (r, g, b) = match hp.floor() as i64 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = l - c / 2.0;
+    let to8 = |v: f64| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    tauri::window::Color(to8(r), to8(g), to8(b), 255)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hsl_to_rgb;
+
+    /// 这两个值直接对应 splash.html 的底色：暗色 = hsl(205 24% 10%)（抓图实测就是 #131B20）、
+    /// 亮色 = CSS 里写死的 hsl(220 43% 97%)。改了配色表就容易把这两处改脱钩，钉住。
+    #[test]
+    fn splash_background_matches_the_stylesheet() {
+        let dark = hsl_to_rgb(205.0, 24.0, 10.0);
+        assert_eq!((dark.0, dark.1, dark.2, dark.3), (19, 27, 32, 255));
+        let light = hsl_to_rgb(220.0, 43.0, 97.0);
+        assert_eq!((light.0, light.1, light.2, light.3), (244, 246, 251, 255));
+        // 换个色相也要跟着走（森林绿：hsl(128 24% 10%)）
+        let forest = hsl_to_rgb(128.0, 24.0, 10.0);
+        assert!(forest.1 > forest.0 && forest.1 > forest.2);
+    }
+}
+
 fn ui_ready_impl(app: &AppHandle) {
+    UI_READY_DONE.store(true, Ordering::Relaxed);
     if let Some(w) = app.get_webview_window("main") {
         let visible = w.is_visible().unwrap_or(true);
         if !visible {
@@ -2873,15 +3101,21 @@ fn ui_ready(app: AppHandle) {
     ui_ready_impl(&app);
 }
 
-/// 前端刚跑起来时（main() 最开始）调它把启动画面放出来。
-/// 为什么由**前端**来建：写在 tauri.conf.json 里的窗口是启动流程里建的，那时主 webview 还没就绪；
-/// 在 setup 里手动建第二个 webview 会随机撞上 0x8007139F 直接 panic（实测踩过）。
-/// 由前端调用时主 webview 一定已经好了，创建稳，而且建完立刻就能做无边框处理
-/// （配置文件那条路上它会带着 WS_CAPTION 露出三条系统边）。
+/// 前端刚跑起来时（main() 最开始）调一下。正常情况下启动画面**早就有了** —— 它在
+/// tauri.conf.json 里声明、由 Tauri 在 setup 之前建好、setup 里显示出来，比这里早得多；
+/// 这一下只是再确保它在最前面。
+/// 真没有（配置那条路没建起来）才补建一个：那时前端已经跑起来、主 webview 早就绪，创建稳。
+/// 但启动阶段一旦收尾就绝不再建/再放：那时放出来的窗口没人会关，会变成一个没边框、
+/// 不在任务栏、还置顶的常驻小窗。
 #[tauri::command]
 async fn splash_show(app: AppHandle) -> Result<(), String> {
-    if app.get_webview_window("splash").is_some() {
-        return Ok(()); // 已经有了
+    if UI_READY_DONE.load(Ordering::Relaxed) {
+        return Ok(()); // 启动阶段已经结束（ui_ready 跑过），别再放出来
+    }
+    if let Some(sp) = app.get_webview_window("splash") {
+        let _ = sp.show();
+        let _ = sp.set_always_on_top(true);
+        return Ok(()); // 已经有了：只把它在最前面顶一下
     }
     // 图标做成 'static 的 owned Image：`default_window_icon()` 借的是 app，
     // 直接 cloned() 会因生命周期不够长编译不过（E0597）
@@ -3031,6 +3265,41 @@ pub fn run() {
         .setup(|app| {
             // 它内部要跑 PowerShell + WMI（好几秒），别挡着窗口显示 —— 丢后台线程慢慢补名字
             std::thread::spawn(refresh_friendly);
+            // 任务栏/标题栏图标：显式再设一次。
+            // 实测这台机器上 WM_GETICON 的**大图标是 0**（只有小图标有值），
+            // 任务栏按钮于是显示成空白/默认图标。
+            // 优先用打包进去的图标；没有（开发运行时常见）就用源码里内嵌的那份。
+            // 都做成 'static 的 owned Image —— 启动画面和托盘两步都要用同一个。
+            let icon: Option<tauri::image::Image<'static>> = app
+                .default_window_icon()
+                .map(|i| tauri::image::Image::new_owned(i.rgba().to_vec(), i.width(), i.height()))
+                .or_else(fallback_icon);
+            // ── 先把启动画面顶上去 ──
+            // 它是 tauri.conf.json 里的 windows[0]，Tauri 在 setup **之前**就建好了，那时主 webview
+            // 还在加载 index.html（前面那 ~0.9 秒就是它）。这里只做三件事：修边框 → 设底色 → 显示。
+            // 顺序有讲究：先修边框再 show()，用户就看不到那三面系统边；底色要在 show() **之前**设，
+            // 否则先闪一帧白（WebView2 的默认底色是白的，页面还没画上去）。
+            if let Some(sp) = app.get_webview_window("splash") {
+                #[cfg(windows)]
+                {
+                    install_frame_proc(&sp);
+                    strip_native_frame(&sp);
+                    // 创建那一下是按"带标题栏的窗口"算的外框（380x260 的客户区 → 396x269 的窗口），
+                    // 边框清掉之后客户区会撑满那 396x269。这里显式再定一次尺寸，启动画面就是干净的
+                    // 380x260（不依赖任何"恢复"来的值）。
+                    let _ = sp.set_size(tauri::PhysicalSize::new(380, 260));
+                    let _ = sp.center();
+                }
+                let (hue, sat, lig) = splash_bg_hsl(app.handle());
+                let _ = sp.set_background_color(Some(hsl_to_rgb(hue, sat, lig)));
+                if let Some(icon) = icon.clone() {
+                    let _ = sp.set_icon(icon.clone());
+                    #[cfg(windows)]
+                    set_big_icon(&sp, &icon);
+                }
+                let _ = sp.show();
+                let _ = sp.set_always_on_top(true);
+            }
             // 自绘标题栏：把原生窗体边框去掉（decorations=false 在 Windows 上还会剩一圈）
             #[cfg(windows)]
             if let Some(w) = app.get_webview_window("main") {
@@ -3052,15 +3321,7 @@ pub fn run() {
                 // 之后由守护线程盯着：最大化状态一变就重清样式 + 贴回工作区（普通线程，不引 tokio）
                 spawn_frame_watcher(w.clone());
             }
-            // 任务栏/标题栏图标：显式再设一次。
-            // 实测这台机器上 WM_GETICON 的**大图标是 0**（只有小图标有值），
-            // 任务栏按钮于是显示成空白/默认图标。
-            // 优先用打包进去的图标；没有（开发运行时常见）就用源码里内嵌的那份。
-            // 都做成 'static 的 owned Image —— 托盘那步还要用同一个。
-            let icon: Option<tauri::image::Image<'static>> = app
-                .default_window_icon()
-                .map(|i| tauri::image::Image::new_owned(i.rgba().to_vec(), i.width(), i.height()))
-                .or_else(fallback_icon);
+            // 图标已经设给启动画面了；主窗口（长期存在的那个）这边再设一次
             if let Some(icon) = icon.clone() {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.set_icon(icon.clone());   // 小图标（tao 只做这个）
@@ -3211,6 +3472,8 @@ pub fn run() {
             agent::agent_skill_save,
             agent::agent_skill_delete,
             agent::agent_skill_set_enabled,
+            agent::agent_skill_set_always,
+            agent::agent_skills_always,
             agent::agent_skill_import,
             agent::agent_skills_dir,
             agent::agent_tools,
