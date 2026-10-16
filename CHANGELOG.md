@@ -18,6 +18,11 @@
 ## [未发布]
 
 ### 新增
+- **CI 自动发"测试版"Release**（给不想自己编译的人一个下载入口）：`main` 每推一次就重建，并更新
+  同一个 **Pre-release**（tag `test-latest`，链接固定），里面挂三样东西 —— 免安装 zip（解压双击
+  `KDock.exe`）、**NSIS 安装包**（`bundle.active` 打开，装到当前用户、有开始菜单入口和卸载）、
+  裸可执行文件；每一份的说明里都明确写着"这是自动构建的测试版、未签名、别用在生产环境"。
+  将来打 `v*` tag 时，同一条流程会自动转成正式 Release。README（中/英）新增「下载」一节。
 - **agent 能直接调安卓 ADB 了**（以前只能靠本机命令硬啃）：新增 `adb_devices / adb_mdns /
   adb_connect / adb_pair / adb_shell / adb_screenshot / adb_push / adb_pull / adb_install`，
   和「安卓 ADB」页共用同一套后端（`android.rs`）。

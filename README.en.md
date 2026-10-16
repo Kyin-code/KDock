@@ -20,6 +20,27 @@ live charts, flow orchestration — plus an Agent that can drive all of it. All 
 
 ---
 
+## Download (test builds)
+
+> ⚠️ **There are no stable releases yet — only automatically built test builds.** They follow `main`:
+> they may crash or change your settings, so please back up and do not use them in production.
+
+**[⬇ Latest test build](https://github.com/Kyin-code/KDock/releases/tag/test-latest)** — CI rebuilds it on every
+push to `main`, so this link always points at the newest one. GitHub marks it as a **Pre-release**.
+([All releases](https://github.com/Kyin-code/KDock/releases))
+
+| File | What it is |
+| --- | --- |
+| `KDock-*-win-x64.zip` | **Portable** — unzip and run `KDock.exe` |
+| `KDock_*_x64-setup.exe` | **Installer** (NSIS) — installs for the current user, adds a Start menu entry, uninstalls cleanly |
+| `kdock.exe` | The bare executable |
+
+- The binaries are **not code-signed**: Windows SmartScreen may warn on first launch (More info → Run anyway);
+- The **WebView2 Runtime** is required (usually present on Windows 10/11; the app offers to install it if missing);
+- Only Windows x64 packages are built right now.
+
+---
+
 ## What it does
 
 | Area | Capabilities |

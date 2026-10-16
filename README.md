@@ -20,9 +20,33 @@
 
 ---
 
+## 下载（测试版）
+
+> ⚠️ **目前只有自动构建的测试版，没有正式版。** 它跟着 `main` 分支走：可能崩溃、可能改你的配置，
+> 请先备份，不要用在生产环境。
+
+**[⬇ 最新测试版](https://github.com/Kyin-code/KDock/releases/tag/test-latest)** —— `main` 上每有新提交
+CI 就会重建一次，这个链接永远指向最新那份，GitHub 上标着 **Pre-release**。
+（[全部 Release](https://github.com/Kyin-code/KDock/releases)）
+
+里面有三个包，按需要挑一个：
+
+| 文件 | 说明 |
+| --- | --- |
+| `KDock-*-win-x64.zip` | **免安装**：解压后双击 `KDock.exe` |
+| `KDock_*_x64-setup.exe` | **安装包**（NSIS）：装到当前用户、开始菜单有入口、可从"应用和功能"卸载 |
+| `kdock.exe` | 裸可执行文件 |
+
+- 程序**没做代码签名**：首次运行 Windows 可能弹 SmartScreen，点「更多信息 → 仍要运行」即可；
+- 需要 **WebView2 Runtime**（Win10/11 一般自带；缺了程序启动时会引导你安装）；
+- 目前只构建 Windows x64 的包。
+
+---
+
 ## 目录
 
 - [它能做什么](#它能做什么)
+- [下载（测试版）](#下载测试版)
 - [截图](#截图)
 - [快速开始](#快速开始)
 - [界面速览](#界面速览)

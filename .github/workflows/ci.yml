@@ -24,6 +24,9 @@ jobs:
     # The runner is a physical machine, so never execute code coming from a fork.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [ self-hosted, windows, kdock ]
+    # Publishing a release needs write access; everything else in this job stays read-only.
+    permissions:
+      contents: write
     timeout-minutes: 60
     defaults:
       run:
@@ -70,3 +73,137 @@ jobs:
           name: kdock-windows-x64
           if-no-files-found: error
           path: release/**
+
+      - name: Stage installer
+        if: github.event_name != 'pull_request'
+        run: |
+          # `tauri build` produces the NSIS installer under the cargo target dir.
+          $nsis = "$env:CARGO_TARGET_DIR\release\bundle\nsis"
+          Get-ChildItem $nsis -Filter *.exe -ErrorAction SilentlyContinue |
+            Copy-Item -Destination release -Force
+          if (-not (Get-ChildItem release -Filter *setup.exe -ErrorAction SilentlyContinue)) {
+            Write-Warning "no NSIS installer was produced - this release will only carry the portable zip"
+            "> :warning: no installer was produced in this run" >> $env:GITHUB_STEP_SUMMARY
+          }
+          Get-ChildItem release -Recurse -File -Name
+
+      - name: Package portable zip
+        if: github.event_name != 'pull_request'
+        id: pack
+        run: |
+          $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $sha = "${{ github.sha }}".Substring(0, 7)
+          $name = "KDock-$ver-test-$sha-win-x64"
+          New-Item -ItemType Directory -Force "pack/$name" | Out-Null
+          Copy-Item release/kdock.exe "pack/$name/KDock.exe" -Force
+          $note = @(
+            "KDock test build (portable, no install needed)",
+            "==============================================",
+            "1) Unzip and double-click KDock.exe.",
+            "2) The binary is not code-signed: Windows SmartScreen may warn",
+            "   -> More info -> Run anyway.",
+            "3) Needs the WebView2 Runtime (usually bundled with Windows 10/11;",
+            "   if it is missing the app offers to install it on first start).",
+            "4) This is a TEST build, for trying things out and giving feedback.",
+            "",
+            "KDock 测试版（免安装）",
+            "1) 解压后双击 KDock.exe 即可运行；",
+            "2) 未做代码签名，首次运行可能被 SmartScreen 拦一下（更多信息 -> 仍要运行）；",
+            "3) 需要 WebView2 Runtime，Win10/11 一般自带；",
+            "4) 这是测试版，请别用在生产环境。"
+          ) -join "`r`n"
+          Set-Content -Path "pack/$name/README-first.txt" -Value $note -Encoding UTF8
+          Compress-Archive -Path "pack/$name/*" -DestinationPath "pack/$name.zip" -Force
+          "zip=pack/$name.zip" >> $env:GITHUB_OUTPUT
+          Get-ChildItem pack -File -Name
+
+      - name: Publish release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $repo  = "${{ github.repository }}"
+          $sha   = "${{ github.sha }}"
+          $short = $sha.Substring(0, 7)
+          $ref   = "${{ github.ref }}"
+          $ver   = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmm")
+          # A v* tag push becomes a normal release. A push to main keeps ONE rolling
+          # pre-release (tag `test-latest`), so there is a single stable download link
+          # instead of a growing pile of builds, and it is always marked Pre-release.
+          $isStable = $ref.StartsWith("refs/tags/v")
+          $tag = if ($isStable) { "${{ github.ref_name }}" } else { "test-latest" }
+          $head = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept        = "application/vnd.github+json"
+            "User-Agent"  = "kdock-ci"
+          }
+          $body = @(
+            $(if ($isStable) { "**KDock $ver**" } else { "> WARNING: this is an automatically built **TEST build** (pre-release), NOT a stable version. 这是自动构建的**测试版**，不是正式版本。" }),
+            $(if ($isStable) { "" } else { "> It may crash or change your settings - please back up first and do not use it in production. 可能崩溃、可能改你的配置；请先备份，别用在生产环境。" }),
+            "",
+            "## Downloads",
+            "- **KDock-$ver-test-$short-win-x64.zip** - portable: unzip and run KDock.exe",
+            "- **KDock_$ver`_x64-setup.exe** - installer: Start menu entry + uninstaller (no admin needed)",
+            "- **kdock.exe** - the bare executable",
+            "",
+            "The binaries are not code-signed: Windows SmartScreen may warn on first launch (More info -> Run anyway).",
+            "The WebView2 Runtime is required (usually present on Windows 10/11).",
+            "",
+            "Build: commit $short, $((Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm")) UTC, version $ver.",
+            "This download always points at the newest build from `main`.",
+            "",
+            "Feedback: https://github.com/$repo/issues"
+          ) -join "`n"
+          $payload = @{
+            tag_name         = $tag
+            name             = if ($isStable) { "KDock $ver" } else { "KDock test build (latest: $stamp, $short)" }
+            body             = $body
+            draft            = $false
+            prerelease       = -not $isStable
+            target_commitish = $sha
+          } | ConvertTo-Json -Depth 6
+          # Existing rolling release? Then wipe its old assets and update it in place.
+          $existing = $null
+          try {
+            $existing = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/tags/$tag" -Headers $head
+          } catch { $existing = $null }
+          if ($existing) {
+            foreach ($a in @($existing.assets)) {
+              Invoke-RestMethod -Method Delete -Uri "https://api.github.com/repos/$repo/releases/assets/$($a.id)" -Headers $head | Out-Null
+              Write-Output "removed old asset: $($a.name)"
+            }
+            $rel = Invoke-RestMethod -Method Patch -Uri "https://api.github.com/repos/$repo/releases/$($existing.id)" `
+              -Headers $head -ContentType "application/json" -Body ([Text.Encoding]::UTF8.GetBytes($payload))
+            # Use the id we already know: do not depend on what PATCH echoes back.
+            $relId = $existing.id
+            $relUrl = if ($rel.html_url) { $rel.html_url } else { $existing.html_url }
+            Write-Output "updated release: $relUrl"
+          } else {
+            $rel = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$repo/releases" `
+              -Headers $head -ContentType "application/json" -Body ([Text.Encoding]::UTF8.GetBytes($payload))
+            $relId = $rel.id
+            $relUrl = $rel.html_url
+            Write-Output "created release: $relUrl"
+          }
+          $assets = @("${{ steps.pack.outputs.zip }}", "release/kdock.exe")
+          $assets += (Get-ChildItem release -Filter *setup.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+          foreach ($f in $assets) {
+            $n = Split-Path $f -Leaf
+            Invoke-RestMethod -Method Post -Headers $head -ContentType "application/octet-stream" `
+              -Uri "https://uploads.github.com/repos/$repo/releases/$relId/assets?name=$([uri]::EscapeDataString($n))" `
+              -InFile $f | Out-Null
+            Write-Output "uploaded: $n"
+          }
+          # Keep the rolling tag pointing at the build that is actually attached to it.
+          if (-not $isStable) {
+            try {
+              $refPayload = @{ sha = $sha; force = $true } | ConvertTo-Json
+              Invoke-RestMethod -Method Patch -Uri "https://api.github.com/repos/$repo/git/refs/tags/$tag" `
+                -Headers $head -ContentType "application/json" -Body $refPayload | Out-Null
+              Write-Output "moved tag $tag -> $short"
+            } catch {
+              Write-Warning "could not move tag $tag (release itself is fine): $($_.Exception.Message)"
+            }
+          }
+          "### Release: $tag -> $relUrl" >> $env:GITHUB_STEP_SUMMARY
