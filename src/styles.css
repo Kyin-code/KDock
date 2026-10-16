@@ -404,8 +404,12 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 /* 没有标签的行（按钮行 / 复选框 / 状态）也缩进到控件列，跟上面的输入框对齐；
    列表 / 表格 / 快捷发送那种数据行不缩进，它们本来就该占满宽 */
 .parampane :is(.btnrow, .trow, label.chk, .state):not(.qslist *):not(.qsrow *):not(.cmdtable *):not(.agentlist *) { padding-left: calc(var(--plb) + var(--pgap)); }
-.parampane .btnrow { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
-.parampane .btnrow > .btn { flex: 0 0 auto; min-width: 5.2rem; justify-content: center; }   /* 不再拉成整宽，宽度也一样 */
+/* 按钮行排成等宽网格（一排排对齐，长短不一的按钮不会把行尾拉得参差不齐） */
+.parampane .btnrow {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(6.4rem, 1fr));
+  gap: 6px; margin: 4px 0 8px;
+}
+.parampane .btnrow > .btn { width: 100%; min-width: 0; justify-content: center; }   /* 格子多宽按钮多宽 */
 .parampane > label.chk { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
 .stats { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; white-space: pre-line; }
 
