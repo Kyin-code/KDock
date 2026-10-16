@@ -8752,6 +8752,27 @@ const EN = {
   "RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent":
     "The standard LAN port on RIGOL DS1000Z series scopes (TCP 5555, SCPI text). Once connected the agent",
   "工具干同样的事。": "can do the same things with the same tools.",
+  // 批量文本：比对右边来源
+  "挑一个文件跟输入比": "Pick a file to compare with the input",
+  "右边：": "right: ",
+
+  // 批量文本：文本比对
+  "比对": "Compare",
+  "跟 IDE 一样把左右两份文本并排比对（F7 / Shift+F7 跳差异，Esc 退出）": "Side-by-side compare of the two texts, like an IDE (F7 / Shift+F7 jump, Esc exits)",
+  "比对：输入 ↔ 结果": "Compare: input ↔ result",
+  "忽略首尾空白": "Ignore outer spaces",
+  "上一处": "Previous",
+  "下一处": "Next",
+  "上一处（Shift+F7）": "Previous (Shift+F7)",
+  "下一处（F7）": "Next (F7)",
+  "↑ 上一处": "↑ Previous",
+  "↓ 下一处": "↓ Next",
+  "返回编辑": "Back to editing",
+  "退出比对（Esc）": "Exit compare (Esc)",
+  "{n} 处不同": "{n} differences",
+  "改 {m} · 加 {a} · 删 {d}": "changed {m} · added {a} · removed {d}",
+  "两边完全一样": "the two sides are identical",
+
   // 批量文本：行号栏 / 状态栏 / 导入文件
   "从文件读进来；也可以把文件直接拖到下面这个框上": "Read from a file; you can also drop a file on the box below",
   "导入文本文件": "Import a text file",

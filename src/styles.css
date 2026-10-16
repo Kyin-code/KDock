@@ -1744,7 +1744,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 
 /* 编辑器：行号栏（不可编辑，跟着文本一起滚）+ 底部状态栏（行/列、选中、字符/字节、编码、行尾） */
 .bted {
-  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto;
   flex: 1 1 auto; min-height: 200px;
   border: 1px solid var(--surface-line); border-radius: 10px; background: var(--surface-1); overflow: hidden;
 }
@@ -1756,11 +1756,36 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   user-select: none; overflow: hidden; white-space: pre;
 }
 .bted .btarea { min-height: 0; height: 100%; border: 0; border-radius: 0; background: transparent; flex: none; }
-.btstatus {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 3px 4px 0; font-size: 11.5px; color: hsl(var(--muted-foreground));
+/* 状态栏做成编辑器自己的底部一行（贴在下边框里侧），跟 IDE 里那样 */
+.bted > .btstatus {
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 3px 9px 4px; font-size: 11.5px; color: hsl(var(--muted-foreground));
+  background: var(--surface-2); border-top: 1px solid var(--surface-line);
 }
 .btcol.dragover .bted { border-color: hsl(var(--primary) / 0.85); background: hsl(var(--primary) / 0.07); }
+
+/* 文本比对（CLion 那种并排 diff）：左行号 / 左文本 / 右行号 / 右文本，四列对齐 */
+.btdiff { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0; }
+.btdiffbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btdiffbar .lb { font-size: 12.5px; }
+.btdiffbody {
+  flex: 1 1 auto; min-height: 200px; overflow: auto;
+  border: 1px solid var(--surface-line); border-radius: 10px; background: var(--surface-1);
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; line-height: 1.55;
+}
+.btdiffrow { display: grid; grid-template-columns: 3.4rem minmax(0, 1fr) 3.4rem minmax(0, 1fr); }
+.btdiffrow > * { padding: 0 6px; white-space: pre; overflow: hidden; }
+.btdiffrow .ln { text-align: right; color: hsl(var(--muted-foreground) / 0.7); background: var(--surface-2); user-select: none; }
+.btdiffrow .tx { border-left: 1px solid var(--surface-line-soft); }
+.btdiffrow.del .tx-l, .btdiffrow.del .ln-l { background: hsl(var(--destructive) / 0.13); }
+.btdiffrow.add .tx-r, .btdiffrow.add .ln-r { background: hsl(var(--success) / 0.15); }
+.btdiffrow.mod .tx-l, .btdiffrow.mod .ln-l { background: hsl(var(--destructive) / 0.10); }
+.btdiffrow.mod .tx-r, .btdiffrow.mod .ln-r { background: hsl(var(--success) / 0.12); }
+.btdiffrow.blank { background: repeating-linear-gradient(45deg, transparent 0 6px, var(--surface-line-soft) 6px 7px); }
+.btdiffrow .hl { border-radius: 3px; font-weight: 600; }
+.btdiffrow.mod .tx-l .hl { background: hsl(var(--destructive) / 0.35); }
+.btdiffrow.mod .tx-r .hl { background: hsl(var(--success) / 0.4); }
+.btdiffrow.cur { outline: 1px solid hsl(var(--primary) / 0.75); outline-offset: -1px; }
 
 /* 批量文本右栏：跟"数据计算"同一套行式布局（标签列 + 控件列），只是右栏只有 ~300px，标签列收窄；
    卡也是 .dcsection 那套折叠样式，展开状态单独记一份 */

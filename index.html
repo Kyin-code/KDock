@@ -595,6 +595,7 @@
             <span class="lb">批量文本</span>
             <span class="grow"></span>
             <span id="bt-count" class="lb"></span>
+            <button id="bt-diff-open" class="btn small" title="跟 IDE 一样把左右两份文本并排比对（F7 / Shift+F7 跳差异，Esc 退出）">比对</button>
           </div>
           <!-- 左右两个编辑器都带"行号栏 + 底部状态栏"（跟 IDE、跟参考站一样） -->
           <div class="btgrid grow">
@@ -607,8 +608,8 @@
               <div class="bted">
                 <div class="btln" id="bt-in-ln" aria-hidden="true"></div>
                 <textarea id="bt-in" class="btarea" spellcheck="false" placeholder="PA0=1&#10;PA1=0&#10;PA2=1"></textarea>
+                <div class="btstatus" id="bt-in-status"></div>
               </div>
-              <div class="btstatus" id="bt-in-status"></div>
             </div>
             <div class="btarrow">→</div>
             <div class="btcol">
@@ -619,9 +620,27 @@
               <div class="bted">
                 <div class="btln" id="bt-out-ln" aria-hidden="true"></div>
                 <textarea id="bt-out" class="btarea" readonly></textarea>
+                <div class="btstatus" id="bt-out-status"></div>
               </div>
-              <div class="btstatus" id="bt-out-status"></div>
             </div>
+          </div>
+
+          <!-- 文本比对（跟 CLion 的 diff 一个用法）：左边=输入、右边=结果，并排 + 高亮 + 跳差异 -->
+          <div id="bt-diff" class="btdiff" hidden>
+            <div class="btdiffbar">
+              <span class="lb">比对</span>
+              <span class="lb">输入</span>
+              <span class="lb">↔</span>
+              <div class="dcchips" id="bt-diff-right" data-val="out"></div>
+              <span id="bt-diff-stat" class="lb"></span>
+              <span class="grow"></span>
+              <label class="chk"><input type="checkbox" id="bt-diff-icase" /> 忽略大小写</label>
+              <label class="chk"><input type="checkbox" id="bt-diff-iws" /> 忽略首尾空白</label>
+              <button id="bt-diff-prev" class="btn small" title="上一处（Shift+F7）">↑ 上一处</button>
+              <button id="bt-diff-next" class="btn small" title="下一处（F7）">↓ 下一处</button>
+              <button id="bt-diff-close" class="btn small primary" title="退出比对（Esc）">返回编辑</button>
+            </div>
+            <div id="bt-diff-body" class="btdiffbody"></div>
           </div>
           <div class="trow">
             <button id="bt-send" class="btn small primary" title="按下面的间隔，一行一行发到串口">逐行发送</button>

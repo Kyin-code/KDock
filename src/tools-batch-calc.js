@@ -481,6 +481,223 @@ function btInitChips() {
   dcChips("bt-indent", [["brace", T("花括号自动")], ["tabs2", T("Tab → 2 空格")], ["tabs4", T("Tab → 4 空格")], ["strip", T("去掉行首缩进")]]);
 }
 
+/* ========================= 批量文本：文本比对（CLion 那种） ========================= */
+
+/** Myers 的 O(ND) diff：返回 {t,a,b} 的编辑脚本（t = = / - / +）。
+    两头先剥掉公共前后缀（真实场景差别通常只占一小段），中间太长时走「按行配对」兜底。 */
+function btDiffOps(a, b, eq) {
+  let head = 0;
+  while (head < a.length && head < b.length && eq(a[head], b[head])) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && eq(a[a.length - 1 - tail], b[b.length - 1 - tail])) tail++;
+  const ops = [];
+  for (let i = 0; i < head; i++) ops.push({ t: "=", a: i, b: i });
+  const na = a.slice(head, a.length - tail), nb = b.slice(head, b.length - tail);
+  const mid = (na.length + nb.length) > 3000 ? btDiffByIndex(na, nb, eq) : btDiffMyers(na, nb, eq);
+  for (const o of mid) ops.push({ t: o.t, a: o.a == null ? null : o.a + head, b: o.b == null ? null : o.b + head });
+  for (let i = 0; i < tail; i++) ops.push({ t: "=", a: a.length - tail + i, b: b.length - tail + i });
+  return ops;
+}
+
+/** 中间那段太大时的兜底：按行号硬配对（同 index 的两行算「改了」），结果仍然并排对齐 */
+function btDiffByIndex(a, b, eq) {
+  const ops = [];
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const hasA = i < a.length, hasB = i < b.length;
+    if (hasA && hasB) {
+      if (eq(a[i], b[i])) ops.push({ t: "=", a: i, b: i });
+      else { ops.push({ t: "-", a: i }); ops.push({ t: "+", b: i }); }
+    } else if (hasA) ops.push({ t: "-", a: i });
+    else ops.push({ t: "+", b: i });
+  }
+  return ops;
+}
+
+function btDiffMyers(a, b, eq) {
+  const N = a.length, M = b.length;
+  if (!N && !M) return [];
+  if (!N) return b.map((_, i) => ({ t: "+", b: i }));
+  if (!M) return a.map((_, i) => ({ t: "-", a: i }));
+  const max = N + M, off = max;
+  const v = new Array(2 * max + 2).fill(0);
+  const trace = [];
+  let D = -1;
+  outer:
+  for (let d = 0; d <= max; d++) {
+    trace.push(v.slice());
+    for (let k = -d; k <= d; k += 2) {
+      let x;
+      if (k === -d || (k !== d && v[off + k - 1] < v[off + k + 1])) x = v[off + k + 1];
+      else x = v[off + k - 1] + 1;
+      let y = x - k;
+      while (x < N && y < M && eq(a[x], b[y])) { x++; y++; }
+      v[off + k] = x;
+      if (x >= N && y >= M) { D = d; break outer; }
+    }
+  }
+  const out = [];
+  let x = N, y = M;
+  for (let d = D; d > 0; d--) {
+    const vPrev = trace[d];
+    const k = x - y;
+    const prevK = (k === -d || (k !== d && vPrev[off + k - 1] < vPrev[off + k + 1])) ? k + 1 : k - 1;
+    const prevX = vPrev[off + prevK];
+    const prevY = prevX - prevK;
+    while (x > prevX && y > prevY) { out.push({ t: "=", a: x - 1, b: y - 1 }); x--; y--; }
+    if (x === prevX) { out.push({ t: "+", b: y - 1 }); y--; }
+    else { out.push({ t: "-", a: x - 1 }); x--; }
+  }
+  while (x > 0 && y > 0) { out.push({ t: "=", a: x - 1, b: y - 1 }); x--; y--; }
+  return out.reverse();
+}
+
+/** 右边那份文本（比对用）：结果栏，或者另外挑一个文件 */
+async function btDiffPickRight() {
+  try {
+    const p = await dlgOpen({
+      title: T("挑一个文件跟输入比"), multiple: false, directory: false,
+      filters: [{ name: T("文本 / 日志 / CSV"), extensions: ["txt", "log", "csv", "json", "md", "hex"] },
+                { name: T("所有文件"), extensions: ["*"] }],
+    });
+    const path = typeof p === "string" ? p : (p && p.path);
+    if (!path) { dcChipSel["bt-diff-right"] = new Set(["out"]); $id("bt-diff-right").dataset.val = "out"; dcChipPaint("bt-diff-right"); return; }
+    const r = await invoke("file_read_text", { path });
+    btDiffRight = { mode: "file", text: r.text, name: String(path).split(/[\\/]/).pop() };
+    btDiffRender();
+  } catch (e) {
+    btMsg(T("导入失败：") + String(e && e.message ? e.message : e).slice(0, 90), true);
+  }
+}
+
+/** 把编辑脚本折成并排的行：- 和 + 成对时算「改了」（一行两边都显示，方便看差异） */
+function btDiffRows(ops) {
+  const rows = [];
+  let i = 0;
+  while (i < ops.length) {
+    if (ops[i].t === "=") { rows.push({ t: "=", a: ops[i].a, b: ops[i].b }); i++; continue; }
+    const dels = [], adds = [];
+    while (i < ops.length && ops[i].t !== "=") {
+      if (ops[i].t === "-") dels.push(ops[i].a); else adds.push(ops[i].b);
+      i++;
+    }
+    const n = Math.max(dels.length, adds.length);
+    for (let k = 0; k < n; k++) {
+      const da = dels[k] == null ? null : dels[k];
+      const db = adds[k] == null ? null : adds[k];
+      rows.push({ t: da != null && db != null ? "~" : (da != null ? "-" : "+"), a: da, b: db });
+    }
+  }
+  return rows;
+}
+
+/** 一行以内的高亮：掐掉公共前后缀，把中间那段标出来 */
+function btDiffInline(x, y) {
+  const maxP = Math.min(x.length, y.length);
+  let p = 0;
+  while (p < maxP && x[p] === y[p]) p++;
+  let t = 0;
+  while (t < maxP - p && x[x.length - 1 - t] === y[y.length - 1 - t]) t++;
+  return {
+    aPre: x.slice(0, p), aMid: x.slice(p, x.length - t), aSuf: t ? x.slice(x.length - t) : "",
+    bPre: y.slice(0, p), bMid: y.slice(p, y.length - t), bSuf: t ? y.slice(y.length - t) : "",
+  };
+}
+
+let btDiffState = { rows: [], blocks: [], cur: -1 };
+let btDiffRight = { mode: "out", text: "", name: "" };   // 右边比什么：结果栏，还是另外挑一个文件（CLion 那种两份文件对比）
+
+function btDiffRender() {
+  const box = $id("bt-diff-body");
+  if (!box) return;
+  const icase = $id("bt-diff-icase").checked;
+  const iws = $id("bt-diff-iws").checked;
+  const norm = (t) => (iws ? t.trim() : t);
+  const eq = (x, y) => (icase ? norm(x).toLowerCase() === norm(y).toLowerCase() : norm(x) === norm(y));
+  const A = $id("bt-in").value.split("\n");
+  const rightText = btDiffRight.mode === "file" ? btDiffRight.text : $id("bt-out").value;
+  const B = rightText.split("\n");
+  const rows = btDiffRows(btDiffOps(A, B, eq));
+  const blocks = [];
+  rows.forEach((r, i) => {
+    if (r.t === "=") return;
+    if (!blocks.length || blocks[blocks.length - 1].end !== i - 1) blocks.push({ start: i, end: i });
+    else blocks[blocks.length - 1].end = i;
+  });
+  let add = 0, del = 0, mod = 0;
+  for (const r of rows) { if (r.t === "+") add++; else if (r.t === "-") del++; else if (r.t === "~") mod++; }
+  const stat = $id("bt-diff-stat");
+  if (stat) stat.textContent = blocks.length
+    ? T("{n} 处不同").replace("{n}", blocks.length) + "　" + T("改 {m} · 加 {a} · 删 {d}").replace("{m}", mod).replace("{a}", add).replace("{d}", del)
+      + (btDiffRight.mode === "file" ? "　·　" + T("右边：") + btDiffRight.name : "")
+    : T("两边完全一样");
+  const frag = document.createDocumentFragment();
+  const mk = (cls, txt) => { const d = document.createElement("span"); d.className = cls; d.textContent = txt; return d; };
+  const mkHl = (cls, pre, mid, suf) => {
+    const d = document.createElement("span");
+    d.className = cls;
+    if (pre) d.appendChild(document.createTextNode(pre));
+    if (mid) { const b = document.createElement("b"); b.className = "hl"; b.textContent = mid; d.appendChild(b); }
+    if (suf) d.appendChild(document.createTextNode(suf));
+    return d;
+  };
+  rows.forEach((r, i) => {
+    const row = document.createElement("div");
+    row.className = "btdiffrow " + (r.t === "~" ? "mod" : r.t === "-" ? "del" : r.t === "+" ? "add" : "");
+    row.dataset.row = String(i);
+    row.appendChild(mk("ln ln-l", r.a == null ? "" : String(r.a + 1)));
+    row.appendChild(mk("tx tx-l", r.a == null ? "" : A[r.a]));
+    row.appendChild(mk("ln ln-r", r.b == null ? "" : String(r.b + 1)));
+    row.appendChild(mk("tx tx-r", r.b == null ? "" : B[r.b]));
+    if (r.t === "~") {
+      const hl = btDiffInline(A[r.a], B[r.b]);
+      row.replaceChild(mkHl("tx tx-l", hl.aPre, hl.aMid, hl.aSuf), row.children[1]);
+      row.replaceChild(mkHl("tx tx-r", hl.bPre, hl.bMid, hl.bSuf), row.children[3]);
+    }
+    if (r.a == null || r.b == null) {
+      row.classList.add("blank");
+      for (const c of [...row.children]) c.classList.add("blank");
+    }
+    frag.appendChild(row);
+  });
+  box.textContent = "";
+  box.appendChild(frag);
+  btDiffState = { rows, blocks, cur: blocks.length ? 0 : -1 };
+  btDiffMark();
+}
+
+function btDiffMark() {
+  const box = $id("bt-diff-body");
+  if (!box) return;
+  for (const e of box.querySelectorAll(".cur")) e.classList.remove("cur");
+  const b = btDiffState.blocks[btDiffState.cur];
+  if (!b) return;
+  for (let i = b.start; i <= b.end; i++) {
+    const row = box.querySelector('[data-row="' + i + '"]');
+    if (row) row.classList.add("cur");
+  }
+  const first = box.querySelector('[data-row="' + b.start + '"]');
+  if (first) {
+    const top = first.offsetTop - box.clientHeight / 2 + first.offsetHeight / 2;
+    box.scrollTop = Math.max(0, Math.min(box.scrollHeight - box.clientHeight, top));
+  }
+}
+
+function btDiffGo(dir) {
+  const n = btDiffState.blocks.length;
+  if (!n) return;
+  btDiffState.cur = ((btDiffState.cur + dir) % n + n) % n;
+  btDiffMark();
+}
+
+function btDiffOpen(on) {
+  const diff = $id("bt-diff");
+  const grid = document.querySelector('.workpane[data-work="batch"] .btgrid');
+  if (!diff || !grid) return;
+  diff.hidden = !on;
+  grid.hidden = on;
+  if (on) btDiffRender();
+}
 export function initBatch(opts) {
   if (opts && typeof opts.pushTx === "function") btPushTx = opts.pushTx;
   const box = $id("bt-in");
@@ -555,6 +772,29 @@ export function initBatch(opts) {
     } catch (e) { $id("bt-state").textContent = T("保存失败：") + String(e).slice(0, 40); }
   };
   $id("bt-send").onclick = btSendAll;
+  // 文本比对（左边输入 ↔ 右边结果）
+  dcChips("bt-diff-right", [["out", T("结果")], ["file", T("文件…")]], {
+    onChange: (v) => {
+      const last = v;
+      if (last === "file") { if (!btDiffRight.text) btDiffPickRight(); else btDiffRender(); }
+      else { btDiffRight = { mode: "out", text: "", name: "" }; btDiffRender(); }
+    },
+  });
+  $id("bt-diff-open").onclick = () => btDiffOpen(true);
+  $id("bt-diff-close").onclick = () => btDiffOpen(false);
+  $id("bt-diff-prev").onclick = () => btDiffGo(-1);
+  $id("bt-diff-next").onclick = () => btDiffGo(1);
+  for (const id of ["bt-diff-icase", "bt-diff-iws"]) {
+    const n = $id(id);
+    if (n) n.onchange = btDiffRender;
+  }
+  document.addEventListener("keydown", (e) => {
+    const pane = document.querySelector('.workpane[data-work="batch"]');
+    if (!pane || pane.hidden) return;
+    if ($id("bt-diff").hidden) return;
+    if (e.key === "F7") { e.preventDefault(); btDiffGo(e.shiftKey ? -1 : 1); }
+    else if (e.key === "Escape") { e.preventDefault(); btDiffOpen(false); }
+  });
   // 导入 / 示例（导入也能直接把文件拖到左边那个框上）
   $id("bt-import").onclick = () => btImportFile("");
   $id("bt-sample").onclick = () => {
@@ -583,7 +823,7 @@ export function initBatch(opts) {
   });
   btRender();
   // 切语言时把这一页里"运行时拼出来的"文字重画一遍
-  onLang(() => { btInitChips(); btRender(); btUpdateCount(); btStatusRender(); btMsg(""); $id("bt-state").textContent = ""; });   // 小标签重建成当前语言；旧提示/状态是上一门语言拼的，清掉
+  onLang(() => { btInitChips(); btRender(); btUpdateCount(); btStatusRender(); btMsg(""); $id("bt-state").textContent = ""; if ($id("bt-diff") && !$id("bt-diff").hidden) btDiffRender(); });   // 小标签重建成当前语言；旧提示/状态是上一门语言拼的，清掉
 }
 
 /* ============================== 计算器 ============================== */
