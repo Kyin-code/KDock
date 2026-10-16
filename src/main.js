@@ -7878,48 +7878,9 @@ function renderSkillsPage() {
     const el = agEl("set-skill-dir");
     if (el) el.textContent = p || "（未知）";
   }).catch(() => {});
-  renderBuiltinPage();
   renderWorkSkillsPage();
   renderArchivePage();
   renderToolsPage();
-}
-
-/* ── 内置指令：只读 + 可选项开关 ───────────────────────────────────── */
-async function renderBuiltinPage() {
-  const box = agEl("set-builtin-list");
-  if (!box) return;
-  const list = await invoke("agent_builtin_list").catch(() => []);
-  box.innerHTML = "";
-  let on = 0;
-  for (const b of list) {
-    if (b.enabled) on++;
-    const row = document.createElement("div");
-    row.className = "row" + (b.enabled ? "" : " off");
-    const nm = document.createElement("span");
-    nm.className = "nm"; nm.textContent = en(b.title) + (b.optional ? "" : en("（核心）"));
-    row.appendChild(nm);
-    if (b.optional) {
-      const sw = document.createElement("input");
-      sw.type = "checkbox"; sw.className = "sw"; sw.checked = !!b.enabled;
-      sw.title = en("关掉就不再带上这条（对新会话生效）");
-      sw.onchange = async () => {
-        try {
-          await invoke("agent_builtin_set", { id: b.id, on: sw.checked });
-          toast(sw.checked ? en("已打开 ") + b.id : en("已关闭 ") + b.id);
-        } catch (e) { toast(String(e)); sw.checked = !sw.checked; }
-        renderBuiltinPage();
-      };
-      row.appendChild(sw);
-    } else {
-      const lock = document.createElement("span");
-      lock.className = "swtag";
-      lock.textContent = en("只读");
-      row.appendChild(lock);
-    }
-    box.appendChild(row);
-  }
-  const sum = agEl("set-builtin-sum");
-  if (sum) sum.textContent = `${on}/${list.length}`;
 }
 
 /* ── 工作区技能（项目级）＋ 归档 ─────────────────────────────────── */
@@ -10766,9 +10727,8 @@ const EN = {
   "未连接": "Disconnected", "先选一个本机文件": "Choose a local file first",
   "填一下设备上的目标路径": "Fill in the target path on the device",
 
-  // ── 三层上下文（内置指令 / 技能 / 指导文件）+ 命中率 ──
+  // ── 上下文分层（技能 / 指导文件）+ 命中率 ──
   "工具": "Tools",
-  "内置指令": "Built-in instructions", "（核心）": " (core)", "只读": "read-only",
   "全局指导（每轮都在场）": "Global guidance (always in context)",
   "保存指导": "Save guidance", "打开所在目录": "Open folder",
   "以前的「常驻技能」已迁到这里": "The old \"always-on skills\" moved here",

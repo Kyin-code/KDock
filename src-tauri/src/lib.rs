@@ -3683,8 +3683,6 @@ pub fn run() {
             agent::agent_slash_save,
             agent::agent_slash_delete,
             // ── 三层上下文：内置指令 / 技能（全局·工作区） / 指导文件 / 工具开关 / 骨架 ──
-            agent::agent_builtin_list,
-            agent::agent_builtin_set,
             agent::agent_tools_list,
             agent::agent_tool_set,
             agent::agent_guidance_get,

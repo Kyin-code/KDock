@@ -818,18 +818,6 @@ pub fn agent_tools() -> Vec<Value> {
 
 // ── 上下文组装 / 压缩 ───────────────────────────────────────────────
 
-/// 内置指令清单（只读 + 可选项开关）—— 对应"内置"这一层
-#[tauri::command]
-pub fn agent_builtin_list(app: AppHandle) -> Vec<Value> {
-    builtin::list(&app)
-}
-
-#[tauri::command]
-pub fn agent_builtin_set(app: AppHandle, id: String, on: bool) -> Result<Value, String> {
-    builtin::set_enabled(&app, &id, on)?;
-    Ok(json!({ "ok": true, "items": builtin::list(&app) }))
-}
-
 /// 工具清单（只读 + 开关）。注意：开关按会话冻结，改了要**新会话**才生效
 /// （工具定义在 prompt 最前面，中途改会把整段历史和前缀缓存一起作废）。
 #[tauri::command]
@@ -983,7 +971,7 @@ fn names_line(app: &AppHandle, session_id: &str) -> String {
 fn system_prompt(app: &AppHandle, workspace: &std::path::Path) -> String {
     let mut p = String::new();
     // ① 内置指令（只读、可选项可关）—— 角色 / 连接用法 / 做事原则 / 上下文卫生
-    p.push_str(&builtin::text(app));
+    p.push_str(&builtin::text());
     // ② 全局指导（个人约定，跟项目无关）
     let g = store::read_global_guidance(app);
     if !g.trim().is_empty() {
@@ -2147,7 +2135,7 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
         .unwrap_or_else(|| system_prompt(&app, &ws));
     let sys = est(&sys_text);
     // 三层分项：内置指令 / 技能索引 / 指导文件（都从同一份系统提示文本里量，口径一致）
-    let builtin_tok = est(&builtin::text(&app));
+    let builtin_tok = est(&builtin::text());
     let index_tok = est(&store::skills_index_for(&app, &ws));
     let guidance_tok = est(&store::read_global_guidance(&app)) + est(&store::read_workspace_guidance(&ws));
     // 工具定义：按本会话冻结的清单算（和实际发出去的一致）
