@@ -12,6 +12,7 @@
 
 pub mod anthropic;
 pub mod browser;
+mod builtin;
 pub mod llm;
 pub mod mcp;
 pub mod store;
@@ -61,7 +62,7 @@ pub fn prune_dead_builtin(app: &AppHandle) {
     let _ = store::secret_set(app, OLD_ID, "");
 }
 /// 工作区里的项目级说明文件（跟 Codex 的 AGENTS.md 一个意思）
-const WORKSPACE_INSTRUCTIONS: &str = "AGENTS.md";
+// 工作区指导文件名（AGENTS.md）—— 读写都走 store::read_workspace_guidance / agent_guidance_*
 
 #[derive(Default)]
 pub struct AgentState {
@@ -445,6 +446,9 @@ pub fn agent_session_set_perm(app: AppHandle, id: String, perm: String) -> Resul
         _ => "ask".to_string(),
     };
     store::session_update_meta(&app, &meta)?;
+    // 权限变了：追加一条状态注记（尾部几十 token），**不动系统提示** ——
+    // 系统提示是前缀，改它会把它后面的整段历史缓存打掉
+    append_state_note(&app, &id);
     // 切成"自动（完全权限）"时，**正等着的审批直接放行** —— 和 codex 一致：
     // 用户把权限放宽了，就不该再让一个已经挂在那儿的弹窗挡着。
     let mut approved = 0usize;
@@ -474,7 +478,19 @@ pub fn agent_session_set_goal(app: AppHandle, id: String, goal: String) -> Resul
     meta.goal = if clearing { String::new() } else { text.clone() };
     meta.updated = now_ms();
     store::session_update_meta(&app, &meta)?;
+    append_state_note(&app, &id);
     Ok(json!({ "ok": true, "goal": meta.goal, "cleared": clearing }))
+}
+
+/// 把"当前权限 / 目标 / 称呼"追加成一条注记（内容没变就不追加，免得洪泛历史）
+fn append_state_note(app: &AppHandle, session_id: &str) {
+    let Some(m) = store::session_meta_of(app, session_id) else { return };
+    let Some(note) = state_note(&m.perm, &m.goal, &names_line(app, session_id)) else { return };
+    let events = store::session_read(app, session_id);
+    let same = matches!(events.last(), Some(Event::State { text, .. }) if text == &note);
+    if !same {
+        let _ = store::session_append(app, session_id, &Event::State { text: note, ts: 0 });
+    }
 }
 
 /// 技能开关（关掉的挪到 skills-off/，不进口令索引）
@@ -779,26 +795,6 @@ pub fn agent_skill_delete(app: AppHandle, name: String) -> Result<Value, String>
     Ok(json!({ "ok": true }))
 }
 
-/// 开关技能的"常驻"：勾上就每轮把正文注入系统提示（身份 / 口吻 / 说话规则这类技能用这个）
-#[tauri::command]
-pub fn agent_skill_set_always(app: AppHandle, name: String, on: bool) -> Result<Value, String> {
-    store::skill_set_always(&app, &name, on)?;
-    Ok(json!({
-        "ok": true, "slug": name, "always": on,
-        "bytes": store::skills_always_bytes(&app), "limit": store::SKILLS_ALWAYS_LIMIT,
-    }))
-}
-
-/// 常驻技能清单（界面显示开关状态和"已用多少 KB"）
-#[tauri::command]
-pub fn agent_skills_always(app: AppHandle) -> Result<Value, String> {
-    Ok(json!({
-        "slugs": store::skills_always(&app),
-        "bytes": store::skills_always_bytes(&app),
-        "limit": store::SKILLS_ALWAYS_LIMIT,
-    }))
-}
-
 #[tauri::command]
 pub fn agent_tools() -> Vec<Value> {
     tools::catalog()
@@ -809,17 +805,184 @@ pub fn agent_tools() -> Vec<Value> {
 
 // ── 上下文组装 / 压缩 ───────────────────────────────────────────────
 
-/// 系统提示里的"常驻技能"那一段（没有常驻技能就返回空串）。
-/// 单独抽出来是因为 `agent_context_breakdown` 要按同一份文本算它占多少 token。
-/// 那句"优先于上面的通用角色描述"是**通用**优先级，不是给某个技能写死的：
-/// 用户丢进来一个身份技能并勾上常驻，人格就该压过 KDock 的默认角色设定（和 opencode 里
-/// "装了人格技能就自称那个人格"是一个效果）。但它不去动那句默认角色描述本身。
-fn always_skills_section(app: &AppHandle) -> String {
-    let blk = store::always_skills_block(app);
-    if blk.is_empty() {
-        return String::new();
+/// 内置指令清单（只读 + 可选项开关）—— 对应"内置"这一层
+#[tauri::command]
+pub fn agent_builtin_list(app: AppHandle) -> Vec<Value> {
+    builtin::list(&app)
+}
+
+#[tauri::command]
+pub fn agent_builtin_set(app: AppHandle, id: String, on: bool) -> Result<Value, String> {
+    builtin::set_enabled(&app, &id, on)?;
+    Ok(json!({ "ok": true, "items": builtin::list(&app) }))
+}
+
+/// 工具清单（只读 + 开关）。注意：开关按会话冻结，改了要**新会话**才生效
+/// （工具定义在 prompt 最前面，中途改会把整段历史和前缀缓存一起作废）。
+#[tauri::command]
+pub fn agent_tools_list(app: AppHandle) -> Vec<Value> {
+    let off = store::tools_off(&app);
+    tools::catalog()
+        .iter()
+        .map(|t| {
+            json!({
+                "name": t.name, "description": t.description, "host": t.host,
+                "danger": tools::is_dangerous(&t.name),
+                "enabled": !off.contains(&t.name.to_string()),
+                "bytes": serde_json::to_string(&tools::schema_json(std::slice::from_ref(t), true)).map(|s| s.len()).unwrap_or(0),
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn agent_tool_set(app: AppHandle, name: String, on: bool) -> Result<Value, String> {
+    if !tools::is_known(&name) {
+        return Err(format!("没有这个工具：{name}"));
     }
-    format!("常驻技能（每个请求都在场；技能里写的自我设定、口吻与做事规则，优先于上面那句通用角色描述）：\n{blk}\n")
+    store::tools_off_set(&app, &name, !on)?;
+    Ok(json!({ "ok": true, "note": "下个新会话生效（工具定义在请求最前面，中途改会让整个前缀缓存作废）" }))
+}
+
+/// 全局指导文件（AGENTS.md）：人格 / 口吻 / 通用规矩 —— "一直在场"的东西写这儿，不写技能
+#[tauri::command]
+pub fn agent_guidance_get(app: AppHandle, workspace: Option<String>) -> Value {
+    let ws = workspace
+        .filter(|s| !s.trim().is_empty())
+        .map(std::path::PathBuf::from);
+    json!({
+        "globalPath": store::global_guidance_path(&app).map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+        "global": store::read_global_guidance(&app),
+        "workspace": ws.as_ref().map(|w| store::read_workspace_guidance(w)).unwrap_or_default(),
+        "workspacePath": ws.as_ref().map(|w| w.join("AGENTS.md").to_string_lossy().to_string()).unwrap_or_default(),
+    })
+}
+
+#[tauri::command]
+pub fn agent_guidance_set(app: AppHandle, text: String, workspace: bool, path: Option<String>) -> Result<Value, String> {
+    if workspace {
+        let ws = path.filter(|p| !p.trim().is_empty()).ok_or("要指定工作区")?;
+        let ws = std::path::PathBuf::from(ws);
+        std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        let p = ws.join("AGENTS.md");
+        std::fs::write(&p, &text).map_err(|e| format!("写 {} 失败: {e}", p.display()))?;
+        return Ok(json!({ "ok": true, "path": p.to_string_lossy() }));
+    }
+    let p = store::write_global_guidance(&app, &text)?;
+    Ok(json!({ "ok": true, "path": p }))
+}
+
+/// 本会话现在实际会发给模型的系统提示（骨架）+ 工具清单。
+/// 用户问"技能到底以什么形式进了上下文"时，答案就在这儿，不用猜。
+#[tauri::command]
+pub fn agent_prompt_preview(app: AppHandle, session_id: String) -> Value {
+    let ws = workspace_of(&app, &session_id);
+    let meta = store::session_meta_of(&app, &session_id);
+    let frozen = meta.as_ref().map(|m| !m.system_prompt.trim().is_empty()).unwrap_or(false);
+    let text = meta
+        .as_ref()
+        .map(|m| m.system_prompt.clone())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| system_prompt(&app, &ws));
+    let names: Vec<String> = tools_schema_frozen(&app, &session_id)
+        .iter()
+        .filter_map(|v| v["function"]["name"].as_str().map(|s| s.to_string()))
+        .collect();
+    json!({
+        "system": text,
+        "tools": names,
+        "frozen": frozen,
+        "workspace": ws.to_string_lossy(),
+        "chars": text.chars().count(),
+    })
+}
+
+/// 刷新"上下文骨架"：清掉冻结的系统提示 + 工具清单，下一轮重新生成。
+/// 代价：本会话的前缀缓存重置一次（改完技能/指导文件想让本会话就吃上，点这个）。
+#[tauri::command]
+pub fn agent_prefix_refresh(app: AppHandle, session_id: String, tools_too: Option<bool>) -> Result<Value, String> {
+    let mut meta = store::session_meta_of(&app, &session_id).ok_or("找不到这个会话")?;
+    meta.system_prompt = String::new();
+    if tools_too.unwrap_or(false) {
+        meta.tools = Vec::new();
+    }
+    store::session_update_meta(&app, &meta)?;
+    Ok(json!({ "ok": true, "note": "骨架已重置：下一轮重新生成（本会话缓存会重算一次）" }))
+}
+
+/// 工作区技能（项目级）：存在即生效，没有启停
+#[tauri::command]
+pub fn agent_skills_workspace(workspace: String) -> Vec<store::SkillInfo> {
+    if workspace.trim().is_empty() {
+        return Vec::new();
+    }
+    store::workspace_skills(&std::path::PathBuf::from(workspace))
+}
+
+/// 全局技能 → 工作区专属（先归档备份，再从全局移除）
+#[tauri::command]
+pub fn agent_skill_convert(app: AppHandle, name: String, workspace: String) -> Result<Value, String> {
+    let r = store::skill_convert_to_workspace(&app, &name, &workspace)?;
+    Ok(json!({ "ok": true, "detail": r }))
+}
+
+#[tauri::command]
+pub fn agent_skill_archive(app: AppHandle) -> Vec<store::ArchiveInfo> {
+    store::archive_list(&app)
+}
+
+#[tauri::command]
+pub fn agent_skill_archive_restore(app: AppHandle, name: String, scope: Option<String>, workspace: Option<String>) -> Result<Value, String> {
+    let scope = scope.unwrap_or_else(|| "global".into());
+    let r = store::archive_restore(&app, &name, &scope, workspace.as_deref().unwrap_or(""))?;
+    Ok(json!({ "ok": true, "path": r }))
+}
+
+#[tauri::command]
+pub fn agent_skill_archive_delete(app: AppHandle, name: String) -> Result<Value, String> {
+    store::archive_delete(&app, &name)?;
+    Ok(json!({ "ok": true }))
+}
+
+/// 把老的「常驻技能」迁移成全局指导文件（AGENTS.md）。
+/// 常驻那套已经不用了：人格/身份这类"一直在场"的东西按 Codex 的分工应该写指导文件，
+/// 技能则回到"索引里一行、正文按需读"。迁移是**保行为**的：正文照样每轮都在，只是换了载体。
+#[tauri::command]
+pub fn agent_migrate_always_skills(app: AppHandle) -> Value {
+    let Some(p) = store::skills_always_path_pub(&app) else { return json!({ "migrated": 0 }) };
+    let slugs = store::skills_always(&app);
+    if slugs.is_empty() {
+        return json!({ "migrated": 0 });
+    }
+    let list = store::skills_list(&app);
+    let mut body = String::new();
+    for s in list.iter().filter(|s| slugs.contains(&s.slug)) {
+        let Ok(text) = std::fs::read_to_string(&s.path) else { continue };
+        let (_, b) = store::parse_frontmatter(&text);
+        if b.trim().is_empty() {
+            continue;
+        }
+        body.push_str(&format!("## {}\n{}\n\n", s.slug, b.trim()));
+    }
+    if body.trim().is_empty() {
+        return json!({ "migrated": 0 });
+    }
+    let old = store::read_global_guidance(&app);
+    let merged = if old.trim().is_empty() {
+        format!("# 全局指导（从常驻技能迁移而来）\n\n{body}")
+    } else {
+        format!("{old}\n\n{}", body)
+    };
+    let r = store::write_global_guidance(&app, &merged);
+    if r.is_ok() {
+        // 老文件改名留档：不删，用户能对拍
+        let _ = std::fs::rename(&p, p.with_extension("json.migrated"));
+    }
+    json!({
+        "migrated": slugs.len(),
+        "slugs": slugs,
+        "note": r.ok().unwrap_or_default(),
+    })
 }
 
 /// 会话内称呼那一行（第一轮由模型从"用户自称 / 身份技能"里总结出来；没定下来就返回空串，
@@ -838,63 +1001,134 @@ fn names_line(app: &AppHandle, session_id: &str) -> String {
     )
 }
 
-fn system_prompt(
-    app: &AppHandle,
-    workspace: &std::path::Path,
-    perm: &str,
-    goal: &str,
-    names: &str,
-) -> String {
+/// 系统提示（= 前缀骨架）。**只放"一个会话里不会变"的东西**：
+/// 内置指令 + 工作区路径 + 静态权限规则 + 技能索引 + 两份指导文件。
+/// 权限值 / 目标 / 称呼这类会变的，走 `Event::State` 注记追加在尾部 ——
+/// 前缀里改一个字，它后面的整段历史缓存就全作废，这是命中率的第一杀手。
+fn system_prompt(app: &AppHandle, workspace: &std::path::Path) -> String {
     let mut p = String::new();
-    p.push_str("你是 KDock 里的设备调试助手，跑在用户的电脑上（桌面版上位机）。\n");
-    p.push_str("KDock 已经内置：串口/网口收发、设备文件读写、固件升级(OTA)、烧录器写片、示波器控制、中控编排(时序流程)、屏幕捕获。你能直接调它们。\n\n");
+    // ① 内置指令（只读、可选项可关）—— 角色 / 连接用法 / 做事原则 / 上下文卫生
+    p.push_str(&builtin::text(app));
+    // ② 工作区
     p.push_str(&format!("工作区（相对路径都相对它）：{}\n", workspace.to_string_lossy()));
-    p.push_str(names);
-    p.push_str("注意：传输页那条主连接是用户自己的；要**互不干扰**就用你自己的 link_*（那条用户看不见）。\n");
-    p.push_str("但**用户想看着你干**、或者你想跟用户看同一份设备返回时，用 port_* 直接操作主连接：\n");
-    p.push_str("port_list 看本机有哪些串口（别去跑 PowerShell 扫）、port_state 看主连接状态、port_write 往主连接发、port_read 读主连接的收发记录（用户在传输页看到的就是这一份）。\n");
-    p.push_str("你在主连接上做的事会实时出现在用户的传输页里，所以那是「看得见」的通道。\n\n");
-    p.push_str(&format!(
-        "权限级别：{}\n",
-        match perm {
-            "read" => "只读（写设备/写文件/跑命令/烧录都会被后端直接拒绝，别去试）",
-            "auto" => "自动（危险动作也会直接执行，做完要汇报清楚）",
-            _ => "需要批准（写设备/写文件/跑命令/烧录前，系统会弹给用户点允许，你只管说明你要做什么）",
-        }
-    ));
-    p.push_str("做事原则：\n");
-    p.push_str("1. 先观察再动手（先 list/read 看清现状），改设备状态前先说明你要做什么；\n");
-    p.push_str("2. 危险动作（升级、烧录、写设备文件、复位）尽量先让用户确认；\n");
-    p.push_str("3. 一条工具调用只做一件事，拿到结果再决定下一步；不要臆测输出；\n");
-    p.push_str("4. 二进制内容用 HEX 描述，别贴乱码；\n");
-    p.push_str("5. 收尾时用中文给一句结论 + 关键数据。\n\n");
-    // /goal 设定的目标：一直生效，每轮都在这里带上
-    if !goal.trim().is_empty() {
-        p.push_str("本次会话的目标（用户用 /goal 设定，优先围绕它推进；完成后提醒用户可以 /goal clear 清掉）：\n");
-        p.push_str(goal.trim());
-        p.push_str("\n\n");
-    }
-    let idx = store::skills_index(app);
-    p.push_str("已安装技能（任务匹配到某个技能时，先用 skill_read 读全文，再照它做；也可以自己 skill_create 新技能）：\n");
-    p.push_str(&idx);
+    // ③ 权限：这里只写**静态规则**；当前值走"会话状态注记"（见 Event::State），
+    //    免得用户切一次权限就把整个前缀（含全部历史）的缓存打掉
+    p.push_str(
+        "权限（当前值以最新一条「会话状态」注记为准，没有注记就是「需要批准」）：\n\
+         · 只读：写设备/写文件/跑命令/烧录都会被后端直接拒绝，别去试；\n\
+         · 需要批准：危险动作前系统会弹给用户点允许，你只管说明你要做什么；\n\
+         · 自动：危险动作也会直接执行，做完必须汇报清楚。\n\n",
+    );
+    // ④ 技能索引（全局 + 本项目两段；正文按需 skill_read）
+    p.push_str("技能（索引在这里，正文按需读；也可以自己 skill_create 新技能）：\n");
+    p.push_str(&store::skills_index_for(app, workspace));
     p.push('\n');
-    p.push_str(&always_skills_section(app));
-    let instr = workspace.join(WORKSPACE_INSTRUCTIONS);
-    if let Ok(text) = std::fs::read_to_string(&instr) {
-        if !text.trim().is_empty() {
-            p.push_str("\n工作区里的项目说明（AGENTS.md，优先遵守）：\n");
-            p.push_str(&text);
-            p.push('\n');
-        }
+    // ⑤ 指导文件（每轮都在）：全局（个人约定）+ 工作区（项目约定）
+    let g = store::read_global_guidance(app);
+    if !g.trim().is_empty() {
+        p.push_str("\n全局指导（AGENTS.md，用户自己的持久约定：人格 / 口吻 / 通用规矩，优先遵守）：\n");
+        p.push_str(g.trim());
+        p.push('\n');
+    }
+    let w = store::read_workspace_guidance(workspace);
+    if !w.trim().is_empty() {
+        p.push_str("\n工作区指导（本项目的 AGENTS.md，比全局指导更具体，优先遵守）：\n");
+        p.push_str(w.trim());
+        p.push('\n');
     }
     p
 }
 
+/// 会话状态注记：权限 / 目标 / 称呼。变了才追加一条（尾部几十 token），
+/// 不再每次改动都重写系统提示。
+fn state_note(perm: &str, goal: &str, names: &str) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    parts.push(format!(
+        "权限={}",
+        match perm {
+            "read" => "只读",
+            "auto" => "自动",
+            _ => "需要批准",
+        }
+    ));
+    if !goal.trim().is_empty() {
+        parts.push(format!("目标={}", goal.trim()));
+    }
+    if !names.trim().is_empty() {
+        parts.push(names.trim().trim_end_matches('。').to_string());
+    }
+    Some(format!("<会话状态>{}</会话状态>", parts.join("；")))
+}
+
+/// 冻结的骨架：本会话第一次请求时生成并写进 meta，之后原样复用。
+/// 想改（改了技能/指导文件/工具开关）：界面上点「刷新骨架」→ 清空它，下一轮重建。
+fn system_prompt_frozen(app: &AppHandle, session_id: &str, workspace: &std::path::Path) -> String {
+    if let Some(m) = store::session_meta_of(app, session_id) {
+        if !m.system_prompt.trim().is_empty() {
+            return m.system_prompt;
+        }
+    }
+    let text = system_prompt(app, workspace);
+    if let Some(mut m) = store::session_meta_of(app, session_id) {
+        m.system_prompt = text.clone();
+        let _ = store::session_update_meta(app, &m);
+    }
+    text
+}
+
+/// 本会话冻结的工具清单（第一次请求时快照）。返回名字表（顺序固定）。
+fn tools_frozen(app: &AppHandle, session_id: &str) -> Vec<String> {
+    if let Some(m) = store::session_meta_of(app, session_id) {
+        if !m.tools.is_empty() {
+            return m.tools;
+        }
+    }
+    let off = store::tools_off(app);
+    let names: Vec<String> = tools::catalog()
+        .iter()
+        .filter(|t| !off.contains(&t.name.to_string()))
+        .map(|t| t.name.to_string())
+        .collect();
+    if let Some(mut m) = store::session_meta_of(app, session_id) {
+        m.tools = names.clone();
+        let _ = store::session_update_meta(app, &m);
+    }
+    names
+}
+
+/// 按冻结清单把工具定义拼出来（tool_calls 在 prompt 最前面，顺序也必须稳）
+fn tools_schema_frozen(app: &AppHandle, session_id: &str) -> Vec<Value> {
+    let names = tools_frozen(app, session_id);
+    let all = tools::schema_json(&tools::catalog(), true);
+    let mut builtin: Vec<Value> = Vec::new();
+    for n in &names {
+        if let Some(v) = all.iter().find(|v| v["function"]["name"].as_str() == Some(n.as_str())) {
+            builtin.push(v.clone());
+        }
+    }
+    let (mcp_schemas, _) = mcp::all_tool_schemas_cached(app);
+    // MCP 的工具是动态的：按冻结清单过滤（新启用的服务要等新会话才进清单）
+    for s in mcp_schemas {
+        if let Some(n) = s["function"]["name"].as_str() {
+            if names.iter().any(|x| x == n) {
+                builtin.push(s);
+            }
+        }
+    }
+    builtin
+}
+
 /// 请求前"裁剪"：只影响**这一次请求**，不写文件（codex 里叫 for_prompt）。
 /// 从摘要之后的第一条开始，按 token 预算丢掉最老的几轮；至少留最后两轮。
-fn trim_for_request(messages: Vec<Value>, budget: usize) -> Vec<Value> {
-    let target = budget * 8 / 10;
-    if llm::estimate_messages_tokens(&messages) <= target {
+/// 请求前的裁剪。两个要点：
+///   · 触发线 80%、但**一次降到 60%**（水位线，不是贴着砍）—— 贴着砍会逐轮往前滑，
+///     每轮都变成"从裁剪点往后全 miss"，前缀缓存等于白建；
+///   · 估算口径要含工具定义（它在 prompt 最前面，也是最大的一块）。
+fn trim_for_request(messages: Vec<Value>, budget: usize, tools_tokens: usize) -> Vec<Value> {
+    let trigger = budget * 8 / 10;
+    let target = budget * 6 / 10;
+    let used = llm::estimate_messages_tokens(&messages) + tools_tokens;
+    if used <= trigger {
         return messages;
     }
     // 第 0 条是系统提示，可能第 1 条是摘要 —— 这两个都不动
@@ -908,7 +1142,7 @@ fn trim_for_request(messages: Vec<Value>, budget: usize) -> Vec<Value> {
     };
     let mut cut = head;
     let mut cur = messages.clone();
-    while llm::estimate_messages_tokens(&cur) > target {
+    while llm::estimate_messages_tokens(&cur) + tools_tokens > target {
         // 找下一个"轮次边界"（用户消息，或者没有 tool_calls 的助手消息）
         let mut next = cut;
         while next < messages.len() {
@@ -938,6 +1172,30 @@ fn tool_msg(id: &str, text: &str) -> Value {
     json!({ "role": "tool", "tool_call_id": id, "content": text })
 }
 
+/// 工具结果进上下文前的预算：**留头又留尾**。
+/// 为什么这件事关系到钱：命中率 ≈ 1 − Δ/P，Δ 就是"上一轮之后新加的 token"，
+/// 而 Δ 的大头正是工具结果（波形、日志、目录列表、网页正文）。结果原样灌进历史，
+/// 一轮就能把命中率从 98% 压到 80% 以下 —— 省它比省任何东西都值。
+/// 全量不丢：需要细节就让模型用工具把原文写进工作区文件，再按需分批读。
+const TOOL_RESULT_CHARS: usize = 8_000;
+
+fn cap_tool_result(text: &str) -> String {
+    let n = text.chars().count();
+    if n <= TOOL_RESULT_CHARS {
+        return text.to_string();
+    }
+    let head_n = TOOL_RESULT_CHARS * 6 / 10;
+    let tail_n = TOOL_RESULT_CHARS - head_n;
+    let head: String = text.chars().take(head_n).collect();
+    let tail: String = text.chars().skip(n - tail_n).collect();
+    format!(
+        "{head}\n…（中间省略 {} 字，共 {} 字。要看全量：用工具把它写到工作区文件里再分批读，\n\
+         或让工具直接给更小的输出 —— 别整段贴回对话，那会让上下文和花费一起涨）…\n{tail}",
+        n - TOOL_RESULT_CHARS,
+        n
+    )
+}
+
 /// 把会话事件翻译成 OpenAI 的 messages。
 /// 两条硬规矩：
 /// 1. tool_call 和它的 tool 结果必须成对、顺序不能乱；
@@ -945,11 +1203,9 @@ fn tool_msg(id: &str, text: &str) -> Value {
 ///    必须把 reasoning_content 原样带回去，否则下一轮直接 HTTP 400。
 fn events_to_messages(
     app: &AppHandle,
+    session_id: &str,
     events: &[Event],
     workspace: &std::path::Path,
-    perm: &str,
-    goal: &str,
-    names: &str,
 ) -> Vec<Value> {
     fn flush(out: &mut Vec<Value>, text: &mut String) {
         let t = text.trim();
@@ -966,7 +1222,7 @@ fn events_to_messages(
         .iter()
         .any(|e| matches!(e, Event::Assistant { reasoning, .. } if !reasoning.trim().is_empty()));
 
-    let mut out = vec![json!({ "role": "system", "content": system_prompt(app, workspace, perm, goal, names) })];
+    let mut out = vec![json!({ "role": "system", "content": system_prompt_frozen(app, session_id, workspace) })];
 
     // 压缩是"追加一条 summary + 跳过它覆盖的那段"，原文还在文件里（可以用 history_search 回查）。
     let skip = store::summary_upto(events).min(events.len());
@@ -1038,6 +1294,13 @@ fn events_to_messages(
                     }
                 }
             }
+            // 状态注记：夹在对话里的小标签（权限/目标/称呼的变更），消息流里必须看得见
+            Event::State { text, .. } => {
+                flush(&mut out, &mut pend_text);
+                pend_reason.clear();
+                out.push(json!({ "role": "user", "content": text }));
+                i += 1;
+            }
             Event::ToolResult { .. } | Event::Note { .. } => {
                 i += 1;
             }
@@ -1059,9 +1322,7 @@ fn event_brief(e: &Event) -> String {
 fn compact_if_needed(app: &AppHandle, provider: &Provider, key: &str, session_id: &str) -> Option<String> {
     let events = store::session_read(app, session_id);
     let ws = workspace_of(app, session_id);
-    let perm = store::session_meta_of(app, session_id).map(|m| m.perm).unwrap_or_else(|| "ask".into());
-    let goal = store::session_meta_of(app, session_id).map(|m| m.goal).unwrap_or_default();
-    let messages = events_to_messages(app, &events, &ws, &perm, &goal, &names_line(app, session_id));
+    let messages = events_to_messages(app, session_id, &events, &ws);
     let budget = provider.context_window.saturating_sub(provider.reserve_output) as usize;
     if budget == 0 {
         return None;
@@ -1334,6 +1595,10 @@ fn maybe_auto_title(app: &AppHandle, session_id: &str, provider: &Provider, key:
     if store::session_update_meta(app, &meta).is_ok() {
         // 只刷新标题，不往对话里塞系统消息（名字本来就显示在对话头上）
         emit(app, "agent://session", json!(meta));
+        // 称呼是**会话状态**：用一条注记告诉模型（别写进系统提示，那样每轮前缀都不一样了）
+        if !user_name.trim().is_empty() || !agent_name.trim().is_empty() {
+            append_state_note(app, session_id);
+        }
     }
 }
 
@@ -1401,7 +1666,8 @@ fn run_turn(
     emit(&app, "agent://state", json!({ "running": true, "session": session_id }));
 
     let perm = store::session_meta_of(&app, &session_id).map(|m| m.perm).unwrap_or_else(|| "ask".into());
-    let goal = store::session_meta_of(&app, &session_id).map(|m| m.goal).unwrap_or_default();
+    // goal / 称呼这类"会话状态"走注记（见 Event::State），不再进系统提示
+    let _ = append_state_note(&app, &session_id);
     let result: Result<(), String> = (|| {
         store::session_append(&app, &session_id, &Event::User { text: text.clone(), ts: 0 })?;
         if let Some(meta) = store::session_touch(&app, &session_id) {
@@ -1436,10 +1702,13 @@ fn run_turn(
             drain_pending(&app, &st, &session_id)?;
             let events = store::session_read(&app, &session_id);
             let budget_now = provider.context_window.saturating_sub(provider.reserve_output) as usize;
-            // 摘要之外的再裁一道（只影响这次请求）
+            // 摘要之外的再裁一道（只影响这次请求）。口径要和 provider 对齐：
+            // 工具定义也在 prompt 里，估算时得一起算，否则阈值永远踩不准
+            let tools_est = llm::estimate_tokens(&serde_json::to_string(&tools_schema).unwrap_or_default()) / 4;
             let messages = trim_for_request(
-                events_to_messages(&app, &events, &ws, &perm, &goal, &names_line(&app, &session_id)),
+                events_to_messages(&app, &session_id, &events, &ws),
                 budget_now.max(1),
+                tools_est,
             );
             emit(&app, "agent://round", json!({ "session": session_id, "round": round + 1,
                 "messages": messages.len(),
@@ -1482,6 +1751,18 @@ fn run_turn(
                     meta.total_completion += out.usage.completion_tokens;
                     meta.total_cache_hit += out.usage.cache_hit_tokens;
                     meta.total_cache_miss += out.usage.cache_miss_tokens;
+                    // 逐轮留档：界面能画出"命中率/Δ 的走势"，排障时能一眼看出是哪一轮掉的
+                    meta.usage_recent.push(json!({
+                        "ts": now_ms(),
+                        "prompt": out.usage.prompt_tokens,
+                        "hit": out.usage.cache_hit_tokens,
+                        "miss": out.usage.cache_miss_tokens,
+                        "out": out.usage.completion_tokens,
+                    }));
+                    if meta.usage_recent.len() > 40 {
+                        let drop = meta.usage_recent.len() - 40;
+                        meta.usage_recent.drain(..drop);
+                    }
                     let _ = store::session_update_meta(&app, &meta);
                 }
             }
@@ -1531,11 +1812,7 @@ fn run_turn(
                     Ok(t) => (true, t),
                     Err(e) => (false, e),
                 };
-                let text = if text.chars().count() > 12_000 {
-                    format!("{}…(结果太长，截断到 12000 字)", text.chars().take(12_000).collect::<String>())
-                } else {
-                    text
-                };
+                let text = cap_tool_result(&text);
                 store::session_append(&app, &session_id, &Event::ToolResult {
                     id: call.id.clone(), name: call.name.clone(), ok, text: text.clone(), ts: 0 })?;
                 emit(&app, "agent://tool_result", json!({ "session": session_id,
@@ -1869,21 +2146,22 @@ pub async fn amd_load(force: Option<bool>) -> Result<Value, String> {
 pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
     let meta = store::session_meta_of(&app, &session_id);
     let ws = workspace_of(&app, &session_id);
-    let perm = meta
-        .as_ref()
-        .map(|m| m.perm.clone())
-        .unwrap_or_else(|| "ask".into());
     let events = store::session_read(&app, &session_id);
     let est = |s: &str| llm::estimate_tokens(s);
 
-    let goal = meta.as_ref().map(|m| m.goal.clone()).unwrap_or_default();
-    let sys = est(&system_prompt(&app, &ws, &perm, &goal, &names_line(&app, &session_id)));
-    // 常驻技能是系统提示的一部分（sys 里已经含了），这里单独报出来给界面标"其中"
-    let skills_always = est(&always_skills_section(&app));
-    let mut schema = tools::schema_json(&tools::catalog(), true);
-    // 别漏掉 MCP 工具：它们也在 prompt 前缀里（用缓存的那份，不会为此再起进程）
-    let (mcp_schemas, _) = mcp::all_tool_schemas_cached(&app);
-    schema.extend(mcp_schemas);
+    // 系统提示按"冻结的那份"算（冻结了就用冻结的，没冻结才现算）—— 界面显示的才是真实的
+    let sys_text = meta
+        .as_ref()
+        .map(|m| m.system_prompt.clone())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| system_prompt(&app, &ws));
+    let sys = est(&sys_text);
+    // 三层分项：内置指令 / 技能索引 / 指导文件（都从同一份系统提示文本里量，口径一致）
+    let builtin_tok = est(&builtin::text(&app));
+    let index_tok = est(&store::skills_index_for(&app, &ws));
+    let guidance_tok = est(&store::read_global_guidance(&app)) + est(&store::read_workspace_guidance(&ws));
+    // 工具定义：按本会话冻结的清单算（和实际发出去的一致）
+    let schema = tools_schema_frozen(&app, &session_id);
     let tools_tok = est(&serde_json::to_string(&schema).unwrap_or_default());
     let covered = store::summary_upto(&events).min(events.len());
     let summary = est(&store::summary_text(&events).unwrap_or_default());
@@ -1899,6 +2177,7 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
             Event::ToolCall { name, args, .. } => est(name) + est(&args.to_string()) + 8,
             Event::ToolResult { text, .. } => est(text) + 12,
             Event::Note { text, .. } => est(text),
+            Event::State { text, .. } => est(text) + 4,
         };
         if in_dropped {
             dropped += cost;
@@ -1908,7 +2187,7 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
             Event::User { .. } => user += cost,
             Event::Assistant { .. } => assistant += cost,
             Event::ToolCall { .. } | Event::ToolResult { .. } => tool += cost,
-            Event::Note { .. } => note += cost,
+            Event::Note { .. } | Event::State { .. } => note += cost,
             Event::Summary { .. } => {}
         }
     }
@@ -1922,7 +2201,9 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
 
     json!({
         "system": sys,
-        "skillsAlways": skills_always,
+        "systemBuiltin": builtin_tok,
+        "systemSkills": index_tok,
+        "systemGuidance": guidance_tok,
         "tools": tools_tok,
         "summary": summary,
         "user": user,

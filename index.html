@@ -57,6 +57,7 @@
             <button class="modaltab" data-set="theme">主题与配色</button>
             <button class="modaltab" data-set="model">模型与供应商</button>
             <button class="modaltab" data-set="skills">技能</button>
+            <button class="modaltab" data-set="tools">工具</button>
             <button class="modaltab" data-set="mcp">MCP</button>
             <button class="modaltab" data-set="kb">知识库</button>
             <button class="modaltab" data-set="cache">缓存</button>
@@ -278,6 +279,57 @@
 
             <!-- 技能：本机技能的全部管理（Agent 信息页只放开关） -->
             <div class="setpane" data-setpane="skills" hidden>
+              <p class="hint">三层分工（照 Codex 的规矩）：<b>内置指令</b>是程序自带的规矩（只读，可选项能关）；
+                <b>技能</b>是按需读的流程 —— 系统提示里只有一行「名字 — 什么时候用」，正文要模型自己读；
+                <b>指导文件 AGENTS.md</b>是一直播在场的东西（人格 / 口吻 / 通用规矩 / 项目规矩）。</p>
+
+              <div class="setcard">
+                <div class="cardtitle">内置指令<span class="grow"></span><span id="set-builtin-sum" class="lb"></span></div>
+                <div id="set-builtin-list" class="agentlist"></div>
+              </div>
+
+              <div class="setcard">
+                <div class="cardtitle">全局指导（每轮都在场）<span class="grow"></span>
+                  <span id="set-guidance-path" class="lb"></span></div>
+                <textarea id="set-guidance" rows="7" class="agskill"
+                  placeholder="人格 / 口吻 / 通用规矩写这儿（等价于 Codex 的全局 AGENTS.md）。&#10;例：# 身份&#10;- 你叫小卡，说话简短，先给结论。"></textarea>
+                <div class="trow">
+                  <button id="set-guidance-save" class="btn small primary">保存指导</button>
+                  <button id="set-guidance-open" class="btn small">打开所在目录</button>
+                  <span class="grow"></span>
+                  <span class="lb">以前的「常驻技能」已迁到这里</span>
+                </div>
+              </div>
+
+              <div class="setcard">
+                <div class="cardtitle">全局技能（用户级：使用 / 不使用）<span class="grow"></span>
+                  <span id="set-skill-count" class="lb"></span></div>
+                <div id="set-skill-list" class="agentlist skilllist"></div>
+                <div class="trow">
+                  <button id="set-skill-import" class="btn small">导入…</button>
+                  <button id="set-skill-open" class="btn small">打开技能目录</button>
+                  <button id="set-skill-new" class="btn small">新建</button>
+                  <span class="grow"></span>
+                  <select id="set-skill-convert-ws" class="tight" title="转到哪个工作区"></select>
+                  <button id="set-skill-convert" class="btn small" title="把列表里选中的技能复制到该工作区，再从全局移除（自动在 skill-archive 留一份备份）">转为工作区专属</button>
+                </div>
+              </div>
+
+              <div class="setcard">
+                <div class="cardtitle">工作区技能（项目级：存在即生效）<span class="grow"></span>
+                  <select id="set-wsskill-ws" class="tight" title="看哪个工作区的技能"></select></div>
+                <div id="set-wsskill-list" class="agentlist skilllist"></div>
+                <div class="trow">
+                  <button id="set-wsskill-open" class="btn small">打开 .kdock_skill 目录</button>
+                  <span class="lb">放在 <code>&lt;工作区&gt;/.kdock_skill/&lt;名字&gt;/SKILL.md</code>，随项目走</span>
+                </div>
+              </div>
+
+              <div class="setcard">
+                <div class="cardtitle">技能归档（skill-archive：工作区技能的备份）<span class="grow"></span><span id="set-archive-count" class="lb"></span></div>
+                <div id="set-archive-list" class="agentlist"></div>
+              </div>
+
               <div class="setcard">
                 <div class="cardtitle">斜杠指令（/xxx）</div>
                 <p class="hint">一条 .md 一条指令：frontmatter 里写 name / description，正文就是提示词模板（里面的 {{args}} 会换成命令后面跟的参数）。把文件丢进下面的目录就行 —— 技能作者也能随技能一起分发。</p>
@@ -285,16 +337,6 @@
                   <span id="set-slash-dir" class="lb" title=""></span>
                   <span class="grow"></span>
                   <button id="set-slash-open" class="btn small">打开指令目录</button>
-                </div>
-              </div>
-              <div class="setcard">
-                <div class="cardtitle">本机技能<span class="grow"></span>
-                  <span id="set-skill-count" class="lb"></span></div>
-                <div id="set-skill-list" class="agentlist skilllist"></div>
-                <div class="trow">
-                  <button id="set-skill-import" class="btn small">导入…</button>
-                  <button id="set-skill-open" class="btn small">打开技能目录</button>
-                  <button id="set-skill-new" class="btn small">新建</button>
                 </div>
               </div>
               <div class="setcard">
@@ -313,6 +355,16 @@
               <p class="hint">技能 = 一份 <code>SKILL.md</code>（frontmatter 的 name/description 进系统提示，正文按需读）。
                 点列表里的一项可以读出来编辑；「导入」支持选一个 <code>SKILL.md</code> 或装着它的目录。
                 技能目录：<code id="set-skill-dir"></code></p>
+            </div>
+
+            <!-- 工具：只读清单 + 开关（工具定义在请求最前面，是最大的那一块 token） -->
+            <div class="setpane" data-setpane="tools" hidden>
+              <div class="cardtitle">agent 能用的工具<span class="grow"></span><span id="set-tool-sum" class="lb"></span></div>
+              <p class="hint">这里的开关是**只读清单 + 使用/不使用**：关掉用不上的工具能省下每次请求的输入 token
+                （现在这一整块约占系统提示之外的一半）。注意：工具定义在请求的<b>最前面</b>，中途改会让整段前缀缓存
+                （含全部历史）重算一次，所以<b>开关只对新会话生效</b>；想让当前会话立刻吃上，去 Agent 信息页点「刷新骨架」。</p>
+              <input id="set-tool-filter" class="dirinput" placeholder="搜索工具名 / 说明" />
+              <div id="set-tool-list" class="agentlist scrollable"></div>
             </div>
 
             <!-- MCP：全部管理（Agent 信息页只放开关） -->

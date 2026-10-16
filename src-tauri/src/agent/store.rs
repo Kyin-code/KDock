@@ -317,6 +317,10 @@ pub enum Event {
     Summary { text: String, upto: usize, #[serde(default)] ts: i64 },
     /// 系统提示/事件（比如"用户点了停止"）
     Note { text: String, #[serde(default)] ts: i64 },
+    /// 会话状态注记（权限/目标/称呼这类"随时可能变"的东西）。
+    /// 为什么不放系统提示里：系统提示是前缀，改一个字它后面的整段历史缓存全作废；
+    /// 注记是**追加在尾部**的，只在变更那一轮多几十个 token。
+    State { text: String, #[serde(default)] ts: i64 },
 }
 
 impl Event {
@@ -329,7 +333,8 @@ impl Event {
             | Event::ToolCall { ts, .. }
             | Event::ToolResult { ts, .. }
             | Event::Summary { ts, .. }
-            | Event::Note { ts, .. } => *ts,
+            | Event::Note { ts, .. }
+            | Event::State { ts, .. } => *ts,
         }
     }
     pub fn stamp(mut self) -> Self {
@@ -340,7 +345,8 @@ impl Event {
             | Event::ToolCall { ts, .. }
             | Event::ToolResult { ts, .. }
             | Event::Summary { ts, .. }
-            | Event::Note { ts, .. } => {
+            | Event::Note { ts, .. }
+            | Event::State { ts, .. } => {
                 if *ts == 0 { *ts = t; }
             }
         }
@@ -383,6 +389,19 @@ pub struct SessionMeta {
     /// 已经提示过"大头是系统提示+工具定义"了（同一个会话只弹一次 toast）
     #[serde(default)]
     pub warned_overhead: bool,
+    /// **冻结的上下文骨架**：本会话第一次请求时把系统提示定型存这儿，
+    /// 之后每一轮原样复用 —— 磁盘上的技能/指导文件改了也不动它，前缀才能一直命中。
+    /// （想让它重新生成：界面上点「刷新骨架」，代价是本会话缓存重置一次。）
+    #[serde(default)]
+    pub system_prompt: String,
+    /// 本会话冻结的工具清单（名字，按顺序）。工具定义在请求最前面，一变全都作废，
+    /// 所以也按会话冻住；新会话才吃新的开关。
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// 最近几轮的用量（每轮：prompt / 命中 / 未命中 / 输出），给界面看命中率走势。
+    /// 只留最近 40 轮，不做累积（累积看 total_* 那几个）。
+    #[serde(default)]
+    pub usage_recent: Vec<serde_json::Value>,
     /// 权限：read(只读) / ask(危险动作先问) / auto(自动)
     #[serde(default = "default_perm")]
     pub perm: String,
@@ -511,6 +530,9 @@ pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<Sess
         total_cache_hit: 0,
         total_cache_miss: 0,
         warned_overhead: false,
+        system_prompt: String::new(),
+        tools: Vec::new(),
+        usage_recent: Vec::new(),
         turns: 0,
         perm: default_perm(),
         goal: String::new(),
@@ -768,6 +790,53 @@ pub struct SkillInfo {
     pub size: u64,
     /// 开关：关掉的技能会挪到 `skills-off/`，不进口令索引（agent 也看不到）
     pub enabled: bool,
+    /// 哪一层的技能：global（用户级，agent/skills/） / workspace（项目级，<工作区>/.kdock_skill/）
+    /// —— 界面按这个分三段显示，索引也分两段注入
+    #[serde(default)]
+    pub scope: String,
+}
+
+/// 工作区里的项目技能目录（跟 Codex 的工程约定一个思路：项目自己的东西放项目里）
+pub const WORKSPACE_SKILL_DIR: &str = ".kdock_skill";
+
+/// 工作区技能目录"按需创建"：**代码保证**它存在（不依赖 agent 记得去看）。
+/// 顺手放一个内容为 `*` 的 .gitignore —— 否则用户的仓库 git status 会被这个目录污染。
+pub fn ensure_workspace_skill_dir(ws: &std::path::Path) -> std::path::PathBuf {
+    let d = ws.join(WORKSPACE_SKILL_DIR);
+    let _ = std::fs::create_dir_all(&d);
+    let gi = d.join(".gitignore");
+    if !gi.exists() {
+        let _ = std::fs::write(&gi, "*\n");
+    }
+    d
+}
+
+/// 工作区技能（项目级）：全都在用，没有启用/停用一说的那种 —— 存在即生效
+pub fn workspace_skills(ws: &std::path::Path) -> Vec<SkillInfo> {
+    let dir = ensure_workspace_skill_dir(ws);
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(&dir) else { return out };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let md = path.join("SKILL.md");
+        let Ok(text) = std::fs::read_to_string(&md) else { continue };
+        let (fm, _body) = parse_frontmatter(&text);
+        let dir_name = entry.file_name().to_string_lossy().to_string();
+        out.push(SkillInfo {
+            slug: dir_name.clone(),
+            name: fm.get("name").cloned().unwrap_or_else(|| dir_name.clone()),
+            description: fm.get("description").cloned().unwrap_or_default(),
+            path: md.to_string_lossy().to_string(),
+            size: std::fs::metadata(&md).map(|m| m.len()).unwrap_or(0),
+            enabled: true,
+            scope: "workspace".into(),
+        });
+    }
+    out.sort_by(|a, b| a.slug.cmp(&b.slug));
+    out
 }
 
 pub fn skills_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -839,6 +908,7 @@ pub fn skills_list(app: &AppHandle) -> Vec<SkillInfo> {
                     path: md.to_string_lossy().to_string(),
                     size: std::fs::metadata(&md).map(|m| m.len()).unwrap_or(0),
                     enabled,
+                    scope: "global".into(),
                 });
             }
         }
@@ -908,6 +978,11 @@ fn skills_always_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(agent_dir(app)?.join("skills-always.json"))
 }
 
+/// 给迁移用：老「常驻技能」清单文件的路径（已经不参与系统提示了）
+pub fn skills_always_path_pub(app: &AppHandle) -> Option<std::path::PathBuf> {
+    skills_always_path(app).ok()
+}
+
 /// 常驻技能的 slug 清单（没文件 / 文件坏了都当"没有"）。排序去重，读的是纯文件，好测。
 fn skills_always_read(path: &std::path::Path) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
@@ -936,75 +1011,6 @@ pub fn skills_always(app: &AppHandle) -> Vec<String> {
         Ok(p) => skills_always_read(&p),
         Err(_) => Vec::new(),
     }
-}
-
-fn skills_always_write(app: &AppHandle, slugs: &[String]) -> Result<(), String> {
-    let path = skills_always_path(app)?;
-    skills_always_write_to(&path, slugs)
-}
-
-/// 常驻技能的字节数合计（只算启用的；上限判断和界面显示都用它）
-pub fn skills_always_bytes(app: &AppHandle) -> usize {
-    let always = skills_always(app);
-    skills_list(app)
-        .iter()
-        .filter(|s| s.enabled && always.contains(&s.slug))
-        .map(|s| s.size as usize)
-        .sum()
-}
-
-/// 开关一个技能的"常驻"。开的时候要过上限 —— 不然勾一个几十 KB 的大技能，每轮请求都被顶爆。
-pub fn skill_set_always(app: &AppHandle, slug: &str, on: bool) -> Result<(), String> {
-    let Some(info) = skills_list(app).into_iter().find(|s| s.slug == slug) else {
-        return Err(format!("没有这个技能：{slug}"));
-    };
-    if on && !info.enabled {
-        return Err("先启用这个技能，再设常驻".into());
-    }
-    let mut cur = skills_always(app);
-    if on {
-        let used = skills_always_bytes(app);
-        if used + info.size as usize > SKILLS_ALWAYS_LIMIT {
-            return Err(format!(
-                "常驻技能合计不能超过 {} KB（已用 {:.1} KB，这个 {:.1} KB）",
-                SKILLS_ALWAYS_LIMIT / 1024,
-                used as f64 / 1024.0,
-                info.size as f64 / 1024.0
-            ));
-        }
-        if !cur.contains(&slug.to_string()) {
-            cur.push(slug.to_string());
-        }
-    } else {
-        cur.retain(|s| s != slug);
-    }
-    skills_always_write(app, &cur)
-}
-
-/// 拼进系统提示的常驻技能正文（没有常驻技能就返回空串）。
-/// 只放正文，不放 frontmatter（name/description 已经在技能索引里了）。
-pub fn always_skills_block(app: &AppHandle) -> String {
-    always_block_of(&skills_always(app), &skills_list(app))
-}
-
-/// 纯逻辑部分：按清单挑出启用的技能，把**正文**（不含 frontmatter）拼成一段。
-/// 顺序跟着传进来的 list 走 —— 调用方是 skills_list（已按 slug 排序），顺序稳定，
-/// 系统提示的前缀缓存才不会每轮失效。
-fn always_block_of(always: &[String], list: &[SkillInfo]) -> String {
-    if always.is_empty() {
-        return String::new();
-    }
-    let mut out = String::new();
-    for s in list.iter().filter(|s| s.enabled && always.contains(&s.slug)) {
-        let Ok(text) = std::fs::read_to_string(&s.path) else { continue };
-        let (_, body) = parse_frontmatter(&text);
-        let body = body.trim();
-        if body.is_empty() {
-            continue;
-        }
-        out.push_str(&format!("\n### 常驻技能：{}\n{}\n", s.slug, body));
-    }
-    out
 }
 
 /// 从本机导入一个技能：给 `SKILL.md` 的路径，或者"装着 SKILL.md 的目录"
@@ -1067,6 +1073,303 @@ pub fn skills_index(app: &AppHandle) -> String {
         .join("\n")
 }
 
+/* ── 指导文件（AGENTS.md）："一直在场"的规则/人格走这里，而不是靠技能常驻 ─────────
+   这是照 Codex 的分工来的：AGENTS.md 是**持久的、每轮都在**的项目/个人约定，
+   技能（SKILL.md）是**按需读**的可复用流程。以前 KDock 用"常驻技能"把人格塞进系统提示，
+   那是拿技能当指导文件用；现在把这条归位 —— 人格/身份/口吻写全局指导或工作区 AGENTS.md。 */
+
+/// 全局指导：`agent/AGENTS.md`（个人级，一直在场）
+pub fn global_guidance_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(agent_dir(app)?.join("AGENTS.md"))
+}
+
+/* ── 工具清单开关：`agent/tools-off.json`（一串工具名）────────────────────────
+   工具定义在请求的**最前面**，内容是十几个 KB 的大头。关掉用不上的工具能省 token，
+   但**中途改会让整个前缀（含全部历史）作废** —— 所以开关按会话冻结：改了下一个新会话生效。 */
+
+fn tools_off_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(agent_dir(app)?.join("tools-off.json"))
+}
+
+pub fn tools_off(app: &AppHandle) -> Vec<String> {
+    let mut v: Vec<String> = tools_off_path(app)
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    v.sort();
+    v.dedup();
+    v
+}
+
+pub fn tools_off_set(app: &AppHandle, name: &str, off: bool) -> Result<(), String> {
+    let mut cur = tools_off(app);
+    if off {
+        if !cur.contains(&name.to_string()) {
+            cur.push(name.to_string());
+        }
+    } else {
+        cur.retain(|x| x != name);
+    }
+    let p = tools_off_path(app)?;
+    let text = serde_json::to_string_pretty(&cur).map_err(|e| e.to_string())?;
+    let tmp = p.with_extension("json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| format!("写 {} 失败: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &p).map_err(|e| format!("改名失败: {e}"))
+}
+
+pub fn read_global_guidance(app: &AppHandle) -> String {
+    global_guidance_path(app)
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default()
+}
+
+pub fn write_global_guidance(app: &AppHandle, text: &str) -> Result<String, String> {
+    let p = global_guidance_path(app)?;
+    std::fs::write(&p, text).map_err(|e| format!("写 {} 失败: {e}", p.display()))?;
+    Ok(p.to_string_lossy().to_string())
+}
+
+/// 工作区指导：`<工作区>/AGENTS.md`
+pub fn read_workspace_guidance(ws: &std::path::Path) -> String {
+    std::fs::read_to_string(ws.join("AGENTS.md")).unwrap_or_default()
+}
+
+/* ── 技能归档（skill-archive/）：工作区技能的唯一备份 ──────────────────────
+   为什么另开一个目录、不塞进 skills-off/：
+     · skills_list() 会扫 skills/ 和 skills-off/ —— 放进去就会以"停用的全局技能"
+       出现在全局列表里（还可能被误启用）。"全局停用"和"已下放到项目"是两回事。
+     · 归档要额外记住"属于哪个工作区"，skills-off/ 那种"目录即状态"装不下。
+     · 缓存页可以把归档单列一项，删除/还原都清楚。 */
+
+pub fn skill_archive_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(agent_dir(app)?.join("skill-archive"))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchiveInfo {
+    pub slug: String,
+    pub workspace: String,
+    pub from: String,      // 从哪儿来的：global / workspace
+    pub ts: i64,
+    pub path: String,
+    pub size: u64,
+}
+
+/// 把一份技能目录拷进归档（同名先删旧的），并写 meta.json 记来源
+pub fn archive_skill(app: &AppHandle, src_dir: &std::path::Path, workspace: &str, from: &str) -> Result<String, String> {
+    let slug = src_dir
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .ok_or("目录名拿不到")?;
+    let dst = skill_archive_dir(app)?.join(&slug);
+    if dst.exists() {
+        std::fs::remove_dir_all(&dst).map_err(|e| format!("清旧归档失败: {e}"))?;
+    }
+    copy_dir(src_dir, &dst)?;
+    let meta = ArchiveInfo {
+        slug: slug.clone(),
+        workspace: workspace.to_string(),
+        from: from.to_string(),
+        ts: now_ms(),
+        path: dst.to_string_lossy().to_string(),
+        size: std::fs::metadata(dst.join("SKILL.md")).map(|m| m.len()).unwrap_or(0),
+    };
+    std::fs::write(dst.join("meta.json"), serde_json::to_string_pretty(&meta).unwrap_or_default())
+        .map_err(|e| format!("写 meta.json 失败: {e}"))?;
+    Ok(dst.to_string_lossy().to_string())
+}
+
+fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("建 {} 失败: {e}", dst.display()))?;
+    for e in std::fs::read_dir(src).map_err(|e| format!("读 {} 失败: {e}", src.display()))?.flatten() {
+        let p = e.path();
+        let to = dst.join(e.file_name());
+        if p.is_dir() {
+            copy_dir(&p, &to)?;
+        } else {
+            std::fs::copy(&p, &to).map_err(|e| format!("拷 {} 失败: {e}", p.display()))?;
+        }
+    }
+    Ok(())
+}
+
+pub fn archive_list(app: &AppHandle) -> Vec<ArchiveInfo> {
+    let mut out = Vec::new();
+    let Ok(dir) = skill_archive_dir(app) else { return out };
+    let Ok(rd) = std::fs::read_dir(&dir) else { return out };
+    for e in rd.flatten() {
+        let p = e.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let slug = e.file_name().to_string_lossy().to_string();
+        if slug.starts_with('.') {
+            continue;
+        }
+        let meta: Option<ArchiveInfo> = std::fs::read_to_string(p.join("meta.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok());
+        out.push(match meta {
+            Some(mut m) => {
+                m.path = p.to_string_lossy().to_string();
+                if m.size == 0 {
+                    m.size = std::fs::metadata(p.join("SKILL.md")).map(|x| x.len()).unwrap_or(0);
+                }
+                m
+            }
+            None => ArchiveInfo {
+                slug: slug.clone(),
+                workspace: String::new(),
+                from: String::new(),
+                ts: 0,
+                path: p.to_string_lossy().to_string(),
+                size: std::fs::metadata(p.join("SKILL.md")).map(|x| x.len()).unwrap_or(0),
+            },
+        });
+    }
+    out.sort_by(|a, b| b.ts.cmp(&a.ts));
+    out
+}
+
+/// 从归档还原：scope = global（放回全局 skills/）或 workspace（放回指定工作区）
+pub fn archive_restore(app: &AppHandle, slug: &str, scope: &str, workspace: &str) -> Result<String, String> {
+    let src = skill_archive_dir(app)?.join(slugify(slug));
+    if !src.is_dir() {
+        return Err(format!("归档里没有这个技能：{slug}"));
+    }
+    if scope == "workspace" {
+        if workspace.trim().is_empty() {
+            return Err("还原到工作区要指定工作区".into());
+        }
+        let ws = PathBuf::from(workspace);
+        std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        let dst = ensure_workspace_skill_dir(&ws).join(slugify(slug));
+        if dst.exists() {
+            std::fs::remove_dir_all(&dst).map_err(|e| e.to_string())?;
+        }
+        copy_dir(&src, &dst)?;
+        return Ok(dst.to_string_lossy().to_string());
+    }
+    let dst = skills_dir(app)?.join(slugify(slug));
+    if dst.exists() {
+        std::fs::remove_dir_all(&dst).map_err(|e| e.to_string())?;
+    }
+    copy_dir(&src, &dst)?;
+    Ok(dst.to_string_lossy().to_string())
+}
+
+pub fn archive_delete(app: &AppHandle, slug: &str) -> Result<(), String> {
+    let p = skill_archive_dir(app)?.join(slugify(slug));
+    if p.is_dir() {
+        std::fs::remove_dir_all(&p).map_err(|e| format!("删归档失败: {e}"))?;
+    }
+    Ok(())
+}
+
+/// 把全局技能"转为工作区专属"：复制到 <工作区>/.kdock_skill/ + 归档一份备份 + 从全局移除。
+/// 反向的"提升为全局"用 archive_restore(scope="global") 就够了。
+pub fn skill_convert_to_workspace(app: &AppHandle, slug: &str, workspace: &str) -> Result<String, String> {
+    if workspace.trim().is_empty() {
+        return Err("要指定一个工作区".into());
+    }
+    let ws = PathBuf::from(workspace);
+    std::fs::create_dir_all(&ws).map_err(|e| format!("建工作区失败: {e}"))?;
+    let src = skill_dir_of(app, slug)?;
+    if !src.is_dir() {
+        return Err(format!("没有这个技能：{slug}"));
+    }
+    // ① 先备份
+    let backup = archive_skill(app, &src, workspace, "global")?;
+    // ② 再复制到工作区
+    let dst = ensure_workspace_skill_dir(&ws).join(slugify(slug));
+    if dst.exists() {
+        return Err(format!("工作区里已经有同名技能了：{}", dst.display()));
+    }
+    copy_dir(&src, &dst)?;
+    // ③ 从全局移除（启用目录 / 停用目录都清）
+    let _ = std::fs::remove_dir_all(skills_dir(app)?.join(slugify(slug)));
+    let _ = std::fs::remove_dir_all(skills_off_dir(app)?.join(slugify(slug)));
+    Ok(format!("{}（备份在 {}）", dst.to_string_lossy(), backup))
+}
+
+/// 三段一起的索引：内置之外的两段技能（全局 + 本项目），正文按需读。
+/// 顺序**按 slug 排序**、文本里不含大小/时间 —— 系统提示要拿前缀缓存，稳字第一。
+pub fn skills_index_for(app: &AppHandle, ws: &std::path::Path) -> String {
+    let global: Vec<SkillInfo> = skills_list(app).into_iter().filter(|s| s.enabled).collect();
+    let local = workspace_skills(ws);
+    let mut out = String::new();
+    out.push_str("全局技能（用户级：任务匹配到某个技能的描述时，先用 skill_read 读全文再照它做）：\n");
+    if global.is_empty() {
+        out.push_str("（还没有全局技能）\n");
+    } else {
+        for s in &global {
+            let d = if s.description.is_empty() { "（无描述）".to_string() } else { s.description.clone() };
+            out.push_str(&format!("- {} — {}\n", s.slug, d));
+        }
+    }
+    out.push_str("本项目技能（工作区里的 .kdock_skill；涉及本项目文件/流程时**必须先读**它）：\n");
+    if local.is_empty() {
+        out.push_str("（本项目还没有专属技能）\n");
+    } else {
+        for s in &local {
+            let d = if s.description.is_empty() { "（无描述）".to_string() } else { s.description.clone() };
+            out.push_str(&format!("- {} — {}\n", s.slug, d));
+        }
+    }
+    out
+}
+
+/// 技能在哪儿（含工作区技能）：先工作区、再全局启用、最后全局停用
+pub fn skill_dir_of_in(app: &AppHandle, ws: &std::path::Path, slug: &str) -> PathBuf {
+    let s = slugify(slug);
+    let local = ws.join(WORKSPACE_SKILL_DIR).join(&s);
+    if local.is_dir() {
+        return local;
+    }
+    let g = skills_dir(app).map(|d| d.join(&s)).unwrap_or_default();
+    if g.is_dir() {
+        return g;
+    }
+    let off = skills_off_dir(app).map(|d| d.join(&s)).unwrap_or_default();
+    if off.is_dir() {
+        return off;
+    }
+    g
+}
+
+/// 读技能正文（工作区优先）——模型走这条路，所以它能读到项目技能
+pub fn skill_read_in(app: &AppHandle, ws: &std::path::Path, slug: &str) -> Result<String, String> {
+    let p = skill_dir_of_in(app, ws, slug).join("SKILL.md");
+    std::fs::read_to_string(&p).map_err(|e| format!("读不到 {}: {e}", p.display()))
+}
+
+/// 写技能：scope = global（默认）或 workspace
+pub fn skill_write_in(app: &AppHandle, ws: &std::path::Path, scope: &str, slug: &str, content: &str) -> Result<String, String> {
+    if scope == "workspace" {
+        let dir = ensure_workspace_skill_dir(ws).join(slugify(slug));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let p = dir.join("SKILL.md");
+        std::fs::write(&p, content).map_err(|e| format!("写 {} 失败: {e}", p.display()))?;
+        return Ok(p.to_string_lossy().to_string());
+    }
+    skill_write(app, slug, content)
+}
+
+/// 删技能：工作区技能删之前先归档一份（回收站语义）
+pub fn skill_delete_in(app: &AppHandle, ws: &std::path::Path, scope: &str, slug: &str) -> Result<(), String> {
+    if scope == "workspace" {
+        let dir = ws.join(WORKSPACE_SKILL_DIR).join(slugify(slug));
+        if !dir.is_dir() {
+            return Err(format!("工作区里没有这个技能：{slug}"));
+        }
+        let _ = archive_skill(app, &dir, &ws.to_string_lossy(), "workspace");
+        return std::fs::remove_dir_all(&dir).map_err(|e| format!("删技能失败: {e}"));
+    }
+    skill_delete(app, slug)
+}
+
 // ── 工作区 ──────────────────────────────────────────────────────────
 
 pub fn default_workspace(app: &AppHandle) -> PathBuf {
@@ -1114,6 +1417,7 @@ mod tests {
             path: p.to_string_lossy().to_string(),
             size: std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0),
             enabled,
+            scope: "global".into(),
         }
     }
 
@@ -1131,23 +1435,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    /// 两段索引：全局只有启用的进，工作区存在即进；顺序按 slug（前缀缓存要稳）
     #[test]
-    fn always_block_takes_only_enabled_bodies() {
-        let d = tmp_dir("block");
-        // 顺序照 skills_list（先启用的、再按 slug），块里就按这个顺序
-        let list = vec![
-            mk_skill(&d, "xiaoka", "我是小卡，说话简短，先给结论。", true),
-            mk_skill(&d, "off-one", "这条不该出现", false),
-            SkillInfo { slug: "ghost".into(), path: d.join("没有这个文件").to_string_lossy().to_string(), ..mk_skill(&d, "ghost-src", "x", true) },
-        ];
-        let always: Vec<String> = ["xiaoka", "off-one", "ghost"].iter().map(|s| s.to_string()).collect();
-        let blk = always_block_of(&always, &list);
-        assert!(blk.contains("### 常驻技能：xiaoka"));
-        assert!(blk.contains("我是小卡，说话简短，先给结论。"));
-        assert!(!blk.contains("这条不该出现"), "停用的技能不能注入");
-        assert!(!blk.contains("描述不该进正文"), "frontmatter 不能混进正文");
-        assert!(!blk.contains("ghost"), "文件没了就跳过，不能炸");
-        assert!(always_block_of(&[], &list).is_empty(), "没勾任何技能就是空串");
+    fn workspace_skill_dir_is_created_with_gitignore() {
+        let d = tmp_dir("wsskill");
+        let dir = ensure_workspace_skill_dir(&d);
+        assert!(dir.is_dir(), "目录要由代码建出来");
+        assert!(dir.join(".gitignore").exists(), "自带 .gitignore，别污染用户的仓库");
+        // 放一个项目技能进去，能读出来、能按名字找到
+        std::fs::create_dir_all(dir.join("proj-rules")).unwrap();
+        std::fs::write(dir.join("proj-rules").join("SKILL.md"),
+            "---\nname: proj-rules\ndescription: 本项目的规矩\n---\n正文").unwrap();
+        let list = workspace_skills(&d);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].slug, "proj-rules");
+        assert_eq!(list[0].scope, "workspace");
+        assert!(list[0].enabled, "项目技能存在即生效");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

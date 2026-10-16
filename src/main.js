@@ -6054,6 +6054,8 @@ function bindSettings() {
       if (b.dataset.set === "model") agProvTab("use");
       if (b.dataset.set === "about") agLoadTools();
       if (b.dataset.set === "cache") { cacheRender(); bindCache(); }
+      if (b.dataset.set === "skills") { renderSkillsPage(); }
+      if (b.dataset.set === "tools") { agToolRows = []; renderToolsPage(); }
       if (b.dataset.set === "about" || b.dataset.set === "general") agRenderAbout();
       if (LANG === "en") setTimeout(() => langWalk(), 0);   // 这一页里运行时拼出来的文字
     };
@@ -6802,6 +6804,23 @@ function agRenderInfo() {
     row("Token", `${en("输入")} ${agK(inTok)} / ${en("输出")} ${agK(outTok)}`) +
     row("缓存命中", hit + miss > 0 ? `${hitRate}%（${agK(hit)} / ${agK(hit + miss)}）` : "—", hitRate >= 50 ? "ok" : "") +
     (() => {
+      // 逐轮命中率：Δ（这一轮新加的 token）越大，命中率越低 —— 1 − Δ/P。
+      // 只列最近 6 轮，够看出"是哪一轮掉的"。
+      const r = (agMeta && agMeta.usage_recent) || [];
+      if (!r.length) return "";
+      const tail = r.slice(-6).map((u) => {
+        const tot = (u.hit || 0) + (u.miss || 0);
+        const pct2 = tot ? Math.round(((u.hit || 0) / tot) * 100) : 0;
+        return `<span class="wsr" title="${en("命中")} ${agK(u.hit)} / ${en("未命中")} ${agK(u.miss)}">${pct2}%</span>`;
+      }).join("");
+      return `<div class="row"><span class="k">${en("最近几轮")}</span><span class="v">${tail}</span></div>`;
+    })() +
+    `<div class="trow" style="gap:6px">
+       <button id="ag-prompt-view" class="btn small" title="${en("看这个会话实际发给模型的系统提示（骨架）+ 工具清单")}">${en("查看系统提示")}</button>
+       <button id="ag-prefix-refresh" class="btn small" title="${en("改了技能/指导文件/工具开关后，让本会话立刻吃上（代价：本会话缓存重算一次）")}">${en("刷新骨架")}</button>
+       ${agBreak && agBreak.frozen ? `<span class="sub">${en("骨架已冻结（前缀稳定 → 缓存命中率高）")}</span>` : `<span class="sub">${en("骨架未冻结")}</span>`}
+     </div>` +
+    (() => {
       // 速度按"实际跑的那条 profile"取：优先当前生效的（下一轮就是它跑），
       // 没有它的数据再退回这个会话记录的那条
       const activeId = agCfg && agCfg.activeId;
@@ -6813,6 +6832,35 @@ function agRenderInfo() {
     (agBalance ? row("余额", agEscape(agBalance), "") : "") +
     `<div class="sub">${en("按")} ${agEscape(model || "?")} ${en("的价格估算（元/百万 token），可在 main.js 的 AG_PRICE 里改")}</div>` +
     `<div class="sub">${en("出字速度只算模型正在出字的那段（工具调用、等待不算）")}</div>`;
+  // 上面那两个按钮是每次重画都新建的，绑一次就行
+  const pv = agEl("ag-prompt-view");
+  if (pv) pv.onclick = agShowPrompt;
+  const pr = agEl("ag-prefix-refresh");
+  if (pr) pr.onclick = async () => {
+    if (!agMeta) return;
+    const r = await agConfirm(en("刷新上下文骨架会让本会话的前缀缓存重算一次（下一轮输入 token 会贵一点），继续？"), en("刷新骨架"), false);
+    if (!r) return;
+    try {
+      const out = await invoke("agent_prefix_refresh", { sessionId: agMeta.id, toolsToo: false });
+      toast(String((out && out.note) || "ok"));
+      agRefreshBreakdown();
+    } catch (e) { toast(String(e)); }
+  };
+}
+
+/** 「查看系统提示」：把骨架原文摆出来（用户问"技能到底怎么进上下文的"时，答案就在这儿） */
+async function agShowPrompt() {
+  if (!agMeta) return toast(en("先开一个会话"));
+  try {
+    const p = await invoke("agent_prompt_preview", { sessionId: agMeta.id });
+    const head = `${en("骨架")}：${p.frozen ? en("已冻结") : en("未冻结")} · ${p.chars} ${en("字")}\n` +
+      `${en("工作区")}：${p.workspace}\n${en("工具")}（${(p.tools || []).length}）：${(p.tools || []).join(", ")}\n` +
+      "────────\n";
+    agDialog({
+      title: en("这个会话实际发给模型的系统提示"),
+      text: head + (p.system || ""),
+    });
+  } catch (e) { toast(String(e)); }
 }
 
 /* ── 上下文成分分析（参考 opencode 的 context 面板）：把占 token 的东西按类目拆开 ── */
@@ -6857,9 +6905,9 @@ function agRenderBreakdown() {
     `<div class="agctx-legend">${legend}` +
     `<div class="r"><span class="dot" style="background:var(--surface-3)"></span><span class="n">${en("剩余可用")}</span>` +
     `<span class="v">${agK(b.free || 0)} · ${freePct.toFixed(0)}%</span></div></div>` +
-    (b.skillsAlways
-      ? `<div class="sub">${en("其中常驻技能")}: ${agK(b.skillsAlways)} tokens · ${en("正文每轮注入，不会被压缩掉")}</div>`
-      : "") +
+    // 系统提示按三层拆开报：内置指令 / 技能索引 / 指导文件 —— "谁在一直占上下文"要一眼看明白
+    `<div class="sub">${en("系统提示里")}: ${en("内置指令")} ${agK(b.systemBuiltin || 0)} · ` +
+    `${en("技能索引")} ${agK(b.systemSkills || 0)} · ${en("指导文件")} ${agK(b.systemGuidance || 0)}</div>` +
     (b.dropped
       ? `<div class="sub">${en("已被摘要压掉")}: ${agK(b.dropped)} tokens · ${b.coveredEvents} ${en("条旧事件；原文仍在会话文件里，可用 history_search 回查")}</div>`
       : "") +
@@ -7167,6 +7215,13 @@ async function bindAgent() {
     else await agNewSession(agWorkspaces[0] && agWorkspaces[0].id);
   }
   agLoadSkills();
+  // 老版「常驻技能」一次性迁移到全局指导（AGENTS.md）：保行为不变，只是换了载体
+  invoke("agent_migrate_always_skills").then((r) => {
+    if (r && r.migrated) {
+      toast(en("已把常驻技能迁移到「全局指导」：") + (r.slugs || []).join(", "));
+      agLoadSkills();
+    }
+  }).catch(() => {});
   agLoadMcps();
   agLoadTools();
   bindAgentPanes();
@@ -7765,7 +7820,7 @@ async function agImportProviders() {
 
 async function agLoadSkills() {
   agSkills = await invoke("agent_skills").catch(() => []);
-  agAlways = await invoke("agent_skills_always").catch(() => ({ slugs: [], bytes: 0, limit: 16384 }));
+  agAlways = { slugs: [], bytes: 0, limit: 0 };        // 「常驻技能」已经取消了，留着这个变量只为兼容旧引用
   agRenderSkillTable();   // Agent 信息页：只展示 + 开关
   renderSkillsPage();     // 设置 → 技能：全部管理
 }
@@ -7801,43 +7856,20 @@ function agRenderSkillTable() {
       }
       await agLoadSkills();
     };
-    // 「常驻」：勾上就每轮把技能正文注入系统提示（身份 / 口吻 / 说话规则这类技能用这个）。
-    // 技能没启用时不给勾 —— 后端也拦（常驻只对启用的技能生效）。
-    const awLbl = document.createElement("span");
-    awLbl.className = "swtag" + (agIsAlways(s.slug) ? " on" : "");
-    awLbl.textContent = en("常驻");
-    const aw = document.createElement("input");
-    aw.type = "checkbox"; aw.className = "sw"; aw.checked = agIsAlways(s.slug);
-    aw.disabled = !s.enabled;
-    aw.title = !s.enabled
-      ? en("先启用这个技能")
-      : en("常驻：技能正文每轮注入系统提示（身份 / 口吻类技能用这个）");
-    aw.onchange = async () => {
-      // 先在前端拦一道上限（按"常驻技能字节合计"算），后端还会再拦一次
-      if (aw.checked && agAlways.bytes + (s.size || 0) > agAlways.limit) {
-        aw.checked = false;
-        return toast(`常驻技能合计不能超过 ${(agAlways.limit / 1024).toFixed(0)} KB（已用 ${(agAlways.bytes / 1024).toFixed(1)} KB）`);
-      }
-      try {
-        await invoke("agent_skill_set_always", { name: s.slug, on: aw.checked });
-        toast(aw.checked ? `已常驻 ${s.slug}（正文每轮注入）` : `已取消常驻 ${s.slug}`);
-      } catch (e) {
-        toast(String(e)); aw.checked = !aw.checked;
-      }
-      await agLoadSkills();
-    };
+    // 这一页只管"展示 + 开关"：使用/不使用；正文按需读（不再有"常驻"这回事）
     row.appendChild(nm); row.appendChild(d); row.appendChild(sz);
-    row.appendChild(awLbl); row.appendChild(aw); row.appendChild(sw);
+    row.appendChild(sw);
     box.appendChild(row);
   }
-  if (agAlways.slugs.length) {
+  // 三层的"当前占用"一句话说清：内置 / 技能索引 / 指导文件（工具定义在工具页）
+  invoke("agent_prompt_preview", { sessionId: (agMeta && agMeta.id) || "" }).then((p) => {
     const foot = document.createElement("div");
     foot.className = "agrow empty";
-    foot.textContent = en("常驻技能") + ": " + agAlways.slugs.join(", ") + " · " +
-      (agAlways.bytes / 1024).toFixed(1) + " / " + (agAlways.limit / 1024).toFixed(0) + " KB · " +
-      en("每轮注入系统提示，一直占上下文");
+    const frozen = p.frozen ? en("骨架已冻结") : en("骨架未冻结（下一轮生成）");
+    foot.textContent = en("系统提示 ") + String(p.chars || 0) + en(" 字 · ") + frozen + " · " +
+      en("技能只占索引；正文要模型 skill_read 才进上下文");
     box.appendChild(foot);
-  }
+  }).catch(() => {});
 }
 
 function agRenderMcpTable() {
@@ -7889,7 +7921,7 @@ function renderSkillsPage() {
     nm.className = "nm"; nm.textContent = s.slug;
     const tag = document.createElement("span");
     tag.className = "tag";
-    tag.textContent = (s.enabled ? "" : "停用 · ") + (agIsAlways(s.slug) ? en("常驻") + " · " : "")
+    tag.textContent = (s.enabled ? en("使用中") : en("不使用")) + " · "
       + (s.size + 0 === s.size ? (s.size / 1024).toFixed(1) + " KB" : "");
     row.appendChild(nm); row.appendChild(tag);
     row.title = (s.description || "") + "\n" + (s.path || "");
@@ -7905,6 +7937,192 @@ function renderSkillsPage() {
     const el = agEl("set-skill-dir");
     if (el) el.textContent = p || "（未知）";
   }).catch(() => {});
+  renderBuiltinPage();
+  renderWorkSkillsPage();
+  renderArchivePage();
+  renderToolsPage();
+}
+
+/* ── 内置指令：只读 + 可选项开关 ───────────────────────────────────── */
+async function renderBuiltinPage() {
+  const box = agEl("set-builtin-list");
+  if (!box) return;
+  const list = await invoke("agent_builtin_list").catch(() => []);
+  box.innerHTML = "";
+  let onBytes = 0;
+  for (const b of list) {
+    if (b.enabled) onBytes += b.bytes || 0;
+    const row = document.createElement("div");
+    row.className = "row" + (b.enabled ? "" : " off");
+    const nm = document.createElement("span");
+    nm.className = "nm"; nm.textContent = en(b.title) + (b.optional ? "" : en("（核心）"));
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = en(b.desc || "");
+    row.title = b.body || "";
+    row.appendChild(nm); row.appendChild(tag);
+    if (b.optional) {
+      const sw = document.createElement("input");
+      sw.type = "checkbox"; sw.className = "sw"; sw.checked = !!b.enabled;
+      sw.title = en("关掉就不进系统提示（改完对新会话生效；当前会话点「刷新骨架」立刻生效）");
+      sw.onchange = async () => {
+        try {
+          await invoke("agent_builtin_set", { id: b.id, on: sw.checked });
+          toast(sw.checked ? en("已打开 ") + b.id : en("已关闭 ") + b.id);
+        } catch (e) { toast(String(e)); sw.checked = !sw.checked; }
+        renderBuiltinPage();
+      };
+      row.appendChild(sw);
+    } else {
+      const lock = document.createElement("span");
+      lock.className = "swtag";
+      lock.textContent = en("只读");
+      row.appendChild(lock);
+    }
+    box.appendChild(row);
+  }
+  const sum = agEl("set-builtin-sum");
+  if (sum) sum.textContent = `${list.filter((x) => x.enabled).length}/${list.length} · ${(onBytes / 1024).toFixed(1)} KB`;
+}
+
+/* ── 工作区技能（项目级）＋ 归档 ─────────────────────────────────── */
+let agWsList = [];
+async function renderWorkSkillsPage() {
+  const sel = agEl("set-wsskill-ws");
+  const box = agEl("set-wsskill-list");
+  if (!box) return;
+  // 工作区下拉：没建过就去问后端要一次
+  if (sel && !agWsList.length) {
+    agWsList = await invoke("agent_workspaces").catch(() => []);
+    sel.innerHTML = "";
+    for (const w of agWsList) {
+      const o = document.createElement("option");
+      o.value = w.path; o.textContent = w.name || w.path;
+      sel.appendChild(o);
+    }
+    const cv = agEl("set-skill-convert-ws");
+    if (cv) {
+      cv.innerHTML = "";
+      for (const w of agWsList) {
+        const o = document.createElement("option");
+        o.value = w.path; o.textContent = w.name || w.path;
+        cv.appendChild(o);
+      }
+    }
+  }
+  const ws = (sel && sel.value) || (agMeta && agMeta.workspace) || "";
+  box.innerHTML = '<div class="empty">' + en("读取中…") + '</div>';
+  const list = ws ? await invoke("agent_skills_workspace", { workspace: ws }).catch(() => []) : [];
+  box.innerHTML = "";
+  if (!list.length) {
+    box.innerHTML = '<div class="empty">' + en("这个工作区还没有专属技能（导入的技能默认落在全局，可用上面的「转为工作区专属」下放）") + '</div>';
+  }
+  for (const s of list) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const nm = document.createElement("span");
+    nm.className = "nm"; nm.textContent = s.slug;
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = ((s.size || 0) / 1024).toFixed(1) + " KB · " + en("存在即生效（每轮进索引）");
+    const del = document.createElement("button");
+    del.className = "btn small danger"; del.textContent = en("删除");
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      const r = await agConfirm(`删掉工作区技能 ${s.slug}？（会先归档一份到 skill-archive）`, en("删除技能"), true);
+      if (!r) return;
+      try {
+        await invoke("agent_skill_delete", { name: s.slug, scope: "workspace", workspace: ws });
+        await renderWorkSkillsPage(); renderArchivePage();
+      } catch (err) { toast(String(err)); }
+    };
+    row.appendChild(nm); row.appendChild(tag); row.appendChild(del);
+    row.title = s.path || "";
+    box.appendChild(row);
+  }
+}
+
+async function renderArchivePage() {
+  const box = agEl("set-archive-list");
+  if (!box) return;
+  const list = await invoke("agent_skill_archive").catch(() => []);
+  const cnt = agEl("set-archive-count");
+  if (cnt) cnt.textContent = list.length ? `${list.length}` : "";
+  box.innerHTML = "";
+  if (!list.length) {
+    box.innerHTML = '<div class="empty">' + en("（没有归档：把全局技能转为工作区专属、或删掉工作区技能时，会自动在这儿留一份备份）") + '</div>';
+    return;
+  }
+  for (const a of list) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const nm = document.createElement("span");
+    nm.className = "nm"; nm.textContent = a.slug;
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = ((a.size || 0) / 1024).toFixed(1) + " KB · " + (a.from === "workspace" ? en("来自工作区") : en("来自全局"));
+    row.title = (a.workspace || "") + "\n" + (a.path || "");
+    const b1 = document.createElement("button");
+    b1.className = "btn small"; b1.textContent = en("还原到全局");
+    b1.onclick = async (e) => { e.stopPropagation();
+      try { await invoke("agent_skill_archive_restore", { name: a.slug, scope: "global" }); toast(en("已还原到全局技能")); await agLoadSkills(); }
+      catch (err) { toast(String(err)); } };
+    row.appendChild(nm); row.appendChild(tag); row.appendChild(b1);
+    if (a.workspace) {
+      const b2 = document.createElement("button");
+      b2.className = "btn small"; b2.textContent = en("还原到工作区");
+      b2.onclick = async (e) => { e.stopPropagation();
+        try { await invoke("agent_skill_archive_restore", { name: a.slug, scope: "workspace", workspace: a.workspace }); toast(en("已还原到工作区")); renderWorkSkillsPage(); }
+        catch (err) { toast(String(err)); } };
+      row.appendChild(b2);
+    }
+    const b3 = document.createElement("button");
+    b3.className = "btn small danger"; b3.textContent = en("删归档");
+    b3.onclick = async (e) => { e.stopPropagation();
+      const r = await agConfirm(`删掉归档 ${a.slug}？删了就真没备份了。`, en("删除归档"), true);
+      if (!r) return;
+      try { await invoke("agent_skill_archive_delete", { name: a.slug }); renderArchivePage(); }
+      catch (err) { toast(String(err)); } };
+    row.appendChild(b3);
+    box.appendChild(row);
+  }
+}
+
+/* ── 设置 → 工具：只读清单 + 使用/不使用（对新会话生效）───────────── */
+let agToolRows = [];
+async function renderToolsPage() {
+  const box = agEl("set-tool-list");
+  if (!box) return;
+  if (!agToolRows.length) agToolRows = await invoke("agent_tools_list").catch(() => []);
+  const kw = ((agEl("set-tool-filter") || {}).value || "").trim().toLowerCase();
+  const rows = agToolRows.filter((t) => !kw || (t.name + " " + (t.description || "")).toLowerCase().includes(kw));
+  box.innerHTML = "";
+  let onBytes = 0;
+  for (const t of agToolRows) if (t.enabled) onBytes += t.bytes || 0;
+  const sum = agEl("set-tool-sum");
+  if (sum) sum.textContent = `${agToolRows.filter((x) => x.enabled).length}/${agToolRows.length} · ${(onBytes / 1024).toFixed(1)} KB`;
+  for (const t of rows) {
+    const row = document.createElement("div");
+    row.className = "row" + (t.enabled ? "" : " off");
+    const nm = document.createElement("span");
+    nm.className = "nm"; nm.textContent = t.name;
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = (t.host ? en("界面") + " · " : "") + (t.danger ? en("需批准") + " · " : "") + ((t.bytes || 0) / 1024).toFixed(1) + " KB";
+    row.title = t.description || "";
+    const sw = document.createElement("input");
+    sw.type = "checkbox"; sw.className = "sw"; sw.checked = !!t.enabled;
+    sw.onchange = async () => {
+      try {
+        const r = await invoke("agent_tool_set", { name: t.name, on: sw.checked });
+        toast(String((r && r.note) || ""));
+        agToolRows = [];
+        renderToolsPage();
+      } catch (e) { toast(String(e)); sw.checked = !sw.checked; }
+    };
+    row.appendChild(nm); row.appendChild(tag); row.appendChild(sw);
+    box.appendChild(row);
+  }
 }
 
 /* ── 设置 → MCP：全部管理（列表 / 新增 / 编辑 / 测试 / 删除 / 打开配置目录）── */
@@ -7940,6 +8158,53 @@ function renderMcpPage() {
 
 function bindSkillsPage() {
   if (!agEl("set-skill-save")) return;
+  // 全局指导（AGENTS.md）：人格/口吻/通用规矩写这儿 —— 每轮都在场，不再靠"常驻技能"
+  const loadGuidance = async () => {
+    try {
+      const g = await invoke("agent_guidance_get", { workspace: null });
+      if (agEl("set-guidance")) agEl("set-guidance").value = g.global || "";
+      if (agEl("set-guidance-path")) {
+        agEl("set-guidance-path").textContent = (g.globalPath || "").replace(/[\\/][^\\/]*$/, "");
+        agEl("set-guidance-path").title = g.globalPath || "";
+      }
+    } catch (_) {}
+  };
+  loadGuidance();
+  if (agEl("set-guidance-save")) agEl("set-guidance-save").onclick = async () => {
+    try {
+      const r = await invoke("agent_guidance_set", { text: agEl("set-guidance").value, workspace: false });
+      toast(en("已保存：") + r.path);
+    } catch (e) { toast(String(e)); }
+  };
+  if (agEl("set-guidance-open")) agEl("set-guidance-open").onclick = async () => {
+    try {
+      const g = await invoke("agent_guidance_get", { workspace: null });
+      await invoke("open_folder", { path: String(g.globalPath || "").replace(/[\\/][^\\/]*$/, "") });
+    } catch (e) { toast(String(e)); }
+  };
+  if (agEl("set-skill-convert")) agEl("set-skill-convert").onclick = async () => {
+    const name = (agEl("set-skill-name") || {}).value && agEl("set-skill-name").value.trim();
+    const ws = (agEl("set-skill-convert-ws") || {}).value;
+    if (!name) return toast(en("先在下面的「编辑技能」里点一个技能（或填名字），再转"));
+    if (!ws) return toast(en("没有可选的工作区（先在左边栏建一个）"));
+    const r = await agConfirm(`把 ${name} 转为 ${ws} 的工作区专属？\n（会先归档一份到 skill-archive，再从全局移除）`, en("转为工作区专属"), false);
+    if (!r) return;
+    try {
+      const out = await invoke("agent_skill_convert", { name, workspace: ws });
+      toast(en("已转换：") + (out.detail || ""));
+      agEl("set-skill-body").value = "";
+      agEl("set-skill-name").value = "";
+      agWsList = [];
+      await agLoadSkills();
+    } catch (e) { toast(String(e)); }
+  };
+  if (agEl("set-wsskill-ws")) agEl("set-wsskill-ws").onchange = () => renderWorkSkillsPage();
+  if (agEl("set-wsskill-open")) agEl("set-wsskill-open").onclick = async () => {
+    const ws = (agEl("set-wsskill-ws") || {}).value;
+    if (!ws) return;
+    try { await invoke("open_folder", { path: ws + "\\.kdock_skill" }); } catch (e) { toast(String(e)); }
+  };
+  if (agEl("set-tool-filter")) agEl("set-tool-filter").oninput = () => renderToolsPage();
   agEl("set-skill-save").onclick = async () => {
     const n = agEl("set-skill-name").value.trim();
     if (!n) return toast("先填技能名");
@@ -10541,6 +10806,55 @@ const EN = {
   "先选一个 TFTP 根目录": "Pick a TFTP root folder first", "选 TFTP 根目录": "Choose the TFTP root folder",
   "未连接": "Disconnected", "先选一个本机文件": "Choose a local file first",
   "填一下设备上的目标路径": "Fill in the target path on the device",
+
+  // ── 三层上下文（内置指令 / 技能 / 指导文件）+ 命中率 ──
+  "工具": "Tools",
+  "内置指令": "Built-in instructions", "（核心）": " (core)", "只读": "read-only",
+  "全局指导（每轮都在场）": "Global guidance (always in context)",
+  "保存指导": "Save guidance", "打开所在目录": "Open folder",
+  "以前的「常驻技能」已迁到这里": "The old \"always-on skills\" moved here",
+  "全局技能（用户级：使用 / 不使用）": "Global skills (user level: on / off)",
+  "工作区技能（项目级：存在即生效）": "Workspace skills (project level: present = active)",
+  "技能归档（skill-archive：工作区技能的备份）": "Skill archive (backups of workspace skills)",
+  "转为工作区专属": "Move to workspace", "还原到全局": "Restore to global",
+  "还原到工作区": "Restore to workspace", "删归档": "Delete archive",
+  "使用中": "in use", "不使用": "off",
+  "读取中…": "Loading…", "来自工作区": "from workspace", "来自全局": "from global",
+  "存在即生效（每轮进索引）": "present = active (indexed every turn)",
+  "这个工作区还没有专属技能（导入的技能默认落在全局，可用上面的「转为工作区专属」下放）":
+    "This workspace has no project skills yet (imports land in global skills; use \"Move to workspace\" to push one down)",
+  "（没有归档：把全局技能转为工作区专属、或删掉工作区技能时，会自动在这儿留一份备份）":
+    "(no archive entries: moving a global skill into a workspace, or deleting a workspace skill, leaves a backup here)",
+  "（还没有技能：点「导入…」选一个 SKILL.md，或「新建」）": "(no skills yet: use Import… to pick a SKILL.md, or New)",
+  "先在下面的「编辑技能」里点一个技能（或填名字），再转": "Click a skill in the editor below (or type a name) first",
+  "没有可选的工作区（先在左边栏建一个）": "No workspace to choose (create one in the left sidebar first)",
+  "转为工作区专属": "Move to workspace", "打开 .kdock_skill 目录": "Open .kdock_skill folder",
+  "删除技能": "Delete skill", "删除归档": "Delete archive", "已还原到全局技能": "Restored to global skills",
+  "已还原到工作区": "Restored to the workspace", "已转换：": "Moved: ",
+  "关掉就不进系统提示（改完对新会话生效；当前会话点「刷新骨架」立刻生效）":
+    "Off = not in the system prompt (takes effect for new sessions; use Refresh skeleton for this session)",
+  "已打开 ": "Enabled ", "已关闭 ": "Disabled ",
+  "查看系统提示": "View system prompt", "刷新骨架": "Refresh skeleton",
+  "骨架已冻结（前缀稳定 → 缓存命中率高）": "Skeleton frozen (stable prefix → high cache hit rate)",
+  "骨架未冻结": "skeleton not frozen",
+  "看这个会话实际发给模型的系统提示（骨架）+ 工具清单": "See the exact system prompt (skeleton) and tool list sent for this session",
+  "改了技能/指导文件/工具开关后，让本会话立刻吃上（代价：本会话缓存重算一次）":
+    "After editing skills / guidance / tool switches, apply them to this session (costs one cache rebuild)",
+  "刷新上下文骨架会让本会话的前缀缓存重算一次（下一轮输入 token 会贵一点），继续？":
+    "Refreshing the skeleton rebuilds this session's prefix cache (next request costs more input). Continue?",
+  "刚开这个会话时定下的系统提示（技能、指导文件、工具清单都已快照）":
+    "The system prompt fixed when this session started (skills, guidance and tools are snapshotted)",
+  "先开一个会话": "Open a session first",
+  "这个会话实际发给模型的系统提示": "The system prompt actually sent for this session",
+  "骨架": "Skeleton", "已冻结": "frozen", "未冻结": "not frozen", "字": "chars",
+  "工作区": "Workspace", "工具": "Tools",
+  "系统提示里": "Inside the system prompt", "技能索引": "skill index", "指导文件": "guidance",
+  "最近几轮": "Recent rounds", "命中": "hit", "未命中": "miss",
+  "已把常驻技能迁移到「全局指导」：": "Migrated always-on skills into global guidance: ",
+  "agent 能用的工具": "Tools the agent can use",
+  "搜索工具名 / 说明": "Search tool name / description",
+  "（没有技能：点「导入…」选一个 SKILL.md，或「新建」）": "(no skills: use Import… or New)",
+  "命中率": "Cache hit", "缓存命中": "Cache hit",
 };
 const en = (t) => (LANG === "en" && EN[t]) ? EN[t] : t;
 // 分文件写的小模块（批量文本/计算器）也要能翻译 + 切语言时重画

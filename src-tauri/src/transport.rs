@@ -287,6 +287,87 @@ fn plink_ensure_hostkey(exe: &PathBuf, host: &str, port: u16, user: &str, passwo
     Some(fp)
 }
 
+/// 一次性在远程跑一条命令（不进交互 shell）—— 给 agent 的 `ssh_run` 用。
+/// 有密码走 plink（`-pw`），没密码走 ssh.exe（BatchMode + accept-new + 可选 -i 私钥）。
+pub fn ssh_run_once(
+    host: &str,
+    port: u16,
+    user: &str,
+    password: &str,
+    key: &str,
+    cmd: &str,
+    timeout_ms: u64,
+) -> Result<(i32, String), String> {
+    use std::process::{Command, Stdio};
+    let host = host.trim();
+    if host.is_empty() {
+        return Err("要填主机".into());
+    }
+    let port = if port == 0 { 22 } else { port };
+    let mut extra = String::new();
+    if !key.trim().is_empty() {
+        extra = format!("-i {}", key.trim());
+    }
+    let mut c;
+    if !password.is_empty() {
+        let exe = find_plink().ok_or_else(|| {
+            "密码登录要用 PuTTY 的 plink（Windows 自带的 ssh.exe 只在控制台里读密码，管道喂不进去）。到「环境配置 → PuTTY plink」一键安装。".to_string()
+        })?;
+        let fp = plink_ensure_hostkey(&exe, host, port, user, password, &extra);
+        c = Command::new(&exe);
+        c.args(plink_args(host, port, user, password, &extra, fp.as_deref(), Some(cmd)));
+    } else {
+        let exe = find_ssh().ok_or_else(|| {
+            "没找到 ssh.exe。到「环境配置 → OpenSSH 客户端」一键安装。".to_string()
+        })?;
+        c = Command::new(&exe);
+        c.args(["-p", &port.to_string()]);
+        c.args(["-o", "BatchMode=yes"]);
+        c.args(["-o", "StrictHostKeyChecking=accept-new"]);
+        c.args(["-o", "ConnectTimeout=10"]);
+        if !key.trim().is_empty() {
+            c.args(["-i", key.trim()]);
+        }
+        let target = if user.trim().is_empty() { host.to_string() } else { format!("{}@{host}", user.trim()) };
+        c.arg(target);
+        c.arg(cmd);
+    }
+    c.env("TERM", "dumb");
+    c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000);
+    }
+    let mut child = c.spawn().map_err(|e| format!("起 ssh 进程失败: {e}"))?;
+    let t0 = std::time::Instant::now();
+    loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(st) => {
+                let out = child.wait_with_output().map_err(|e| e.to_string())?;
+                let mut s = String::from_utf8_lossy(&out.stdout).to_string();
+                let err = String::from_utf8_lossy(&out.stderr);
+                if !err.trim().is_empty() {
+                    if !s.is_empty() && !s.ends_with('\n') {
+                        s.push('\n');
+                    }
+                    s.push_str("[stderr] ");
+                    s.push_str(err.trim());
+                }
+                return Ok((st.code().unwrap_or(-1), s));
+            }
+            None => {
+                if t0.elapsed().as_millis() as u64 > timeout_ms {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("远端命令超时（{timeout_ms} ms）：{cmd}"));
+                }
+                std::thread::sleep(Duration::from_millis(80));
+            }
+        }
+    }
+}
+
 struct SshInner {
     child: std::sync::Mutex<std::process::Child>,
     stdin: std::sync::Mutex<Option<Box<dyn Write + Send>>>,

@@ -190,12 +190,29 @@ pub fn catalog() -> Vec<ToolDef> {
         json!({"type":"object","properties":{
             "name":{"type":"string","description":"技能名，会做 slug 化"},
             "description":{"type":"string","description":"一句话说明什么时候用它"},
-            "body":{"type":"string","description":"正文（Markdown）"}
+            "body":{"type":"string","description":"正文（Markdown）"},
+            "scope":{"type":"string","enum":["global","workspace"],"description":"存哪一层：global=用户级（默认），workspace=只在本项目生效（<工作区>/.kdock_skill）"}
         },"required":["name","description"]}), false);
     push("skill_update", "整体覆盖一个技能的 SKILL.md。",
-        json!({"type":"object","properties":{"name":{"type":"string"},"content":{"type":"string"}},"required":["name","content"]}), false);
+        json!({"type":"object","properties":{"name":{"type":"string"},"content":{"type":"string"},
+            "scope":{"type":"string","enum":["global","workspace"],"description":"改哪一层（默认 global）"}},"required":["name","content"]}), false);
     push("skill_delete", "删掉一个技能。",
-        json!({"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}), false);
+        json!({"type":"object","properties":{"name":{"type":"string"},
+            "scope":{"type":"string","enum":["global","workspace"],"description":"删哪一层（默认 global；本项目技能删之前会自动归档一份）"}},"required":["name"]}), false);
+
+    // ── SSH：远程跑一条命令（给"让 agent 去操作另一台机器"用）─────────────
+    push("ssh_run", "SSH 到一台机器上跑一条命令，回退出码 + 输出。\
+密码登录走 PuTTY plink（Windows 自带的 ssh.exe 只在控制台里读密码）；没密码就用 ssh.exe + 密钥（给 key 参数）。\
+首次连接会自动记住主机指纹，之后对不上会拒绝。",
+        json!({"type":"object","properties":{
+            "host":{"type":"string","description":"主机名或 IP"},
+            "user":{"type":"string","description":"用户名"},
+            "password":{"type":"string","description":"密码（可空；空就走密钥/ssh-agent）"},
+            "key":{"type":"string","description":"私钥路径（可空）"},
+            "port":{"type":"integer","description":"端口，默认 22"},
+            "cmd":{"type":"string","description":"要跑的命令（远端 shell 一行）"},
+            "timeout_ms":{"type":"integer","description":"超时毫秒，默认 60000"}
+        },"required":["host","cmd"]}), false);
 
     // ── host：JS 那边实现 ───────────────────────────────────────────
     push("browser_open", "用内置浏览器打开一个网页（抓下来抽正文，页面同时会显示在右侧「浏览器」里）。",
@@ -338,6 +355,9 @@ fn arg_str(args: &Value, key: &str) -> Option<String> {
 }
 fn arg_u64(args: &Value, key: &str, default: u64) -> u64 {
     args.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
+}
+fn arg_u16(args: &Value, key: &str) -> Option<u16> {
+    args.get(key).and_then(|v| v.as_u64()).map(|v| v as u16)
 }
 fn arg_bool(args: &Value, key: &str, default: bool) -> bool {
     args.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
@@ -713,6 +733,7 @@ pub fn is_dangerous(name: &str) -> bool {
         name,
         "link_send" | "device_push" | "firmware_upgrade" | "flash" | "local_run" | "port_write" | "flow_set" | "flow_add_node" | "flow_connect" | "flow_delete"
             | "port_open" | "port_close"
+            | "ssh_run"
             | "workspace_write" | "workspace_mkdir" | "skill_create" | "skill_update"
             | "skill_delete" | "flow_run" | "capture_save"
             | "la_config" | "la_capture" | "la_save"
@@ -924,44 +945,49 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "workspace_mkdir" => workspace_mkdir(ctx, args),
         "skill_list" => {
             let list = store::skills_list(ctx.app);
+            let local = store::workspace_skills(&ctx.workspace);
+            let mut out = String::new();
+            out.push_str("全局技能（用户级）：\n");
             if list.is_empty() {
-                return Ok("（还没有技能）".into());
+                out.push_str("（没有）\n");
             }
-            let always = store::skills_always(ctx.app);
-            Ok(list
-                .iter()
-                .map(|s| {
-                    format!(
-                        "{} — {}{}",
-                        s.slug,
-                        s.description,
-                        if always.contains(&s.slug) { "（常驻：正文每轮都在系统提示里）" } else { "" }
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n"))
+            for s in list.iter() {
+                out.push_str(&format!("- {} — {}\n", s.slug, s.description));
+            }
+            out.push_str("本项目技能（工作区 .kdock_skill，存在即生效）：\n");
+            if local.is_empty() {
+                out.push_str("（没有）\n");
+            }
+            for s in local.iter() {
+                out.push_str(&format!("- {} — {}\n", s.slug, s.description));
+            }
+            Ok(out)
         }
-        "skill_read" => store::skill_read(ctx.app, &arg_str(args, "name").ok_or("缺少 name")?),
+        "skill_read" => store::skill_read_in(ctx.app, &ctx.workspace, &arg_str(args, "name").ok_or("缺少 name")?),
         "skill_create" => {
             let name = arg_str(args, "name").ok_or("缺少 name")?;
             let desc = arg_str(args, "description").ok_or("缺少 description")?;
             let body = arg_str(args, "body").unwrap_or_default();
+            let scope = arg_str(args, "scope").unwrap_or_else(|| "global".into());
             let slug = store::slugify(&name);
             let content = format!("---\nname: {name}\ndescription: {desc}\n---\n\n{body}\n");
-            let path = store::skill_write(ctx.app, &slug, &content)?;
-            Ok(format!("技能已建：{slug}（{path}）"))
+            let path = store::skill_write_in(ctx.app, &ctx.workspace, &scope, &slug, &content)?;
+            Ok(format!("技能已建：{slug}（{}，{path}）", if scope == "workspace" { "本项目" } else { "全局" }))
         }
         "skill_update" => {
             let name = arg_str(args, "name").ok_or("缺少 name")?;
             let content = arg_str(args, "content").ok_or("缺少 content")?;
-            let path = store::skill_write(ctx.app, &name, &content)?;
+            let scope = arg_str(args, "scope").unwrap_or_else(|| "global".into());
+            let path = store::skill_write_in(ctx.app, &ctx.workspace, &scope, &name, &content)?;
             Ok(format!("技能已更新：{path}"))
         }
         "skill_delete" => {
             let name = arg_str(args, "name").ok_or("缺少 name")?;
-            store::skill_delete(ctx.app, &name)?;
-            Ok(format!("技能已删除：{name}"))
+            let scope = arg_str(args, "scope").unwrap_or_else(|| "global".into());
+            store::skill_delete_in(ctx.app, &ctx.workspace, &scope, &name)?;
+            Ok(format!("技能已删除：{name}（{}）", if scope == "workspace" { "已归档一份到 skill-archive" } else { "全局" }))
         }
+        "ssh_run" => ssh_run(ctx, args),
         other if other.starts_with("mcp__") => super::mcp::call_by_full_name(ctx.app, other, args),
         other if !is_known(other) => Err(format!("不认识工具 {other}")),
         other => Err(format!("工具 {other} 还没实现")),
@@ -969,6 +995,28 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
 }
 
 fn link_open(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    ssh_or_link(ctx, args)
+}
+
+/// `ssh_run`：远程跑一条命令。有密码走 plink、没密码走 ssh.exe（见 transport::ssh_run_once）
+fn ssh_run(_ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let host = arg_str(args, "host").ok_or("缺少 host")?;
+    let cmd = arg_str(args, "cmd").ok_or("缺少 cmd")?;
+    let user = arg_str(args, "user").unwrap_or_default();
+    let password = arg_str(args, "password").unwrap_or_default();
+    let key = arg_str(args, "key").unwrap_or_default();
+    let port = arg_u16(args, "port").unwrap_or(22);
+    let timeout = arg_u64(args, "timeout_ms", 60_000).min(30 * 60_000);
+    let (code, text) = crate::transport::ssh_run_once(&host, port, &user, &password, &key, &cmd, timeout)?;
+    let tail = if text.len() > 6000 {
+        format!("{}\n…（输出太长，已截）", &text[..6000])
+    } else {
+        text
+    };
+    Ok(format!("退出码 {code}\n{tail}"))
+}
+
+fn ssh_or_link(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let mode = arg_str(args, "mode").ok_or("缺少 mode")?;
     let endpoint = match mode.as_str() {
         "serial" => {

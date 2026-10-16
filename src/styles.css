@@ -1403,6 +1403,12 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 /* 技能行上的「常驻」小标签（勾上 = 技能正文每轮注入系统提示） */
 .agtable .agrow .swtag { flex: 0 0 auto; font-size: 10.5px; color: hsl(var(--muted-foreground)); }
 .agtable .agrow .swtag.on { color: hsl(var(--primary)); font-weight: 650; }
+/* 逐轮命中率的小圆片（agent 信息页：一眼看出是哪一轮掉的） */
+.agtable .agrow .wsr, .wsr {
+  display: inline-block; min-width: 34px; text-align: center; margin-right: 4px;
+  padding: 1px 5px; border-radius: 999px; font-size: 10.5px; font-family: Consolas, monospace;
+  background: var(--surface-3); color: hsl(var(--muted-foreground));
+}
 .agtable .sw {
   width: 32px; height: 18px; flex: 0 0 auto; appearance: none; position: relative; cursor: pointer;
   border-radius: 999px; background: var(--surface-3); border: 1px solid var(--surface-line);
