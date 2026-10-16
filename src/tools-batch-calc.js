@@ -1884,7 +1884,7 @@ async function dcRsa(op) {
 /* ---------- 视频带宽计算（数据计算页第 8 块） ----------
    算法在 video-bandwidth.js 里（纯函数、不碰 DOM）：这里只负责输入框、四个带宽数、
    时序明细、以及"逐接口版本能不能扛住"那三条列表。 */
-const VB_GROUPS = [["dp", "DisplayPort"], ["dpam", "DisplayPort Alt Mode on USB-C"], ["hdmi", "HDMI"]];
+const VB_GROUPS = [["dp", "DisplayPort"], ["hdmi", "HDMI"], ["dpam", "DisplayPort Alt Mode on USB-C"]];   // 顺序跟参考页一致：两大接口在前，USB-C 上的 DP Alt 放最后
 const VB_UNITS = { maximum: "带宽（峰值）", line: "Line", active: "Active", dsc: "DSC（8 bpp 下限）" };
 const VB_STATE_TXT = { ok: "支持", light: "支持（轻度 DSC）", heavy: "支持（重度 DSC）", no: "不支持" };
 const VB_STATE_EN = { ok: "Supported", light: "Supported, light DSC", heavy: "Supported, heavy DSC", no: "Not supported" };

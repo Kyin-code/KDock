@@ -2117,6 +2117,8 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 
 /* 数据计算：每块 = 标题 + 可折叠主体（原生 <details>，标题一行，展开才占地方） */
 .dcsection { padding: 0; overflow: hidden; margin-bottom: 8px; }
+/* 面板本身是 flex 列 + overflow:auto：区块一律不参与压缩，否则展开的大块会被压扁、下面的内容既看不见也滚不到（要让面板滚，不是让区块缩） */
+.dcsection { flex: 0 0 auto; }
 .dcsection:last-child { margin-bottom: 0; }
 .dcsection > .dcsum {
   display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
