@@ -388,6 +388,25 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
   text-transform: uppercase; margin: 14px 0 8px;
 }
 .cardtitle:first-child, .card .cardtitle { margin-top: 0; }
+
+/* ── 参数区（宽窗在右栏，窄窗整行挪到下面）统一对齐 ────────────────────────────
+   目标：一整栏只留两个左边缘 —— 标签统一右对齐到一处，控件（输入框 / 下拉 / 按钮 / 复选框）
+   都从同一条竖线开始；控件高度也统一。以前是输入框在 88、按钮行在 12、复选框在 12，看着就散。 */
+.parampane { --plb: 4.2rem; --pgap: 8px; --pctl-h: 28px; }
+.parampane .field {
+  display: grid; grid-template-columns: var(--plb) minmax(0, 1fr); gap: var(--pgap);
+  align-items: center; margin-bottom: 6px;
+}
+.parampane .field > label { text-align: right; font-size: 12.5px; }
+.parampane input[type="text"], .parampane input[type="number"], .parampane input:not([type]),
+.parampane select, .parampane .btn, .parampane .btn.small, .parampane input.dirinput { height: var(--pctl-h); }
+.parampane .dirinput { font-size: 12.5px; }
+/* 没有标签的行（按钮行 / 复选框 / 状态）也缩进到控件列，跟上面的输入框对齐；
+   列表 / 表格 / 快捷发送那种数据行不缩进，它们本来就该占满宽 */
+.parampane :is(.btnrow, .trow, label.chk, .state):not(.qslist *):not(.qsrow *):not(.cmdtable *):not(.agentlist *) { padding-left: calc(var(--plb) + var(--pgap)); }
+.parampane .btnrow { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.parampane .btnrow > .btn { flex: 0 0 auto; min-width: 5.2rem; justify-content: center; }   /* 不再拉成整宽，宽度也一样 */
+.parampane > label.chk { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
 .stats { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; white-space: pre-line; }
 
 .state { display: flex; align-items: center; gap: 6px; margin: 2px 0 4px; font-size: 12.5px; color: hsl(var(--muted-foreground)); }
@@ -528,7 +547,25 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
      最后输入框下半截被切到窗口外面（实测 card 276 / 溢出 75px）。压到 30vh 之后 900x600 实测是
      工作区 348px、参数区 180px（它自己会滚，内容 343px）：输出区停在 96px 下限、输入区 129px，
      两边都完整，谁都不裁。 */
-  .split > .params { grid-column: 1 / -1; grid-row: 2; max-height: 30vh; }
+  /* 高度由 JS 按当前这一栏的内容量给（--param-max，夹在 30~55vh 之间）：内容少就矮、内容多就高一点，
+     免得所有页都固定 30vh、内容多的那几页非得在小窗口里滚。 */
+  .split > .params { grid-column: 1 / -1; grid-row: 2; max-height: var(--param-max, 30vh); }
+  /* 这条横向很宽、只有 30vh 高：表单类面板折成两栏，一屏能看全；表格 / 列表 / 对话类保持单栏 */
+  .params .parampane:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]) {
+    display: block; column-width: 20rem; column-gap: 18px;   /* 按宽度自动 2~3 栏，一屏能看全 */
+    column-fill: balance;
+  }
+  .params .parampane > * { break-inside: avoid; }
+  /* 批量文本那 4 张卡是独立的块：铺成多列，一屏看全（.parampane.parampane 是为了盖过上面那条通用规则） */
+  .params .parampane.parampane[data-param="batch"] {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(26rem, 1fr)); gap: 8px 10px; align-items: start;
+    column-width: auto;
+  }
+  /* 卡里的"一行行"在这条又宽又矮的条带里再折成 2~3 列，不然一行只有一两行高、白白浪费宽度 */
+  .params .parampane[data-param="batch"] .dcbody {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 4px 10px; align-items: center;
+  }
+  .params .parampane[data-param="batch"] .dcbody > .hint { grid-column: 1 / -1; margin: 0; }
   .cardtitle { margin: 10px 0 6px; }
 }
 @media (max-width: 1000px) {
@@ -1703,7 +1740,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 
 /* 批量文本右栏：跟"数据计算"同一套行式布局（标签列 + 控件列），只是右栏只有 ~300px，标签列收窄；
    卡也是 .dcsection 那套折叠样式，展开状态单独记一份 */
-.parampane[data-param="batch"] .dcrow { grid-template-columns: 4.6rem minmax(0, 1fr); gap: 8px; }
+.parampane[data-param="batch"] .dcrow { grid-template-columns: var(--plb) minmax(0, 1fr); gap: var(--pgap); }
 .parampane[data-param="batch"] .dcrow > .dclb { padding-top: 7px; font-size: 12px; }
 .parampane[data-param="batch"] .dcsection { margin-bottom: 8px; }
 .parampane[data-param="batch"] .dcsection > .dcsum { padding: 8px 10px; min-height: 2.1rem; }

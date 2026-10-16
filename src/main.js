@@ -1101,6 +1101,19 @@ const WORK_OF = {
   agent: "agent",
 };
 
+/** 窄窗时参数区是「整行挪到下面」的一条：按当前这张面板的内容量决定它多高（30~55vh 之间），
+    内容少就不占地方、内容多也别逼着用户在小窗口里滚。宽窗（右栏模式）下这条不起作用。 */
+function syncParamStrip() {
+  if (!window.matchMedia('(max-width: 1180px)').matches) { document.documentElement.style.removeProperty('--param-max'); return; }
+  const box = document.querySelector('.params');
+  if (!box) return;
+  const pane = [...box.querySelectorAll('[data-param]')].find((p) => !p.hidden);
+  if (!pane) { document.documentElement.style.removeProperty('--param-max'); return; }
+  const need = pane.scrollHeight + 24;                    // 上下留点缝
+  const lo = Math.round(innerHeight * 0.3), hi = Math.round(innerHeight * 0.55);
+  document.documentElement.style.setProperty('--param-max', Math.min(hi, Math.max(lo, need)) + 'px');
+}
+
 /** 切页：左导航高亮 + 中间换操作区 + 右边换参数区 */
 function showPane(tab) {
   const btn = document.querySelector(`.navitem[data-tab="${tab}"]`);
@@ -1109,6 +1122,7 @@ function showPane(tab) {
   document.querySelectorAll("[data-work]").forEach((p) => { p.hidden = p.dataset.work !== work; });
   if (work === "agent") agUnreadClear();      // 切过来就算看过了，清掉未读角标
   document.querySelectorAll("[data-param]").forEach((p) => { p.hidden = p.dataset.param !== tab; });
+  syncParamStrip();
   if (tab === "upgrade") syncUpgCtl();
   if (tab === "files") {
     syncPaneCtl("fl");
@@ -1353,7 +1367,9 @@ function bindKb() {
     };
   }
   // 位置跟随：窗口缩放 / 拖分栏 / 抽屉式布局变化都算
-  window.addEventListener("resize", () => { if (kbVisible()) kbSyncSoon(); });
+  window.addEventListener("resize", () => { if (kbVisible()) kbSyncSoon(); syncParamStrip(); });
+  // 参数区里的折叠卡展开/收起后，条带高度跟着变（toggle 不冒泡，用捕获接）
+  document.addEventListener("toggle", (e) => { if (e.target && e.target.closest && e.target.closest(".params")) syncParamStrip(); }, true);
   if (window.ResizeObserver) {
     const ro = new ResizeObserver(() => { if (kbVisible()) kbSyncSoon(); });
     for (const id of ["kb-host", "kb-chat-host"]) {
