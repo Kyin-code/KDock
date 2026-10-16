@@ -2576,7 +2576,8 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   .params .parampane[data-param="link"] select { max-width: 9rem; }
   .params .parampane[data-param="link"] input[type="number"] { max-width: 7.5rem; }
   /* "自定义"三个字收掉，留勾 + 输入框（勾有悬停提示） */
-  .params .parampane[data-param="link"] .field > label[for="baud-custom-chk"] { display: none; }
+  /* 自定义波特率整格收掉（窄窗只留核心那几个）：要改特殊波特率把窗口拉宽，或用标题栏「▭」展开成宽屏布局 */
+  .params .parampane[data-param="link"] .field:has(label[for="baud-custom-chk"]) { display: none; }
 }
 /* 再窄一档：把这条连接带的几个下拉再收一收，700px 上下也能一行塞下（不用横向滚） */
 @media (max-width: 760px) {
@@ -2587,4 +2588,80 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   .params .parampane[data-param="link"] input[type="number"] { max-width: 5.4rem; }
   .params .parampane[data-param="link"] .btnrow .btn { padding: 0 7px; }
   .params .parampane[data-param="link"] .field > .inline { gap: 3px; }
+}
+
+/* ============ 窄窗：升级页 / 烧录页的参数区也压平 ============
+   跟传输页一条思路：整行挪到下面之后别再摊成好几栏，压成"一到两行"。
+   收起来的东西（工具路径、命令预览、各种长提示）在宽窗口里都还在。 */
+@media (max-width: 980px) {
+  .params .parampane[data-param="upgrade"]:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]),
+  .params .parampane[data-param="flash"]:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]) {
+    display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+    column-width: auto; overflow-x: auto; overflow-y: hidden;
+  }
+  .params .parampane[data-param="upgrade"] > *,
+  .params .parampane[data-param="flash"] > * { break-inside: auto; }
+  .params .parampane[data-param="upgrade"] > .cardtitle,
+  .params .parampane[data-param="flash"] > .cardtitle,
+  .params .parampane[data-param="upgrade"] details.adv,
+  .params .parampane[data-param="flash"] details.adv,
+  .params .parampane[data-param="flash"] > #fl-cmd,
+  .params .parampane[data-param="upgrade"] > .hint,
+  .params .parampane[data-param="flash"] > .hint { display: none; }
+  .params .parampane[data-param="upgrade"] > div[data-upgm]:not([hidden]),
+  .params .parampane[data-param="flash"] > div[data-flm]:not([hidden]),
+  .params .parampane[data-param="upgrade"] > #upg-url-row:not([hidden]) { display: contents; }
+  .params .parampane[data-param="upgrade"] .field,
+  .params .parampane[data-param="flash"] .field {
+    display: flex; align-items: center; gap: 6px; margin: 0; flex: 0 0 auto; grid-template-columns: none;
+  }
+  .params .parampane[data-param="upgrade"] .field > label,
+  .params .parampane[data-param="flash"] .field > label { flex: 0 0 auto; margin: 0; }
+  .params .parampane[data-param="upgrade"] .field > .inline,
+  .params .parampane[data-param="flash"] .field > .inline { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  .params .parampane[data-param="upgrade"] .btnrow,
+  .params .parampane[data-param="flash"] .btnrow {
+    display: flex; flex-direction: row; flex-wrap: nowrap; margin: 0; flex: 0 0 auto;
+  }
+  .params .parampane[data-param="upgrade"] select,
+  .params .parampane[data-param="flash"] select { max-width: 9rem; }
+  .params .parampane[data-param="upgrade"] input,
+  .params .parampane[data-param="flash"] input { max-width: 11rem; }
+  .params .parampane[data-param="upgrade"] .state,
+  .params .parampane[data-param="flash"] .state { flex: 0 0 auto; }
+}
+@media (max-width: 760px) {
+  .params .parampane[data-param="upgrade"] .field > label,
+  .params .parampane[data-param="flash"] .field > label { display: none; }   /* 跟传输页一样：窄了连标签也收 */
+  .params .parampane[data-param="upgrade"] input,
+  .params .parampane[data-param="flash"] input { max-width: 8rem; }
+}
+
+/* ============ 窄窗：计算器 ============
+   小窗口里只留"基本计算器 + 进制/标记 + 位板前 8 位"：
+   · 位运算那一行、x²/xʸ/x³/1⁄x/n!/√/MOD/字节交换、位板的移位/循环/全反 全部收起来
+     （这些在「算式」输入框里照样能打：<< >> & | ^ ~ ** %）；
+   · 32 位板缩成 8 位（只留最低那个字节，位号 7..0 看得更清）。
+   宽窗口一个字都不动。 */
+@media (max-width: 980px) {
+  #calc-pad [data-act="op:<<"],
+  #calc-pad [data-act="op:>>"],
+  #calc-pad [data-act="op:&"],
+  #calc-pad [data-act="op:|"],
+  #calc-pad [data-act="op:^"],
+  #calc-pad [data-act="op:~"],
+  #calc-pad [data-act="op:**"],
+  #calc-pad [data-act="op:%"],
+  #calc-pad [data-act="sqr"],
+  #calc-pad [data-act="pow3"],
+  #calc-pad [data-act="inv"],
+  #calc-pad [data-act="fact"],
+  #calc-pad [data-act="sqrt"],
+  #calc-pad [data-act="bits:bswap"],
+  #calc-pad [data-act="bits:shl"],
+  #calc-pad [data-act="bits:shr"],
+  #calc-pad [data-act="bits:rol"],
+  #calc-pad [data-act="bits:ror"],
+  #calc-pad [data-act="bits:not32"] { display: none; }
+  #calc-bits .bitrow2:not(:last-child) { display: none; }   /* 32 位板 → 8 位（最低那个字节） */
 }
