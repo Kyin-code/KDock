@@ -1954,8 +1954,12 @@ function vbRenderOut(sig) {
     line.append(el("b", null, vbFmtG(sig[key])), el("span", "u", "Gbps"));
     t.appendChild(line);
     t.title = key === "dsc"
-      ? T("DSC 按固定 8 bpp 估的理论下限，跟输入的色深无关；实际压缩码率会更高。")
+      ? T("DSC 按固定 8 bpp 估的理论下限，跟输入的色深无关；实际压缩码率会更高。") + "\n" + T("点一下复制这个数")
       : T("点一下复制这个数");
+    t.onclick = async () => {
+      const v = vbFmtG(sig[key]) + " Gbps";
+      try { await navigator.clipboard.writeText(v); toastMini(T("已复制：") + v); } catch (_) { toastMini(v); }
+    };
     grid.appendChild(t);
   }
   box.appendChild(grid);
@@ -2083,7 +2087,7 @@ function initVB() {
 /** 数据计算页的绑定（跟计算器一起在 initCalc 里挂一次） */
 function initDataCalc() {
   dcBindSections();
-  for (const id of ["dc-out", "calc-file-out", "fl-out", "aes-out", "hm-out", "rsa-out"]) dcBindRowCopy(id);
+  for (const id of ["dc-out", "calc-file-out", "fl-out", "aes-out", "hm-out", "rsa-out", "vb-out"]) dcBindRowCopy(id);
 
   // 小选择器
   dcChips("dc-algs", DC_ALGS.map(([k, l]) => [k, l]), { multi: true });

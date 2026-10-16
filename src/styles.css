@@ -2141,6 +2141,8 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   border: 1px solid var(--surface-line); background: var(--surface-0);
 }
 .vbnum .lb { font-size: 11.5px; color: hsl(var(--muted-foreground)); }
+.vbnum { cursor: pointer; }
+.vbnum:hover { border-color: hsl(var(--primary) / 0.55); background: var(--surface-2); }
 .vbnum-line { display: flex; align-items: baseline; gap: 4px; }
 .vbnum b { font-size: 1.25rem; font-weight: 650; line-height: 1.2; }
 .vbnum .u { font-size: 11.5px; color: hsl(var(--muted-foreground)); }
