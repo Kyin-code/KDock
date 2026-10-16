@@ -752,6 +752,29 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
 .nodecfg .btnrow { margin: 6px 0 2px; }
 .nodecfg code { background: hsl(var(--accent)); padding: 0 3px; border-radius: 4px; }
 
+/* ── 逻辑分析仪：左边通道列 + 右边波形（canvas）── */
+.lagrid { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: 6px; flex: 1 1 auto; min-height: 220px; }
+.lalabels { display: flex; flex-direction: column; min-width: 0; overflow: auto; border: 1px solid var(--surface-line); border-radius: 10px; background: var(--surface-1); padding: 0 4px; }
+.lalabel-h { display: flex; align-items: center; font-size: 11.5px; color: hsl(var(--muted-foreground)); padding-left: 6px; }
+.lalabel { display: flex; align-items: center; gap: 5px; min-width: 0; cursor: pointer; border-top: 1px solid var(--surface-line-soft); font-size: 12px; }
+.lalabel.sel { background: hsl(var(--primary) / 0.12); }
+.lalabel.off { opacity: .45; }                                  /* 隐藏的通道：留在列表里，灰掉，点头上的圈再打开 */
+.lalabel.off .ladot { filter: grayscale(1); }
+.lalabel .laeye { flex: 0 0 auto; width: 16px; height: 16px; padding: 0; line-height: 1; font-size: 10px; border: none; background: transparent; color: hsl(var(--muted-foreground)); cursor: pointer; }
+.lalabel .laeye:hover { color: hsl(var(--primary)); }
+.lalabel .ladot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; }
+.lalabel .laname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lalabel .laval { flex: 0 0 auto; font-family: Consolas, monospace; font-size: 11px; color: hsl(var(--foreground) / 0.75); }
+.lalabel.ladec { color: hsl(var(--primary)); }
+.lacanvas { width: 100%; height: 100%; min-height: 220px; min-width: 12rem; border: 1px solid var(--surface-line); border-radius: 10px; background: var(--surface-0); }
+.laviewbar, .lacurbar { gap: 8px; flex-wrap: wrap; }
+.lacurbar b { font-family: Consolas, monospace; font-weight: 600; }
+.ladeclist { display: flex; flex-direction: column; gap: 4px; }
+.ladecrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ladecrow .laname { font-weight: 600; font-size: 12px; }
+.ladecrow select.tight { min-width: 4.4rem; }
+.ladecrow input.num { width: 5.5rem; }
+
 /* ============ 烧录：器件库网格 ============ */
 .devgrid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));

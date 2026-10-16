@@ -1193,7 +1193,39 @@
 
         <!-- 逻辑分析仪（先留空） -->
         <div class="workpane" data-work="logic" hidden>
-          <div class="placeholder">逻辑分析仪：先留空，等你定型号/协议再接</div>
+          <div class="trow">
+            <span class="lb">逻辑分析仪</span>
+            <span id="la-info" class="lb"></span>
+            <span class="grow"></span>
+            <button id="la-demo" class="btn small primary">示例</button>
+            <button id="la-import" class="btn small">导入 VCD / CSV…</button>
+            <button id="la-bin" class="btn small">原始二进制…</button>
+          </div>
+          <div class="trow laviewbar">
+            <span class="lb">视图</span>
+            <button id="la-zout" class="btn small" title="缩小">−</button>
+            <button id="la-zin" class="btn small" title="放大">＋</button>
+            <button id="la-fit" class="btn small">适应窗口</button>
+            <span id="la-span" class="lb"></span>
+            <span id="la-zoomspan" class="lb"></span>
+            <span class="grow"></span>
+            <span id="la-src" class="lb"></span>
+          </div>
+          <div class="lagrid grow">
+            <div class="lalabels" id="la-labels"></div>
+            <canvas id="la-canvas" class="lacanvas"></canvas>
+          </div>
+          <div class="trow lacurbar">
+            <span class="lb">光标</span>
+            <span class="lb">A <b id="la-a">—</b></span>
+            <span class="lb">B <b id="la-b">—</b></span>
+            <span class="lb">Δt <b id="la-dt">—</b></span>
+            <span class="lb">1/Δt <b id="la-freq">—</b></span>
+            <button id="la-clr-cur" class="btn tiny">清光标</button>
+            <span class="grow"></span>
+            <span class="lb">点一下放 A · Shift+点放 B · 滚轮缩放 · 拖动平移 · 双击适应</span>
+            <span id="la-msg" class="lb"></span>
+          </div>
         </div>
       </section>
       <div class="gutter" id="gutter-r" title="拖动调整参数区宽度（双击复位）"></div>
@@ -1950,9 +1982,30 @@
         </div>
 
         <!-- 逻辑分析仪参数 -->
+        <!-- 逻辑分析仪参数：解码器 + 测量 + 来源说明（查看/解码这一版；真机采集下一版接） -->
         <div class="parampane" data-param="logic" hidden>
-          <div class="cardtitle">逻辑分析仪</div>
-          <p class="hint">先占位：等确定型号/接口（USB 还是网络、采样率、通道数）再实现。</p>
+          <div class="cardtitle">数据来源</div>
+          <div class="field"><label for="la-rate">采样率</label>
+            <div class="inline"><input id="la-rate" type="number" value="1000000" /><span class="lb">Hz</span></div></div>
+          <p class="hint">现在能吃：示例信号、VCD、CSV、原始二进制（一个字节 = 8 个通道，采样率按上面填）。
+            真机采集（fx2lafw / DSLogic 这类 USB 逻辑分析仪）要加驱动，下一版接。</p>
+
+          <div class="cardtitle">解码器</div>
+          <div class="btnrow">
+            <button id="la-add-uart" class="btn small">+ UART</button>
+            <button id="la-add-spi" class="btn small">+ SPI</button>
+          </div>
+          <div id="la-dec-list" class="ladeclist"></div>
+
+          <div class="cardtitle">测量（当前视图窗口 · 选中的通道）</div>
+          <div class="aginfo dcinfo">
+            <div class="row"><span class="k">通道</span><span class="v" id="la-msel">—</span></div>
+            <div class="row"><span class="k">频率</span><span class="v" id="la-mfreq">—</span></div>
+            <div class="row"><span class="k">占空比</span><span class="v" id="la-mduty">—</span></div>
+            <div class="row"><span class="k">脉冲数</span><span class="v" id="la-mpulse">—</span></div>
+            <div class="row"><span class="k">高 / 低脉宽</span><span class="v" id="la-mw">—</span></div>
+          </div>
+          <p class="hint">在左边通道名上点一下 = 选中它（测的就是它）。</p>
         </div>
       </aside>
     </main>

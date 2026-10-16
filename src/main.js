@@ -8,6 +8,7 @@ import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 // 两个纯本地工具页（批量文本 / 计算器）——单独成文件，免得 main.js 再长下去
 import { initBatch, initCalc } from "./tools-batch-calc.js";
+import { initLogic, laAgentState, laAgentRead, laAgentConfig, laAgentCapture, laAgentSave } from "./logic-analyzer.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -1174,6 +1175,7 @@ function showPane(tab) {
   if (tab === "batch") initBatch({ pushTx: pushEntry });
   if (tab === "calc") initCalc();
   if (tab === "datacalc") initCalc();          // 折叠区块的初始化在 initCalc 里（只有一次）
+  if (tab === "logic") initLogic();
   if (tab === "scope") { scSetView(scView); scResizePlot(); }
   kbSyncSoon();                                 // 知识库页：进来就贴、离开就收（详见 kbSync）
   if (LANG === "en") langWalk();   // 这一页里"切过来才渲染"的文字（提示语/空态）再扫一遍
@@ -7538,6 +7540,12 @@ function agFocus() {
 
 // ---------- host 工具（后端让前端干活） ----------
 const AG_HOST = {
+  // 逻辑分析仪：读结果（只读）+ 改配置（不动数据）+ 采集 + 存盘
+  async la_state() { initLogic(); return laAgentState(); },
+  async la_read(a) { initLogic(); return laAgentRead(a || {}); },
+  async la_config(a) { initLogic(); return laAgentConfig(a || {}); },
+  async la_capture(a) { initLogic(); return laAgentCapture(a || {}); },
+  async la_save(a) { initLogic(); return laAgentSave(a || {}); },
   async ui_goto(a) {
     const map = { transfer: "link", firmware: "upgrade", flow: "seq", files: "files", flash: "flash",
                   chart: "chart", capture: "capture", scope: "scope", logic: "logic", commands: "cmds" };
@@ -8804,6 +8812,46 @@ const EN = {
   "RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent":
     "The standard LAN port on RIGOL DS1000Z series scopes (TCP 5555, SCPI text). Once connected the agent",
   "工具干同样的事。": "can do the same things with the same tools.",
+  // 逻辑分析仪
+  "导入 VCD / CSV…": "Import VCD / CSV…",
+  "原始二进制…": "Raw binary…",
+  "光标": "Cursors",
+  "清光标": "Clear cursors",
+  "点一下放 A · Shift+点放 B · 滚轮缩放 · 拖动平移 · 双击适应": "click = cursor A · Shift+click = B · wheel = zoom · drag = pan · double-click = fit",
+  "数据来源": "Source",
+  "解码器": "Decoders",
+  "测量（当前视图窗口 · 选中的通道）": "Measure (current view · selected channel)",
+  "占空比": "Duty",
+  "脉冲数": "Pulses",
+  "高 / 低脉宽": "High / low pulse width",
+  "在左边通道名上点一下 = 选中它（测的就是它）。": "Click a channel name on the left to select it (that is what gets measured).",
+  "显示 / 隐藏这一路": "Show / hide this channel",
+  "显示全部通道": "Show all channels",
+  "删掉这个解码器": "Remove this decoder",
+  "还没加解码器：上面点 + UART / + SPI": "No decoder yet: click + UART / + SPI above",
+  "示例信号（UART 115200 / 1kHz PWM / SPI 读 JEDEC ID）": "Demo signal (UART 115200 / 1 kHz PWM / SPI JEDEC ID read)",
+  "已载入示例信号": "Demo signal loaded",
+  "通道": "Channel",
+  "二进制": "Binary",
+  "采样率已改为 ": "Sample rate set to ",
+  "{n} 路 / {m} 点 / {t}": "{n} ch / {m} samples / {t}",
+  "每屏 ": "per screen ",
+  "窗口 {a} ~ {b}": "window {a} ~ {b}",
+  "导入 VCD": "Imported VCD",
+  "导入 CSV": "Imported CSV",
+  "导入二进制": "Imported binary",
+  "{n} 个信号 / {m} 点": "{n} signals / {m} samples",
+  "{m} 点": "{m} samples",
+  "捕获文件": "Capture files",
+  "所有文件": "All files",
+  "导入逻辑分析仪数据（VCD / CSV）": "Import logic data (VCD / CSV)",
+  "导入原始二进制（一个字节 = 8 个通道）": "Import raw binary (one byte = 8 channels)",
+  "已导入 ": "Imported ",
+  "VCD 里没找到信号（只支持单比特标量）": "no signals found in that VCD (single-bit scalars only)",
+  "CSV 是空的": "the CSV is empty",
+  "CSV 里没有采样": "the CSV has no samples",
+  "现在能吃：示例信号、VCD、CSV、原始二进制（一个字节 = 8 个通道，采样率按上面填）。 真机采集（fx2lafw / DSLogic 这类 USB 逻辑分析仪）要加驱动，下一版接。": "Sources: demo signal, VCD, CSV, raw binary (one byte = 8 channels, sample rate as above). Live capture (fx2lafw / DSLogic USB analyzers) needs a driver and lands next version.",
+
   // 传输页：序号列
   "序号": "Line no.",
   "每行前面显示行号（从 1 开始；清屏后重新数，上翻看历史时也对得上）": "Show a line number on each line (starts at 1, restarts after clearing, and stays stable when you scroll back)",

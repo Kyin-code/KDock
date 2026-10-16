@@ -2636,6 +2636,46 @@ fn file_read_text(path: String, max_bytes: Option<u64>) -> Result<serde_json::Va
     let eol = if text.contains("\r\n") { "CRLF" } else if text.contains('\n') { "LF" } else { "—" };
     Ok(serde_json::json!({ "text": text, "bytes": bytes.len(), "utf8": utf8, "eol": eol }))
 }
+/// 读一个二进制文件并把内容按 base64 返回（逻辑分析仪的原始二进制导入用）。
+/// 默认上限 64MB —— base64 之后还要过一遍 JSON，太大就别走了。
+#[tauri::command]
+fn file_read_bytes(path: String, max_bytes: Option<u64>) -> Result<serde_json::Value, String> {
+    let cap = max_bytes.unwrap_or(64 * 1024 * 1024);
+    let meta = std::fs::metadata(&path).map_err(|e| format!("读不到文件: {e}"))?;
+    if !meta.is_file() { return Err("这不是一个文件".into()); }
+    if meta.len() > cap {
+        return Err(format!("文件太大（{:.1} MB），最多 {:.0} MB", meta.len() as f64 / 1048576.0, cap as f64 / 1048576.0));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("读不到文件: {e}"))?;
+    Ok(serde_json::json!({ "bytes": base64_encode(&bytes), "size": bytes.len() }))
+}
+
+/// base64（标准字母表，带 padding）—— 只给上面那个命令用，不引依赖
+fn base64_encode(data: &[u8]) -> String {
+    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for c in data.chunks(3) {
+        let b = [c[0], *c.get(1).unwrap_or(&0), *c.get(2).unwrap_or(&0)];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// 按路径写文本文件（la_save 用：agent 没法走文件选择框）。上限 128MB。
+#[tauri::command]
+fn file_write_text(path: String, content: String) -> Result<serde_json::Value, String> {
+    if content.len() > 128 * 1024 * 1024 { return Err("内容太大（>128MB）".into()); }
+    if let Some(dir) = std::path::Path::new(&path).parent() {
+        if !dir.as_os_str().is_empty() { std::fs::create_dir_all(dir).map_err(|e| format!("建目录失败: {e}"))?; }
+    }
+    std::fs::write(&path, content.as_bytes()).map_err(|e| format!("写不进去: {e}"))?;
+    Ok(serde_json::json!({ "bytes": content.len() }))
+}
+
 #[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
@@ -3476,6 +3516,8 @@ pub fn run() {
             open_folder,
             file_digest,
             file_read_text,
+            file_read_bytes,
+            file_write_text,
             storage::command_table_get,
             storage::command_table_save,
             storage::cache_items,

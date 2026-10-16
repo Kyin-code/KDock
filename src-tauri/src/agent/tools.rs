@@ -229,6 +229,31 @@ pub fn catalog() -> Vec<ToolDef> {
             "graph":{"type":"object","description":"可选，直接给编排 JSON"},
             "wait":{"type":"boolean","description":"等它跑完再返回，默认 true"}
         }}), true);
+    push("la_state", "读逻辑分析仪的**当前状态**：数据来源、采样率、通道数/点数/时长、视图窗口、光标 A/B 与 Δt、通道列表（含当前电平）、已加的解码器、选中通道的测量（频率/占空比/脉冲/脉宽）。只读，不改任何东西。",
+        json!({"type":"object","properties":{}}), true);
+    push("la_read", "读逻辑分析仪**解码出来的结果**（只读）：每个解码器的全部项（UART：字节 + 起止时间 + 停止位是否合法；SPI：字节 + 起止时间），以及每一路在当前视图窗口里的频率/占空比/脉冲数。",
+        json!({"type":"object","properties":{
+            "tail":{"type":"integer","description":"每个解码器只返回最后 N 项，默认 200，最多 2000"}
+        }}), true);
+    push("la_config", "改逻辑分析仪的**配置**（不动采集到的数据）：设采样率、加/删/改解码器（uart/spi + 通道 + 波特率）、显示/隐藏通道、选中某一路、移动视图窗口、放/清光标。改完界面立刻生效。",
+        json!({"type":"object","properties":{
+            "sampleRate":{"type":"number"},
+            "decoders":{"type":"array","description":"整份替换。uart: {kind,ch,baud}；spi: {kind,cs,clk,mosi}",
+                "items":{"type":"object","properties":{"kind":{"type":"string","enum":["uart","spi"]},"ch":{"type":"integer"},"baud":{"type":"integer"},"cs":{"type":"integer"},"clk":{"type":"integer"},"mosi":{"type":"integer"}},"required":["kind"]}},
+            "channels":{"type":"array","description":"通道显隐","items":{"type":"object","properties":{"i":{"type":"integer"},"on":{"type":"boolean"}}}},
+            "select":{"type":"integer","description":"选中哪一路（测量就是它）"},
+            "view":{"type":"object","description":"单位秒","properties":{"t0":{"type":"number"},"span":{"type":"number"}}},
+            "cursors":{"type":"object","description":"单位秒；a/b 给 null 表示清掉","properties":{"a":{"type":"number"},"b":{"type":"number"}}}
+        }}), true);
+    push("la_capture", "**开始一次采集**。现在支持 source=demo（内置示例信号：UART 115200 / 1kHz PWM / SPI 读 JEDEC ID）；source=device 会给明确报错（真机驱动还没接）。",
+        json!({"type":"object","properties":{
+            "source":{"type":"string","enum":["demo","device"],"description":"默认 demo"}
+        }}), true);
+    push("la_save", "把当前逻辑分析仪的数据**存成文件**（要 path）。format=csv（time + 各通道）或 vcd（PulseView / DSView / GTKWave 能打开）；超过 20 万点只存前 20 万。",
+        json!({"type":"object","properties":{
+            "path":{"type":"string"},
+            "format":{"type":"string","enum":["csv","vcd"]}
+        },"required":["path"]}), true);
     push("flow_get", "读**当前画布上的编排**：节点（含各自参数与坐标）+ 连线（from/port/to）+ 可用的节点类型清单（每种类型有哪些输入/输出端口）。想看懂/复述用户画的流程、或者要自己排一条，先调它拿格式。",
         json!({"type":"object","properties":{}}), true);
     push("flow_add_node", "在**现有画布上新增一个节点**（不动别人已画的东西）。type 取自 flow_get 的 kinds；x/y 不给就自动摆在最右边节点的右侧；params 里的字段会并到该节点上（比如 label）。返回新节点的 id。",
@@ -638,6 +663,7 @@ pub fn is_dangerous(name: &str) -> bool {
             | "port_open" | "port_close"
             | "workspace_write" | "workspace_mkdir" | "skill_create" | "skill_update"
             | "skill_delete" | "flow_run" | "capture_save"
+            | "la_config" | "la_capture" | "la_save"
     )
 }
 
