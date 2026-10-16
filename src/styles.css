@@ -2663,5 +2663,58 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   #calc-pad [data-act="bits:rol"],
   #calc-pad [data-act="bits:ror"],
   #calc-pad [data-act="bits:not32"] { display: none; }
-  #calc-bits .bitrow2:not(:last-child) { display: none; }   /* 32 位板 → 8 位（最低那个字节） */
+  #calc-bits .bitrow2:nth-child(-n+2) { display: none; }   /* 32 位板 → 16 位（收掉高两个字节，留低两行） */
+}
+
+/* ============ 窄窗第四轮：shell 面板（传输/升级共用）+ 文件管理 + 命令表 + 计算器 ============ */
+@media (max-width: 980px) {
+  /* 1) 发送那一行连"文本 / HEX"一起收掉（要切 HEX 走标题栏「编辑」菜单，窄窗菜单在 ☰ 里） */
+  .workpane.shell .inpane { display: block; }
+  .workpane.shell .inpane .trow { display: none; }
+  .workpane.shell .inpane #tx { width: 100%; }
+
+  /* 2) 文件管理页：跟升级 / 烧录一样压平成一到几行 */
+  .params .parampane[data-param="files"]:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]) {
+    display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+    column-width: auto; overflow-x: auto; overflow-y: hidden;
+  }
+  .params .parampane[data-param="files"] > * { break-inside: auto; }
+  .params .parampane[data-param="files"] > .cardtitle,
+  .params .parampane[data-param="files"] > .hint { display: none; }
+  .params .parampane[data-param="files"] > div[data-flm]:not([hidden]) { display: contents; }
+  .params .parampane[data-param="files"] .field {
+    display: flex; align-items: center; gap: 6px; margin: 0; flex: 0 0 auto; grid-template-columns: none;
+  }
+  .params .parampane[data-param="files"] .field > label { flex: 0 0 auto; margin: 0; }
+  .params .parampane[data-param="files"] .field > .inline { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  .params .parampane[data-param="files"] .btnrow {
+    display: flex; flex-direction: row; flex-wrap: nowrap; margin: 0; flex: 0 0 auto;
+  }
+  .params .parampane[data-param="files"] select { max-width: 9rem; }
+  .params .parampane[data-param="files"] input { max-width: 11rem; }
+
+  /* 3) 命令表：把"常用命令 + ? + ✎ 编辑指令表"那一行收掉（只留下面那个搜索框），
+        命令行压矮一点，同样一条带子里能多看几条 */
+  .params .parampane[data-param="cmds"] > .trow,
+  .params .parampane[data-param="cmds"] > .hint { display: none; }
+  .params .parampane[data-param="cmds"] .cmdrow {
+    padding: 2px 6px; gap: 6px; grid-template-columns: 92px minmax(0, 1fr) 26px;
+  }
+  .params .parampane[data-param="cmds"] .cmdrow .cname { font-size: 12px; }
+  .params .parampane[data-param="cmds"] .cmdrow .cdesc { font-size: 11.5px; }
+  .params .parampane[data-param="cmds"] .cmdrow .cgo.btn { width: 24px; height: 22px; }
+  .params .parampane[data-param="cmds"] .cmdgrp { padding: 4px 8px 2px; }
+
+  /* 4) 计算器：窄窗不看历史记录；显示区并成一行（左算式、右 = 进制 结果）；位板留 16 位 */
+  .params .parampane[data-param="calc"]:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]) { display: none; }
+  html[data-tab="calc"] .split > .params { display: none; }   /* 历史收掉了，这条空带子也别占 30px */
+  .split > .params:not(:has(.parampane:not([hidden]))) { display: none; }   /* 条带里没东西就整条收掉 */
+  .calcview .calcsubline { display: none; }
+  .calcmain { flex-direction: row; align-items: center; gap: .55rem; }
+  .calcexprline { flex: 0 1 auto; min-width: 0; max-width: 46%; text-align: left; }
+  .calcbigline { flex: 1 1 auto; min-width: 0; }
+}
+@media (max-width: 760px) {
+  .params .parampane[data-param="files"] .field > label { display: none; }
+  .params .parampane[data-param="files"] input { max-width: 8rem; }
 }

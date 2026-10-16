@@ -1169,6 +1169,7 @@ function showPane(tab) {
   document.querySelectorAll("[data-work]").forEach((p) => { p.hidden = p.dataset.work !== work; });
   if (work === "agent") agUnreadClear();      // 切过来就算看过了，清掉未读角标
   document.querySelectorAll("[data-param]").forEach((p) => { p.hidden = p.dataset.param !== tab; });
+  document.documentElement.dataset.tab = tab;      // 窄窗样式要按"当前这一页"决定收不收那条参数带（如计算器）
   syncParamStrip();
   if (tab === "upgrade") syncUpgCtl();
   if (tab === "files") {
