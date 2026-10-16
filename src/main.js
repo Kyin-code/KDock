@@ -6054,7 +6054,9 @@ function bindSettings() {
       if (b.dataset.set === "model") agProvTab("use");
       if (b.dataset.set === "about") agLoadTools();
       if (b.dataset.set === "cache") { cacheRender(); bindCache(); }
-      if (b.dataset.set === "skills") { renderSkillsPage(); }
+      // 技能页：**重新扫一遍再画** —— 用户可能是"打开技能目录、往里丢了一个 SKILL.md"
+      // 才切回来的，只重画旧快照就会看不见新技能（后端的目录指纹缓存很便宜）
+      if (b.dataset.set === "skills") { agLoadSkills(); }
       if (b.dataset.set === "tools") { agToolRows = []; renderToolsPage(); }
       if (b.dataset.set === "about" || b.dataset.set === "general") agRenderAbout();
       if (LANG === "en") setTimeout(() => langWalk(), 0);   // 这一页里运行时拼出来的文字
@@ -7927,6 +7929,8 @@ function renderSkillsPage() {
     row.title = (s.description || "") + "\n" + (s.path || "");
     row.onclick = async () => {
       agEl("set-skill-name").value = s.slug;
+      agEditSkill = { scope: "global", workspace: "" };
+      if (agEl("set-skill-scope")) agEl("set-skill-scope").textContent = en("正在编辑：全局技能");
       try {
         agEl("set-skill-body").value = await invoke("agent_skill_read", { name: s.slug });
       } catch (e) { toast(String(e)); }
@@ -7987,6 +7991,8 @@ async function renderBuiltinPage() {
 
 /* ── 工作区技能（项目级）＋ 归档 ─────────────────────────────────── */
 let agWsList = [];
+/// 编辑器现在在改哪一层（点全局技能行 = global；点项目技能行 = workspace + 那个工作区）
+let agEditSkill = { scope: "global", workspace: "" };
 async function renderWorkSkillsPage() {
   const sel = agEl("set-wsskill-ws");
   const box = agEl("set-wsskill-list");
@@ -8000,6 +8006,9 @@ async function renderWorkSkillsPage() {
       o.value = w.path; o.textContent = w.name || w.path;
       sel.appendChild(o);
     }
+    // 默认看**当前会话所在的工作区**（列表第一项往往是"默认工作区"，看着像"没有技能"）
+    const cur = (agMeta && agMeta.workspace) || "";
+    if (cur && agWsList.some((w) => w.path === cur)) sel.value = cur;
     const cv = agEl("set-skill-convert-ws");
     if (cv) {
       cv.innerHTML = "";
@@ -8008,6 +8017,7 @@ async function renderWorkSkillsPage() {
         o.value = w.path; o.textContent = w.name || w.path;
         cv.appendChild(o);
       }
+      if (cur && agWsList.some((w) => w.path === cur)) cv.value = cur;
     }
   }
   const ws = (sel && sel.value) || (agMeta && agMeta.workspace) || "";
@@ -8035,6 +8045,15 @@ async function renderWorkSkillsPage() {
         await invoke("agent_skill_delete", { name: s.slug, scope: "workspace", workspace: ws });
         await renderWorkSkillsPage(); renderArchivePage();
       } catch (err) { toast(String(err)); }
+    };
+    // 点行 = 读进下面的编辑器（编辑器要知道自己在改哪一层）
+    row.onclick = async () => {
+      agEl("set-skill-name").value = s.slug;
+      agEditSkill = { scope: "workspace", workspace: ws };
+      if (agEl("set-skill-scope")) agEl("set-skill-scope").textContent = en("正在编辑：本项目技能（") + ws + "）";
+      try {
+        agEl("set-skill-body").value = await invoke("agent_skill_read", { name: s.slug, scope: "workspace", workspace: ws });
+      } catch (e) { toast(String(e)); }
     };
     row.appendChild(nm); row.appendChild(tag); row.appendChild(del);
     row.title = s.path || "";
@@ -8209,7 +8228,11 @@ function bindSkillsPage() {
     const n = agEl("set-skill-name").value.trim();
     if (!n) return toast("先填技能名");
     try {
-      await invoke("agent_skill_save", { name: n, content: agEl("set-skill-body").value });
+      // 按编辑器当前所在的层保存（全局 / 本项目）
+      await invoke("agent_skill_save", {
+        name: n, content: agEl("set-skill-body").value,
+        scope: agEditSkill.scope, workspace: agEditSkill.workspace || null,
+      });
       toast("技能已保存");
       await agLoadSkills();
     } catch (e) { toast(String(e)); }
@@ -8222,8 +8245,11 @@ function bindSkillsPage() {
   };
   agEl("set-skill-del").onclick = async () => {
     const n = agEl("set-skill-name").value.trim();
-    if (!n || !(await agConfirm(`删掉技能 ${n}？（目录会一起删）`, "删除技能", true))) return;
-    await invoke("agent_skill_delete", { name: n }).catch((e) => toast(String(e)));
+    const where = agEditSkill.scope === "workspace" ? "本项目（删前会自动归档一份）" : "全局";
+    if (!n || !(await agConfirm(`删掉技能 ${n}？（${where}，目录会一起删）`, "删除技能", true))) return;
+    await invoke("agent_skill_delete", {
+      name: n, scope: agEditSkill.scope, workspace: agEditSkill.workspace || null,
+    }).catch((e) => toast(String(e)));
     agEl("set-skill-body").value = "";
     await agLoadSkills();
   };

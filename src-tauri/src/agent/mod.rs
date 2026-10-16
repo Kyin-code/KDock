@@ -780,17 +780,30 @@ pub fn agent_skills(app: AppHandle) -> Vec<store::SkillInfo> {
 }
 
 #[tauri::command]
-pub fn agent_skill_read(app: AppHandle, name: String) -> Result<String, String> {
+pub fn agent_skill_read(app: AppHandle, name: String, scope: Option<String>, workspace: Option<String>) -> Result<String, String> {
+    if scope.as_deref() == Some("workspace") {
+        let ws = workspace.filter(|w| !w.trim().is_empty()).ok_or("要指定工作区")?;
+        return store::skill_read_in(&app, &std::path::PathBuf::from(ws), &name);
+    }
     store::skill_read(&app, &name)
 }
 
 #[tauri::command]
-pub fn agent_skill_save(app: AppHandle, name: String, content: String) -> Result<String, String> {
+pub fn agent_skill_save(app: AppHandle, name: String, content: String, scope: Option<String>, workspace: Option<String>) -> Result<String, String> {
+    if scope.as_deref() == Some("workspace") {
+        let ws = workspace.filter(|w| !w.trim().is_empty()).ok_or("要指定工作区")?;
+        return store::skill_write_in(&app, &std::path::PathBuf::from(ws), "workspace", &name, &content);
+    }
     store::skill_write(&app, &name, &content)
 }
 
 #[tauri::command]
-pub fn agent_skill_delete(app: AppHandle, name: String) -> Result<Value, String> {
+pub fn agent_skill_delete(app: AppHandle, name: String, scope: Option<String>, workspace: Option<String>) -> Result<Value, String> {
+    if scope.as_deref() == Some("workspace") {
+        let ws = workspace.filter(|w| !w.trim().is_empty()).ok_or("要指定工作区")?;
+        store::skill_delete_in(&app, &std::path::PathBuf::from(ws), "workspace", &name)?;
+        return Ok(json!({ "ok": true, "archived": true }));
+    }
     store::skill_delete(&app, &name)?;
     Ok(json!({ "ok": true }))
 }
@@ -1009,27 +1022,29 @@ fn system_prompt(app: &AppHandle, workspace: &std::path::Path) -> String {
     let mut p = String::new();
     // ① 内置指令（只读、可选项可关）—— 角色 / 连接用法 / 做事原则 / 上下文卫生
     p.push_str(&builtin::text(app));
-    // ② 工作区
-    p.push_str(&format!("工作区（相对路径都相对它）：{}\n", workspace.to_string_lossy()));
-    // ③ 权限：这里只写**静态规则**；当前值走"会话状态注记"（见 Event::State），
-    //    免得用户切一次权限就把整个前缀（含全部历史）的缓存打掉
-    p.push_str(
-        "权限（当前值以最新一条「会话状态」注记为准，没有注记就是「需要批准」）：\n\
-         · 只读：写设备/写文件/跑命令/烧录都会被后端直接拒绝，别去试；\n\
-         · 需要批准：危险动作前系统会弹给用户点允许，你只管说明你要做什么；\n\
-         · 自动：危险动作也会直接执行，做完必须汇报清楚。\n\n",
-    );
-    // ④ 技能索引（全局 + 本项目两段；正文按需 skill_read）
-    p.push_str("技能（索引在这里，正文按需读；也可以自己 skill_create 新技能）：\n");
-    p.push_str(&store::skills_index_for(app, workspace));
-    p.push('\n');
-    // ⑤ 指导文件（每轮都在）：全局（个人约定）+ 工作区（项目约定）
+    // ② 全局指导（个人约定，跟项目无关）
     let g = store::read_global_guidance(app);
     if !g.trim().is_empty() {
         p.push_str("\n全局指导（AGENTS.md，用户自己的持久约定：人格 / 口吻 / 通用规矩，优先遵守）：\n");
         p.push_str(g.trim());
         p.push('\n');
     }
+    // ③ 全局技能索引（也跟项目无关）
+    p.push_str("\n技能（索引在这里，正文按需读；也可以自己 skill_create 新技能）：\n");
+    p.push_str(&store::skills_index_global(app));
+    // ④ 权限：这里只写**静态规则**；当前值走"会话状态注记"（见 Event::State），
+    //    免得用户切一次权限就把整个前缀（含全部历史）的缓存打掉
+    p.push_str(
+        "\n权限（当前值以最新一条「会话状态」注记为准，没有注记就是「需要批准」）：\n\
+         · 只读：写设备/写文件/跑命令/烧录都会被后端直接拒绝，别去试；\n\
+         · 需要批准：危险动作前系统会弹给用户点允许，你只管说明你要做什么；\n\
+         · 自动：危险动作也会直接执行，做完必须汇报清楚。\n\n",
+    );
+    /* ⑤ 以下都是**跟着工作区变**的东西，放最后 ——
+       "先稳后变"是有意的：前缀缓存从第 0 个 token 开始比，换工作区时前面那段照样命中。 */
+    p.push_str(&format!("工作区（相对路径都相对它）：{}\n", workspace.to_string_lossy()));
+    p.push_str(&store::skills_index_workspace(workspace));
+    p.push('\n');
     let w = store::read_workspace_guidance(workspace);
     if !w.trim().is_empty() {
         p.push_str("\n工作区指导（本项目的 AGENTS.md，比全局指导更具体，优先遵守）：\n");
@@ -1177,20 +1192,28 @@ fn tool_msg(id: &str, text: &str) -> Value {
 /// 而 Δ 的大头正是工具结果（波形、日志、目录列表、网页正文）。结果原样灌进历史，
 /// 一轮就能把命中率从 98% 压到 80% 以下 —— 省它比省任何东西都值。
 /// 全量不丢：需要细节就让模型用工具把原文写进工作区文件，再按需分批读。
-const TOOL_RESULT_CHARS: usize = 8_000;
+const TOOL_RESULT_CHARS: usize = 4_000;
 
-fn cap_tool_result(text: &str) -> String {
+/// 超长的工具结果：只把**头尾**放进上下文，全文落盘（opencode 也是这么干的：
+/// 截断 + 给路径 + 文件留 7 天），模型要看全量用 output_read 读。
+/// 内联上限从 8K 字收到 4K 字：Δ 小一半，命中率就上去了，信息又没丢。
+fn cap_tool_result(app: &AppHandle, tool: &str, text: &str) -> String {
     let n = text.chars().count();
     if n <= TOOL_RESULT_CHARS {
         return text.to_string();
     }
+    let saved = store::tool_output_write(app, tool, text).ok();
     let head_n = TOOL_RESULT_CHARS * 6 / 10;
     let tail_n = TOOL_RESULT_CHARS - head_n;
     let head: String = text.chars().take(head_n).collect();
     let tail: String = text.chars().skip(n - tail_n).collect();
+    let where_ = match &saved {
+        Some(p) => format!("全文已存到 {p}（可用 output_read 读；{} 天后自动清理）", store::TOOL_OUTPUT_KEEP_DAYS),
+        None => "全文没能落盘".to_string(),
+    };
     format!(
-        "{head}\n…（中间省略 {} 字，共 {} 字。要看全量：用工具把它写到工作区文件里再分批读，\n\
-         或让工具直接给更小的输出 —— 别整段贴回对话，那会让上下文和花费一起涨）…\n{tail}",
+        "{head}\n…（中间省略 {} 字，共 {} 字；{where_}。\n\
+         别整段重贴回对话 —— 那会让上下文和花费一起涨）…\n{tail}",
         n - TOOL_RESULT_CHARS,
         n
     )
@@ -1414,7 +1437,11 @@ fn compact_if_needed(app: &AppHandle, provider: &Provider, key: &str, session_id
         if prev.trim().is_empty() { String::new() } else { format!("---- 之前的摘要（在此基础上补充，别丢信息）----\n{prev}") },
         transcript.chars().take(60_000).collect::<String>());
     let msgs = vec![
-        json!({ "role": "system", "content": "你是负责压缩上下文的助手。直接输出摘要正文，不要输出思考过程、不要复述提示词。" }),
+        json!({ "role": "system", "content": "你是负责压缩上下文的助手。直接输出摘要正文，不要输出思考过程、不要复述提示词。\
+摘要里**不要**复述下面的东西（它们每一轮都在系统提示里，原样还给下一轮，写了就是重复占钱）：\
+系统提示里的规矩与角色设定、指导文件（AGENTS.md）的内容、技能索引、环境信息（工作区路径、会话 id、模型名）。\
+只总结**用户和助手说过、做过**的事：目标与结论、已经验证过的关键数据（命令、输出要点、参数）、\
+改过哪些文件/服务、还没做完的事与下一步。用简短的单行要点，别写成大段散文。" }),
         json!({ "role": "user", "content": prompt }),
     ];
     // 摘要这条也要留足输出额度：推理模型会把小额度全花在思考上、正文为空
@@ -1812,7 +1839,7 @@ fn run_turn(
                     Ok(t) => (true, t),
                     Err(e) => (false, e),
                 };
-                let text = cap_tool_result(&text);
+                let text = cap_tool_result(&app, &call.name, &text);
                 store::session_append(&app, &session_id, &Event::ToolResult {
                     id: call.id.clone(), name: call.name.clone(), ok, text: text.clone(), ts: 0 })?;
                 emit(&app, "agent://tool_result", json!({ "session": session_id,

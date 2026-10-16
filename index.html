@@ -341,7 +341,7 @@
               </div>
               <div class="setcard">
                 <div class="cardtitle">编辑技能<span class="grow"></span>
-                  <span class="lb">点上面列表里的一项读进来</span></div>
+                  <span class="lb" id="set-skill-scope">点上面列表里的一项读进来</span></div>
                 <div class="field"><label for="set-skill-name">名字</label>
                   <input id="set-skill-name" placeholder="技能名（会 slug 化；中文也能用）" /></div>
                 <textarea id="set-skill-body" rows="14" class="agskill"
@@ -360,9 +360,11 @@
             <!-- 工具：只读清单 + 开关（工具定义在请求最前面，是最大的那一块 token） -->
             <div class="setpane" data-setpane="tools" hidden>
               <div class="cardtitle">agent 能用的工具<span class="grow"></span><span id="set-tool-sum" class="lb"></span></div>
-              <p class="hint">这里的开关是**只读清单 + 使用/不使用**：关掉用不上的工具能省下每次请求的输入 token
-                （现在这一整块约占系统提示之外的一半）。注意：工具定义在请求的<b>最前面</b>，中途改会让整段前缀缓存
-                （含全部历史）重算一次，所以<b>开关只对新会话生效</b>；想让当前会话立刻吃上，去 Agent 信息页点「刷新骨架」。</p>
+              <p class="hint">这里的开关是<b>只读清单 + 使用/不使用</b>：关掉用不上的工具，主要作用是让模型少被无关工具干扰、
+                少误调（能力控制），<b>不是省 token 的手段</b>：实测在 DeepSeek 这条线上，工具数从 60 个关到 0 个，
+                接口报的 <code>prompt_tokens</code> 一个数都没变（工具定义没被算进 prompt）。
+                不过别的厂商（比如 Anthropic 的显式缓存）工具块是在前缀里的，所以这里仍然<b>按会话冻结</b>：
+                开关对新会话生效；想让当前会话立刻吃上，去 Agent 信息页点「刷新骨架」。</p>
               <input id="set-tool-filter" class="dirinput" placeholder="搜索工具名 / 说明" />
               <div id="set-tool-list" class="agentlist scrollable"></div>
             </div>

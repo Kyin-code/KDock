@@ -1083,6 +1083,67 @@ pub fn global_guidance_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(agent_dir(app)?.join("AGENTS.md"))
 }
 
+/* ── 大工具结果的落盘（tool-output/）──────────────────────────────────────
+   照 opencode 的做法：超过内联上限的工具结果**只截一段进上下文**，全文写到
+   `agent/tool-output/` 下的文件里，并在结果里给出路径 —— 模型要看全量就用
+   output_read 读那段文件。好处是"上下文里永远是小的"（Δ 小 → 缓存命中率高），
+   信息又没丢。文件 7 天后自动清理（跟 opencode 的 RETENTION 一致）。 */
+
+pub const TOOL_OUTPUT_KEEP_DAYS: u64 = 7;
+
+pub fn tool_output_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let d = agent_dir(app)?.join("tool-output");
+    std::fs::create_dir_all(&d).map_err(|e| format!("建 {} 失败: {e}", d.display()))?;
+    Ok(d)
+}
+
+/// 把全文写进去，返回路径。顺手清掉过期文件（只在写的时候清，够用了，不用后台任务）。
+pub fn tool_output_write(app: &AppHandle, tool: &str, text: &str) -> Result<String, String> {
+    let dir = tool_output_dir(app)?;
+    let name = format!("tool_{}_{}.txt", now_ms(), slugify(tool));
+    let path = dir.join(&name);
+    std::fs::write(&path, text).map_err(|e| format!("写 {} 失败: {e}", path.display()))?;
+    let cutoff = now_ms() - (TOOL_OUTPUT_KEEP_DAYS as i64) * 86_400_000;
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            let old = std::fs::metadata(&p)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| (d.as_millis() as i64) < cutoff)
+                .unwrap_or(false);
+            if old {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// 读回落盘的工具输出。**只允许读 tool-output 目录里的文件**（别的路径一律拒），
+/// 免得这条路变成"绕过工作区限制读任意文件"的后门。
+pub fn tool_output_read(app: &AppHandle, path: &str, offset: usize, limit: usize) -> Result<String, String> {
+    let dir = tool_output_dir(app)?;
+    let want = PathBuf::from(path.trim());
+    // 允许传文件名，也允许传完整路径；但解析后必须在 tool-output 目录里
+    let resolved = if want.is_absolute() { want } else { dir.join(want) };
+    let canon_dir = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+    let canon = std::fs::canonicalize(&resolved).map_err(|e| format!("读不到 {}: {e}", resolved.display()))?;
+    if !canon.starts_with(&canon_dir) {
+        return Err("只能读 tool-output 目录里的文件".into());
+    }
+    let text = std::fs::read_to_string(&canon).map_err(|e| format!("读 {} 失败: {e}", canon.display()))?;
+    let total = text.chars().count();
+    let off = offset.min(total);
+    let take = if limit == 0 { 8000 } else { limit.min(40000) };
+    let body: String = text.chars().skip(off).take(take).collect();
+    Ok(format!(
+        "（{}/{} 字起，共 {} 字）\n{}",
+        off, take, total, body
+    ))
+}
+
 /* ── 工具清单开关：`agent/tools-off.json`（一串工具名）────────────────────────
    工具定义在请求的**最前面**，内容是十几个 KB 的大头。关掉用不上的工具能省 token，
    但**中途改会让整个前缀（含全部历史）作废** —— 所以开关按会话冻结：改了下一个新会话生效。 */
@@ -1297,8 +1358,16 @@ pub fn skill_convert_to_workspace(app: &AppHandle, slug: &str, workspace: &str) 
 /// 三段一起的索引：内置之外的两段技能（全局 + 本项目），正文按需读。
 /// 顺序**按 slug 排序**、文本里不含大小/时间 —— 系统提示要拿前缀缓存，稳字第一。
 pub fn skills_index_for(app: &AppHandle, ws: &std::path::Path) -> String {
+    let mut out = String::new();
+    out.push_str(&skills_index_global(app));
+    out.push_str(&skills_index_workspace(ws));
+    out
+}
+
+/// 全局技能的索引段（**跟项目无关**：换个工作区这段也一模一样 ——
+/// 系统提示里"先稳后变"的排序就是为了这个，跨工作区也能吃到同一段前缀缓存）
+pub fn skills_index_global(app: &AppHandle) -> String {
     let global: Vec<SkillInfo> = skills_list(app).into_iter().filter(|s| s.enabled).collect();
-    let local = workspace_skills(ws);
     let mut out = String::new();
     out.push_str("全局技能（用户级：任务匹配到某个技能的描述时，先用 skill_read 读全文再照它做）：\n");
     if global.is_empty() {
@@ -1309,6 +1378,13 @@ pub fn skills_index_for(app: &AppHandle, ws: &std::path::Path) -> String {
             out.push_str(&format!("- {} — {}\n", s.slug, d));
         }
     }
+    out
+}
+
+/// 本项目技能的索引段（跟着工作区变，所以排在全局后面）
+pub fn skills_index_workspace(ws: &std::path::Path) -> String {
+    let local = workspace_skills(ws);
+    let mut out = String::new();
     out.push_str("本项目技能（工作区里的 .kdock_skill；涉及本项目文件/流程时**必须先读**它）：\n");
     if local.is_empty() {
         out.push_str("（本项目还没有专属技能）\n");

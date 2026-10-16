@@ -182,6 +182,13 @@ pub fn catalog() -> Vec<ToolDef> {
         },"required":["path","content"]}), false);
     push("workspace_mkdir", "在工作区里建目录。",
         json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}), false);
+    push("output_read", "读被截断的工具输出全文（大输出会落到 tool-output 目录，工具结果里会给出路径）。\
+offset/limit 按**字符**算，默认从 0 读 8000 字；一次读不完就接着往后读，别整段贴回对话。",
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"工具结果里给出的那个路径（也可以只给文件名）"},
+            "offset":{"type":"integer","description":"从第几个字符开始（默认 0）"},
+            "limit":{"type":"integer","description":"最多读多少字符（默认 8000，上限 40000）"}
+        },"required":["path"]}), false);
     push("skill_list", "列出已安装的技能（名字 + 描述；标了「常驻」的技能每轮都注入全文）。",
         json!({"type":"object","properties":{}}), false);
     push("skill_read", "读一个技能的完整 SKILL.md。任务或问题匹配某个技能的描述时就该先读它 —— 包括身份、口吻、自我介绍、闲聊这类问题，不是只有硬件操作才读技能。",
@@ -943,6 +950,12 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "workspace_read" => workspace_read(ctx, args),
         "workspace_write" => workspace_write(ctx, args),
         "workspace_mkdir" => workspace_mkdir(ctx, args),
+        "output_read" => {
+            let path = arg_str(args, "path").ok_or("缺少 path")?;
+            let off = arg_u64(args, "offset", 0) as usize;
+            let lim = arg_u64(args, "limit", 8000) as usize;
+            store::tool_output_read(ctx.app, &path, off, lim)
+        }
         "skill_list" => {
             let list = store::skills_list(ctx.app);
             let local = store::workspace_skills(&ctx.workspace);
