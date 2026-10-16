@@ -276,6 +276,15 @@ function buildEndpoint() {
   if (mode === "tcp_server") {
     return { mode: "tcp_server", host: $("tcp-server-host").value.trim(), port: num($("tcp-server-port").value) };
   }
+  if (mode === "ssh") {
+    const host = $("ssh-host").value.trim();
+    if (!host) throw new Error(en("填一下 SSH 主机"));
+    return {
+      mode: "ssh", host, port: num($("ssh-port").value) || 22,
+      user: $("ssh-user").value.trim(), password: $("ssh-pass").value,
+      extra: $("ssh-extra") ? $("ssh-extra").value.trim() : "",
+    };
+  }
   return {
     mode: "udp",
     local_port: num($("udp-local-port").value),
@@ -289,7 +298,7 @@ function buildEndpoint() {
 function applyEndpointToUi(ep) {
   try {
     const t = ep.mode;
-    if (!["serial", "tcp_client", "tcp_server", "udp"].includes(t)) return;
+    if (!["serial", "tcp_client", "tcp_server", "udp", "ssh"].includes(t)) return;
     const sel = $("mode");
     if (sel) sel.value = t;
     switchMode(t);
@@ -308,6 +317,10 @@ function applyEndpointToUi(ep) {
     } else if (t === "tcp_server") {
       $("tcp-server-host").value = ep.host || "0.0.0.0";
       $("tcp-server-port").value = ep.port ?? "";
+    } else if (t === "ssh") {
+      $("ssh-host").value = ep.host || "";
+      $("ssh-port").value = ep.port ?? 22;
+      $("ssh-user").value = ep.user || "";
     } else {
       $("udp-local-port").value = ep.local_port ?? "";
       $("udp-remote-host").value = ep.remote_host || "";
@@ -421,8 +434,15 @@ function ansiToHtml(text) {
   }
   out += escapeHtml(s.slice(last));
   close();
-  // 剩下的非 SGR 转义（清屏、移动光标…）直接抹掉，纯文本流里不该出现
-  return out.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+  /* 剩下的非 SGR 转义一律抹掉 —— SSH 进去之后这些东西每行都在：
+     · OSC（ESC ] 0;标题 BEL）：xterm 拿它设窗口标题，纯文本流里就是垃圾
+     · 带中间字节的 CSI（ESC [ ?2004h 括号粘贴、ESC [ 2J 清屏…）
+     · 两字节转义（ESC ( B 之类）
+     不只是"难看"：不抹掉的话每行提示符后面都拖一串 ESC[…h/[…l，日志没法看也没法复制。 */
+  return out
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, "")
+    .replace(/\u001b\[[0-9;?><!]*[ -/]*[@-~]/g, "")
+    .replace(/\u001b[@-Z\\-_]/g, "");
 }
 
 /** 一条记录里可能含好几行（设备一次吐一批），按行拆开显示，时间戳沿用这条记录的时间 */
@@ -462,16 +482,23 @@ function termFeed(st, text) {
   while (i < text.length) {
     const ch = text[i];
     if (ch === "\u001b") {
-      const m = /^\u001b\[([0-9;]*)([A-Za-z])/.exec(text.slice(i));
+      const rest = text.slice(i);
+      // OSC（ESC ] … BEL / ESC \）：整段吞掉。SSH 的提示符每行都带一条（设窗口标题）
+      const osc = /^\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/.exec(rest);
+      if (osc) { i += osc[0].length; continue; }
+      // CSI：参数里可能有 ? > ! 这类中间字节（如 ESC[?2004h 括号粘贴），都要整条吞掉，
+      // 不能只丢 ESC 再把 "?2004h" 当正文铺出来
+      const m = /^\u001b\[([0-9;?><!]*)[ -/]*([@-~])/.exec(rest);
       if (!m) { i += 1; continue; }                      // 裸 ESC：丢掉
       const n = m[1] === "" ? 1 : (parseInt(m[1], 10) || 1);
-      if (m[2] === "D") st.col = Math.max(0, st.col - n);
-      else if (m[2] === "C") st.col += n;
-      else if (m[2] === "A") st.row = Math.max(0, st.row - n);
-      else if (m[2] === "B") { st.row += n; while (st.lines.length <= st.row) st.lines.push(""); }
-      else if (m[2] === "K") st.lines[st.row] = (st.lines[st.row] ?? "").slice(0, st.col);
-      else if (m[2] === "J") { st.lines = [""]; st.row = 0; st.col = 0; }
-      else if (m[2] === "H") { st.row = 0; st.col = 0; }
+      const priv = /[?><!]/.test(m[1]);                  // 私有模式：只当"要忽略"，别照着光标动
+      if (!priv && m[2] === "D") st.col = Math.max(0, st.col - n);
+      else if (!priv && m[2] === "C") st.col += n;
+      else if (!priv && m[2] === "A") st.row = Math.max(0, st.row - n);
+      else if (!priv && m[2] === "B") { st.row += n; while (st.lines.length <= st.row) st.lines.push(""); }
+      else if (!priv && m[2] === "K") st.lines[st.row] = (st.lines[st.row] ?? "").slice(0, st.col);
+      else if (!priv && m[2] === "J") { st.lines = [""]; st.row = 0; st.col = 0; }
+      else if (!priv && m[2] === "H") { st.row = 0; st.col = 0; }
       i += m[0].length;
       continue;
     }
@@ -805,8 +832,9 @@ function hex8(v) {
 //    但设备只有一条连接，所以最终都写回【传输】页那套控件上，只是三个入口 ──
 function switchPaneMode(pfx, m) {
   $(`${pfx}-mode`).value = m;
+  // data-<pfx>m 可以写多个值（空格隔开）：像"FTP / FTPS / TFTP 这一组字段"就共用一整块
   document.querySelectorAll(`[data-${pfx}m]`).forEach((el) => {
-    el.hidden = el.dataset[`${pfx}m`] !== m;
+    el.hidden = !String(el.dataset[`${pfx}m`] || "").split(/\s+/).includes(m);
   });
 }
 /** 传输页 -> 这个页：切到该标签时同步一次，让用户看到当前连接参数 */
@@ -1018,7 +1046,8 @@ async function flList() {
   const my = ++flSeq;
   flState("读取目录 ...");
   try {
-    const items = await invoke("device_list", { path: dir });
+    // 网络盘（FTP/FTPS）用 netfs 那套；串口 / TCP 服务通道还是走设备的 cshell / 6666 服务
+    const items = flIsNet() ? await flListNet(dir) : await invoke("device_list", { path: dir });
     if (my !== flSeq) return;          // 已经有更新的请求了，别拿旧结果覆盖
     flEntries = items;
     flDirOf = dir;
@@ -1081,7 +1110,18 @@ async function flPull() {
   localStorage.setItem("kdock_save_dir", $("fl-save-dir").value.trim());
   flState(`传输中 ... ${path}`);
   try {
-    const r = await invoke("device_pull", { path, saveTo: save });
+    let r;
+    if (flIsNet()) {
+      // FTP 走 RETR；TFTP 走 RRQ（后端按 tftp_host 有没有值来分）
+      const h = $("fl-net-host").value.trim();
+      r = await invoke("netfs_get", {
+        id: flNetId, path, saveTo: save,
+        tftpHost: flNetProto() === "tftp" ? h : null,
+        tftpPort: flNetPort(),
+      });
+    } else {
+      r = await invoke("device_pull", { path, saveTo: save });
+    }
     flState(`已保存到 ${save}   ${r.bytes} B   crc32=${hex8(r.crc32)}`, "ok");
     toast(`已保存到 ${save}（${r.bytes} B）`);
     pushSys(`[文件] 已保存到 ${save}   ${r.bytes} B   crc32=${hex8(r.crc32)}`);
@@ -1091,8 +1131,194 @@ async function flPull() {
   }
 }
 
-// 文件页的连接块 + 发文件
-wirePaneLink("fl");
+/* ── 文件页的"网络盘"：FTP / FTPS（显式 + 隐式）/ TFTP ─────────────────────────
+   串口和 TCP Client 那两条老路走主连接（device_list / device_pull / device_upload），
+   网络盘走 netfs_*（后端自己维护一条有状态的控制连接）；TFTP 没有会话，后端按次问。
+   两者在界面上是同一套动作：列目录 / 取回本机 / 发到设备。 */
+const FL_NET_MODES = ["ftp", "ftps", "ftps_implicit", "tftp"];
+let flNetId = 0;
+function flIsNet() { return FL_NET_MODES.includes($("fl-mode").value); }
+function flNetProto() { return $("fl-mode").value; }
+function flNetPort() {
+  const v = $("fl-net-port").value.trim();
+  if (v) return Number(v);
+  return flNetProto() === "tftp" ? 69 : flNetProto() === "ftps_implicit" ? 990 : 21;
+}
+
+/** 列目录：网络盘走 netfs_list，返回同样的 {name,size,is_dir} */
+async function flListNet(dir) {
+  if (!flNetId) throw new Error(en("先点「连接」（FTP/FTPS 要登录；TFTP 只是记一下地址）"));
+  const items = await invoke("netfs_list", { id: flNetId, path: dir });
+  return items.map((x) => ({
+    name: x.name,
+    size: x.size,
+    is_dir: x.is_dir,
+    mtime: x.mtime || "",
+  }));
+}
+
+async function flOpenNet() {
+  const proto = flNetProto();
+  const label = en("连接") + " " + proto.toUpperCase();
+  flState(label + " …");
+  try {
+    const r = await invoke("netfs_open", {
+      proto,
+      host: $("fl-net-host").value.trim(),
+      port: flNetPort(),
+      user: $("fl-net-user").value.trim(),
+      password: $("fl-net-pass").value,
+      insecure: !!($("fl-net-insecure") && $("fl-net-insecure").checked),
+    });
+    flNetId = Number(r.id) || 0;
+    flState(`${r.label}  ${r.note || ""}`, "ok");
+    pushSys(`[文件] 已连接 ${r.label}${r.note ? "（" + r.note + "）" : ""}`);
+    localStorage.setItem("kdock_fl_net", JSON.stringify({
+      proto, host: $("fl-net-host").value.trim(), port: $("fl-net-port").value.trim(),
+      user: $("fl-net-user").value.trim(),
+    }));
+    if (proto === "tftp") {
+      $("fl-items").innerHTML = '<option value="">' + en("（TFTP 没有列表：直接填路径取/送）") + '</option>';
+      flEntries = [];
+    } else {
+      $("fl-dir").value = "/";
+      flList();
+    }
+  } catch (e) {
+    flNetId = 0;
+    flState(en("失败: ") + e, "err");
+    pushSys(`[文件] ${proto.toUpperCase()} 连接失败: ${e}`);
+    toast(String(e));
+  }
+}
+
+async function flCloseNet(silent) {
+  if (flNetId) {
+    await invoke("netfs_close", { id: flNetId }).catch(() => {});
+    if (!silent) pushSys(`[文件] 已断开 ${flNetProto().toUpperCase()}（#${flNetId}）`);
+    flNetId = 0;
+  }
+  flState(en("未连接"));
+}
+
+/** 内置 TFTP 服务端：把本机当 TFTP 服务器（设备来取固件 / 把日志写回来） */
+let tftpSrvOn = false;
+function tftpSrvState(text, cls) {
+  const d = $("fl-tftp-state");
+  if (d) { d.textContent = en(text); d.className = "dot" + (cls ? " " + cls : ""); }
+  const b = $("fl-tftp-go"), s = $("fl-tftp-stop");
+  if (b) b.disabled = tftpSrvOn;
+  if (s) s.disabled = !tftpSrvOn;
+}
+function tftpSrvLog(text) {
+  const box = $("fl-tftp-log");
+  if (!box) return;
+  box.textContent += `[${new Date().toLocaleTimeString()}] ${text}\n`;
+  if (box.textContent.length > 40000) box.textContent = box.textContent.slice(-30000);
+  box.scrollTop = box.scrollHeight;
+}
+async function tftpSrvStart() {
+  const root = $("fl-tftp-root").value.trim();
+  if (!root) { toast(en("先选一个 TFTP 根目录")); return; }
+  try {
+    const r = await invoke("tftp_server_start", {
+      root, port: Number($("fl-tftp-port").value) || 69,
+      allowWrite: !!($("fl-tftp-write") && $("fl-tftp-write").checked),
+    });
+    tftpSrvOn = true;
+    localStorage.setItem("kdock_tftp", JSON.stringify({ root, port: r.port, write: !!$("fl-tftp-write").checked }));
+    tftpSrvState(`已启动 · UDP ${r.port} · ${r.root}`, "ok");
+    pushSys(`[TFTP] 服务端已启动：UDP ${r.port}，根目录 ${r.root}`);
+  } catch (e) {
+    tftpSrvOn = false;
+    tftpSrvState(en("启动失败: ") + e, "err");
+    toast(String(e));
+  }
+}
+async function tftpSrvStop() {
+  await invoke("tftp_server_stop").catch(() => {});
+  tftpSrvOn = false;
+  tftpSrvState("未启动");
+}
+
+/** 连接/断开：串口/TCP 走主连接，网络盘走 netfs */
+async function flConnect() {
+  const m = $("fl-mode").value;
+  if (FL_NET_MODES.includes(m)) return flOpenNet();
+  $("mode").value = m;
+  switchMode(m);
+  if (m === "serial") {
+    if ($("fl-ports").value) $("ports").value = $("fl-ports").value;
+    if ($("fl-baud").value) { $("baud").value = $("fl-baud").value; currentBaud = Number($("fl-baud").value); }
+  } else {
+    $("tcp-client-host").value = $("fl-host").value.trim();
+    $("tcp-client-port").value = $("fl-port").value;
+  }
+  await doOpen();
+}
+
+$("fl-mode").onchange = () => switchPaneMode("fl", $("fl-mode").value);
+$("fl-open").onclick = flConnect;
+$("fl-close").onclick = async () => { await flCloseNet(); await doClose(); };
+$("fl-refresh").onclick = refreshPorts;
+if ($("fl-mkdir")) $("fl-mkdir").onclick = async () => {
+  if (!flIsNet()) return toast(en("「新建目录」只在 FTP / FTPS 下可用"));
+  const name = await agDialog({ title: en("新建目录"), text: en("目录名（建在当前路径下）"), input: true });
+  if (!name.ok || !name.value) return;
+  try {
+    await invoke("netfs_mkdir", { id: flNetId, path: joinPath(flDirOf || $("fl-dir").value.trim() || "/", name.value.trim()) });
+    flList();
+  } catch (e) { flState(en("失败: ") + e, "err"); }
+};
+if ($("fl-del")) $("fl-del").onclick = async () => {
+  if (!flIsNet()) return toast(en("「删除」只在 FTP / FTPS 下可用"));
+  const name = $("fl-items").value;
+  if (!name) return toast(en("先在列表里选一个"));
+  const it = flEntries.find((x) => x.name === name);
+  const path = joinPath(flDirOf || $("fl-dir").value.trim() || "/", name);
+  const r = await agDialog({
+    title: en("删除"),
+    text: `确定删掉 ${path}${it && it.is_dir ? en("（目录）") : ""}？删了回不来。`,
+  });
+  if (!r.ok) return;
+  try {
+    await invoke("netfs_delete", { id: flNetId, path, isDir: !!(it && it.is_dir) });
+    flList();
+  } catch (e) { flState(en("失败: ") + e, "err"); }
+};
+if ($("fl-tftp-go")) $("fl-tftp-go").onclick = tftpSrvStart;
+if ($("fl-tftp-stop")) $("fl-tftp-stop").onclick = tftpSrvStop;
+if ($("fl-tftp-pick")) $("fl-tftp-pick").onclick = async () => {
+  const p = await dlgOpen({ directory: true, multiple: false, title: en("选 TFTP 根目录") });
+  if (p) { $("fl-tftp-root").value = typeof p === "string" ? p : p.path; }
+};
+if ($("fl-tftp-write")) $("fl-tftp-write").onchange = () => {
+  if (tftpSrvOn) { tftpSrvStop().then(tftpSrvStart); }   // 开关改了要重启才生效
+};
+
+/** 文件页的持久化：上次用哪种方式 / FTP 服务器 / 内置 TFTP 服务端的根目录与端口 */
+function flRestorePrefs() {
+  try {
+    const j = JSON.parse(localStorage.getItem("kdock_fl_net") || "null");
+    if (j && j.proto) {
+      $("fl-mode").value = j.proto;
+      switchPaneMode("fl", j.proto);
+      if (j.host) $("fl-net-host").value = j.host;
+      if (j.port) $("fl-net-port").value = j.port;
+      if (j.user) $("fl-net-user").value = j.user;
+    }
+  } catch (_) {}
+  try {
+    const t = JSON.parse(localStorage.getItem("kdock_tftp") || "null");
+    if (t) {
+      if (t.root) $("fl-tftp-root").value = t.root;
+      if (t.port) $("fl-tftp-port").value = t.port;
+      $("fl-tftp-write").checked = !!t.write;
+    }
+  } catch (_) {}
+  tftpSrvState("未启动");
+}
+
 let flSendFile = null;   // { name, bytes }
 
 $("fl-pick").onclick = async () => {
@@ -1112,13 +1338,24 @@ $("fl-pick").onclick = async () => {
 };
 
 $("fl-send").onclick = async () => {
-  if (!flSendFile) { toast("先选一个本机文件"); return; }
+  if (!flSendFile) { toast(en("先选一个本机文件")); return; }
   const path = $("fl-send-path").value.trim();
-  if (!path) { toast("填一下设备上的目标路径"); return; }
+  if (!path) { toast(en("填一下设备上的目标路径")); return; }
   const n = flSendFile.bytes.length;
   flState(`发送中 ... ${path}`);
   try {
-    const crc = await invoke("device_upload", { path, data: flSendFile.bytes });
+    let crc;
+    if (flIsNet()) {
+      const h = $("fl-net-host").value.trim();
+      const r = await invoke("netfs_put", {
+        id: flNetId, path, data: flSendFile.bytes,
+        tftpHost: flNetProto() === "tftp" ? h : null,
+        tftpPort: flNetPort(),
+      });
+      crc = r.crc32;
+    } else {
+      crc = await invoke("device_upload", { path, data: flSendFile.bytes });
+    }
     flState(`已发送 ${n} B  crc32=${hex8(crc)}`, "ok");
     pushSys(`[文件] 已发送 ${path}   ${n} B   crc32=${hex8(crc)}`);
     flList();                                  // 刷新列表，能马上看到
@@ -1148,6 +1385,7 @@ const WORK_OF = {
   agent: "agent",
   env: "env",
   kb: "kb",
+  adb: "adb",
 };
 
 /** 窄窗时参数区是「整行挪到下面」的一条：按当前这张面板的内容量决定它多高（30~55vh 之间），
@@ -1175,9 +1413,13 @@ function showPane(tab) {
   syncParamStrip();
   if (tab === "upgrade") syncUpgCtl();
   if (tab === "files") {
-    syncPaneCtl("fl");
-    if (!flEntries.length) flList();
+    // 网络盘模式（FTP/FTPS/TFTP）没连之前别去列目录：那会报"先点连接"
+    if (!flIsNet()) {
+      syncPaneCtl("fl");
+      if (!flEntries.length) flList();
+    }
   }
+  if (tab === "adb") adbOnShow();
   const pg = $("tb-page");
   if (pg) { const p = TB_PAGES.find((x) => x[0] === tab); pg.textContent = p ? en(p[1]) : tab; }
   if (tab === "chart") { chDirty = true; chartResize(); }
@@ -2467,7 +2709,61 @@ let capFpsT0 = 0;
 let capFps = 0;
 let capRunning = false;
 let capSession = 0;        // 当前这一路捕获的会话号（后端每开一路给一个）
-let capRefresh = null;     // 枚举显示器的函数（第一次进「屏幕捕获」页才跑）
+let capRefresh = null;     // 枚举显示器的函数（第一次进「屏幕共享」页才跑）
+let capBackend = "desktop";     // desktop（DXGI）| rs（VNC / RTSP / RTMP / H.264）
+let capWH = { w: 0, h: 0 };     // 最近一帧的原始尺寸（VNC 回传坐标要用它换算）
+let capFs = false;              // 是不是全屏中
+let capWanted = false;          // 这一次"开始"我们还在等后端把会话号给我们
+
+/** 事件是不是属于"当前这一次"的？
+ *  后端的线程一起就会发事件（错误/首帧），那时候 rs_open 的返回值还没回到 JS，
+ *  我们手里的会话号还是 0 —— 所以"还没拿到号"的那一小段时间要**先收下**，
+ *  否则第一个错误（比如 VNC 密码不对）会被当成旧会话丢掉，界面一直卡在"连接中…"。 */
+function capEventMine(p) {
+  if (!capWanted) return false;
+  const sid = Number(p && p.session) || 0;
+  if (!sid) return true;
+  return !capSession || sid === capSession;
+}
+
+/** 当前的"来源"：desktop / vnc / rtsp / rtmp / h264 */
+function capSrcName() { return $("cap-src").value; }
+const CAP_SRC_LABEL = { desktop: "本机桌面", vnc: "VNC", rtsp: "RTSP", rtmp: "RTMP", h264: "H.264" };
+const CAP_SRC_BACKEND = { desktop: "desktop", vnc: "rs", rtsp: "rs", rtmp: "rs", h264: "rs" };
+
+/** 切来源：显示/隐藏各组字段，工具栏标签也跟着变 */
+function capSetSrc(src) {
+  capBackend = CAP_SRC_BACKEND[src] || "desktop";
+  document.querySelectorAll("[data-caps]").forEach((el) => {
+    el.hidden = !String(el.dataset.caps || "").split(/\s+/).includes(src);
+  });
+  if ($("cap-src-label")) $("cap-src-label").textContent = en(CAP_SRC_LABEL[src] || src);
+  if ($("cap-ctl-wrap")) $("cap-ctl-wrap").hidden = src !== "vnc";
+  const view = $("cap-view");
+  if (view) view.classList.toggle("remote", capBackend === "rs" && src === "vnc");
+}
+
+/** rs_open 的参数（VNC / RTSP / RTMP / H.264 共用） */
+function capRsArgs() {
+  const src = capSrcName();
+  const [sw, sh] = String($("cap-size").value || "1280x720").split("x").map(Number);
+  const scale = Number($("cap-scale").value) || 1;
+  const base = {
+    kind: src === "vnc" ? "vnc" : src,
+    fps: Number($("cap-fps").value) || 8,
+    quality: Number($("cap-q").value) || 70,
+    scale,
+  };
+  if (src === "vnc") {
+    return { ...base, host: $("cap-vnc-host").value.trim(), port: Number($("cap-vnc-port").value) || 5900,
+      password: $("cap-vnc-pass").value, viewOnly: !($("cap-ctl") && $("cap-ctl").checked) };
+  }
+  const url = src === "rtsp" ? $("cap-rtsp-url").value.trim()
+    : src === "rtmp" ? $("cap-rtmp-url").value.trim()
+    : $("cap-h264-url").value.trim();
+  return { ...base, url, sizeW: sw || 1280, sizeH: sh || 720,
+    transport: src === "rtsp" ? $("cap-rtsp-tr").value : "auto" };
+}
 
 function capState(t, cls) {
   $("cap-state").textContent = t;
@@ -2478,6 +2774,7 @@ function capApplyLatest() {
   if (!capImg || !capLatest) { capApplying = false; return; }
   const f = capLatest;
   capLatest = null;
+  capWH = { w: Number(f.w) || 0, h: Number(f.h) || 0 };
   capImg.src = "data:image/jpeg;base64," + f.data;
   capFrames += 1;
   const now = Date.now();
@@ -2490,6 +2787,97 @@ function capApplyLatest() {
   if (capRunning) capState(`${f.w}x${f.h} · ${fpsTxt} · ${Math.round(f.bytes / 1024)} KB/帧`, "ok");
   // 下一帧用 rAF 应用：一来跟渲染节奏对齐，二来**自动丢旧帧**（抓得比画得快时不积压）
   requestAnimationFrame(() => { capApplying = false; if (capLatest) { capApplying = true; capApplyLatest(); } });
+}
+
+/** 统一入口：桌面捕获（capture://frame）和远端画面（rs://frame）都走这里 */
+function capPushFrame(f) {
+  capLatest = f;
+  if (!capApplying && capImg) { capApplying = true; capApplyLatest(); }
+}
+
+/** 把当前这一帧另存为 PNG（走 canvas 转 PNG，复用后端那个"写 PNG"命令） */
+async function capSaveShot() {
+  const img = $("cap-view") && $("cap-view").querySelector("img");
+  if (!img || !img.src.startsWith("data:")) { toast(en("还没有画面可存")); return; }
+  const picked = await dlgSave({ title: en("把当前画面另存为"), defaultPath: "kdock-screen.png",
+    filters: [{ name: "PNG", extensions: ["png"] }] });
+  if (!picked) return;
+  const cv = document.createElement("canvas");
+  cv.width = img.naturalWidth || capWH.w || 1;
+  cv.height = img.naturalHeight || capWH.h || 1;
+  cv.getContext("2d").drawImage(img, 0, 0);
+  try {
+    const path = await invoke("scope_save_png", { path: picked, dataUrl: cv.toDataURL("image/png") });
+    toast(en("已保存：") + path);
+    pushSys("[屏幕共享] 画面已保存：" + path);
+  } catch (e) { toast(String(e)); }
+}
+
+/** 全屏：窗口级全屏 + 隐藏我们的标题栏/导航（Esc / F11 退出） */
+async function capSetFullscreen(on) {
+  capFs = !!on;
+  try { await invoke("win_ctl", { action: on ? "fullscreen" : "unfullscreen" }); } catch (_) {}
+  document.documentElement.dataset.fs = on ? "1" : "0";
+  const hint = $("cap-fs-hint");
+  if (hint) hint.hidden = !on;
+  if ($("cap-fs")) $("cap-fs").textContent = on ? en("⛶ 退出全屏") : en("⛶ 全屏");
+  setTimeout(() => { if (capRunning && capBackend === "desktop") capRefresh && 0; }, 50);
+}
+
+/** 画面上的鼠标 → VNC PointerEvent：把浏览器坐标换算成远端帧坐标 */
+function capRemoteXY(ev) {
+  const img = $("cap-view") && $("cap-view").querySelector("img");
+  if (!img || !capWH.w || !capWH.h) return null;
+  const box = img.getBoundingClientRect();
+  const iw = capWH.w, ih = capWH.h;
+  // object-fit: contain —— 先算出真实显示的内容区（可能有黑边）
+  const k = Math.min(box.width / iw, box.height / ih);
+  const cw = iw * k, ch = ih * k;
+  const ox = box.left + (box.width - cw) / 2, oy = box.top + (box.height - ch) / 2;
+  let x = Math.round((ev.clientX - ox) / k);
+  let y = Math.round((ev.clientY - oy) / k);
+  x = Math.max(0, Math.min(iw - 1, x));
+  y = Math.max(0, Math.min(ih - 1, y));
+  return { x, y };
+}
+
+/** 浏览器按键 → X11 keysym（VNC 键事件用） */
+function capKeysym(e) {
+  const k = e.key;
+  const sp = {
+    Backspace: 0xff08, Tab: 0xff09, Enter: 0xff0d, Escape: 0xff1b, " ": 0x20,
+    Delete: 0xffff, Insert: 0xff63, Home: 0xff50, End: 0xff57,
+    PageUp: 0xff55, PageDown: 0xff56, ArrowLeft: 0xff51, ArrowUp: 0xff52,
+    ArrowRight: 0xff53, ArrowDown: 0xff54, Shift: 0xffe1, Control: 0xffe3,
+    Alt: 0xffe9, Meta: 0xffeb, CapsLock: 0xffe5, NumLock: 0xff7f, ScrollLock: 0xff14,
+    ContextMenu: 0xff67, PrintScreen: 0xff61, Pause: 0xff13,
+  };
+  if (sp[k] != null) return sp[k];
+  if (/^F\d{1,2}$/.test(k)) return 0xffbe + (Number(k.slice(1)) - 1);
+  if (k.length === 1) {
+    const cp = k.codePointAt(0);
+    return cp <= 0xff ? cp : cp <= 0xffff ? cp : 0x01000000 + cp;   // Unicode → keysym
+  }
+  return 0;
+}
+
+function capCtlOn() { return $("cap-ctl") && $("cap-ctl").checked; }
+let capBtnMask = 0;
+function capSendPointer(ev, mask) {
+  if (!capRunning || capSrcName() !== "vnc" || !capCtlOn()) return;
+  const p = capRemoteXY(ev);
+  if (!p) return;
+  invoke("rs_pointer", { id: capSession, x: p.x, y: p.y, mask: mask == null ? capBtnMask : mask }).catch(() => {});
+}
+
+async function capStopShared(quiet) {
+  capRunning = false;
+  capWanted = false;
+  const sid = capSession;
+  capSession = 0;
+  if (capBackend === "desktop") await invoke("capture_stop").catch(() => {});
+  else if (sid) await invoke("rs_stop", { id: sid }).catch(() => {});
+  if (!quiet) { capState(en("已停止")); pushSys("[屏幕共享] 已停止"); }
 }
 
 async function bindCapture() {
@@ -2513,41 +2901,413 @@ async function bindCapture() {
   };
   $("cap-start").onclick = async () => {
     try {
+      await capStopShared(true);                  // 先把上一路停干净（它的收尾事件不该串到这一次）
+      await new Promise((r) => setTimeout(r, 150));
       view.classList.toggle("fit", $("cap-mode").value === "fit");
       view.innerHTML = "";
       capImg = document.createElement("img");
       view.appendChild(capImg);
       capRunning = true;
+      capWanted = true;                           // 后端线程一启动就会推事件，先"开门收着"
       capFrames = 0; capFpsT0 = Date.now();
       // 会话号：后端每开一路捕获就给一个，帧/出错/停止事件都带着它。
       // 上一路线程退出时也会发 stopped，必须按会话过滤 —— 否则"先开 1 号屏、再开 2 号屏"
       // 时，1 号屏线程退出的那个 stopped 会把刚起来的 2 号屏顶成"已停止"（画面却还在刷）。
       capSession = 0;
-      const sid = await invoke("capture_start", {
-        monitor: Number($("cap-mon").value) || 0,
-        fps: Number($("cap-fps").value) || 8,
-        quality: Number($("cap-q").value) || 70,
-      });
+      // 注意：capture_start 直接返回会话号；rs_open 返回的是 {id,label,…} 这个对象
+      // （曾经这里统一按数字取，rs 那路取到 NaN → 会话号一直是 0 → 键鼠回传全被后端拒掉）
+      const sid = capBackend === "desktop"
+        ? await invoke("capture_start", {
+            monitor: Number($("cap-mon").value) || 0,
+            fps: Number($("cap-fps").value) || 8,
+            quality: Number($("cap-q").value) || 70,
+          })
+        : (await invoke("rs_open", capRsArgs())).id;
       capSession = Number(sid) || 0;
-      capState("采集中…", "ok");
-      pushSys(`[捕获] 开始（显示器 ${$("cap-mon").value}，${$("cap-fps").value}fps，画质 ${$("cap-q").value}）`);
+      capState(capBackend === "desktop" ? "采集中…" : "连接中…", "ok");
+      pushSys(capBackend === "desktop"
+        ? `[屏幕共享] 桌面开始（显示器 ${$("cap-mon").value}，${$("cap-fps").value}fps，画质 ${$("cap-q").value}）`
+        : `[屏幕共享] ${CAP_SRC_LABEL[capSrcName()]} 开始：${capRsArgs().url || $("cap-vnc-host").value}`);
     } catch (e) {
       capRunning = false;
-      capState("启动失败", "err");
+      capState(en("启动失败: ") + e, "err");
       toast(String(e));
     }
   };
-  $("cap-stop").onclick = async () => {
-    capRunning = false;
-    capSession = 0;                       // 自己按的停：随后那个 stopped 事件不用再理
-    await invoke("capture_stop").catch(() => {});
-    capState("已停止");
-    pushSys("[捕获] 已停止");
-  };
+  $("cap-stop").onclick = () => capStopShared();
   $("cap-mode").onchange = () => view.classList.toggle("fit", $("cap-mode").value === "fit");
   $("cap-reload").onclick = async () => { await refresh(); toast(`显示器列表已刷新（${$("cap-mon").options.length} 个）`); };
-  // 枚举显示器要过 DXGI，启动时也要花点时间 —— 留到第一次进「屏幕捕获」页再列（见 showPane）
+  $("cap-src").onchange = () => capSetSrc($("cap-src").value);
+  $("cap-ctl").onchange = () => { if (!capCtlOn()) capSetFullscreen(capFs); };
+  $("cap-fs").onclick = () => capSetFullscreen(!capFs);
+  $("cap-shot").onclick = capSaveShot;
+  $("cap-h264-pick").onclick = async () => {
+    const p = await dlgOpen({ title: en("选一个 H.264 / 视频文件"), multiple: false, directory: false,
+      filters: [{ name: "视频 / 裸流", extensions: ["h264", "264", "hevc", "mp4", "ts", "mkv", "flv", "avi"] }, { name: "全部", extensions: ["*"] }] });
+    if (p) $("cap-h264-url").value = typeof p === "string" ? p : p.path;
+  };
+  // 画面上的鼠标 / 键盘 → 被控端（只在 VNC + 打开「允许控制键鼠」时发）
+  view.addEventListener("mousemove", (e) => capSendPointer(e));
+  view.addEventListener("mousedown", (e) => {
+    capBtnMask |= e.button === 0 ? 1 : e.button === 1 ? 2 : e.button === 2 ? 4 : 0;
+    capSendPointer(e);
+    if (capSrcName() === "vnc" && capCtlOn()) e.preventDefault();
+  });
+  view.addEventListener("mouseup", (e) => {
+    capBtnMask &= ~(e.button === 0 ? 1 : e.button === 1 ? 2 : e.button === 2 ? 4 : 0);
+    capSendPointer(e);
+  });
+  view.addEventListener("contextmenu", (e) => { if (capSrcName() === "vnc" && capCtlOn()) e.preventDefault(); });
+  view.addEventListener("wheel", (e) => {
+    if (capSrcName() !== "vnc" || !capCtlOn() || !capRunning) return;
+    const bit = e.deltaY < 0 ? 8 : 16;                 // VNC：8=滚上，16=滚下
+    const p = capRemoteXY(e);
+    if (!p) return;
+    invoke("rs_pointer", { id: capSession, x: p.x, y: p.y, mask: capBtnMask | bit }).catch(() => {});
+    setTimeout(() => invoke("rs_pointer", { id: capSession, x: p.x, y: p.y, mask: capBtnMask }).catch(() => {}), 30);
+    e.preventDefault();
+  }, { passive: false });
+  view.addEventListener("keydown", (e) => {
+    if (capSrcName() !== "vnc" || !capCtlOn() || !capRunning) return;
+    const ks = capKeysym(e);
+    if (!ks) return;
+    invoke("rs_key", { id: capSession, keysym: ks, down: true }).catch(() => {});
+    if (e.key.length === 1 || ["Backspace", "Enter", "Tab"].includes(e.key)) e.preventDefault();
+  });
+  view.addEventListener("keyup", (e) => {
+    if (capSrcName() !== "vnc" || !capCtlOn() || !capRunning) return;
+    const ks = capKeysym(e);
+    if (ks) invoke("rs_key", { id: capSession, keysym: ks, down: false }).catch(() => {});
+  });
+  // F11 / Esc：全屏切换（只在「屏幕共享」页生效，输入框里打字不抢键）
+  document.addEventListener("keydown", (e) => {
+    if (document.documentElement.dataset.tab !== "capture") return;
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    if (e.key === "F11") { e.preventDefault(); capSetFullscreen(!capFs); }
+    else if (e.key === "Escape" && capFs) { e.preventDefault(); capSetFullscreen(false); }
+  });
+  capSetSrc($("cap-src").value);
+  // 自测用的把手（跟 window.__sqRx / window.__dbgOnGdb 一个性质）：
+  // 键鼠回传这条链路不好从外面观察，留个口子方便排障/自动化测试
+  window.__cap = {
+    src: capSrcName,
+    running: () => capRunning,
+    session: () => capSession,
+    wh: () => capWH,
+    ctlOn: capCtlOn,
+    remoteXY: capRemoteXY,
+    keysym: capKeysym,
+    pointer: (x, y, mask) => invoke("rs_pointer", { id: capSession, x, y, mask }),
+    key: (keysym, down) => invoke("rs_key", { id: capSession, keysym, down }),
+  };
+  // 枚举显示器要过 DXGI，启动时也要花点时间 —— 留到第一次进「屏幕共享」页再列（见 showPane）
   capRefresh = refresh;
+}
+
+/* ══════════ 安卓 ADB：设备 / shell / 推拉 / APK / 投屏（内置轮询 + scrcpy）══════════
+   后端（android.rs）只负责调 adb.exe / scrcpy.exe，这里只画界面、把命令拼出来。
+   投屏帧走 adb://frame（和屏幕共享一个形状），画面里点一下 = adb shell input tap。 */
+let adbDevs = [];
+let adbSession = 0;          // 投屏会话号（后端每开一路给一个）
+let adbMirroring = false;
+let adbImg = null, adbLatest = null, adbApplying = false, adbFrames = 0, adbFpsT0 = 0, adbFps = 0;
+let adbWH = { w: 0, h: 0 };
+let adbReady = null;         // 第一次进这一页才去问 adb 在不在
+let adbStCount = 1;          // 编号（adb push 能推出多台，这里给"多设备"留位置）
+
+function adbState(text, cls) {
+  const d = $("adb-state");
+  if (d) { d.textContent = en(text); d.className = "dot" + (cls ? " " + cls : ""); }
+  const dot = $("adb-dot");
+  if (dot) dot.className = "dot" + (cls === "err" ? " err" : adbDevs.length ? " ok" : "");
+}
+function adbLog(text) {
+  const box = $("adb-log");
+  if (!box) return;
+  const lines = String(text).replace(/\r\n/g, "\n").split("\n");
+  for (const l of lines) {
+    if (!l.trim() && lines.length > 1) continue;
+    box.textContent += `[${new Date().toLocaleTimeString()}] ${l}\n`;
+  }
+  if (box.textContent.length > 200000) box.textContent = box.textContent.slice(-150000);
+  box.scrollTop = box.scrollHeight;
+}
+function adbSerial() {
+  const s = $("adb-dev");
+  return s && s.value ? s.value : "";
+}
+function adbPushFrame(f) {
+  adbLatest = f;
+  if (!adbApplying && adbImg) { adbApplying = true; adbApplyLatest(); }
+}
+function adbApplyLatest() {
+  if (!adbImg || !adbLatest) { adbApplying = false; return; }
+  const f = adbLatest;
+  adbLatest = null;
+  adbWH = { w: Number(f.srcW) || Number(f.w) || 0, h: Number(f.srcH) || Number(f.h) || 0 };
+  adbImg.src = "data:image/jpeg;base64," + f.data;
+  adbFrames += 1;
+  const now = Date.now();
+  if (now - adbFpsT0 >= 500) {
+    adbFps = adbFrames * 1000 / (now - adbFpsT0);
+    adbFrames = 0; adbFpsT0 = now;
+  }
+  if (adbMirroring) {
+    $("adb-mir-state").textContent = `${f.w}x${f.h} · ${adbFps.toFixed(1)} fps · ${Math.round(f.bytes / 1024)} KB/帧`;
+  }
+  requestAnimationFrame(() => { adbApplying = false; if (adbLatest) { adbApplying = true; adbApplyLatest(); } });
+}
+/** 画面坐标 → 手机坐标（缩放后要乘回去） */
+function adbRemoteXY(ev) {
+  const img = $("adb-view") && $("adb-view").querySelector("img");
+  if (!img || !adbWH.w || !adbWH.h) return null;
+  const box = img.getBoundingClientRect();
+  const k = Math.min(box.width / adbWH.w, box.height / adbWH.h);
+  const cw = adbWH.w * k, ch = adbWH.h * k;
+  const ox = box.left + (box.width - cw) / 2, oy = box.top + (box.height - ch) / 2;
+  return {
+    x: Math.max(0, Math.min(adbWH.w - 1, Math.round((ev.clientX - ox) / k))),
+    y: Math.max(0, Math.min(adbWH.h - 1, Math.round((ev.clientY - oy) / k))),
+  };
+}
+async function adbRefreshDevices(silent) {
+  try {
+    const list = await invoke("adb_devices");
+    adbDevs = list;
+    const sel = $("adb-dev");
+    const keep = sel.value;
+    sel.innerHTML = "";
+    for (const d of list) {
+      const o = document.createElement("option");
+      o.value = d.serial;
+      o.textContent = `${d.model || d.serial}  ·  ${d.serial}  ·  ${d.state}`;
+      sel.appendChild(o);
+    }
+    if (!list.length) {
+      sel.innerHTML = '<option value="">' + en("（没有设备：USB 调试开了吗？）") + '</option>';
+      adbState("没有设备（打开手机上的 USB 调试，插线后允许本机）", "err");
+    } else {
+      const back = list.find((x) => x.serial === keep);
+      if (back) sel.value = keep;
+      const ok = list.filter((x) => x.state === "device").length;
+      adbState(`${list.length} 台（${ok} 台可用）`, ok ? "ok" : "err");
+    }
+    if (!silent) pushSys(`[ADB] 设备 ${list.length} 台：${list.map((x) => x.serial + "(" + x.state + ")").join(", ") || "无"}`);
+  } catch (e) {
+    adbDevs = [];
+    $("adb-dev").innerHTML = '<option value="">' + en("（adb 不可用）") + '</option>';
+    adbState(String(e), "err");
+    if ($("adb-hint")) $("adb-hint").textContent = String(e);
+  }
+}
+async function adbMirrorStart() {
+  const serial = adbSerial();
+  if (!serial) { toast(en("先选一台设备")); return; }
+  adbStopMirror(true);
+  $("adb-view").innerHTML = "";
+  adbImg = document.createElement("img");
+  $("adb-view").appendChild(adbImg);
+  adbMirroring = true;
+  adbFrames = 0; adbFpsT0 = Date.now();
+  try {
+    const sid = await invoke("adb_mirror_start", {
+      serial,
+      fps: Number($("adb-fps").value) || 6,
+      quality: Number($("adb-q").value) || 75,
+      scale: Number($("adb-scale").value) || 1,
+    });
+    adbSession = Number(sid) || 0;
+    adbState("投屏中（抓屏轮询）", "ok");
+    pushSys(`[ADB] 开始投屏 ${serial}`);
+  } catch (e) {
+    adbMirroring = false;
+    adbState(en("投屏失败: ") + e, "err");
+    toast(String(e));
+  }
+}
+async function adbStopMirror(quiet) {
+  const had = adbMirroring;
+  adbMirroring = false;
+  adbSession = 0;
+  await invoke("adb_mirror_stop").catch(() => {});
+  if (had && !quiet) { adbState("投屏已停止"); pushSys("[ADB] 已停止投屏"); }
+}
+function adbOnShow() {
+  if (!adbReady) { adbReady = adbInit(); }
+}
+async function adbInit() {
+  const st = await invoke("adb_status").catch((e) => ({ ok: false, path: "", version: String(e) }));
+  if (!st.ok) {
+    adbState("没找到 adb", "err");
+    adbLog("没找到 adb.exe —— 到「环境配置 → Android Platform Tools（adb）」点一键安装。");
+    if ($("adb-hint")) $("adb-hint").textContent = "没找到 adb.exe：到「环境配置」一键安装，或者把 platform-tools 目录加到 PATH。";
+    return;
+  }
+  adbLog(`adb：${st.path}\n${st.version || ""}`);
+  adbLog(st.scrcpy ? `scrcpy：${st.scrcpy}` : "scrcpy：没找到（要丝滑投屏就到「环境配置」装一下）");
+  adbState("已找到 adb", "ok");
+  await adbRefreshDevices(true);
+}
+function bindAdb() {
+  adbOnShow();
+  $("adb-refresh").onclick = () => adbRefreshDevices();
+  $("adb-mir").onclick = adbMirrorStart;
+  $("adb-mir-stop").onclick = () => adbStopMirror();
+  $("adb-scrcpy").onclick = async () => {
+    try {
+      const r = await invoke("adb_scrcpy_run", { serial: adbSerial(), args: $("adb-scrcpy-args").value.trim() });
+      adbLog(`scrcpy 已启动（pid ${r.pid}）：${r.exe}`);
+      pushSys(`[ADB] scrcpy 已启动（pid ${r.pid}）`);
+    } catch (e) { adbLog("scrcpy 启动失败：" + e); toast(String(e)); }
+  };
+  $("adb-scrcpy-stop").onclick = () => invoke("adb_scrcpy_stop").catch(() => {});
+  $("adb-run").onclick = async () => {
+    const cmd = $("adb-cmd").value.trim();
+    if (!cmd) return;
+    adbLog("$ " + cmd);
+    try {
+      const r = await invoke("adb_shell", { serial: adbSerial(), cmd });
+      if (r.stdout) adbLog(r.stdout.replace(/\r\n/g, "\n").replace(/\n$/, ""));
+      if (r.stderr) adbLog("[stderr] " + r.stderr.trim());
+      adbLog(`（退出码 ${r.code}）`);
+    } catch (e) { adbLog("执行失败：" + e); }
+  };
+  $("adb-cmd").onkeydown = (e) => { if (e.key === "Enter") $("adb-run").click(); };
+  $("adb-clear").onclick = () => { $("adb-log").textContent = ""; };
+  $("adb-key-back").onclick = () => adbKey(4);
+  $("adb-key-home").onclick = () => adbKey(3);
+  $("adb-key-apps").onclick = () => adbKey(187);
+  $("adb-key-power").onclick = () => adbKey(26);
+  $("adb-text-send").onclick = async () => {
+    const t = $("adb-text").value;
+    if (!t) return;
+    try { await invoke("adb_input", { serial: adbSerial(), kind: "text", text: t }); adbLog(`input text ${t}`); }
+    catch (e) { adbLog("输入失败：" + e); }
+  };
+  $("adb-text").onkeydown = (e) => { if (e.key === "Enter") $("adb-text-send").click(); };
+  // 传文件
+  $("adb-pick").onclick = async () => {
+    const p = await dlgOpen({ title: en("选要推到设备的文件"), multiple: false, directory: false });
+    if (!p) return;
+    $("adb-push-to").dataset.local = String(p);
+    $("adb-push-to").value = "/sdcard/Download/" + String(p).replace(/^.*[\\/]/, "");
+    adbLog("选了：" + p);
+  };
+  $("adb-push").onclick = async () => {
+    const local = ($("adb-push-to").dataset.local || "").trim();
+    if (!local) { toast(en("先点「选择本机文件」")); return; }
+    const to = $("adb-push-to").value.trim();
+    adbLog(`push ${local} → ${to}`);
+    try {
+      const r = await invoke("adb_push", { serial: adbSerial(), local, remote: to });
+      adbLog(r.text || "ok");
+    } catch (e) { adbLog("推送失败：" + e); }
+  };
+  $("adb-pull").onclick = async () => {
+    const from = $("adb-pull-from").value.trim();
+    if (!from) { toast(en("先填设备上的路径")); return; }
+    const save = await dlgSave({ title: en("存到本机"), defaultPath: from.replace(/^.*\//, "") });
+    if (!save) return;
+    adbLog(`pull ${from} → ${save}`);
+    try {
+      const r = await invoke("adb_pull", { serial: adbSerial(), remote: from, saveTo: save });
+      adbLog(`${r.text || "ok"}（${r.bytes} B）`);
+    } catch (e) { adbLog("取回失败：" + e); }
+  };
+  $("adb-shot-save").onclick = async () => {
+    const save = await dlgSave({ title: en("把设备截图存到本机"), defaultPath: "android-shot.png",
+      filters: [{ name: "PNG", extensions: ["png"] }] });
+    if (!save) return;
+    try {
+      const r = await invoke("adb_screenshot", { serial: adbSerial(), saveTo: save });
+      adbLog(`截图已存：${r.path}（${r.bytes} B）`);
+    } catch (e) { adbLog("截图失败：" + e); }
+  };
+  // APK
+  $("adb-apk-pick").onclick = async () => {
+    const p = await dlgOpen({ title: en("选 APK"), multiple: false, directory: false,
+      filters: [{ name: "APK", extensions: ["apk"] }] });
+    if (p) { $("adb-pkg").dataset.apk = p; adbLog("APK：" + p); }
+  };
+  $("adb-apk-go").onclick = async () => {
+    const apk = ($("adb-pkg").dataset.apk || "").trim();
+    if (!apk) { toast(en("先选一个 APK")); return; }
+    adbLog(`install ${apk}`);
+    try {
+      const r = await invoke("adb_install", { serial: adbSerial(), apk, reinstall: $("adb-apk-r").checked });
+      adbLog(r.text || "ok");
+    } catch (e) { adbLog("安装失败：" + e); }
+  };
+  $("adb-pkg-list").onclick = async () => {
+    try {
+      const list = await invoke("adb_packages", { serial: adbSerial(), filter: $("adb-pkg").value.trim() });
+      adbLog(`第三方包 ${list.length} 个：\n` + list.join("\n"));
+      if (list.length && !$("adb-pkg").value.trim()) $("adb-pkg").value = list[0];
+    } catch (e) { adbLog("列包失败：" + e); }
+  };
+  $("adb-pkg-rm").onclick = async () => {
+    const pkg = $("adb-pkg").value.trim();
+    if (!pkg) { toast(en("先填包名")); return; }
+    const r = await agDialog({ title: en("卸载"), text: `确定卸载 ${pkg}？`, danger: true });
+    if (!r.ok) return;
+    try { adbLog((await invoke("adb_uninstall", { serial: adbSerial(), pkg })).text || "ok"); }
+    catch (e) { adbLog("卸载失败：" + e); }
+  };
+  // 常用命令
+  const QUICK = [
+    ["型号", "getprop ro.product.model"],
+    ["安卓版本", "getprop ro.build.version.release"],
+    ["分辨率", "wm size"],
+    ["电量", "dumpsys battery | grep -E 'level|status'"],
+    ["存储占用", "df -h /data"],
+    ["CPU 占用", "top -n 1 -b | head -n 12"],
+    ["内存", "cat /proc/meminfo | head -n 3"],
+    ["SD 卡目录", "ls -l /sdcard"],
+    ["日志(最近 60 行)", "logcat -d -t 60"],
+    ["进程列表", "ps -A | head -n 25"],
+    ["IP 地址", "ip addr show | grep -E 'inet '"],
+    ["重启", "reboot"],
+  ];
+  const box = $("adb-quick");
+  box.textContent = "";
+  for (const [name, cmd] of QUICK) {
+    const b = document.createElement("button");
+    b.className = "btn small"; b.textContent = en(name); b.title = cmd;
+    b.onclick = () => { $("adb-cmd").value = cmd; $("adb-run").click(); };
+    box.appendChild(b);
+  }
+  // 画面里点一下 = 点手机；拖动 = 滑动
+  const view = $("adb-view");
+  let down = null;
+  view.addEventListener("mousedown", (e) => {
+    if (!adbMirroring || !($("adb-ctl") && $("adb-ctl").checked)) return;
+    const p = adbRemoteXY(e);
+    if (!p) return;
+    down = { ...p, t: Date.now() };
+    e.preventDefault();
+  });
+  view.addEventListener("mouseup", async (e) => {
+    if (!down) return;
+    const p = adbRemoteXY(e);
+    const d0 = down; down = null;
+    if (!p) return;
+    const dist = Math.hypot(p.x - d0.x, p.y - d0.y);
+    const kind = dist > 12 ? "swipe" : "tap";
+    try {
+      if (kind === "swipe") {
+        await invoke("adb_input", { serial: adbSerial(), kind: "swipe", a: d0.x, b: d0.y, c: p.x, d: p.y, duration: Math.max(120, Date.now() - d0.t) });
+        adbLog(`swipe ${d0.x},${d0.y} → ${p.x},${p.y}`);
+      } else {
+        await invoke("adb_input", { serial: adbSerial(), kind: "tap", a: p.x, b: p.y });
+        adbLog(`tap ${p.x},${p.y}`);
+      }
+    } catch (err) { adbLog("输入失败：" + err); }
+  });
+}
+async function adbKey(code) {
+  try { await invoke("adb_input", { serial: adbSerial(), kind: "key", text: String(code) }); adbLog(`keyevent ${code}`); }
+  catch (e) { adbLog("按键失败：" + e); }
 }
 
 // ---------------- 传输页顶部那行：日志路径（面包屑）+ 对话时间 ----------------
@@ -2747,6 +3507,9 @@ function sqNewNode(type) {
     n.host = "192.168.1.100"; n.port = 23; n.localPort = 0;
     n.comPort = ""; n.comBaud = 115200; n.cmd = "ping -n 1 -w 1000 192.168.1.100";
     n.expectOut = ""; n.cmdTimeout = 4000;
+    // 临时 SSH（conn === "ssh"）用这几个
+    n.sshHost = "192.168.1.10"; n.sshPort = 22; n.sshUser = "root";
+    n.sshPass = ""; n.sshExtra = ""; n.sshReady = 6000;
   }
   if (type === "delay") n.ms = 50;
   if (type === "branch") { n.mode = "contains"; n.value = ""; }
@@ -2954,6 +3717,7 @@ function sqConnText(n) {
   if (n.conn === "tcp") return "TCP " + (n.host || "?") + ":" + (n.port || "?");
   if (n.conn === "udp") return "UDP " + (n.host || "?") + ":" + (n.port || "?");
   if (n.conn === "serial") return "串口 " + (n.comPort || "?") + " @" + (n.comBaud || 115200);
+  if (n.conn === "ssh") return "SSH " + (n.sshUser ? n.sshUser + "@" : "") + (n.sshHost || "?") + ":" + (n.sshPort || 22);
   return sqConnLabel(n.conn);
 }
 
@@ -3134,6 +3898,7 @@ function sqRenderCfgInner() {
     add("tcp", "临时 TCP（本步指定 IP:端口）");
     add("udp", "临时 UDP（本步指定 IP:端口）");
     add("serial", "临时串口（本步指定 COM 口）");
+    add("ssh", "临时 SSH（本步指定主机/账号）");
     add("local", "本机命令（ping 等）");
     sel.value = n.conn || "main";
     sel.onchange = () => { n.conn = sel.value; sqSave(); sqRenderCfg(); sqRefreshNode(n.id); };
@@ -3160,6 +3925,14 @@ function sqRenderCfgInner() {
       field("目标 IP", txt(n.host, "192.168.1.100", (v) => (n.host = v)));
       field("端口", num(n.port || 0, (v) => (n.port = v)));
       if (n.conn === "udp") field("本地端口", num(n.localPort || 0, (v) => (n.localPort = v)));
+    }
+    if (n.conn === "ssh") {
+      field("主机", txt(n.sshHost, "192.168.1.10", (v) => (n.sshHost = v)));
+      field("端口", num(n.sshPort || 22, (v) => (n.sshPort = v)));
+      field("用户名", txt(n.sshUser, "root", (v) => (n.sshUser = v)));
+      field("密码", txt(n.sshPass, "留空=密钥/自己敲", (v) => (n.sshPass = v)));
+      field("附加参数", txt(n.sshExtra, "-i C:\\keys\\id_ed25519", (v) => (n.sshExtra = v)));
+      field("登录取 Prompt 超时(ms)", num(n.sshReady || 6000, (v) => (n.sshReady = v)));
     }
     if (n.conn === "local") {
       field("命令（cmd /C）", txt(n.cmd, "ping -n 1 -w 1000 192.168.1.100", (v) => (n.cmd = v)));
@@ -3458,6 +4231,27 @@ async function sqResolveConn(n) {
     const r = await invoke("extra_open", { endpoint: ep });
     sqRunConns[key] = r.id;
     sqLog("临时 " + n.conn.toUpperCase() + " 已连接 #" + r.id + " " + r.label);
+    return r.id;
+  }
+  if (n.conn === "ssh") {
+    const key = "ssh:" + String(n.sshHost || "") + ":" + String(n.sshPort || 22) + ":" + String(n.sshUser || "");
+    if (sqRunConns[key]) return sqRunConns[key];
+    const r = await invoke("extra_open", { endpoint: {
+      mode: "ssh", host: n.sshHost || "", port: Number(n.sshPort) || 22,
+      user: n.sshUser || "", password: n.sshPass || "", extra: n.sshExtra || "",
+    } });
+    sqRunConns[key] = r.id;
+    sqLog("临时 SSH 已连接 #" + r.id + " " + r.label);
+    // 等远端 shell 就绪（提示符 / banner）：不然第一条命令会赶在 shell 起来之前发出去，白丢
+    const base0 = sqRx.length;
+    const t0 = Date.now();
+    const budget = Number(n.sshReady) || 6000;
+    while (!sqStop && Date.now() - t0 < budget) {
+      const txt = sqRxTextFrom(base0);
+      if (/[$#>%]\s*$/.test(txt.trim()) || /\n/.test(txt)) break;
+      await sqSleep(100);
+    }
+    if (sqRxTextFrom(base0)) sqLog("   远端已就绪（" + (Date.now() - t0) + "ms）");
     return r.id;
   }
   return n.conn || "main";
@@ -4371,7 +5165,7 @@ async function envRefresh(force) {
   if (!envData || force) {
     if (!envData) { box.textContent = ""; box.appendChild(envEl("p", "hint", en("正在扫描本机…"))); }
     try {
-      envData = await invoke("env_scan", { force: !!force });
+      envData = await invoke("env_scan", { force: !!force, dir: envDirPref() || null });
     } catch (e) {
       box.textContent = "";
       box.appendChild(envEl("p", "hint", en("扫描失败：") + String(e)));
@@ -4518,7 +5312,7 @@ async function envInstall(id, opts) {
 async function envFirstRunCheck() {
   if (localStorage.getItem("kdock_env_skip") === "1") return;
   try {
-    const d = await invoke("env_scan", {});
+    const d = await invoke("env_scan", { dir: envDirPref() || null });
     if (!envData) envData = d;
     if (d.missingRequired && d.missingRequired.length) {
       const names = d.missingRequired.map((k) => {
@@ -7565,7 +8359,10 @@ function bindCache() {
 
 /* ── 设备 IP / 端口 历史：下次输入时给提示 ─────────────────────────── */
 const DEV_HIST_IDS = ["tcp-client-host", "tcp-client-port", "upg-host", "upg-port",
-                      "fl-host", "fl-port", "sq-host", "sq-port", "sc-host"];
+                      "fl-host", "fl-port", "sq-host", "sq-port", "sc-host",
+                      // SSH / FTP / VNC / 流地址这几处也记一份（下次输入直接下拉）
+                      "ssh-host", "ssh-user", "fl-net-host", "fl-net-user",
+                      "cap-vnc-host", "cap-rtsp-url", "cap-rtmp-url", "cap-h264-url"];
 let devHist = {};
 
 function devHistLoad() {
@@ -7601,9 +8398,16 @@ function devHistRefresh(id) {
 
 function bindDevHistory() {
   devHistLoad();
-  for (const id of DEV_HIST_IDS) {
-    const inp = document.getElementById(id);
-    if (!inp) continue;
+  // 除了写死的那批 id，还认 HTML 里的 data-hist="历史键"（新加的输入框用这个更清楚）
+  const nodes = [
+    ...DEV_HIST_IDS.map((id) => document.getElementById(id)),
+    ...document.querySelectorAll("[data-hist]"),
+  ].filter(Boolean);
+  const seen = new Set();
+  for (const inp of nodes) {
+    const id = inp.dataset.hist || inp.id;
+    if (!id || seen.has(inp)) continue;
+    seen.add(inp);
     devHistRefresh(id);
     inp.addEventListener("focus", () => devHistRefresh(id));
     inp.addEventListener("change", () => { devHistRemember(id, inp.value); devHistRefresh(id); });
@@ -9639,6 +10443,104 @@ const EN = {
   "RT-Thread 的命令行环境（env.exe / env.bat，来自 RT-ThreadStudio 或官方 env 仓库）：scons、menuconfig、pkgs 都靠它。": "RT-Thread's command-line environment (env.exe / env.bat, from RT-ThreadStudio or the official env repo): scons, menuconfig and pkgs all rely on it.",
   "ST-Link / ST-Link V2-1 调试器的 WinUSB 驱动（OpenOCD 走它）。用 ST 官方 CUBE 或驱动包安装。": "WinUSB driver for ST-Link / ST-Link V2-1 debuggers (OpenOCD goes through it). Install it from ST's official CUBE or driver pack.",
   "开源逻辑分析仪（FX2 / fx2lafw）在 Windows 上要用 WinUSB 驱动，Zadig 就是干这个的：跑一次、选设备、装 WinUSB。": "The open-source logic analyzer (FX2 / fx2lafw) needs a WinUSB driver on Windows and Zadig is the tool for that: run it once, pick the device, install WinUSB.",
+
+  // ── 本轮新增：安卓 ADB / 屏幕共享 / 文件管理（FTP·TFTP）/ SSH / 环境配置新增项 ──
+  "安卓 ADB": "Android ADB", "屏幕共享": "Screen share",
+  "安卓": "Android", "音视频": "Audio/video", "网络服务": "Network services",
+  "安卓设备": "Android device", "投屏": "Mirror", "停止投屏": "Stop mirror", "scrcpy 投屏": "scrcpy mirror",
+  "关 scrcpy": "Close scrcpy", "执行": "Run", "推送": "Push", "截图存盘": "Save screenshot…",
+  "选择 APK": "Choose APK", "覆盖安装": "Reinstall (overwrite)", "安装": "Install", "卸载": "Uninstall",
+  "卸载包名": "Package name", "列表": "List", "常用命令": "Common commands", "当前设备": "Current device",
+  "传文件": "File transfer", "本机 → 设备": "PC → device", "写到设备": "Write to device",
+  "设备上的路径": "Path on device", "安装包": "Package", "返回": "Back", "主屏": "Home",
+  "多任务": "Recents", "电源键": "Power", "安装并保存": "Install & save",
+  "反向控制（点画面 = 点手机）": "Remote control (click the view = tap the device)",
+  "内置投屏是「抓屏轮询」（约 3~10 fps，够看状态）；要丝滑就用上面的": "The built-in mirror is screencap polling (~3-10 fps, fine for watching state); for smoothness use",
+  "（独立窗口）。": " (its own window).",
+  "选一台设备 → 点【投屏】；画面里点一下就是点手机（在右栏打开「反向控制」）": "Pick a device, then hit Mirror; clicking inside the view taps the device (enable Remote control in the right panel)",
+  "adb shell 命令：getprop ro.product.model / ls -l /sdcard / dumpsys battery …": "adb shell command: getprop ro.product.model / ls -l /sdcard / dumpsys battery …",
+  "要输入的文字（走 input text）": "Text to type (adb shell input text)",
+  "没看到设备？手机要先打开「开发者选项 → USB 调试」，插线后在手机上允许这台电脑。": "No device? Enable Developer options → USB debugging on the phone and allow this PC when prompted.",
+  "（没有设备：USB 调试开了吗？）": "(no device — is USB debugging on?)",
+  "没有设备（打开手机上的 USB 调试，插线后允许本机）": "No device (turn on USB debugging, then allow this PC)",
+  "型号": "Model", "安卓版本": "Android version", "分辨率": "Resolution", "电量": "Battery",
+  "存储占用": "Storage", "CPU 占用": "CPU usage", "内存": "Memory", "SD 卡目录": "SD card",
+  "日志(最近 60 行)": "Logcat (last 60)", "进程列表": "Processes", "IP 地址": "IP addresses", "重启": "Reboot",
+  "Android Platform Tools（adb）": "Android Platform Tools (adb)",
+  "Google 官方的 adb（含 fastboot）。「安卓 ADB」页要靠它连手机/平板/开发板：列设备、跑 shell、装卸 APK、推拉文件、抓屏投屏。": "Google's official adb (with fastboot). The Android ADB page uses it to talk to phones/tablets/boards: list devices, run shell, install/uninstall APKs, push/pull files, mirror the screen.",
+  "scrcpy（安卓投屏 / 反向控制）": "scrcpy (Android mirroring + control)",
+  "把安卓设备画面投到电脑上、还能用鼠标键盘反向控制（走 adb，不需要装手机端 App）。「安卓 ADB」页的「用 scrcpy 投屏」调的就是它。": "Puts an Android screen on your PC with mouse/keyboard control (over adb, no app needed on the phone). The \"scrcpy mirror\" button on the Android ADB page runs it.",
+  "FFmpeg（H.264 / RTSP / RTMP 解码）": "FFmpeg (H.264 / RTSP / RTMP decoding)",
+  "「屏幕共享」页的 RTSP / RTMP / H.264 流全靠它解码（拉流交给 ffmpeg 子进程，KDock 不链接它的库，规避 GPL/LGPL 传染）。": "The Screen share page decodes RTSP / RTMP / H.264 with it (pulling is done by an ffmpeg child process — KDock never links its libraries, so no GPL/LGPL entanglement).",
+  "Tftpd64（TFTP 服务端）": "Tftpd64 (TFTP server)",
+  "独立的 TFTP 服务器（Tftpd64，含客户端/服务端/SNTP）。KDock 的「文件管理」页自带 TFTP 客户端与内置服务端，这个装不装都能用；要更全的功能（DHCP、日志、多网卡绑定）就装它。": "Standalone TFTP server (Tftpd64, with client/server/SNTP). The Files page already has a TFTP client and a built-in server, so this is optional — install it for the extras (DHCP, logging, binding to a specific NIC).",
+  "OpenSSH 客户端（ssh / scp / sftp）": "OpenSSH client (ssh / scp / sftp)",
+  "Windows 自带的 OpenSSH 客户端。「传输」页选 SSH 方式、「中控编排」的 SSH 步骤、命令表里的远程命令都靠它；一条命令就能装（DISM 可选组件，不联网）。": "Windows' built-in OpenSSH client. The SSH mode on the Transfer page, SSH steps in Flow and remote commands in the command table all use it; one DISM command installs it (no download needed).",
+  "PuTTY plink（SSH 密码登录用）": "PuTTY plink (for SSH password login)",
+  "Windows 自带的 ssh.exe 在「密码」这一步只认控制台、不认管道，所以纯密码登录（大多数开发板/设备）要它 —— KDock 的 SSH 连接在填了密码时会优先用 plink。密钥登录用不着它。": "Windows' ssh.exe only reads passwords from a console, never from a pipe, so password-only logins (most boards and devices) need plink. KDock prefers it whenever a password is filled in; key-based logins don't need it.",
+  "OpenSSH 服务端（sshd，可选）": "OpenSSH server (sshd, optional)",
+  "把本机变成 SSH 服务器（别人/别的设备 scp、ssh 进来取日志、传固件）。装完自动配好密钥、设成开机自启并启动；不想要就在服务里停掉 sshd。": "Turns this PC into an SSH server (so other machines can ssh/scp in to grab logs or firmware). It generates host keys, sets the service to automatic and starts it; stop the sshd service if you don't want it.",
+  "SSH（远程 shell）": "SSH (remote shell)",
+  "主机": "Host", "用户名": "User", "密码": "Password", "缩放": "Scale", "原始": "Original",
+  "留空 = 用密钥 / 自己在这儿敲": "empty = key auth",
+  // 带 <code> 的整句会被拆成碎片：langWalk 查表前会 trim + 把内部空白压成一个空格，
+  // 所以这些键必须是"去首尾空白、内部空白压成一个空格"的样子，否则永远查不中（踩过）。
+  "密钥登录：密码留空 + 这里填": "Key auth: leave the password empty and put",
+  "-i <私钥路径>": "-i <private key>",
+  "；端口转发在右边照原样写（如": "here; port forwards go here verbatim (e.g.",
+  "填了密码 → 用 PuTTY 的": "With a password → PuTTY's",
+  "scrcpy 参数": "scrcpy args",
+  "（Windows 自带的": " is used (Windows'",
+  "只在控制台里读密码，管道喂不进去， 所以密码登录必须靠它；首次连接会把主机指纹记下来，之后就对不上了会拒绝）。密码留空 → 走": " only reads passwords from a console, never from a pipe, so password logins need it; the host key fingerprint is remembered on first connect and later mismatches are refused). Empty password →",
+  "+ 密钥。 连上之后，下面输入框里敲的就是远端 shell，输出直接显示在输出区；「命令表」的指令、「中控编排」里选 SSH 的步骤也用这条连接。": " with key auth. Once connected, the input box below is the remote shell and its output goes to the output pane; the command table and SSH steps in Flow share this link.",
+  "临时 SSH（本步指定主机/账号）": "Ad-hoc SSH (host/account per step)",
+  "登录取 Prompt 超时(ms)": "Login prompt timeout (ms)",
+  "FTPS（显式 TLS）": "FTPS (explicit TLS)", "FTPS（隐式 990）": "FTPS (implicit, 990)",
+  "默认 21 / 990 / 69": "default 21 / 990 / 69",
+  "不校验证书（自签名）": "Skip certificate check (self-signed)",
+  "FTP 的列表优先用": "FTP listings prefer",
+  "（带大小/时间），老服务器退回": " (with size/time), falling back to",
+  "；传输一律二进制（TYPE I）。": " on older servers; transfers are always binary (TYPE I).",
+  "TFTP 没有目录/列表这一说：直接填要取或送的文件路径（相对根目录即可），端口默认 69。": "TFTP has no directories or listings: just type the file path to get/send (relative to the root is fine); port defaults to 69.",
+  "新建目录": "New folder", "删除选中": "Delete selection",
+  "内置 TFTP 服务端": "Built-in TFTP server", "根目录": "Root folder",
+  "要给出去的文件放这儿": "files you want to serve go here",
+  "允许写入": "Allow writes", "启动": "Start", "未启动": "not running",
+  "69 端口要管理员权限；被占用或没权限就换个 1024 以上的端口。设备侧命令示例：": "Port 69 needs admin rights; if it's taken or denied, use a port above 1024. Device-side example: ",
+  "tftp -i 本机IP GET kdock.bin": "tftp -i <this PC> GET kdock.bin",
+  "本机桌面（DXGI）": "This PC's desktop (DXGI)", "VNC（可控制键鼠）": "VNC (with keyboard/mouse control)",
+  "RTSP（FFmpeg）": "RTSP (FFmpeg)", "RTMP（FFmpeg）": "RTMP (FFmpeg)",
+  "H.264 文件 / 裸流（FFmpeg）": "H.264 file / raw stream (FFmpeg)",
+  "VNC 密码（没设就留空）": "VNC password (empty if none)",
+  "TCP（推荐，穿透好）": "TCP (recommended)", "UDP（低延迟）": "UDP (lower latency)",
+  "文件 / 流": "File / stream",
+  "D:\\x.h264 或 tcp://0.0.0.0:5000?listen=1": "D:\\x.h264 or tcp://0.0.0.0:5000?listen=1",
+  "原始（1:1）": "Original (1:1)", "50%（省带宽）": "50% (less bandwidth)", "25%（只看大概）": "25% (rough only)",
+  "适应窗口（默认）": "Fit window (default)", "解码尺寸": "Decode size",
+  "FFmpeg 负责解码（含 H.264），按上面这个尺寸等比缩放 + 黑边填充；没装 FFmpeg 就到「环境配置」一键安装。": "FFmpeg does the decoding (H.264 included), scaled to the size above with letterboxing; install FFmpeg from Environment setup if it's missing.",
+  "全屏：点上面的【⛶ 全屏】或按 F11；退出按 Esc 或 F11。VNC 全屏后鼠标键盘直接作用到被控端（「允许控制键鼠」打开时）。": "Fullscreen: the ⛶ button above or F11; Esc or F11 leaves it. In fullscreen VNC the mouse and keyboard go straight to the remote machine (when \"allow keyboard/mouse control\" is on).",
+  "⛶ 全屏": "⛶ Fullscreen", "⛶ 退出全屏": "⛶ Exit fullscreen",
+  "保存画面…": "Save frame…", "全屏中 · 按 F11 或 Esc 退出": "Fullscreen · press F11 or Esc to exit",
+  "允许控制键鼠": "Allow keyboard/mouse", "本机桌面": "Desktop",
+  "选一个 H.264 / 视频文件": "Choose an H.264 / video file",
+  "选要推到设备的文件": "Choose a file to push", "先点「选择本机文件」": "Pick a local file first",
+  "先填设备上的路径": "Fill in the device path first", "存到本机": "Save to this PC",
+  "把设备截图存到本机": "Save the device screenshot", "先选一个 APK": "Choose an APK first",
+  "先填包名": "Fill in the package name first", "还没有画面可存": "No frame to save yet",
+  "把当前画面另存为": "Save the current frame as", "已保存：": "Saved: ",
+  "已停止": "Stopped", "采集中…": "Capturing…", "连接中…": "Connecting…",
+  "选一台设备": "Pick a device", "投屏中（抓屏轮询）": "Mirroring (screencap polling)",
+  "投屏已停止": "Mirror stopped", "投屏失败: ": "Mirror failed: ",
+  "没找到 adb": "adb not found", "已找到 adb": "adb found",
+  "没找到 adb.exe：到「环境配置」一键安装，或者把 platform-tools 目录加到 PATH。": "adb.exe not found: install it from Environment setup, or add the platform-tools folder to PATH.",
+  "先点「连接」（FTP/FTPS 要登录；TFTP 只是记一下地址）": "Hit Connect first (FTP/FTPS log in; for TFTP it just remembers the address)",
+  "（TFTP 没有列表：直接填路径取/送）": "(TFTP has no listing: type a path to get/send)",
+  "「新建目录」只在 FTP / FTPS 下可用": "\"New folder\" only works over FTP / FTPS",
+  "「删除」只在 FTP / FTPS 下可用": "\"Delete\" only works over FTP / FTPS",
+  "先在列表里选一个": "Pick one in the list first", "删除": "Delete", "（目录）": " (folder)",
+  "先选一个 TFTP 根目录": "Pick a TFTP root folder first", "选 TFTP 根目录": "Choose the TFTP root folder",
+  "未连接": "Disconnected", "先选一个本机文件": "Choose a local file first",
+  "填一下设备上的目标路径": "Fill in the target path on the device",
 };
 const en = (t) => (LANG === "en" && EN[t]) ? EN[t] : t;
 // 分文件写的小模块（批量文本/计算器）也要能翻译 + 切语言时重画
@@ -9689,8 +10591,8 @@ function applyLang(lang) {
 // ---------------- 自绘标题栏：菜单栏 + 窗口按钮 ----------------
 const TB_PAGES = [["link", "传输"], ["cmds", "命令表"], ["upgrade", "固件升级"], ["flash", "烧录"],
   ["agent", "Agent"],
-  ["files", "文件管理"], ["chart", "实时图表"], ["seq", "中控编排"], ["scope", "示波器"],
-  ["capture", "屏幕捕获"], ["logic", "逻辑分析仪"],
+  ["files", "文件管理"], ["adb", "安卓 ADB"], ["chart", "实时图表"], ["seq", "中控编排"], ["scope", "示波器"],
+  ["capture", "屏幕共享"], ["logic", "逻辑分析仪"],
   ["batch", "批量文本"], ["calc", "计算器"], ["datacalc", "数据计算"], ["env", "环境配置"],
   ["kb", "知识库"], ["debug", "调试"]];
 const TB_THEME_NAME = { dark: "暗色", light: "亮色", auto: "跟随系统" };
@@ -9970,7 +10872,9 @@ async function main() {
   bindAgentResize();
   bindDevHistory();             // 设备 IP / 端口历史（datalist 提示）
   bindFlash();
+  flRestorePrefs();             // 文件页：上次用的方式 / FTP 服务器 / 内置 TFTP 服务端参数
   bindCapture();
+  bindAdb();                    // 安卓 ADB：设备 / shell / 推拉 / APK / 投屏
   bindSettings();
   bindCache();
   bindAgent();
@@ -10148,23 +11052,79 @@ async function main() {
 
   // 端口插拔由后端推事件，前端不再 1 秒轮询
   await listen("capture://frame", (ev) => {
-    capLatest = ev.payload;                      // 只留最新的一帧
-    if (!capApplying && capImg) { capApplying = true; capApplyLatest(); }
+    capPushFrame(ev.payload);                    // 只留最新的一帧
   });
   await listen("capture://error", (ev) => {
     const p = ev.payload || {};
-    const sid = Number(p.session) || 0;
-    if (sid && sid !== capSession) return;        // 旧会话的错误，忽略
+    if (!capEventMine(p)) return;                 // 旧会话的错误，忽略
     capRunning = false;
     capState("出错: " + (p.msg != null ? p.msg : p), "err");
     pushSys(`[捕获] ${p.msg != null ? p.msg : p}`);
   });
   await listen("capture://stopped", (ev) => {
     const p = ev.payload || {};
-    const sid = Number(p.session) || 0;
-    if (sid && sid !== capSession) return;        // 旧会话线程退出的收尾事件，别动新会话的状态
+    if (!capEventMine(p)) return;                 // 旧会话线程退出的收尾事件，别动新会话的状态
     capRunning = false;
     capState("已停止");
+  });
+  // 远端画面（VNC / RTSP / RTMP / H.264）：帧和错误走自己的事件，形状和 capture 一样
+  await listen("rs://frame", (ev) => {
+    const p = ev.payload || {};
+    if (!capEventMine(p)) return;
+    capPushFrame(p);
+  });
+  await listen("rs://info", (ev) => {
+    const p = ev.payload || {};
+    if (!capEventMine(p)) return;
+    if (p.w) capWH = { w: Number(p.w) || 0, h: Number(p.h) || 0 };
+    if (p.name) pushSys(`[屏幕共享] ${p.name} · ${p.w}x${p.h}`);
+  });
+  await listen("rs://clipboard", (ev) => {
+    const p = ev.payload || {};
+    if (!capEventMine(p) || !p.text) return;
+    pushSys("[VNC] 被控端剪贴板：" + String(p.text).slice(0, 200));
+  });
+  await listen("rs://error", (ev) => {
+    const p = ev.payload || {};
+    if (!capEventMine(p)) return;
+    capRunning = false;
+    capWanted = false;
+    capState("出错: " + (p.msg != null ? p.msg : p), "err");
+    pushSys(`[屏幕共享] ${p.msg != null ? p.msg : p}`);
+  });
+  await listen("rs://stopped", (ev) => {
+    const p = ev.payload || {};
+    if (!capEventMine(p)) return;
+    capRunning = false;
+    capWanted = false;
+    capState("已停止");
+  });
+  // 安卓投屏
+  await listen("adb://frame", (ev) => {
+    const p = ev.payload || {};
+    if (Number(p.session) !== adbSession) return;
+    adbPushFrame(p);
+  });
+  await listen("adb://error", (ev) => {
+    const p = ev.payload || {};
+    if (Number(p.session) !== adbSession) return;
+    adbState("投屏出错: " + (p.msg != null ? p.msg : p), "err");
+    adbLog(String(p.msg != null ? p.msg : p));
+  });
+  await listen("adb://stopped", (ev) => {
+    const p = ev.payload || {};
+    if (Number(p.session) !== adbSession) return;
+    adbMirroring = false;
+    adbState("投屏已停止");
+  });
+  await listen("tftp://log", (ev) => {
+    const p = ev.payload || {};
+    if (p.text) tftpSrvLog(String(p.text));
+  });
+  await listen("tftp://state", (ev) => {
+    const p = ev.payload || {};
+    tftpSrvOn = !!p.running;
+    tftpSrvState(p.running ? `已启动 · UDP ${p.port} · ${p.root || ""}` : "未启动", p.running ? "ok" : "");
   });
   await listen("flash://log", (ev) => {
     const s = String(ev.payload || "");

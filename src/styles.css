@@ -241,6 +241,34 @@ body {
   image-rendering: pixelated;
 }
 .capview.fit img { left: 0; top: 0; width: 100%; height: 100%; object-fit: contain; }
+/* 远端画面（VNC）默认也按"适应窗口"，鼠标事件才映射得准 */
+.capview.remote img { left: 0; top: 0; width: 100%; height: 100%; object-fit: contain; }
+.capview.remote { cursor: crosshair; }
+.capview.grown { flex: 1; }
+
+/* ── 「屏幕共享」全屏：把标题栏 / 导航 / 参数区 / 状态栏都收起来，画面铺满 ── */
+html[data-fs="1"] .titlebar,
+html[data-fs="1"] .nav,
+html[data-fs="1"] .gutter,
+html[data-fs="1"] .params,
+html[data-fs="1"] .bottombar { display: none !important; }
+html[data-fs="1"] .split { padding: 0 !important; gap: 0 !important; grid-template-columns: minmax(0, 1fr) !important; }
+html[data-fs="1"] .work { padding: 0 !important; gap: 0 !important; }
+html[data-fs="1"] .workpane { border-radius: 0; }
+html[data-fs="1"] .capview { border-radius: 0; border: none; }
+html[data-fs="1"] .capbar { display: none; }
+.fshint {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+  padding: 6px 12px; border-radius: 999px; font-size: 12px; z-index: 60;
+  background: hsl(var(--card) / 0.85); color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border) / 0.7); backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+/* ── 安卓 ADB 页：上面投屏、下面 shell 日志 ── */
+.adbpane { display: flex; flex-direction: column; gap: 8px; }
+.adbpane .adblog { flex: 0 0 28vh; min-height: 120px; overflow: auto; }
+.adbpane .capview.grown { flex: 1 1 auto; }
 .placeholder {
   flex: 1; display: flex; align-items: center; justify-content: center;
   color: hsl(var(--muted-foreground)); font-size: 13px;
@@ -372,6 +400,8 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 .btn.icon { width: 30px; padding: 0; font-size: 14px; line-height: 1; }
 .btn.file { width: 100%; }
 .chk { display: inline-flex; align-items: center; gap: 5px; color: hsl(var(--muted-foreground)); font-size: 12.5px; white-space: nowrap; cursor: pointer; }
+/* 参数区里的长勾选项（"反向控制（点画面 = 点手机）"这种）：窄窗下让人换行，别顶出右边界 */
+.parampane .trow > label.chk { white-space: normal; min-width: 0; overflow-wrap: anywhere; }
 .lb { color: hsl(var(--muted-foreground)); font-size: 12.5px; white-space: nowrap; }
 
 .adv { margin: 2px 0 8px; }
@@ -472,6 +502,9 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 }
 .trow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 10px; background: var(--surface-3); }
+/* 环境配置的"类别"一排：组件多了以后（安卓/音视频/网络服务…）窄窗一行放不下，
+   让它换行而不是顶出右边界 */
+#env-kinds { flex-wrap: wrap; max-width: 100%; }
 .seg > label { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 8px; color: hsl(var(--muted-foreground)); font-size: 12.5px; cursor: pointer; transition: background .16s ease, color .16s ease; }
 .seg > label:has(input:checked) { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); box-shadow: 0 2px 8px hsl(var(--primary) / 0.25); }
 .seg > label input { display: none; }

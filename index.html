@@ -389,6 +389,7 @@
           <button class="navitem" data-tab="upgrade"><i>⤒</i><span>固件升级</span></button>
           <button class="navitem" data-tab="flash"><i>⤓</i><span>烧录</span></button>
           <button class="navitem" data-tab="files"><i>▤</i><span>文件管理</span></button>
+          <button class="navitem" data-tab="adb" title="安卓设备：adb 设备 / shell / 推拉文件 / 装 APK / 投屏与反向控制（scrcpy 也在这页）"><i>⊞</i><span>安卓 ADB</span></button>
         </div>
         <div class="navsec">
           <div class="navgroup">环境</div>
@@ -403,7 +404,7 @@
           <button class="navitem" data-tab="calc" title="程序员计算器：表达式、32 位控制板、历史记录"><i>∑</i><span>计算器</span></button>
           <button class="navitem" data-tab="datacalc" title="文件校验 / 哈希、浮点、进制字节序、AES / RSA"><i>#</i><span>数据计算</span></button>
           <button class="navitem" data-tab="scope"><i>⌁</i><span>示波器</span></button>
-          <button class="navitem" data-tab="capture"><i>⛶</i><span>屏幕捕获</span></button>
+          <button class="navitem" data-tab="capture" title="屏幕共享：本机桌面 / VNC（可控制键鼠）/ RTSP / RTMP / H.264（FFmpeg 解码），支持全屏与快捷键"><i>⛶</i><span>屏幕共享</span></button>
           <button class="navitem" data-tab="debug" title="内嵌调试：GDB（MI）+ GDB Server（openocd / J-Link）"><i>⛯</i><span>调试</span></button>
           <button class="navitem" data-tab="logic"><i>▢</i><span>逻辑分析仪</span></button>
         </div>
@@ -1182,9 +1183,42 @@
           </div>
         </div>
 
-        <!-- 屏幕捕获 -->
+        <!-- 屏幕共享（原「屏幕捕获」）：桌面 / VNC / RTSP / RTMP / H.264 -->
         <div class="workpane" data-work="capture" hidden>
+          <div class="trow capbar">
+            <span class="lb" id="cap-src-label">桌面</span>
+            <span id="cap-badge" class="lb"></span>
+            <span class="grow"></span>
+            <label class="chk" id="cap-ctl-wrap" hidden><input type="checkbox" id="cap-ctl" checked /> 允许控制键鼠</label>
+            <button id="cap-fs" class="btn small" title="全屏（F11）；退出按 Esc 或再按一次">⛶ 全屏</button>
+            <button id="cap-shot" class="btn small" title="把当前这一帧存成 PNG">保存画面…</button>
+          </div>
           <div id="cap-view" class="capview" tabindex="0"></div>
+          <div id="cap-fs-hint" class="fshint" hidden>全屏中 · 按 F11 或 Esc 退出</div>
+        </div>
+
+        <!-- 安卓 ADB：投屏 + shell + 日志 -->
+        <div class="workpane adbpane" data-work="adb" hidden>
+          <div class="trow">
+            <span class="lb">安卓设备</span>
+            <span id="adb-dot" class="dot"></span>
+            <span class="grow"></span>
+            <span id="adb-mir-state" class="lb"></span>
+            <button id="adb-mir" class="btn small primary" title="内置投屏：抓屏轮询，画面可直接点（反向控制）">投屏</button>
+            <button id="adb-mir-stop" class="btn small">停止投屏</button>
+            <button id="adb-scrcpy" class="btn small" title="用 scrcpy 投屏（独立窗口，更丝滑；需要先装 scrcpy）">scrcpy 投屏</button>
+            <button id="adb-scrcpy-stop" class="btn small">关 scrcpy</button>
+          </div>
+          <div id="adb-view" class="capview grown" tabindex="0">
+            <div class="placeholder">选一台设备 → 点【投屏】；画面里点一下就是点手机（在右栏打开「反向控制」）</div>
+          </div>
+          <div class="trow">
+            <span class="lb">shell</span>
+            <input id="adb-cmd" class="grow" placeholder="adb shell 命令：getprop ro.product.model / ls -l /sdcard / dumpsys battery …" />
+            <button id="adb-run" class="btn small primary">执行</button>
+            <button id="adb-clear" class="btn small">清空</button>
+          </div>
+          <pre id="adb-log" class="dbgout adblog"></pre>
         </div>
 
         <!-- 内嵌调试：GDB（MI）+ GDB Server -->
@@ -1391,6 +1425,7 @@
               <option value="tcp_client">TCP Client</option>
               <option value="tcp_server">TCP Server</option>
               <option value="udp">UDP</option>
+              <option value="ssh">SSH（远程 shell）</option>
             </select>
           </div>
           <div data-mode="serial">
@@ -1429,6 +1464,20 @@
             <div class="field"><label for="udp-local-port">本地端口</label><input id="udp-local-port" type="number" value="9001" /></div>
             <div class="field"><label for="udp-remote-host">远端 IP</label><input id="udp-remote-host" value="127.0.0.1" /></div>
             <div class="field"><label for="udp-remote-port">远端端口</label><input id="udp-remote-port" type="number" value="9001" /></div>
+          </div>
+          <div data-mode="ssh" hidden>
+            <div class="field"><label for="ssh-host">主机</label><input id="ssh-host" data-hist="ssh-host" value="192.168.1.10" /></div>
+            <div class="field"><label for="ssh-port">端口</label><input id="ssh-port" type="number" value="22" /></div>
+            <div class="field"><label for="ssh-user">用户名</label><input id="ssh-user" data-hist="ssh-user" placeholder="root / pi / ubuntu" /></div>
+            <div class="field"><label for="ssh-pass">密码</label><input id="ssh-pass" type="password" placeholder="留空 = 用密钥 / 自己在这儿敲" /></div>
+            <details class="adv">
+              <summary>高级</summary>
+              <div class="field"><label for="ssh-extra">附加参数</label><input id="ssh-extra" placeholder="-i C:\Users\me\.ssh\id_ed25519" /></div>
+              <p class="hint">密钥登录：密码留空 + 这里填 <code>-i &lt;私钥路径&gt;</code>；端口转发在右边照原样写（如 <code>-L 8080:127.0.0.1:80</code>）。</p>
+            </details>
+            <p class="hint">填了密码 → 用 PuTTY 的 <code>plink</code>（Windows 自带的 <code>ssh.exe</code> 只在控制台里读密码，管道喂不进去，
+              所以密码登录必须靠它；首次连接会把主机指纹记下来，之后就对不上了会拒绝）。密码留空 → 走 <code>ssh.exe</code> + 密钥。
+              连上之后，下面输入框里敲的就是远端 shell，输出直接显示在输出区；「命令表」的指令、「中控编排」里选 SSH 的步骤也用这条连接。</p>
           </div>
           <div class="btnrow">
             <button id="open" class="btn primary">连接</button>
@@ -1525,6 +1574,10 @@
             <select id="fl-mode">
               <option value="serial">串口</option>
               <option value="tcp_client">TCP Client</option>
+              <option value="ftp">FTP</option>
+              <option value="ftps">FTPS（显式 TLS）</option>
+              <option value="ftps_implicit">FTPS（隐式 990）</option>
+              <option value="tftp">TFTP</option>
             </select>
           </div>
           <div data-flm="serial">
@@ -1541,6 +1594,15 @@
             <div class="field"><label for="fl-host">目标 IP</label><input id="fl-host" value="192.168.1.100" /></div>
             <div class="field"><label for="fl-port">端口</label><input id="fl-port" type="number" value="6666" /></div>
           </div>
+          <div data-flm="ftp ftps ftps_implicit tftp" hidden>
+            <div class="field"><label for="fl-net-host">服务器</label><input id="fl-net-host" data-hist="fl-net-host" value="192.168.1.100" /></div>
+            <div class="field"><label for="fl-net-port">端口</label><input id="fl-net-port" type="number" placeholder="默认 21 / 990 / 69" /></div>
+            <div class="field" data-flm="ftp ftps ftps_implicit"><label for="fl-net-user">用户名</label><input id="fl-net-user" data-hist="fl-net-user" placeholder="anonymous" /></div>
+            <div class="field" data-flm="ftp ftps ftps_implicit"><label for="fl-net-pass">密码</label><input id="fl-net-pass" type="password" /></div>
+            <div class="trow" data-flm="ftps ftps_implicit"><label class="chk" title="内网设备大多是自签名证书；不勾就一直用系统信任根校验"><input type="checkbox" id="fl-net-insecure" /> 不校验证书（自签名）</label></div>
+            <p class="hint" data-flm="ftp ftps ftps_implicit">FTP 的列表优先用 <code>MLSD</code>（带大小/时间），老服务器退回 <code>LIST</code>；传输一律二进制（TYPE I）。</p>
+            <p class="hint" data-flm="tftp">TFTP 没有目录/列表这一说：直接填要取或送的文件路径（相对根目录即可），端口默认 69。</p>
+          </div>
           <div class="btnrow">
             <button id="fl-open" class="btn primary">连接</button>
             <button id="fl-close" class="btn">断开</button>
@@ -1551,6 +1613,10 @@
           <div class="btnrow">
             <button id="fl-list" class="btn primary">列出目录</button>
             <button id="fl-up" class="btn">上级</button>
+          </div>
+          <div class="btnrow">
+            <button id="fl-mkdir" class="btn small" title="在设备/服务器上新建目录">新建目录</button>
+            <button id="fl-del" class="btn small danger" title="删掉列表里选中的那一个（目录也能删，非空目录会被拒绝）">删除选中</button>
           </div>
           <div class="cardtitle">取回本机</div>
           <div class="field"><label for="fl-save-dir">下载到</label><input id="fl-save-dir" placeholder="本机目录" /></div>
@@ -1565,6 +1631,27 @@
           </div>
           <div class="field"><label for="fl-send-path">写到</label><input id="fl-send-path" placeholder="/config/xxx.bin" /></div>
           <div class="btnrow"><button id="fl-send" class="btn primary">发送到设备</button></div>
+
+          <!-- 内置 TFTP 服务端：给下位机/设备来取固件用（不依赖任何外部程序） -->
+          <details class="adv" id="fl-tftp-srv-box">
+            <summary>内置 TFTP 服务端</summary>
+            <div class="field">
+              <label for="fl-tftp-root">根目录</label>
+              <div class="inline">
+                <input id="fl-tftp-root" placeholder="要给出去的文件放这儿" />
+                <button id="fl-tftp-pick" class="btn icon" title="选目录">…</button>
+              </div>
+            </div>
+            <div class="field"><label for="fl-tftp-port">端口</label><input id="fl-tftp-port" type="number" value="69" /></div>
+            <div class="trow"><label class="chk" title="打开后允许设备把文件写进来（慎用：会落到根目录下）"><input type="checkbox" id="fl-tftp-write" /> 允许写入</label></div>
+            <div class="btnrow">
+              <button id="fl-tftp-go" class="btn small primary">启动</button>
+              <button id="fl-tftp-stop" class="btn small">停止</button>
+            </div>
+            <div class="state"><span class="dot" id="fl-tftp-state">未启动</span></div>
+            <p class="hint">69 端口要管理员权限；被占用或没权限就换个 1024 以上的端口。设备侧命令示例：<code>tftp -i 本机IP GET kdock.bin</code>。</p>
+            <pre id="fl-tftp-log" class="dbgout tftplog"></pre>
+          </details>
         </div>
 
         <!-- 命令表：整张表放右栏，中栏留给输入/输出，点了就能直接看反馈 -->
@@ -1999,31 +2086,165 @@
           <div id="sc-log"></div>
         </div>
 
-        <!-- 屏幕捕获参数 -->
+        <!-- 屏幕共享参数：桌面 / VNC / RTSP / RTMP / H.264 -->
         <div class="parampane" data-param="capture" hidden>
-          <div class="cardtitle">捕获</div>
+          <div class="cardtitle">来源</div>
           <div class="field">
-            <label for="cap-mon">显示器</label>
-            <div class="inline">
-              <select id="cap-mon"></select>
-              <button id="cap-reload" class="btn icon" title="重新枚举显示器（新接入的显示器点这个）">↻</button>
-            </div>
-          </div>
-          <div class="field"><label for="cap-fps">帧率</label><input id="cap-fps" type="number" min="1" max="30" value="8" class="num" /> fps</div>
-          <div class="field"><label for="cap-q">画质</label><input id="cap-q" type="number" min="30" max="95" value="70" class="num" /></div>
-          <div class="field">
-            <label>显示</label>
-            <select id="cap-mode">
-              <option value="native">1:1（窗口小就裁左上角）</option>
-              <option value="fit">适应窗口</option>
+            <label for="cap-src">来源</label>
+            <select id="cap-src" title="本机桌面走 DXGI；VNC 能控制键鼠；RTSP / RTMP / H.264 交给 FFmpeg 解码">
+              <option value="desktop">本机桌面（DXGI）</option>
+              <option value="vnc">VNC（可控制键鼠）</option>
+              <option value="rtsp">RTSP（FFmpeg）</option>
+              <option value="rtmp">RTMP（FFmpeg）</option>
+              <option value="h264">H.264 文件 / 裸流（FFmpeg）</option>
             </select>
           </div>
+
+          <div data-caps="desktop">
+            <div class="field">
+              <label for="cap-mon">显示器</label>
+              <div class="inline">
+                <select id="cap-mon"></select>
+                <button id="cap-reload" class="btn icon" title="重新枚举显示器（新接入的显示器点这个）">↻</button>
+              </div>
+            </div>
+          </div>
+
+          <div data-caps="vnc" hidden>
+            <div class="field"><label for="cap-vnc-host">服务器</label><input id="cap-vnc-host" data-hist="cap-vnc-host" value="192.168.1.100" /></div>
+            <div class="field"><label for="cap-vnc-port">端口</label><input id="cap-vnc-port" type="number" value="5900" /></div>
+            <div class="field"><label for="cap-vnc-pass">密码</label><input id="cap-vnc-pass" type="password" placeholder="VNC 密码（没设就留空）" /></div>
+          </div>
+
+          <div data-caps="rtsp" hidden>
+            <div class="field"><label for="cap-rtsp-url">地址</label><input id="cap-rtsp-url" data-hist="cap-rtsp-url" placeholder="rtsp://192.168.1.10:554/stream1" /></div>
+            <div class="field">
+              <label for="cap-rtsp-tr">传输</label>
+              <select id="cap-rtsp-tr"><option value="tcp">TCP（推荐，穿透好）</option><option value="udp">UDP（低延迟）</option><option value="auto">自动</option></select>
+            </div>
+          </div>
+
+          <div data-caps="rtmp" hidden>
+            <div class="field"><label for="cap-rtmp-url">地址</label><input id="cap-rtmp-url" data-hist="cap-rtmp-url" placeholder="rtmp://192.168.1.10/live/stream" /></div>
+          </div>
+
+          <div data-caps="h264" hidden>
+            <div class="field"><label for="cap-h264-url">文件 / 流</label><input id="cap-h264-url" data-hist="cap-h264-url" placeholder="D:\x.h264 或 tcp://0.0.0.0:5000?listen=1" /></div>
+            <div class="btnrow"><button id="cap-h264-pick" class="btn small">选文件…</button></div>
+          </div>
+
+          <div class="cardtitle">画面</div>
+          <div class="field"><label for="cap-fps">帧率</label><input id="cap-fps" type="number" min="1" max="60" value="8" class="num" /> fps</div>
+          <div class="field"><label for="cap-q">画质</label><input id="cap-q" type="number" min="20" max="95" value="70" class="num" /></div>
+          <div class="field">
+            <label for="cap-scale">缩放</label>
+            <select id="cap-scale">
+              <option value="1">原始（1:1）</option>
+              <option value="0.75">75%</option>
+              <option value="0.5">50%（省带宽）</option>
+              <option value="0.25">25%（只看大概）</option>
+            </select>
+          </div>
+          <div class="field" data-caps="desktop rtmp h264">
+            <label>显示</label>
+            <select id="cap-mode">
+              <option value="fit">适应窗口（默认）</option>
+              <option value="native">1:1（窗口小就裁左上角）</option>
+            </select>
+          </div>
+          <div class="field" data-caps="rtsp rtmp h264" hidden>
+            <label for="cap-size">解码尺寸</label>
+            <select id="cap-size">
+              <option value="1920x1080">1920 × 1080</option>
+              <option value="1280x720" selected>1280 × 720</option>
+              <option value="960x540">960 × 540</option>
+              <option value="640x360">640 × 360</option>
+            </select>
+          </div>
+          <p class="hint" data-caps="rtsp rtmp h264" hidden>FFmpeg 负责解码（含 H.264），按上面这个尺寸等比缩放 + 黑边填充；没装 FFmpeg 就到「环境配置」一键安装。</p>
+
           <div class="btnrow">
             <button id="cap-start" class="btn primary">开始</button>
             <button id="cap-stop" class="btn">停止</button>
           </div>
           <div class="state"><span class="dot" id="cap-state">未开始</span></div>
-          <p class="hint">DXGI 桌面复制 → JPEG → 界面显示；帧率越高占 CPU 越多，调试看画面 5~10fps 够用。</p>
+          <p class="hint">全屏：点上面的【⛶ 全屏】或按 F11；退出按 Esc 或 F11。VNC 全屏后鼠标键盘直接作用到被控端（「允许控制键鼠」打开时）。</p>
+        </div>
+
+        <!-- 安卓 ADB 参数：设备 / 投屏 / 推拉 / APK / 常用命令 -->
+        <div class="parampane" data-param="adb" hidden>
+          <div class="cardtitle">设备
+            <span class="grow"></span>
+            <button id="adb-refresh" class="btn small" title="重新列设备（新插的线 / 新开的无线调试点这个）">↻ 刷新</button>
+          </div>
+          <div class="field">
+            <label for="adb-dev">当前设备</label>
+            <select id="adb-dev"></select>
+          </div>
+          <div class="state"><span class="dot" id="adb-state">未检测</span></div>
+          <p class="hint" id="adb-hint">没看到设备？手机要先打开「开发者选项 → USB 调试」，插线后在手机上允许这台电脑。</p>
+
+          <div class="cardtitle">投屏</div>
+          <div class="field"><label for="adb-fps">帧率</label><input id="adb-fps" type="number" min="1" max="30" value="6" class="num" /> fps</div>
+          <div class="field"><label for="adb-q">画质</label><input id="adb-q" type="number" min="20" max="95" value="75" class="num" /></div>
+          <div class="field">
+            <label for="adb-scale">缩放</label>
+            <select id="adb-scale">
+              <option value="1">原始</option>
+              <option value="0.6" selected>60%</option>
+              <option value="0.35">35%</option>
+            </select>
+          </div>
+          <div class="trow"><label class="chk" title="打开后：画面里点一下 = 点手机；拖动 = 滑动；上面那行还能直接发按键和文字"><input type="checkbox" id="adb-ctl" checked /> 反向控制（点画面 = 点手机）</label></div>
+          <p class="hint">内置投屏是「抓屏轮询」（约 3~10 fps，够看状态）；要丝滑就用上面的 <b>scrcpy 投屏</b>（独立窗口）。</p>
+          <div class="trow">
+            <button id="adb-key-back" class="btn small" title="KEYCODE_BACK(4)">返回</button>
+            <button id="adb-key-home" class="btn small" title="KEYCODE_HOME(3)">主屏</button>
+            <button id="adb-key-apps" class="btn small" title="KEYCODE_APP_SWITCH(187)">多任务</button>
+            <button id="adb-key-power" class="btn small" title="KEYCODE_POWER(26)">电源键</button>
+          </div>
+          <div class="trow">
+            <input id="adb-text" class="grow" placeholder="要输入的文字（走 input text）" />
+            <button id="adb-text-send" class="btn small">输入</button>
+          </div>
+          <div class="field"><label for="adb-scrcpy-args">scrcpy 参数</label><input id="adb-scrcpy-args" placeholder="--max-size 1280 --max-fps 30" /></div>
+
+          <div class="cardtitle">传文件</div>
+          <div class="field">
+            <label>本机 → 设备</label>
+            <div class="inline">
+              <input id="adb-push-file" type="file" hidden />
+              <button id="adb-pick" class="btn file">选择本机文件</button>
+            </div>
+          </div>
+          <div class="field"><label for="adb-push-to">写到设备</label><input id="adb-push-to" placeholder="/sdcard/Download/x.bin" /></div>
+          <div class="btnrow"><button id="adb-push" class="btn primary">推送</button></div>
+          <div class="field"><label for="adb-pull-from">设备上的路径</label><input id="adb-pull-from" placeholder="/sdcard/Download/x.bin" /></div>
+          <div class="btnrow">
+            <button id="adb-pull" class="btn">取回本机</button>
+            <button id="adb-shot-save" class="btn">截图存盘</button>
+          </div>
+
+          <div class="cardtitle">APK</div>
+          <div class="field">
+            <label>安装包</label>
+            <div class="inline">
+              <input id="adb-apk-file" type="file" hidden />
+              <button id="adb-apk-pick" class="btn file">选择 APK</button>
+            </div>
+          </div>
+          <div class="trow">
+            <label class="chk" title="已装过就覆盖安装（adb install -r）"><input type="checkbox" id="adb-apk-r" checked /> 覆盖安装</label>
+            <span class="grow"></span>
+            <button id="adb-apk-go" class="btn small primary">安装</button>
+          </div>
+          <div class="field"><label for="adb-pkg">卸载包名</label>
+            <div class="inline"><input id="adb-pkg" placeholder="com.example.app" /><button id="adb-pkg-list" class="btn small" title="列出第三方包（点一下填进来）">列表</button></div>
+          </div>
+          <div class="btnrow"><button id="adb-pkg-rm" class="btn small">卸载</button></div>
+
+          <div class="cardtitle">常用命令</div>
+          <div class="chips" id="adb-quick"></div>
         </div>
 
         <!-- 逻辑分析仪参数 -->

@@ -12,7 +12,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-image = { version = "0.24.9", features = ["jpeg"] }
+image = { version = "0.24.9", features = ["jpeg", "png"] }
 screenshots = "0.8.10"
 # image-png：内嵌 icons/icon.png 做兜底图标（任务栏/托盘都要）
 # unstable：多 WebView（窗口里嵌子 WebView）——「知识库」页要把外部页面（Dify 这类
@@ -39,6 +39,11 @@ md-5 = "0.10"
 sha1 = "0.10"
 sha2 = "0.10"
 ureq = { version = "2.12", default-features = false, features = ["tls", "json", "proxy-from-env"] }
+# FTPS（隐式/显式 TLS）与 VNC 的 TLS：rustls 仓库里本来就通过 ureq 在用（Apache-2.0/MIT/ISC），
+# 这里只是把同一棵依赖树里的版本显式引出来；webpki-roots 提供系统信任根。
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "1"
+des = "0.9.0"
 
 # 只有 Windows 才有的：开机自启、屏幕捕获（DXGI）
 [target.'cfg(windows)'.dependencies]

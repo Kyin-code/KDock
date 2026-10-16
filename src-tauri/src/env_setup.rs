@@ -56,10 +56,15 @@ pub enum Plan {
     Download { url: &'static str, file: &'static str, args: &'static str, elevated: bool },
     /// 下载 zip → 解压到安装目录
     Zip { url: &'static str, strip: u32 },
+    /// 下载单个可执行文件 → 直接放到 <安装目录>\<id>\ 里（绿色小工具，不用装）
+    Fetch { url: &'static str, file: &'static str },
     /// git clone 到安装目录（RT-Thread Env）
     Git { repo: &'static str },
     /// 走 winget（微软包管理器）：有官方包的直接一键，不用我们猜直链
     Winget { id: &'static str },
+    /// 走 Windows 可选组件（DISM Add-Capability）：OpenSSH 这类系统自带组件的正道
+    /// service 非空 = 装完把服务设成自动并启动；post = 装完要补跑的命令
+    Capability { cap: &'static str, service: &'static str, post: &'static [&'static str] },
     /// 没有可靠的自动下载地址：只给官网，让用户自己装（不猜 URL）
     Manual,
 }
@@ -77,6 +82,68 @@ pub struct Item {
     pub size_mb: f32,
     pub rules: &'static [Rule],
     pub plan: Plan,
+}
+
+/// 当前选的安装目录（前端 localStorage 里那份每次扫描/安装都传进来）。
+/// 检测规则里写 `%ENVDIR%` 就能指到这儿，于是"用一键安装装完的东西下次一定找得到"。
+static ENV_DIR: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+pub fn set_env_dir(p: &str) {
+    if let Ok(mut g) = ENV_DIR.lock() {
+        *g = p.trim().to_string();
+    }
+}
+
+pub fn env_dir() -> String {
+    let cur = ENV_DIR.lock().map(|g| g.clone()).unwrap_or_default();
+    if !cur.trim().is_empty() {
+        return cur;
+    }
+    // 还没人告诉过我们装哪儿（刚开机、前端还没扫过）也得有个像样的答案：
+    // 否则 %ENVDIR% 会展开成空串，别的模块（找 plink 之类）就会漏看已经装好的东西
+    let d = default_env_dir();
+    set_env_dir(&d);
+    d
+}
+
+/// 默认安装目录：优先 F:\ENV（老用户的老习惯），否则 %USERPROFILE%\KDock\env
+pub fn default_env_dir() -> String {
+    let f = Path::new("F:\\ENV");
+    if f.is_dir() {
+        return f.to_string_lossy().to_string();
+    }
+    Path::new(&std::env::var("USERPROFILE").unwrap_or_default())
+        .join("KDock\\env")
+        .to_string_lossy()
+        .to_string()
+}
+
+/// 展开 %VAR%（环境变量 + 我们的 %ENVDIR%）。检测规则里到处都是这种占位。
+fn expand_vars(s: &str) -> String {
+    let envd = env_dir();
+    let mut out = String::with_capacity(s.len());
+    let bytes: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == '%' {
+            if let Some(j) = (i + 1..bytes.len()).find(|&k| bytes[k] == '%') {
+                let name: String = bytes[i + 1..j].iter().collect();
+                let val = if name.eq_ignore_ascii_case("ENVDIR") {
+                    Some(envd.clone())
+                } else {
+                    std::env::var(&name).ok().or_else(|| std::env::var(name.to_uppercase()).ok())
+                };
+                if let Some(v) = val {
+                    out.push_str(&v);
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
 }
 
 /// 清单。顺序就是界面上的顺序。
@@ -198,6 +265,128 @@ pub static ITEMS: &[Item] = &[
         rules: &[glob("*:\\Downloads\\zadig*.exe", "", ""), glob("*:\\zadig*\\zadig*.exe", "", "")],
         plan: Plan::Winget { id: "akeo.ie.Zadig" },
     },
+    // ── 下面这几个是"KDock 自己要调用的外部程序"：装了才能用对应的页面/功能 ──
+    Item {
+        id: "adb",
+        name: "Android Platform Tools（adb）",
+        kind_cn: "安卓",
+        desc: "Google 官方的 adb（含 fastboot）。「安卓 ADB」页要靠它连手机/平板/开发板：列设备、跑 shell、装卸 APK、推拉文件、抓屏投屏。",
+        url: "https://developer.android.com/tools/releases/platform-tools",
+        required: false,
+        min_version: None,
+        size_mb: 6.0,
+        rules: &[
+            exe("adb.exe", "%ENVDIR%\\adb;%ENVDIR%;%LOCALAPPDATA%\\Android\\Sdk\\platform-tools;%USERPROFILE%\\platform-tools;%USERPROFILE%\\AppData\\Local\\Android\\Sdk\\platform-tools;C:\\platform-tools;D:\\platform-tools;C:\\Android\\platform-tools", "version", ""),
+            glob("%ENVDIR%\\adb\\adb.exe", "version", ""),
+        ],
+        plan: Plan::Zip { url: "https://dl.google.com/android/repository/platform-tools-latest-windows.zip", strip: 1 },
+    },
+    Item {
+        id: "scrcpy",
+        name: "scrcpy（安卓投屏 / 反向控制）",
+        kind_cn: "安卓",
+        desc: "把安卓设备画面投到电脑上、还能用鼠标键盘反向控制（走 adb，不需要装手机端 App）。「安卓 ADB」页的「用 scrcpy 投屏」调的就是它。",
+        url: "https://github.com/Genymobile/scrcpy/releases",
+        required: false,
+        min_version: None,
+        size_mb: 60.0,
+        rules: &[
+            exe("scrcpy.exe", "%ENVDIR%\\scrcpy;%ENVDIR%;%USERPROFILE%\\scrcpy;%LOCALAPPDATA%\\scrcpy;C:\\scrcpy;D:\\scrcpy;E:\\scrcpy", "--version", ""),
+            glob("%ENVDIR%\\scrcpy\\scrcpy.exe", "--version", ""),
+        ],
+        // 官方 win64 包（GitHub Release）。国内网络下 GitHub 资源可能很慢/会断 ——
+        // 那就把 zip 丢进 <exe 同目录>\drivers\scrcpy\（内置包那条路）再点一次，一样的。
+        plan: Plan::Zip { url: "https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-win64-v5.0.1.zip", strip: 1 },
+    },
+    Item {
+        id: "ffmpeg",
+        name: "FFmpeg（H.264 / RTSP / RTMP 解码）",
+        kind_cn: "音视频",
+        desc: "「屏幕共享」页的 RTSP / RTMP / H.264 流全靠它解码（拉流交给 ffmpeg 子进程，KDock 不链接它的库，规避 GPL/LGPL 传染）。",
+        url: "https://www.gyan.dev/ffmpeg/builds/",
+        required: false,
+        min_version: None,
+        size_mb: 95.0,
+        rules: &[
+            exe("ffmpeg.exe", "%ENVDIR%\\ffmpeg;%ENVDIR%;%USERPROFILE%\\ffmpeg;C:\\ffmpeg;C:\\ffmpeg\\bin;D:\\ffmpeg;D:\\ffmpeg\\bin;E:\\ffmpeg\\bin;%LOCALAPPDATA%\\Microsoft\\WinGet\\Links", "-version", ""),
+            glob("%ENVDIR%\\ffmpeg\\bin\\ffmpeg.exe", "-version", ""),
+            glob("%ENVDIR%\\ffmpeg*\\bin\\ffmpeg.exe", "-version", ""),
+        ],
+        // BtbN 的 LGPL 构建（GitHub Release，永远是 latest）：不选 gpl 那个，
+        // 免得用户以后想链接这些库时被许可绊住（我们只是当外部程序调用）。
+        // 下不动就把 zip 丢进 <exe 同目录>\drivers\ffmpeg\。
+        plan: Plan::Zip { url: "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-lgpl.zip", strip: 1 },
+    },
+    Item {
+        id: "tftpd",
+        name: "Tftpd64（TFTP 服务端）",
+        kind_cn: "网络服务",
+        desc: "独立的 TFTP 服务器（Tftpd64，含客户端/服务端/SNTP）。KDock 的「文件管理」页自带 TFTP 客户端与内置服务端，这个装不装都能用；要更全的功能（DHCP、日志、多网卡绑定）就装它。",
+        url: "https://pjo2.github.io/tftpd64/",
+        required: false,
+        min_version: None,
+        size_mb: 2.0,
+        rules: &[
+            exe("tftpd64.exe", "C:\\Program Files\\Tftpd64;C:\\Program Files (x86)\\Tftpd64;C:\\Tftpd64;D:\\Tftpd64;E:\\Tftpd64;%ENVDIR%\\tftpd", "", ""),
+            exe("tftpd32.exe", "C:\\Program Files\\Tftpd64;C:\\Program Files (x86)\\Tftpd64;C:\\Tftpd64;D:\\Tftpd64;E:\\Tftpd64;%ENVDIR%\\tftpd", "", ""),
+            glob("*:\\Tftpd64\\tftpd64.exe", "", ""),
+        ],
+        plan: Plan::Download {
+            url: "https://github.com/PJO2/tftpd64/releases/download/v4.70/Tftpd64_Installer_v4.70.exe",
+            file: "Tftpd64_Installer_v4.70.exe",
+            args: "/S",
+            elevated: true,
+        },
+    },
+    Item {
+        id: "ssh",
+        name: "OpenSSH 客户端（ssh / scp / sftp）",
+        kind_cn: "网络服务",
+        desc: "Windows 自带的 OpenSSH 客户端。「传输」页选 SSH 方式、「中控编排」的 SSH 步骤、命令表里的远程命令都靠它；一条命令就能装（DISM 可选组件，不联网）。",
+        url: "https://learn.microsoft.com/windows-server/administration/openssh/openssh_install_firstuse",
+        required: false,
+        min_version: None,
+        size_mb: 5.0,
+        rules: &[
+            exe("ssh.exe", "C:\\Windows\\System32\\OpenSSH;%ProgramFiles%\\OpenSSH;%ENVDIR%\\openssh", "-V", "OpenSSH_for_Windows_"),
+            glob("C:\\Windows\\System32\\OpenSSH\\ssh.exe", "", ""),
+        ],
+        plan: Plan::Capability { cap: "OpenSSH.Client~~~~0.0.1.0", service: "", post: &[] },
+    },
+    Item {
+        id: "plink",
+        name: "PuTTY plink（SSH 密码登录用）",
+        kind_cn: "网络服务",
+        desc: "Windows 自带的 ssh.exe 在「密码」这一步只认控制台、不认管道，所以纯密码登录（大多数开发板/设备）要它 —— KDock 的 SSH 连接在填了密码时会优先用 plink。密钥登录用不着它。",
+        url: "https://www.putty.org/",
+        required: false,
+        min_version: None,
+        size_mb: 1.0,
+        rules: &[
+            exe("plink.exe", "%ENVDIR%\\plink;%ProgramFiles%\\PuTTY;%ProgramFiles(x86)%\\PuTTY;%ENVDIR%\\putty", "-V", "Release"),
+            glob("%ENVDIR%\\plink\\plink.exe", "", ""),
+        ],
+        plan: Plan::Fetch { url: "https://the.earth.li/~sgtatham/putty/latest/w64/plink.exe", file: "plink.exe" },
+    },
+    Item {
+        id: "sshd",
+        name: "OpenSSH 服务端（sshd，可选）",
+        kind_cn: "网络服务",
+        desc: "把本机变成 SSH 服务器（别人/别的设备 scp、ssh 进来取日志、传固件）。装完自动配好密钥、设成开机自启并启动；不想要就在服务里停掉 sshd。",
+        url: "https://learn.microsoft.com/windows-server/administration/openssh/openssh_install_firstuse",
+        required: false,
+        min_version: None,
+        size_mb: 5.0,
+        rules: &[
+            glob("C:\\Windows\\System32\\OpenSSH\\sshd.exe", "", ""),
+            exe("sshd.exe", "C:\\Windows\\System32\\OpenSSH;%ProgramFiles%\\OpenSSH", "", ""),
+        ],
+        plan: Plan::Capability {
+            cap: "OpenSSH.Server~~~~0.0.1.0",
+            service: "sshd",
+            post: &["ssh-keygen -A"],
+        },
+    },
 ];
 
 /* ───────────────────────── 检测 ───────────────────────── */
@@ -267,6 +456,21 @@ pub fn pick_version(text: &str) -> Option<String> {
     None
 }
 
+/// 带"定位标记"的版本提取：先在输出里找 marker（如 "OpenSSH_for_Windows_"），
+/// 再取它后面那串数字/点。用来避开"输出里先出现别的版本号"的坑
+/// （`ssh -V` 会打印 "OpenSSH_for_Windows_9.5p2, LibreSSL 3.8.2"，朴素扫法会抓到 3.8.2）。
+pub fn pick_version_marked(text: &str, marker: &str) -> Option<String> {
+    let idx = text.find(marker)?;
+    let rest = &text[idx + marker.len()..];
+    let v: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    let v = v.trim_end_matches('.').to_string();
+    if v.chars().any(|c| c == '.') && v.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        Some(v)
+    } else {
+        None
+    }
+}
+
 /// 简单的版本比较：按 . 切开比数字，够用（不做语义化的 pre-release 那套）
 pub fn ver_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let pa: Vec<u32> = a.split('.').map(|x| x.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0)).collect();
@@ -289,9 +493,13 @@ fn find_exe(name: &str, extra: &str) -> Option<PathBuf> {
         let p = d.join(name);
         if p.is_file() { return Some(p); }
     }
+    let extra = expand_vars(extra);
     for root in extra.split(';').filter(|s| !s.trim().is_empty()) {
         let p = Path::new(root).join(name);
         if p.is_file() { return Some(p); }
+        // 根目录下就一层 bin（ffmpeg 解包后就是 <root>\bin\ffmpeg.exe）
+        let pb = Path::new(root).join("bin").join(name);
+        if pb.is_file() { return Some(pb); }
         // 根目录下再往下找一层（如 F:\ENV\gcc-arm-none-eabi-10.3-2021.10\bin\gcc.exe）
         if let Ok(rd) = std::fs::read_dir(root) {
             for e in rd.flatten() {
@@ -303,6 +511,16 @@ fn find_exe(name: &str, extra: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// 给别的模块用：按同样的规则找一个外部程序（%ENVDIR% 也会展开）
+pub fn find_tool(name: &str, extra: &str) -> Option<PathBuf> {
+    find_exe(name, extra)
+}
+
+/// 给别的模块用：跑个程序抓输出（CREATE_NO_WINDOW，不闪黑框）
+pub fn run_text(prog: &str, args: &[&str]) -> Option<String> {
+    run_out(prog, args)
 }
 
 /// 段内通配：* 匹配任意字符（"*:" 匹配 "I:"，"zadig*.exe" 匹配 "zadig-2.9.exe"）
@@ -323,7 +541,7 @@ fn wild(pat: &str, s: &str) -> bool {
 /// 按通配串找文件 —— **跟着模式走**：某层目录名跟模式的对应段对不上就不进去。
 /// （早先那版是"每层都递归再看整条路径"，一条 *:\Program Files\x\y.exe 就能把整盘翻一遍。）
 fn glob_find(pat: &str, max_hits: usize) -> Vec<PathBuf> {
-    let norm = pat.replace('/', "\\");
+    let norm = expand_vars(pat).replace('/', "\\");
     let parts: Vec<&str> = norm.split('\\').filter(|x| !x.is_empty()).collect();
     if parts.is_empty() { return Vec::new(); }
     // 第一段一般是盘符（可能是 "C:" 也可能是 "*:"）
@@ -420,7 +638,11 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
                     detail = p.to_string_lossy().to_string();
                     if !r.ver_args.is_empty() {
                         if let Some(t) = run_out(p.to_string_lossy().as_ref(), &r.ver_args.split(' ').collect::<Vec<_>>()) {
-                            version = pick_version(&t);
+                            version = if r.ver_match.is_empty() {
+                                pick_version(&t)
+                            } else {
+                                pick_version_marked(&t, r.ver_match).or_else(|| pick_version(&t))
+                            };
                         }
                     }
                     if version.is_none() { version = version_from_path(&p.to_string_lossy()); }
@@ -435,7 +657,11 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
                     detail = p.to_string_lossy().to_string();
                     if !r.ver_args.is_empty() {
                         if let Some(t) = run_out(p.to_string_lossy().as_ref(), &r.ver_args.split(' ').collect::<Vec<_>>()) {
-                            version = pick_version(&t);
+                            version = if r.ver_match.is_empty() {
+                                pick_version(&t)
+                            } else {
+                                pick_version_marked(&t, r.ver_match).or_else(|| pick_version(&t))
+                            };
                         }
                     }
                     if version.is_none() { version = version_from_path(&p.to_string_lossy()); }
@@ -471,7 +697,11 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
 static SCAN_CACHE: std::sync::Mutex<Option<(std::time::Instant, Value)>> = std::sync::Mutex::new(None);
 
 #[tauri::command]
-pub fn env_scan(force: Option<bool>) -> Result<Value, String> {
+pub fn env_scan(force: Option<bool>, dir: Option<String>) -> Result<Value, String> {
+    // 前端把"安装目录"传进来：清单里那些 %ENVDIR% 规则要用它去找
+    if let Some(d) = dir.filter(|d| !d.trim().is_empty()) {
+        set_env_dir(&d);
+    }
     if !force.unwrap_or(false) {
         if let Ok(g) = SCAN_CACHE.lock() {
             if let Some((t, v)) = g.as_ref() {
@@ -494,6 +724,7 @@ fn env_scan_now() -> Result<Value, String> {
         "missingRequired": missing,
         "outdated": outdated,
         "downloadDir": download_dir(),
+        "envDir": if env_dir().is_empty() { default_env_dir() } else { env_dir() },
     }))
 }
 
@@ -518,22 +749,39 @@ fn download(app: &tauri::AppHandle, id: &str, url: &str, file: &str) -> Result<P
         emit(app, id, "download", 100, &format!("已存在，直接用：{}", dst.display()));
         return Ok(dst);
     }
+    // 下到 .part 再改名：中途断了/卡住了不会留下一个"看着完整、其实是半截"的文件
+    // （之前就吃过这个亏：断了之后下次直接复用了半截包，解压出一堆怪东西）
+    let part = dir.join(format!("{file}.part"));
+    std::fs::remove_file(&part).ok();
     emit(app, id, "download", 5, &format!("开始下载 {}", file));
-    let resp = ureq::get(url).timeout(std::time::Duration::from_secs(1800)).call().map_err(|e| format!("下载失败: {e}"))?;
+    let resp = ureq::get(url).timeout(std::time::Duration::from_secs(900)).call().map_err(|e| format!("下载失败: {e}（网络不通/太慢？也可以把包手动丢进 {}）", download_dir()))?;
     let total: u64 = resp.header("Content-Length").and_then(|s| s.parse().ok()).unwrap_or(0);
     let mut reader = resp.into_reader();
-    let mut out = std::fs::File::create(&dst).map_err(|e| e.to_string())?;
+    let mut out = std::fs::File::create(&part).map_err(|e| e.to_string())?;
     let mut buf = [0u8; 64 * 1024];
     let mut got: u64 = 0;
     let mut last = 0i32;
     loop {
-        let n = std::io::Read::read(&mut reader, &mut buf).map_err(|e| e.to_string())?;
+        let n = match std::io::Read::read(&mut reader, &mut buf) {
+            Ok(n) => n,
+            Err(e) => {
+                drop(out);
+                std::fs::remove_file(&part).ok();
+                return Err(format!("下载中断（已下 {} MB）: {e}", got / 1048576));
+            }
+        };
         if n == 0 { break; }
         std::io::Write::write_all(&mut out, &buf[..n]).map_err(|e| e.to_string())?;
         got += n as u64;
         let pct = if total > 0 { (got * 100 / total) as i32 } else { 50 };
         if pct >= last + 5 { last = pct; emit(app, id, "download", pct, &format!("下载中 {}%", pct)); }
     }
+    drop(out);
+    if total > 0 && got < total {
+        std::fs::remove_file(&part).ok();
+        return Err(format!("下载不完整（{}/{} MB），已丢弃重来", got / 1048576, total / 1048576));
+    }
+    std::fs::rename(&part, &dst).map_err(|e| format!("改名到 {} 失败: {e}", dst.display()))?;
     emit(app, id, "download", 100, &format!("下载完成：{} MB", got / 1048576));
     Ok(dst)
 }
@@ -555,19 +803,53 @@ fn run_powershell(app: &tauri::AppHandle, id: &str, script: &str, elevated: bool
     }
 }
 
+/// 解开一个 zip 到 dst。strip=1 时，如果包里只有一层顶层目录（platform-tools / scrcpy-win64-vX
+/// / ffmpeg-x-essentials_build 都是这样），就把那层"扒掉"，把内容直接落到 dst 下 ——
+/// 这样检测规则能写成固定的 <ENVDIR>\<id>\xxx.exe，不用猜版本号目录名。
+fn unzip_into(app: &tauri::AppHandle, id: &str, zip: &Path, dst: &Path, strip: u32) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    emit(app, id, "install", 70, &format!("解压到 {}", dst.display()));
+    let script = format!(
+        "$ErrorActionPreference='Stop'; \
+         $z='{zip}'; $dst='{dst}'; $strip={strip}; \
+         $t=Join-Path $env:TEMP ('kdock_zip_' + [guid]::NewGuid().ToString('N')); \
+         Expand-Archive -LiteralPath $z -DestinationPath $t -Force; \
+         $src=$t; \
+         if ($strip -ge 1) {{ \
+           $kids=@(Get-ChildItem -LiteralPath $t); \
+           while ($kids.Count -eq 1 -and $kids[0].PSIsContainer) {{ \
+             $src=$kids[0].FullName; $kids=@(Get-ChildItem -LiteralPath $src) }} \
+         }} \
+         New-Item -ItemType Directory -Force -Path $dst | Out-Null; \
+         Get-ChildItem -LiteralPath $src -Force | Move-Item -Destination $dst -Force; \
+         Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue; \
+         'unzip-ok'",
+        zip = zip.display(),
+        dst = dst.display(),
+        strip = strip
+    );
+    let out = run_powershell(app, id, &script, false)?;
+    if out.contains("unzip-ok") {
+        Ok(())
+    } else {
+        Err(format!("解压失败：{}", out.chars().rev().take(600).collect::<String>().chars().rev().collect::<String>()))
+    }
+}
+
 /// 安装 / 更新。dry = 只打印将要做什么（下载照做，但不执行安装器）——测试用
 #[tauri::command]
 pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>, dry: Option<bool>) -> Result<String, String> {
     let dry = dry.unwrap_or(false);
     let it = ITEMS.iter().find(|x| x.id == id).ok_or_else(|| format!("不认识的组件：{id}"))?;
     let target = dir.unwrap_or_else(|| {
-        let f = Path::new("F:\\ENV");
-        if f.is_dir() { f.to_string_lossy().to_string() } else { Path::new(&std::env::var("USERPROFILE").unwrap_or_default()).join("KDock\\env").to_string_lossy().to_string() }
+        let d = env_dir();
+        if d.trim().is_empty() { default_env_dir() } else { d }
     });
+    set_env_dir(&target);          // 后面的检测规则（%ENVDIR%）按这个目录找
     emit(&app, it.id, "start", 0, &format!("准备安装 {}", it.name));
 
-    // ① 先看有没有"内置"的小驱动：<exe 同目录>drivers<id> 下放 .exe/.msi/.inf 就直接用
-    //    （CH340/FTDI 这种官网要登录的，把安装包提前丢进去就能一键装）
+    // ① 先看有没有"内置"的安装包：<exe 同目录>drivers<id> 下放 .exe/.msi/.inf/.zip 就直接用
+    //    （CH340/FTDI 这种官网要登录的、或者公司网不好下 GitHub 的，把安装包提前丢进去就能一键装）
     let mut bundled: Vec<PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
         if let Some(d) = exe.parent() {
@@ -575,7 +857,7 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
                 for e in rd.flatten() {
                     let p = e.path();
                     let ext = p.extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
-                    if ["exe", "msi", "inf"].contains(&ext.as_str()) { bundled.push(p); }
+                    if ["exe", "msi", "inf", "zip"].contains(&ext.as_str()) { bundled.push(p); }
                 }
             }
         }
@@ -584,6 +866,14 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
         let mut outs = Vec::new();
         for p in &bundled {
             let ext = p.extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
+            if ext == "zip" {
+                // 内置压缩包：走和"一键下载装完"完全一样的那条解包路
+                let dst = Path::new(&target).join(it.id);
+                emit(&app, it.id, "install", 40, &format!("内置压缩包：{}", p.file_name().unwrap_or_default().to_string_lossy()));
+                if dry { outs.push(format!("（模拟）会解压 {} → {}", p.display(), dst.display())); }
+                else { unzip_into(&app, it.id, p, &dst, 1)?; outs.push(format!("已解压到 {}", dst.display())); }
+                continue;
+            }
             let script = if ext == "inf" {
                 format!("pnputil /add-driver '{}' /install", p.display())
             } else if ext == "msi" {
@@ -596,7 +886,7 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
             else { let _ = run_powershell(&app, it.id, &script, true); outs.push(format!("已执行：{}", script)); }
         }
         emit(&app, it.id, "done", 100, "完成");
-        return Ok(format!("用了内置驱动：\n{}", outs.join("\n")));
+        return Ok(format!("用了内置安装包：\n{}", outs.join("\n")));
     }
 
     let log = match it.plan {
@@ -621,19 +911,53 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
         Plan::Zip { url, strip } => {
             let zip = download(&app, it.id, url, &format!("{}.zip", it.id))?;
             let dst = Path::new(&target).join(it.id);
-            std::fs::create_dir_all(&dst).map_err(|e| e.to_string())?;
             if dry {
                 format!("（模拟）会解压 {} → {}（strip {} 层）", zip.display(), dst.display(), strip)
             } else {
-                run_powershell(&app, it.id, &format!(
-                    "$tmp='{}'; Expand-Archive -LiteralPath '{}' -DestinationPath \"$tmp\" -Force; \
-                     $inner=Get-ChildItem -LiteralPath \"$tmp\" | Select-Object -First 1; \
-                     if ($inner -and $inner.PSIsContainer) {{ Move-Item -LiteralPath $inner.FullName -Destination '{}' -Force }} else {{ Get-ChildItem -LiteralPath \"$tmp\" | Move-Item -Destination '{}' -Force }}",
-                    dst.display(), zip.display(), dst.display(), dst.display()
-                ), false)?
+                unzip_into(&app, it.id, &zip, &dst, strip)?;
+                format!("已解压到 {}（strip {} 层）", dst.display(), strip)
             }
         }
+        Plan::Fetch { url, file } => {
+            let dst_dir = Path::new(&target).join(it.id);
+            std::fs::create_dir_all(&dst_dir).map_err(|e| e.to_string())?;
+            let f = download(&app, it.id, url, file)?;
+            let dst = dst_dir.join(file);
+            if dry {
+                format!("（模拟）下载 {} → {}", f.display(), dst.display())
+            } else {
+                std::fs::copy(&f, &dst).map_err(|e| format!("复制到 {} 失败: {e}", dst.display()))?;
+                format!("已放到 {}", dst.display())
+            }
+        }
+        Plan::Capability { cap, service, post } => {
+            // Windows 可选组件（OpenSSH 这种）：DISM 加组件，不需要联网
+            let mut ps = format!(
+                "$ErrorActionPreference='Continue'; \
+                 $c=(Get-WindowsCapability -Online -Name '{cap}'); \
+                 if ($c.State -eq 'Installed') {{ 'already-installed' }} else {{ \
+                   Add-WindowsCapability -Online -Name '{cap}' | Out-Null; 'installed' }}"
+            );
+            for p in post {
+                ps.push_str(&format!("; {p}"));
+            }
+            if !service.is_empty() {
+                ps.push_str(&format!(
+                    "; Set-Service -Name {service} -StartupType Automatic -ErrorAction SilentlyContinue; \
+                     Start-Service -Name {service} -ErrorAction SilentlyContinue; \
+                     (Get-Service -Name {service}).Status"
+                ));
+            }
+            if dry { format!("（模拟）会跑 DISM 可选组件 {cap}（服务 {service}）") }
+            else { run_powershell(&app, it.id, &ps, true)? }
+        }
         Plan::Winget { id: wid } => {
+            if run_out("winget.exe", &["--version"]).is_none() {
+                return Ok(format!(
+                    "这台机器上没有 winget（应用安装程序），装不了「{}」。请到官网下载安装：{}",
+                    it.name, it.url
+                ));
+            }
             if dry { format!("（模拟）会跑 winget install --id {} --silent", wid) }
             else {
                 run_powershell(&app, it.id, &format!(

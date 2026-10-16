@@ -4,10 +4,13 @@
 //! 命令层不区分传输类型；HEX 编解码与行尾处理只有 `kdock-core` 里那一份。
 
 mod agent;
+mod android;
 mod checksum;
 mod debug;
 mod env_setup;
 mod kbview;
+mod netfs;
+mod remote_screen;
 mod scope;
 mod storage;
 mod transport;
@@ -876,6 +879,25 @@ fn win_ctl(app: tauri::AppHandle, action: String) -> Result<(), String> {
         }
         "close" => w.close().map_err(|e| e.to_string()),
         "drag" => w.start_dragging().map_err(|e| e.to_string()),
+        // 全屏（「屏幕共享」页用）：隐藏状态栏/任务栏盖住的那种全屏，Esc/F11 退回来
+        "fullscreen" => {
+            w.set_fullscreen(true).map_err(|e| e.to_string())?;
+            #[cfg(windows)]
+            again(&w);
+            Ok(())
+        }
+        "unfullscreen" => {
+            w.set_fullscreen(false).map_err(|e| e.to_string())?;
+            #[cfg(windows)]
+            {
+                let w2 = w.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(120));
+                    strip_native_frame(&w2);
+                });
+            }
+            Ok(())
+        }
         _ => Err(format!("未知动作 {action}")),
     }
 }
@@ -3390,6 +3412,10 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // SSH(plink) 的主机指纹缓存：放在应用数据目录里，跟别的配置一处（「设置 → 缓存」能一起看）
+            if let Ok(d) = app.path().app_data_dir() {
+                transport::set_hostkey_cache(d.join("ssh_hostkeys.txt"));
+            }
             // 它内部要跑 PowerShell + WMI（好几秒），别挡着窗口显示 —— 丢后台线程慢慢补名字
             std::thread::spawn(refresh_friendly);
             // 任务栏/标题栏图标：显式再设一次。
@@ -3576,6 +3602,44 @@ pub fn run() {
                 kb_hide_all,
                 kb_reload,
                 kb_url,
+                // ── 文件管理：FTP / FTPS / TFTP（客户端 + 内置 TFTP 服务端）──
+                netfs::netfs_open,
+                netfs::netfs_close,
+                netfs::netfs_sessions,
+                netfs::netfs_list,
+                netfs::netfs_stat,
+                netfs::netfs_get,
+                netfs::netfs_put,
+                netfs::netfs_mkdir,
+                netfs::netfs_delete,
+                netfs::netfs_rename,
+                netfs::tftp_server_start,
+                netfs::tftp_server_stop,
+                netfs::tftp_server_state,
+                // ── 安卓（ADB）：设备 / shell / 推拉 / APK / 投屏 / 反向控制 / scrcpy ──
+                android::adb_status,
+                android::adb_devices,
+                android::adb_shell,
+                android::adb_push,
+                android::adb_pull,
+                android::adb_install,
+                android::adb_uninstall,
+                android::adb_packages,
+                android::adb_screenshot,
+                android::adb_mirror_start,
+                android::adb_mirror_stop,
+                android::adb_input,
+                android::adb_scrcpy_run,
+                android::adb_scrcpy_stop,
+                android::adb_scrcpy_state,
+                // ── 屏幕共享：VNC（含键鼠回传）+ RTSP / RTMP / H.264（FFmpeg 解码）──
+                remote_screen::rs_open,
+                remote_screen::rs_stop,
+                remote_screen::rs_stop_all,
+                remote_screen::rs_list,
+                remote_screen::rs_pointer,
+                remote_screen::rs_key,
+                remote_screen::rs_ffmpeg,
             // ── Agent ──
             agent::agent_config_get,
             agent::agent_provider_save,

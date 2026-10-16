@@ -1,10 +1,15 @@
-//! 传输抽象：串口 / TCP / UDP 都收敛成同一个 [`Conn`]。
+//! 传输抽象：串口 / TCP / UDP / SSH 都收敛成同一个 [`Conn`]。
 //!
 //! UI 只依赖这一层，命令层里没有任何 `if 是串口 … else if 是 TCP …` 的分支。
 //! HEX 编解码与行尾处理不在这一层——它们只有 `kdock-core` 里那一份。
+//!
+//! SSH 走系统自带的 OpenSSH 客户端（`ssh.exe`，Win10 1809 起是可选组件），
+//! 用管道当"终端"：远端 PTY（`-tt`）的输入输出就是我们的收发通道，
+//! 于是传输页、命令表、中控编排、Agent 都能拿它当一条普通连接用。
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -52,6 +57,20 @@ pub enum Endpoint {
         #[serde(default)]
         remote_port: u16,
     },
+    /// SSH：交给系统 ssh.exe 跑一个远端 shell，收发都走它的管道
+    Ssh {
+        host: String,
+        #[serde(default)]
+        port: u16,
+        #[serde(default)]
+        user: String,
+        /// 填了就自动应答第一次密码提示（不填就自己在终端里敲）
+        #[serde(default)]
+        password: String,
+        /// 追加的 ssh 参数（例如 -i 私钥、-L 转发）
+        #[serde(default)]
+        extra: String,
+    },
 }
 
 impl Endpoint {
@@ -61,6 +80,7 @@ impl Endpoint {
             Endpoint::TcpClient { .. } => "tcp_client",
             Endpoint::TcpServer { .. } => "tcp_server",
             Endpoint::Udp { .. } => "udp",
+            Endpoint::Ssh { .. } => "ssh",
         }
     }
 
@@ -83,6 +103,14 @@ impl Endpoint {
                     format!("UDP {local_port} <-> {remote_host}:{remote_port}")
                 }
             }
+            Endpoint::Ssh { host, port, user, .. } => {
+                let p = if *port == 0 { 22 } else { *port };
+                if user.is_empty() {
+                    format!("SSH {host}:{p}")
+                } else {
+                    format!("SSH {user}@{host}:{p}")
+                }
+            }
         }
     }
 }
@@ -101,6 +129,304 @@ pub enum Conn {
     Serial(Box<dyn SerialPort>),
     Tcp(TcpStream),
     Udp(UdpEndpoint),
+    Ssh(SshConn),
+}
+
+/* ───────────────────────── SSH（系统 ssh.exe + 管道） ───────────────────────── */
+
+/// 找系统的 ssh.exe：PATH 优先，其次 Windows 自带的那个目录。
+pub fn find_ssh() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("PATH") {
+        for d in path.split(';').filter(|s| !s.trim().is_empty()) {
+            let p = std::path::Path::new(d).join("ssh.exe");
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    for c in [
+        "C:\\Windows\\System32\\OpenSSH\\ssh.exe",
+        "C:\\Program Files\\OpenSSH\\ssh.exe",
+    ] {
+        let p = std::path::Path::new(c);
+        if p.is_file() {
+            return Some(p.to_path_buf());
+        }
+    }
+    None
+}
+
+/// 找 PuTTY 的 plink.exe：**密码登录只能靠它** ——
+/// Windows 自带的 ssh.exe 在"要密码"时只从控制台读，管道里预先写好的密码它看不见
+/// （实测：`echo pw | ssh ...` 会一直卡在密码提示上）。plink 支持 `-pw`，一次给足。
+pub fn find_plink() -> Option<PathBuf> {
+    crate::env_setup::find_tool(
+        "plink.exe",
+        "%ENVDIR%\\plink;%ENVDIR%\\putty;%ProgramFiles%\\PuTTY;%ProgramFiles(x86)%\\PuTTY;%ENVDIR%",
+    )
+}
+
+/// plink 的"主机指纹"缓存（首次连接探测到之后存这儿；文件由 lib.rs 启动时告知）
+static HOSTKEY_FILE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+pub fn set_hostkey_cache(p: PathBuf) {
+    if let Ok(mut g) = HOSTKEY_FILE.lock() {
+        *g = Some(p);
+    }
+}
+
+fn hostkey_get(host: &str, port: u16) -> Option<String> {
+    let p = HOSTKEY_FILE.lock().ok().and_then(|g| g.clone())?;
+    let t = std::fs::read_to_string(p).ok()?;
+    let key = format!("{host}:{port} ");
+    t.lines().find_map(|l| l.trim().strip_prefix(&key).map(|s| s.trim().to_string()))
+}
+
+fn hostkey_put(host: &str, port: u16, fp: &str) {
+    let p = match HOSTKEY_FILE.lock().ok().and_then(|g| g.clone()) {
+        Some(p) => p,
+        None => return,
+    };
+    let mut lines: Vec<String> = std::fs::read_to_string(&p)
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with(&format!("{host}:{port} ")))
+        .map(|s| s.to_string())
+        .collect();
+    lines.push(format!("{host}:{port} {fp}"));
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d).ok();
+    }
+    let _ = std::fs::write(&p, lines.join("\n") + "\n");
+}
+
+/// plink 遇到"没缓存过的主机"时，会在 -batch 模式下把指纹打印出来然后放弃 ——
+/// 我们把它抠出来（等于 TOFU：首次信任 + 之后钉死），下次连接就用 -hostkey 对上。
+fn parse_plink_fingerprint(text: &str) -> Option<String> {
+    if let Some(i) = text.find("SHA256:") {
+        let rest = &text[i..];
+        let fp: String = rest.chars().take_while(|c| !c.is_whitespace()).collect();
+        if fp.len() > 12 {
+            return Some(fp);
+        }
+    }
+    // 老版本 plink 打的是 MD5 那种 xx:xx:xx:… 的指纹
+    for line in text.lines() {
+        let t = line.trim();
+        if t.len() >= 47 && t.matches(':').count() >= 15 && t.split_whitespace().count() <= 3 {
+            return Some(t.split_whitespace().last().unwrap_or(t).to_string());
+        }
+    }
+    None
+}
+
+fn plink_args(host: &str, port: u16, user: &str, password: &str, extra: &str, hostkey: Option<&str>, cmd: Option<&str>) -> Vec<String> {
+    let mut a: Vec<String> = vec!["-ssh".into(), "-P".into(), port.to_string()];
+    if !user.is_empty() {
+        a.push("-l".into());
+        a.push(user.to_string());
+    }
+    a.push("-pw".into());
+    a.push(password.to_string());
+    a.push("-batch".into());
+    if let Some(k) = hostkey {
+        a.push("-hostkey".into());
+        a.push(k.to_string());
+    }
+    for x in extra.split_whitespace() {
+        a.push(x.to_string());
+    }
+    a.push(host.to_string());
+    if let Some(c) = cmd {
+        a.push(c.to_string());
+    }
+    a
+}
+
+fn plink_run(exe: &PathBuf, args: &[String], timeout: Duration) -> Option<(i32, String)> {
+    use std::process::{Command, Stdio};
+    let mut c = Command::new(exe);
+    c.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000);
+    }
+    let mut child = c.spawn().ok()?;
+    let t0 = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => {
+                let out = child.wait_with_output().ok()?;
+                let mut s = String::from_utf8_lossy(&out.stdout).to_string();
+                s.push_str(&String::from_utf8_lossy(&out.stderr));
+                return Some((st.code().unwrap_or(-1), s));
+            }
+            Ok(None) => {
+                if t0.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Some((-1, "（探测主机指纹超时）".into()));
+                }
+                std::thread::sleep(Duration::from_millis(60));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+/// 首次连接先探一次主机指纹（拿不到就返回 None，让上层照原样跑）
+fn plink_ensure_hostkey(exe: &PathBuf, host: &str, port: u16, user: &str, password: &str, extra: &str) -> Option<String> {
+    if let Some(k) = hostkey_get(host, port) {
+        return Some(k);
+    }
+    let args = plink_args(host, port, user, password, extra, None, Some("echo kdock-probe"));
+    let (_, text) = plink_run(exe, &args, Duration::from_secs(12))?;
+    let fp = parse_plink_fingerprint(&text)?;
+    hostkey_put(host, port, &fp);
+    Some(fp)
+}
+
+struct SshInner {
+    child: std::sync::Mutex<std::process::Child>,
+    stdin: std::sync::Mutex<Option<Box<dyn Write + Send>>>,
+    /// stdout / stderr 两条泵线都往这里塞，读的一方从这里取 ——
+    /// 合成一路的好处：密码提示、指纹确认（走 stderr）和正文（stdout）在同一处按顺序显示
+    rx: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<u8>>>,
+    dead: AtomicBool,
+}
+
+/// SSH 连接：一个 ssh.exe 进程 + 它的 stdin/stdout 管道
+#[derive(Clone)]
+pub struct SshConn(std::sync::Arc<SshInner>);
+
+impl SshConn {
+    /// 起一个 ssh 会话。password 非空时自动应答第一次密码提示。
+    pub fn spawn(host: &str, port: u16, user: &str, password: &str, extra: &str) -> Result<SshConn, String> {
+        use std::process::{Command, Stdio};
+        let port = if port == 0 { 22 } else { port };
+        let target = if user.is_empty() { host.to_string() } else { format!("{user}@{host}") };
+        let use_plink = !password.is_empty() && find_plink().is_some();
+        let mut cmd;
+        if use_plink {
+            let exe = find_plink().expect("plink 在上面判断过存在");
+            let fp = plink_ensure_hostkey(&exe, host, port, user, password, extra);
+            cmd = Command::new(&exe);
+            cmd.args(plink_args(host, port, user, password, extra, fp.as_deref(), None));
+        } else {
+            if !password.is_empty() {
+                // 说清楚为什么不用密码：这不是"我们没实现"，是 Windows OpenSSH 的脾气
+                return Err("密码登录需要 PuTTY 的 plink：Windows 自带的 ssh.exe 只在控制台里读密码，管道喂不进去。\
+请到「环境配置 → PuTTY plink」点一键安装；用密钥登录的话把密码留空、在「高级 → 附加参数」里填 -i <私钥>。"
+                    .to_string());
+            }
+            let exe = find_ssh().ok_or_else(|| {
+                "没找到 ssh.exe。到「环境配置 → OpenSSH 客户端」点一键安装（Windows 可选组件，不用联网）".to_string()
+            })?;
+            cmd = Command::new(&exe);
+            // -tt：即使本地不是终端也分配远端 PTY（远端就会给提示符、不缓冲）
+            cmd.arg("-tt");
+            cmd.args(["-p", &port.to_string()]);
+            cmd.args(["-o", "ServerAliveInterval=30"]);
+            cmd.args(["-o", "ServerAliveCountMax=4"]);
+            cmd.args(["-o", "StrictHostKeyChecking=accept-new"]);
+            for a in extra.split_whitespace() {
+                cmd.arg(a);
+            }
+            cmd.arg(&target);
+        }
+        cmd.env("TERM", "xterm-256color");
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：ssh 自己不许弹黑框
+        }
+        let mut child = cmd.spawn().map_err(|e| format!("起 ssh.exe 失败: {e}"))?;
+        let stdin: Option<Box<dyn Write + Send>> = child.stdin.take().map(|s| Box::new(s) as Box<dyn Write + Send>);
+        let stdout: Option<Box<dyn Read + Send>> = child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>);
+        let stderr: Option<Box<dyn Read + Send>> = child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>);
+        let (stdin, stdout) = match (stdin, stdout) {
+            (Some(i), Some(o)) => (i, o),
+            _ => return Err("ssh 的管道没建起来".into()),
+        };
+        let rx: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<u8>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        for mut f in [Some(stdout), stderr].into_iter().flatten() {
+            let q = rx.clone();
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 4096];
+                loop {
+                    match f.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            if let Ok(mut g) = q.lock() {
+                                g.extend(&buf[..n]);
+                                while g.len() > 8 * 1024 * 1024 {
+                                    g.pop_front(); // 前端不看了也不能把内存吃光
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        let inner = std::sync::Arc::new(SshInner {
+            child: std::sync::Mutex::new(child),
+            stdin: std::sync::Mutex::new(Some(stdin)),
+            rx,
+            dead: AtomicBool::new(false),
+        });
+        Ok(SshConn(inner))
+    }
+
+    /// 结束这个会话（杀 ssh.exe；远端 shell 会跟着退）
+    pub fn kill(&self) {
+        self.0.dead.store(true, Ordering::Relaxed);
+        if let Ok(mut c) = self.0.child.lock() {
+            let _ = c.kill();
+        }
+        if let Ok(mut i) = self.0.stdin.lock() {
+            i.take();
+        }
+    }
+
+    /// 从合并后的接收队列里取数据；队列空就报"空闲超时"（上层按空闲处理，不会当成断开）
+    fn read(&self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.0.dead.load(Ordering::Relaxed) {
+            return Ok(0);
+        }
+        if let Ok(mut q) = self.0.rx.lock() {
+            if !q.is_empty() {
+                let n = buf.len().min(q.len());
+                for (i, slot) in buf.iter_mut().take(n).enumerate() {
+                    let _ = i;
+                    *slot = q.pop_front().unwrap_or(0);
+                }
+                return Ok(n);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(8)); // 别空转烧 CPU：约 120Hz 的轮询
+        Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "ssh 空闲"))
+    }
+
+    fn write(&self, data: &[u8]) -> std::io::Result<usize> {
+        let mut g = self.0.stdin.lock().expect("ssh stdin mutex");
+        let f = g.as_mut().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "ssh 已关闭"))?;
+        f.write_all(data)?;
+        f.flush()?;
+        Ok(data.len())
+    }
+}
+
+impl Drop for SshInner {
+    fn drop(&mut self) {
+        self.dead.store(true, Ordering::Relaxed);
+        if let Ok(mut c) = self.child.lock() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
 }
 
 impl Conn {
@@ -116,6 +442,7 @@ impl Conn {
                 .map(Conn::Tcp)
                 .map_err(|e| format!("克隆 TCP 连接失败: {e}")),
             Conn::Udp(u) => Ok(Conn::Udp(u.clone())),
+            Conn::Ssh(s) => Ok(Conn::Ssh(s.clone())),   // 共享同一个 ssh 进程（收发队列在 Arc 里）
         }
     }
 
@@ -124,6 +451,7 @@ impl Conn {
             Conn::Serial(p) => p.read(buf),
             Conn::Tcp(s) => s.read(buf),
             Conn::Udp(u) => u.recv_learn(buf).map_err(net_to_io),
+            Conn::Ssh(s) => s.read(buf),
         }
     }
 
@@ -132,6 +460,7 @@ impl Conn {
             Conn::Serial(p) => p.write(data),
             Conn::Tcp(s) => s.write(data),
             Conn::Udp(u) => u.send(data).map_err(net_to_io),
+            Conn::Ssh(s) => s.write(data),
         }
     }
 
@@ -184,12 +513,19 @@ impl Conn {
             Conn::Tcp(s) => s.flush(),
             // UDP 每次 send 就是一个报文，没有缓冲
             Conn::Udp(_) => Ok(()),
+            // SSH 每条命令自己 write_all + flush
+            Conn::Ssh(_) => Ok(()),
         }
     }
 
     pub fn shutdown(&mut self) {
-        if let Conn::Tcp(s) = self {
-            let _ = s.shutdown(std::net::Shutdown::Both);
+        match self {
+            Conn::Tcp(s) => {
+                let _ = s.shutdown(std::net::Shutdown::Both);
+            }
+            // SSH：杀进程（否则读线程会一直挂着，断开按钮就成了摆设）
+            Conn::Ssh(s) => s.kill(),
+            _ => {}
         }
     }
 
@@ -245,6 +581,13 @@ pub fn open_endpoint(endpoint: &Endpoint) -> Result<Conn, String> {
             Ok(Conn::Udp(ep))
         }
         Endpoint::TcpServer { .. } => Err("TCP Server 用 bind_server 打开".into()),
+        Endpoint::Ssh { host, port, user, password, extra } => Ok(Conn::Ssh(SshConn::spawn(
+            host,
+            *port,
+            user,
+            password,
+            extra,
+        )?)),
     }
 }
 
