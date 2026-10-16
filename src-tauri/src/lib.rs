@@ -2611,6 +2611,31 @@ fn file_digest(path: String, offset: Option<u64>, length: Option<u64>) -> Result
     checksum::file_digest(&path, offset.unwrap_or(0), length.unwrap_or(0))
 }
 
+/// 读一个文本文件（批量文本页的「导入…」和拖文件进来都用它）。
+/// 走 Rust 而不是前端的 fs 插件：前端那条被文件选择器的授权框着，拖进来的路径读不了。
+/// 默认上限 16MB（文本工具够用），超了直接说清楚；不是合法 UTF-8 时按替换字符给，并告诉前端。
+#[tauri::command]
+fn file_read_text(path: String, max_bytes: Option<u64>) -> Result<serde_json::Value, String> {
+    let cap = max_bytes.unwrap_or(16 * 1024 * 1024);
+    let meta = std::fs::metadata(&path).map_err(|e| format!("读不到文件: {e}"))?;
+    if !meta.is_file() {
+        return Err("这不是一个文件".into());
+    }
+    if meta.len() > cap {
+        return Err(format!(
+            "文件太大（{:.1} MB），这里最多读 {:.0} MB —— 先切一段再导吧",
+            meta.len() as f64 / 1048576.0,
+            cap as f64 / 1048576.0
+        ));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("读不到文件: {e}"))?;
+    let (text, utf8) = match String::from_utf8(bytes.clone()) {
+        Ok(t) => (t, true),
+        Err(_) => (String::from_utf8_lossy(&bytes).to_string(), false),
+    };
+    let eol = if text.contains("\r\n") { "CRLF" } else if text.contains('\n') { "LF" } else { "—" };
+    Ok(serde_json::json!({ "text": text, "bytes": bytes.len(), "utf8": utf8, "eol": eol }))
+}
 #[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
@@ -3450,6 +3475,7 @@ pub fn run() {
             default_save_dir,
             open_folder,
             file_digest,
+            file_read_text,
             storage::command_table_get,
             storage::command_table_save,
             storage::cache_items,

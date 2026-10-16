@@ -543,7 +543,7 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
     /* 这里必须用 --nav-w：JS 拖左栏写的就是它（以前写 --left-w，这个变量没人写，
        结果 ≤1180px 的窗口里拖左栏完全没反应） */
     grid-template-columns: var(--nav-w, 300px) 6px minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(45vh, 1fr) auto;   /* 工作区（工具主体）至少留 45vh，别被下面那条挤没 */
   }
   .split > #gutter-r { display: none; }
   /* 参数区这一行的高度：原来给到 42vh（600px 高的窗口就是 252px），把工作区挤到只剩 276px ——
@@ -553,7 +553,7 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
      两边都完整，谁都不裁。 */
   /* 高度由 JS 按当前这一栏的内容量给（--param-max，夹在 30~55vh 之间）：内容少就矮、内容多就高一点，
      免得所有页都固定 30vh、内容多的那几页非得在小窗口里滚。 */
-  .split > .params { grid-column: 1 / -1; grid-row: 2; max-height: var(--param-max, 30vh); }
+  .split > .params { grid-column: 1 / -1; grid-row: 2; max-height: min(45vh, var(--param-max, 30vh)); }
   /* 这条横向很宽、只有 30vh 高：表单类面板折成两栏，一屏能看全；表格 / 列表 / 对话类保持单栏 */
   .params .parampane:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]) {
     display: block; column-width: 20rem; column-gap: 18px;   /* 按宽度自动 2~3 栏，一屏能看全 */
@@ -1741,6 +1741,26 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; line-height: 1.55;
 }
 .btarrow { display: flex; align-items: center; justify-content: center; color: hsl(var(--muted-foreground)); opacity: .6; }
+
+/* 编辑器：行号栏（不可编辑，跟着文本一起滚）+ 底部状态栏（行/列、选中、字符/字节、编码、行尾） */
+.bted {
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  flex: 1 1 auto; min-height: 200px;
+  border: 1px solid var(--surface-line); border-radius: 10px; background: var(--surface-1); overflow: hidden;
+}
+.btln {
+  padding: 8px 8px 8px 10px; text-align: right; min-width: 2.2rem;
+  color: hsl(var(--muted-foreground) / 0.72); background: var(--surface-2);
+  border-right: 1px solid var(--surface-line);
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; line-height: 1.55;
+  user-select: none; overflow: hidden; white-space: pre;
+}
+.bted .btarea { min-height: 0; height: 100%; border: 0; border-radius: 0; background: transparent; flex: none; }
+.btstatus {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 3px 4px 0; font-size: 11.5px; color: hsl(var(--muted-foreground));
+}
+.btcol.dragover .bted { border-color: hsl(var(--primary) / 0.85); background: hsl(var(--primary) / 0.07); }
 
 /* 批量文本右栏：跟"数据计算"同一套行式布局（标签列 + 控件列），只是右栏只有 ~300px，标签列收窄；
    卡也是 .dcsection 那套折叠样式，展开状态单独记一份 */

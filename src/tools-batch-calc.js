@@ -3,6 +3,7 @@
 import { save as dlgSave, open as dlgOpen } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { VB_FORMATS, VB_DEPTHS, VB_TIMINGS, VB_PRESETS, VB_IFACES, vbCompute, vbVerdict, vbState } from "./video-bandwidth.js";
 
 const $id = (id) => document.getElementById(id);
@@ -81,12 +82,99 @@ function btFormat(lines, kind) {
 }
 
 function btRender() {
+  btLineNumbersSoon();
   const lines = btLines();
   btWords = lines;
   btRawLines = $id("bt-in").value.split(/\r?\n/);
   $id("bt-out").value = btFormat(lines, $id("bt-format").value);
   $id("bt-count").textContent = lines.length + T(" 行") + " · " + lines.reduce((a, l) => a + l.length, 0) + T(" 字");
   btUpdateCount();
+  btStatusRender();
+}
+
+/* ============ 批量文本：行号栏 + 底部状态栏（跟 IDE 一样） ============ */
+const BT_ED = ["bt-in", "bt-out"];        // 每个编辑器：textarea id（行号栏 id = textarea id + "-ln"）
+let btEol = "";                          // 导入文件时记住它的行尾（textarea 的 value 会被规范化成 LF，看 value 看不出来）
+let btLnTimer = null;
+let btMeasure = null;
+
+/** 行号栏：软换行的那一行要占多个视觉行的高度，不然行号会越跑越偏。
+    高度用 canvas 按同一个字体量宽度算出来（中文这种双宽字符量得准）。 */
+function btLineNumbers() {
+  const cv = btMeasure || (btMeasure = document.createElement("canvas"));
+  const ctx = cv.getContext("2d");
+  for (const taId of BT_ED) {
+    const ta = $id(taId), ln = $id(taId + "-ln");
+    if (!ta || !ln) continue;
+    const cs = getComputedStyle(ta);
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const inner = ta.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.55;
+    const lines = ta.value.split("\n");
+    let html = "";
+    for (let i = 0; i < lines.length; i++) {
+      const w = inner > 8 ? ctx.measureText(lines[i].replace(/\t/g, "    ")).width : 0;
+      const rows = Math.max(1, Math.ceil(w / inner));
+      html += `<div style="height:${(rows * lh).toFixed(3)}px">${i + 1}</div>`;
+    }
+    ln.innerHTML = html;
+    ln.scrollTop = ta.scrollTop;
+  }
+}
+/** 敲字时别每一下都重量（几万行时量起来会卡），攒 90ms 再算 */
+function btLineNumbersSoon() { clearTimeout(btLnTimer); btLnTimer = setTimeout(btLineNumbers, 90); }
+
+/** 底部状态栏：行/列 · 选中 · 字符 · 字节 · 行数 · 编码 · 行尾（跟 IDE 底部那条一个意思） */
+function btStatusRender() {
+  for (const taId of BT_ED) {
+    const ta = $id(taId), st = $id(taId + "-status");
+    if (!ta || !st) continue;
+    const v = ta.value;
+    const pos = ta.selectionStart || 0, end = ta.selectionEnd || 0;
+    const row = v.slice(0, pos).split("\n").length;
+    const col = pos - v.lastIndexOf("\n", Math.max(0, pos - 1));
+    const sel = Math.abs(end - pos);
+    const lineCount = v.length ? v.split("\n").length : 1;
+    const bytes = new TextEncoder().encode(v).length;
+    const eol = taId === "bt-in" ? (btEol || "LF") : "";   // 行尾只有左边那个（输入）才有意义
+    const bits = [
+      T("行 {r}, 列 {c}").replace("{r}", row).replace("{c}", col),
+      sel ? T("选中 {n}").replace("{n}", sel) : "",
+      T("{n} 字符").replace("{n}", v.length),
+      T("{n} 字节").replace("{n}", bytes),
+      T("{n} 行").replace("{n}", lineCount),
+      "UTF-8", eol,
+    ].filter(Boolean);
+    st.textContent = bits.join("  ·  ");
+  }
+}
+
+/** 导入一个文件到左边输入框（按钮和拖文件都走这里）；path 给了就不弹选择框 */
+async function btImportFile(path0) {
+  try {
+    let path = path0;
+    if (!path) {
+      const p = await dlgOpen({
+        title: T("导入文本文件"), multiple: false, directory: false,
+        filters: [{ name: T("文本 / 日志 / CSV"), extensions: ["txt", "log", "csv", "json", "md", "hex"] },
+                  { name: T("所有文件"), extensions: ["*"] }],
+      });
+      path = typeof p === "string" ? p : (p && p.path);
+    }
+    if (!path) return;
+    const r = await invoke("file_read_text", { path });
+    const ta = $id("bt-in");
+    ta.value = r.text;
+    try { ta.setSelectionRange(0, 0); } catch (_) { /* 忽略 */ }
+    ta.scrollTop = 0;
+    btEol = r.eol || "";
+    btRender();
+    const name = String(path).split(/[\\/]/).pop();
+    btMsg(T("已导入 {name}（{n} 字节{enc}）").replace("{name}", name).replace("{n}", r.bytes)
+      .replace("{enc}", r.utf8 ? "" : T("，不是 UTF-8，已按替换字符显示")));
+  } catch (e) {
+    btMsg(T("导入失败：") + String(e && e.message ? e.message : e).slice(0, 90), true);
+  }
 }
 
 /* ================== 批量文本：对输入框"选区优先"地改 ================== */
@@ -453,7 +541,7 @@ export function initBatch(opts) {
   };
 
   // 清空 / 复制 / 另存为 / 发送
-  $id("bt-clear").onclick = () => { box.value = ""; $id("bt-out").value = ""; btRender(); };
+  $id("bt-clear").onclick = () => { box.value = ""; $id("bt-out").value = ""; btEol = ""; btRender(); };
   $id("bt-copy").onclick = async () => {
     try { await navigator.clipboard.writeText($id("bt-out").value); $id("bt-state").textContent = T("已复制"); }
     catch (e) { $id("bt-state").textContent = T("复制失败：") + String(e).slice(0, 40); }
@@ -467,9 +555,35 @@ export function initBatch(opts) {
     } catch (e) { $id("bt-state").textContent = T("保存失败：") + String(e).slice(0, 40); }
   };
   $id("bt-send").onclick = btSendAll;
+  // 导入 / 示例（导入也能直接把文件拖到左边那个框上）
+  $id("bt-import").onclick = () => btImportFile("");
+  $id("bt-sample").onclick = () => {
+    box.value = ["AT", "AT+NAME=KDock", "AT+BAUD=115200", "AT+SAVE", "AT+RESET"].join("\n");
+    btRender();
+    btMsg(T("已填入示例（一行一条，像 AT 指令那样）"));
+  };
+  for (const taId of BT_ED) {
+    const ta = $id(taId), ln = $id(taId + "-ln");
+    if (!ta || !ln) continue;
+    ta.addEventListener("scroll", () => { ln.scrollTop = ta.scrollTop; });
+    for (const ev of ["input", "click", "keyup", "mouseup", "select"]) ta.addEventListener(ev, btStatusRender);
+  }
+  window.addEventListener("resize", btLineNumbersSoon);
+  getCurrentWebview().onDragDropEvent((ev) => {
+    const pane = document.querySelector('.workpane[data-work="batch"]');
+    const col = $id("bt-in-col");
+    if (!pane || pane.hidden || !col) return;
+    const t = ev.payload && ev.payload.type;
+    col.classList.toggle("dragover", t === "over" || t === "enter");
+    if (t === "drop") {
+      col.classList.remove("dragover");
+      const paths = (ev.payload && ev.payload.paths) || [];
+      if (paths.length) btImportFile(paths[0]);
+    }
+  });
   btRender();
   // 切语言时把这一页里"运行时拼出来的"文字重画一遍
-  onLang(() => { btInitChips(); btRender(); btUpdateCount(); btMsg(""); $id("bt-state").textContent = ""; });   // 小标签重建成当前语言；旧提示/状态是上一门语言拼的，清掉
+  onLang(() => { btInitChips(); btRender(); btUpdateCount(); btStatusRender(); btMsg(""); $id("bt-state").textContent = ""; });   // 小标签重建成当前语言；旧提示/状态是上一门语言拼的，清掉
 }
 
 /* ============================== 计算器 ============================== */

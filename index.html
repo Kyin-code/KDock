@@ -595,12 +595,20 @@
             <span class="lb">批量文本</span>
             <span class="grow"></span>
             <span id="bt-count" class="lb"></span>
-            <button id="bt-clear" class="btn small danger">清空</button>
           </div>
+          <!-- 左右两个编辑器都带"行号栏 + 底部状态栏"（跟 IDE、跟参考站一样） -->
           <div class="btgrid grow">
-            <div class="btcol">
-              <div class="cardtitle">输入（一行一条）</div>
-              <textarea id="bt-in" class="btarea" placeholder="PA0=1&#10;PA1=0&#10;PA2=1"></textarea>
+            <div class="btcol" id="bt-in-col">
+              <div class="cardtitle">输入（一行一条）<span class="grow"></span>
+                <button id="bt-import" class="btn small" title="从文件读进来；也可以把文件直接拖到下面这个框上">导入…</button>
+                <button id="bt-sample" class="btn small">示例</button>
+                <button id="bt-clear" class="btn small danger">清空</button>
+              </div>
+              <div class="bted">
+                <div class="btln" id="bt-in-ln" aria-hidden="true"></div>
+                <textarea id="bt-in" class="btarea" spellcheck="false" placeholder="PA0=1&#10;PA1=0&#10;PA2=1"></textarea>
+              </div>
+              <div class="btstatus" id="bt-in-status"></div>
             </div>
             <div class="btarrow">→</div>
             <div class="btcol">
@@ -608,7 +616,11 @@
                 <button id="bt-copy" class="btn small">复制</button>
                 <button id="bt-download" class="btn small">另存为</button>
               </div>
-              <textarea id="bt-out" class="btarea" readonly></textarea>
+              <div class="bted">
+                <div class="btln" id="bt-out-ln" aria-hidden="true"></div>
+                <textarea id="bt-out" class="btarea" readonly></textarea>
+              </div>
+              <div class="btstatus" id="bt-out-status"></div>
             </div>
           </div>
           <div class="trow">

@@ -1110,7 +1110,7 @@ function syncParamStrip() {
   const pane = [...box.querySelectorAll('[data-param]')].find((p) => !p.hidden);
   if (!pane) { document.documentElement.style.removeProperty('--param-max'); return; }
   const need = pane.scrollHeight + 24;                    // 上下留点缝
-  const lo = Math.round(innerHeight * 0.3), hi = Math.round(innerHeight * 0.55);
+  const lo = Math.round(innerHeight * 0.3), hi = Math.round(innerHeight * 0.45);   // 上限跟 CSS 的 45vh 一致：工作区得留得住
   document.documentElement.style.setProperty('--param-max', Math.min(hi, Math.max(lo, need)) + 'px');
 }
 
@@ -8752,6 +8752,21 @@ const EN = {
   "RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent":
     "The standard LAN port on RIGOL DS1000Z series scopes (TCP 5555, SCPI text). Once connected the agent",
   "工具干同样的事。": "can do the same things with the same tools.",
+  // 批量文本：行号栏 / 状态栏 / 导入文件
+  "从文件读进来；也可以把文件直接拖到下面这个框上": "Read from a file; you can also drop a file on the box below",
+  "导入文本文件": "Import a text file",
+  "文本 / 日志 / CSV": "Text / log / CSV",
+  "所有文件": "All files",
+  "已导入 {name}（{n} 字节{enc}）": "Imported {name} ({n} bytes{enc})",
+  "，不是 UTF-8，已按替换字符显示": ", not UTF-8 - shown with replacement characters",
+  "导入失败：": "Import failed: ",
+  "已填入示例（一行一条，像 AT 指令那样）": "Sample filled in (one per line, AT-command style)",
+  "行 {r}, 列 {c}": "Ln {r}, Col {c}",
+  "选中 {n}": "{n} selected",
+  "{n} 字符": "{n} chars",
+  "{n} 字节": "{n} bytes",
+  "{n} 行": "{n} lines",
+
   // 批量文本：缩进那几个小标签
   "2 空格": "2 spaces",
   "4 空格": "4 spaces",
