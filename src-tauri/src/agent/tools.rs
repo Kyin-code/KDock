@@ -323,6 +323,94 @@ offset/limit 按**字符**算，默认从 0 读 8000 字；一次读不完就接
             "dir":{"type":"string","description":"便携类（工具链 / git 仓库）的安装目录；留空就用环境配置页里设置的那个"}
         },"required":["id"]}), true);
 
+    // ── 安卓（ADB）：agent 直接用，不必再靠 local_run 全盘找 adb.exe ──
+    push("adb_devices", "列安卓设备（USB 直连 + 已经连上的无线调试）。想用安卓做什么，先看这个。",
+        json!({"type":"object","properties":{}}), false);
+    push("adb_mdns", "列无线调试的广播（Android 11+ 的 `adb mdns services`）：配对之前先看设备叫什么、在哪个 IP:端口。",
+        json!({"type":"object","properties":{}}), false);
+    push("adb_connect", "连一台无线调试设备（`adb connect`）。前提是设备上已经打开「开发者选项 → 无线调试」，并且已经配对过。",
+        json!({"type":"object","properties":{
+            "host":{"type":"string","description":"设备 IP，也可以直接给 IP:端口"},
+            "port":{"type":"string","description":"端口，默认 5555（Android 11+ 的无线调试端口是设备上显示的随机端口，要用它）"}
+        },"required":["host"]}), false);
+    push("adb_pair", "配对新设备（Android 11+ 的「使用配对码配对设备」）：要填设备上显示的 IP:端口 + 6 位配对码。配对成功后还要 adb_connect 到它「无线调试」页面上显示的那个端口。",
+        json!({"type":"object","properties":{
+            "host":{"type":"string"},
+            "port":{"type":"string","description":"配对端口（设备上「使用配对码配对设备」弹窗里那个）"},
+            "code":{"type":"string","description":"6 位配对码"}
+        },"required":["host","port","code"]}), false);
+    push("adb_shell", "在安卓设备上跑一条 shell 命令（getprop / dumpsys / pm list packages / ls /sdcard / screencap …），返回退出码和输出。serial 从 adb_devices 拿。",
+        json!({"type":"object","properties":{
+            "serial":{"type":"string","description":"设备序列号（adb_devices 里的 serial）"},
+            "cmd":{"type":"string"},
+            "timeout_ms":{"type":"integer","description":"默认 20000"}
+        },"required":["serial","cmd"]}), false);
+    push("adb_screenshot", "给安卓设备截屏（走 adb exec-out screencap）并存成 PNG，默认存到这个会话的工作区。",
+        json!({"type":"object","properties":{
+            "serial":{"type":"string"},
+            "save_as":{"type":"string","description":"相对工作区的文件名，默认 adb_shot_<时间>.png"}
+        },"required":["serial"]}), false);
+    push("adb_push", "本机文件 → 安卓设备。",
+        json!({"type":"object","properties":{
+            "serial":{"type":"string"},
+            "local":{"type":"string","description":"本机路径（相对工作区也行）"},
+            "remote":{"type":"string","description":"设备上的目标路径"}
+        },"required":["serial","local","remote"]}), false);
+    push("adb_pull", "安卓设备上的文件 → 本机（默认存到这个会话的工作区）。",
+        json!({"type":"object","properties":{
+            "serial":{"type":"string"},
+            "remote":{"type":"string"},
+            "save_as":{"type":"string","description":"相对工作区的保存名"}
+        },"required":["serial","remote"]}), false);
+    push("adb_install", "给安卓设备装 APK（reinstall=true 就是覆盖安装）。",
+        json!({"type":"object","properties":{
+            "serial":{"type":"string"},
+            "apk":{"type":"string","description":"本机 APK 路径"},
+            "reinstall":{"type":"boolean","description":"默认 true"}
+        },"required":["serial","apk"]}), false);
+
+    // ── 屏幕（本机桌面 / VNC / RTSP / RTMP / H.264）：一条真正能用的"看屏 + 操作"通道 ──
+    push("screen_open", "开一路屏幕会话，拿 session id。kind=vnc 时能**被控制端回传鼠标键盘**（screen_pointer / screen_key / screen_type）；kind=desktop/rtsp/rtmp/h264 只能看。会话一直活着，不用了记得 screen_close。",
+        json!({"type":"object","properties":{
+            "kind":{"type":"string","enum":["vnc","desktop","rtsp","rtmp","h264"],"description":"默认 vnc"},
+            "host":{"type":"string","description":"vnc 的服务器地址"},
+            "port":{"type":"integer","description":"vnc 端口，默认 5900"},
+            "password":{"type":"string","description":"vnc 密码（没设就留空）"},
+            "url":{"type":"string","description":"rtsp://… / rtmp://… / 本地 .h264 路径"},
+            "monitor":{"type":"integer","description":"kind=desktop 时的显示器序号，默认 0"},
+            "fps":{"type":"integer","description":"默认 8，最高 60"},
+            "quality":{"type":"integer","description":"JPEG 画质 20-95，默认 70"},
+            "scale":{"type":"number","description":"缩放，1=原始；0.5 省带宽"},
+            "view_only":{"type":"boolean","description":"true = 只看不动（VNC）"}
+        }}), false);
+    push("screen_list", "列当前活着的屏幕会话（id / 类型 / 标签）。", json!({"type":"object","properties":{}}), false);
+    push("screen_shot", "把某一路屏幕会话的**当前画面**存成 PNG（默认存工作区），返回值里带一张粗字符画：@ = 亮/白、空格 = 暗/黑。字符画只能看版面（窗口在哪、画面有没有变），**读不了文字** —— 要读文字得让用户开视觉模型或另配 OCR。",
+        json!({"type":"object","properties":{
+            "session":{"type":"integer","description":"screen_open 返回的 id"},
+            "save_as":{"type":"string","description":"相对工作区的文件名，默认 shot_<时间>.png"}
+        },"required":["session"]}), false);
+    push("screen_pointer", "把对方屏幕上的鼠标移到 (x,y)；click=true 就点一下左键。**会真的操作对方机器**，只在 kind=vnc 的会话上有效。",
+        json!({"type":"object","properties":{
+            "session":{"type":"integer"},
+            "x":{"type":"integer"},
+            "y":{"type":"integer"},
+            "click":{"type":"boolean","description":"默认 false（只移动）"},
+            "button":{"type":"string","enum":["left","middle","right"],"description":"默认 left"}
+        },"required":["session","x","y"]}), false);
+    push("screen_key", "按一个键：enter / tab / esc / backspace / delete / space / up / down / left / right / home / end / pgup / pgdn / insert / f1…f12 / ctrl / shift / alt / 单个字符。不给 down 就是「按一下」（按下+抬起）。**会真的敲到对方机器上**（VNC）。",
+        json!({"type":"object","properties":{
+            "session":{"type":"integer"},
+            "key":{"type":"string"},
+            "down":{"type":"boolean","description":"true=只按下，false=只抬起；不给=按一下"}
+        },"required":["session","key"]}), false);
+    push("screen_type", "把一段文字逐字敲进对方屏幕（VNC；大小写按原样，回车用 screen_key enter）。**会真的敲到对方机器上**。",
+        json!({"type":"object","properties":{
+            "session":{"type":"integer"},
+            "text":{"type":"string"}
+        },"required":["session","text"]}), false);
+    push("screen_close", "关掉一路屏幕会话（不给 session 就全关）。", 
+        json!({"type":"object","properties":{"session":{"type":"integer"}}}), false);
+
     t
 }
 
@@ -351,6 +439,8 @@ pub struct ToolCtx<'a> {
     pub perm: &'a str,
     /// perm=ask 时问用户（返回 true 才执行）
     pub approve: &'a dyn Fn(&str, &Value) -> Result<bool, String>,
+    /// 用户在这次会话里点过「本会话都允许」的工具：这些直接放行，不再弹审批
+    pub allowed: &'a dyn Fn(&str) -> bool,
     /// host 工具：发事件给前端并等结果
     pub host: &'a dyn Fn(&str, &Value, u64) -> Result<String, String>,
     /// 进度日志
@@ -716,6 +806,71 @@ mod tests {
         }
     }
 
+    /// adb / screen 这组工具：注册了、该要审批的要、只读的不要、参数名别写错
+    #[test]
+    fn adb_and_screen_tools_are_registered_and_gated() {
+        let names: Vec<&str> = catalog().iter().map(|d| d.name).collect();
+        for n in [
+            "adb_devices", "adb_mdns", "adb_connect", "adb_pair", "adb_shell",
+            "adb_screenshot", "adb_push", "adb_pull", "adb_install",
+        ] {
+            assert!(names.contains(&n), "缺 adb 工具 {n}");
+        }
+        for n in [
+            "screen_open", "screen_list", "screen_shot", "screen_pointer",
+            "screen_key", "screen_type", "screen_close",
+        ] {
+            assert!(names.contains(&n), "缺 screen 工具 {n}");
+        }
+        // 只读 / 无害的：不该弹审批（截图只往工作区写文件）
+        for n in [
+            "adb_devices", "adb_mdns", "adb_connect", "adb_pair", "adb_screenshot",
+            "adb_pull", "screen_open", "screen_list", "screen_shot", "screen_close",
+        ] {
+            assert!(!is_dangerous(n), "{n} 不该要审批");
+        }
+        // 会改设备 / 会操作对方机器的：必须审批
+        for n in ["adb_shell", "adb_push", "adb_install", "screen_pointer", "screen_key", "screen_type"] {
+            assert!(is_dangerous(n), "{n} 必须审批");
+        }
+        // 全是 Rust 侧实现（host 工具要前端配合，这组不能标 host）
+        for n in ["adb_devices", "adb_shell", "screen_open", "screen_shot", "screen_pointer"] {
+            assert!(!is_host(n), "{n} 不该是 host 工具");
+        }
+        // 参数名最容易写错的两个
+        let sh = catalog().into_iter().find(|d| d.name == "adb_shell").unwrap();
+        for k in ["serial", "cmd", "timeout_ms"] {
+            assert!(sh.schema["properties"].as_object().unwrap().contains_key(k), "adb_shell 缺参数 {k}");
+        }
+        let so = catalog().into_iter().find(|d| d.name == "screen_open").unwrap();
+        for k in ["kind", "host", "port", "password", "fps", "quality", "scale", "view_only"] {
+            assert!(so.schema["properties"].as_object().unwrap().contains_key(k), "screen_open 缺参数 {k}");
+        }
+    }
+
+    /// 键名表：常用键都要认得；单个字符按 Unicode → keysym；十六进制也认
+    #[test]
+    fn keysym_table_covers_common_keys() {
+        assert_eq!(keysym_of("enter"), Some(0xff0d));
+        assert_eq!(keysym_of("Enter"), Some(0xff0d));
+        assert_eq!(keysym_of("esc"), Some(0xff1b));
+        assert_eq!(keysym_of("F5"), Some(0xffbe + 4));
+        assert_eq!(keysym_of("a"), Some(b'a' as u32));
+        assert_eq!(keysym_of("中"), Some('中' as u32));
+        assert_eq!(keysym_of("0xff0d"), Some(0xff0d));
+        assert_eq!(keysym_of(" "), Some(0x20), "空格不能被 trim 掉");
+        assert_eq!(keysym_of("a"), Some(0x61));
+        assert_eq!(keysym_of("nosuchkey"), None);
+    }
+
+    /// local_run 的 PATH 前缀要把 KDock 自己装工具的目录带上（它们都在 %ENVDIR% 下）
+    #[test]
+    fn env_path_prefix_mentions_env_dir() {
+        let p = env_path_prefix();
+        assert!(p.contains(&crate::env_setup::env_dir()), "PATH 前缀里没带 %ENVDIR%：{p}");
+    }
+
+    #[test]
     fn port_tools_are_registered_and_gated() {
         let names: Vec<&str> = catalog().iter().map(|d| d.name).collect();
         for n in ["port_list", "port_state", "port_write", "port_read", "port_open", "port_close", "net_local_ips"] {
@@ -766,28 +921,34 @@ pub fn is_dangerous(name: &str) -> bool {
         "link_send" | "device_push" | "firmware_upgrade" | "flash" | "local_run" | "port_write" | "flow_set" | "flow_add_node" | "flow_connect" | "flow_delete"
             | "port_open" | "port_close"
             | "ssh_run"
-            | "workspace_write" | "workspace_mkdir" | "skill_create" | "skill_update"
+            | "skill_create" | "skill_update"
             | "skill_delete" | "flow_run" | "capture_save"
             | "la_config" | "la_capture" | "la_save"
             | "env_install"
+            // 安卓：会改设备状态的动作。截图/取文件只是往工作区写，不拦。
+            | "adb_shell" | "adb_push" | "adb_install"
+            // 屏幕：**会真的操作对方机器**的输入注入
+            | "screen_pointer" | "screen_key" | "screen_type"
     )
 }
 
 pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String> {
     // 权限闸门：只读直接拒；需要批准就先问人
     if is_dangerous(name) || name.starts_with("mcp__") {
-        match ctx.perm {
-            "read" => {
-                return Err(format!(
-                    "当前权限是「只读」，{name} 不执行。要用的话，在输入框下面那行把权限切成「需要批准」或「自动」。"
-                ))
-            }
-            "ask" => {
-                if !(ctx.approve)(name, args)? {
-                    return Err(format!("用户拒绝了 {name}（可以问问他为什么，或者换个做法）"));
+        if !(ctx.allowed)(name) {
+            match ctx.perm {
+                "read" => {
+                    return Err(format!(
+                        "当前权限是「只读」，{name} 不执行。要用的话，在输入框下面那行把权限切成「需要批准」或「自动」。"
+                    ))
                 }
+                "ask" => {
+                    if !(ctx.approve)(name, args)? {
+                        return Err(format!("用户拒绝了 {name}（可以问问他为什么，或者换个做法）"));
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
     if is_host(name) {
@@ -925,6 +1086,22 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "firmware_upgrade" => firmware_upgrade(ctx, args),
         "local_run" => local_run(args),
         "flash" => flash(ctx, args),
+        "adb_devices" => adb_devices_text(),
+        "adb_mdns" => adb_mdns_text(),
+        "adb_connect" => adb_connect_text(args),
+        "adb_pair" => adb_pair_text(args),
+        "adb_shell" => adb_shell_text(args),
+        "adb_screenshot" => adb_screenshot_text(ctx, args),
+        "adb_push" => adb_push_text(ctx, args),
+        "adb_pull" => adb_pull_text(ctx, args),
+        "adb_install" => adb_install_text(ctx, args),
+        "screen_open" => screen_open(ctx, args),
+        "screen_list" => screen_list_text(),
+        "screen_shot" => screen_shot(ctx, args),
+        "screen_pointer" => screen_pointer(args),
+        "screen_key" => screen_key(args),
+        "screen_type" => screen_type(args),
+        "screen_close" => screen_close(args),
         "scope" => crate::scope::raw(&arg_str(args, "cmd").ok_or("缺少 cmd")?),
         "scope_connect" => {
             let ip = arg_str(args, "ip").unwrap_or_else(|| "192.168.1.100".into());
@@ -1263,12 +1440,32 @@ fn firmware_upgrade(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         lines.join("\n"), info.payload_size, info.payload_crc32))
 }
 
+/// KDock 自己装的工具（adb / scrcpy / ffmpeg / plink）在哪个目录，拼成 PATH 前缀。
+/// agent 用 local_run 时看到的只是系统 PATH，以前它只能全盘搜（实测白烧好几分钟）。
+fn env_path_prefix() -> String {
+    let d = crate::env_setup::env_dir();
+    let mut parts: Vec<String> = vec![d.clone()];
+    for sub in ["adb", "scrcpy", "plink", "ffmpeg", "ffmpeg\\bin", "platform-tools", "JLink", "openocd"] {
+        let p = format!("{d}\\{sub}");
+        if std::path::Path::new(&p).exists() {
+            parts.push(p);
+        }
+    }
+    parts.join(";")
+}
+
 fn local_run(args: &Value) -> Result<String, String> {
     let cmd = arg_str(args, "cmd").ok_or("缺少 cmd")?;
     let timeout = Duration::from_millis(arg_u64(args, "timeout_ms", 15_000));
     // 引号与输出编码统一走 shell 模块：以前 args(["/C", cmd]) 会被再包一层引号，
     // 命令里的 $_ / $env: 被外层吃掉、结尾的 D:\ 被当成转义引号，中文输出还会变乱码
-    let (code, stdout, stderr) = crate::shell::run(&cmd, timeout.as_millis() as u64, &crate::agent::stop_requested)?;
+    // 再把 KDock 自己的工具目录塞进 PATH 最前面 —— agent 就不用去找 adb/ffmpeg 在哪了
+    let (code, stdout, stderr) = crate::shell::run_with_path(
+        &cmd,
+        timeout.as_millis() as u64,
+        &crate::agent::stop_requested,
+        &env_path_prefix(),
+    )?;
     let mut text = format!("exit={code}\n");
     if !stdout.trim().is_empty() {
         text.push_str(&format!("--- stdout ---\n{}\n", stdout.trim_end()));
@@ -1277,6 +1474,337 @@ fn local_run(args: &Value) -> Result<String, String> {
         text.push_str(&format!("--- stderr ---\n{}\n", stderr.trim_end()));
     }
     Ok(text.chars().take(8000).collect())
+}
+
+/* ───────────────────────── 安卓（ADB） ───────────────────────── */
+
+fn jstr(v: &Value, k: &str) -> String {
+    v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
+}
+
+fn adb_devices_text() -> Result<String, String> {
+    let list = crate::android::adb_devices()?;
+    if list.is_empty() {
+        return Ok("（没有设备）\nUSB：手机要先打开「开发者选项 → USB 调试」，插线后在手机上允许这台电脑。\n无线：设备上打开「无线调试」→ adb_mdns 看广播 → adb_pair 配对 → adb_connect 连它显示的那个端口。".into());
+    }
+    Ok(list
+        .iter()
+        .map(|d| {
+            let mut line = format!("{}  [{}]", jstr(d, "serial"), jstr(d, "state"));
+            let model = jstr(d, "model");
+            if !model.is_empty() {
+                line.push_str(&format!("  {model}"));
+            }
+            if jstr(d, "state") != "device" {
+                line.push_str("   ← 不是 device 状态，先用不了（未授权 / 离线）");
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+fn adb_mdns_text() -> Result<String, String> {
+    let v = crate::android::adb_mdns()?;
+    let raw = jstr(&v, "raw");
+    if raw.trim().is_empty() {
+        Ok("（没发现无线调试广播）\n设备上要打开「无线调试」；两边要在同一网段；刚开机的话等几秒再试。\n\
+            小提示：mDNS 广播的是**配对(pairstate)** 和 **可连接(connect)** 两个端口，它们和 5555 不是一回事。".into())
+    } else {
+        Ok(raw)
+    }
+}
+
+fn adb_port_arg(args: &Value) -> Option<u16> {
+    args.get("port").and_then(|v| {
+        v.as_str()
+            .and_then(|s| s.trim().parse::<u16>().ok())
+            .or_else(|| v.as_u64().map(|n| n as u16))
+    })
+}
+
+fn adb_connect_text(args: &Value) -> Result<String, String> {
+    let host = arg_str(args, "host").ok_or("缺少 host")?;
+    let v = crate::android::adb_connect(host, adb_port_arg(args))?;
+    Ok(format!("adb connect {}：{}", jstr(&v, "target"), jstr(&v, "text")))
+}
+
+fn adb_pair_text(args: &Value) -> Result<String, String> {
+    let host = arg_str(args, "host").ok_or("缺少 host")?;
+    let code = arg_str(args, "code").ok_or("缺少 code（6 位配对码）")?;
+    let v = crate::android::adb_pair(host, adb_port_arg(args), code)?;
+    Ok(format!(
+        "配对成功：{}\n{}\n（接下来 adb_connect 到设备「无线调试」页上显示的那个 **连接** 端口，通常和配对端口不同）",
+        jstr(&v, "target"),
+        jstr(&v, "text")
+    ))
+}
+
+fn adb_shell_text(args: &Value) -> Result<String, String> {
+    let serial = arg_str(args, "serial").ok_or("缺少 serial（先用 adb_devices 看）")?;
+    let cmd = arg_str(args, "cmd").ok_or("缺少 cmd")?;
+    let t = args.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(20_000);
+    let v = crate::android::adb_shell(serial, cmd, Some(t))?;
+    let mut out = format!("exit={}\n", v.get("code").and_then(|x| x.as_i64()).unwrap_or(-1));
+    let so = jstr(&v, "stdout");
+    let se = jstr(&v, "stderr");
+    if !so.trim().is_empty() {
+        out.push_str(&format!("--- stdout ---\n{}\n", so.trim_end()));
+    }
+    if !se.trim().is_empty() {
+        out.push_str(&format!("--- stderr ---\n{}\n", se.trim_end()));
+    }
+    Ok(out.chars().take(8000).collect())
+}
+
+fn adb_screenshot_text(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let serial = arg_str(args, "serial").ok_or("缺少 serial")?;
+    let rel = arg_str(args, "save_as").unwrap_or_else(|| format!("adb_shot_{}.png", crate::now_ms()));
+    let path = ws_path(ctx, &rel)?;
+    let v = crate::android::adb_screenshot(serial, path.to_string_lossy().to_string())?;
+    Ok(format!(
+        "已截图存到 {}（{} 字节）\n（这是**安卓设备自己的屏幕**；KDock 的「安卓 ADB」页也能直接投屏看）",
+        path.display(),
+        v.get("bytes").and_then(|x| x.as_u64()).unwrap_or(0)
+    ))
+}
+
+fn adb_push_text(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let serial = arg_str(args, "serial").ok_or("缺少 serial")?;
+    let local = arg_str(args, "local").ok_or("缺少 local（本机文件）")?;
+    let remote = arg_str(args, "remote").ok_or("缺少 remote（设备上的目标路径）")?;
+    let local_abs = ws_path(ctx, &local)?.to_string_lossy().to_string();
+    let v = crate::android::adb_push(serial, local_abs, remote)?;
+    Ok(jstr(&v, "text"))
+}
+
+fn adb_pull_text(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let serial = arg_str(args, "serial").ok_or("缺少 serial")?;
+    let remote = arg_str(args, "remote").ok_or("缺少 remote（设备上的路径）")?;
+    let rel = arg_str(args, "save_as").unwrap_or_else(|| {
+        std::path::Path::new(&remote)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| format!("adb_pull_{}", crate::now_ms()))
+    });
+    let path = ws_path(ctx, &rel)?;
+    let v = crate::android::adb_pull(serial, remote, path.to_string_lossy().to_string())?;
+    Ok(format!(
+        "已取回 {}（{} 字节）\n{}",
+        path.display(),
+        v.get("bytes").and_then(|x| x.as_u64()).unwrap_or(0),
+        jstr(&v, "text")
+    ))
+}
+
+fn adb_install_text(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let serial = arg_str(args, "serial").ok_or("缺少 serial")?;
+    let apk = arg_str(args, "apk").ok_or("缺少 apk（本机 APK 路径）")?;
+    let apk_abs = ws_path(ctx, &apk)?.to_string_lossy().to_string();
+    let re = args.get("reinstall").and_then(|v| v.as_bool()).unwrap_or(true);
+    let v = crate::android::adb_install(serial, apk_abs, Some(re))?;
+    Ok(jstr(&v, "text"))
+}
+
+/* ───────────────────────── 屏幕（VNC / RTSP / RTMP / H.264） ───────────────────────── */
+
+/// 相对工作区的文件名 → 工作区内的绝对路径（也允许直接给工作区里的绝对路径；跑到外面就拒）
+fn ws_path(ctx: &ToolCtx, rel: &str) -> Result<std::path::PathBuf, String> {
+    let p = std::path::Path::new(rel.trim());
+    let joined = if p.is_absolute() { p.to_path_buf() } else { ctx.workspace.join(p) };
+    let ws = ctx.workspace.canonicalize().unwrap_or_else(|_| ctx.workspace.clone());
+    let probe = joined.parent().unwrap_or(&joined);
+    let parent = probe.canonicalize().unwrap_or_else(|_| probe.to_path_buf());
+    if !parent.starts_with(&ws) {
+        return Err(format!("只能写到这个会话的工作区里（{rel} 看着在外面）"));
+    }
+    Ok(joined)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn screen_open(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let kind = arg_str(args, "kind").unwrap_or_else(|| "vnc".into());
+    let v = crate::remote_screen::rs_open(
+        ctx.app.clone(),
+        kind.clone(),
+        arg_str(args, "host"),
+        args.get("port").and_then(|x| x.as_u64()).map(|n| n as u16),
+        arg_str(args, "password"),
+        arg_str(args, "url"),
+        args.get("fps").and_then(|x| x.as_u64()).map(|n| n as u32),
+        args.get("quality").and_then(|x| x.as_u64()).map(|n| n as u8),
+        args.get("scale").and_then(|x| x.as_f64()).map(|n| n as f32),
+        None,
+        None,
+        arg_str(args, "transport"),
+        args.get("view_only").and_then(|x| x.as_bool()),
+    )?;
+    let id = v.get("id").and_then(|x| x.as_u64()).unwrap_or(0);
+    Ok(format!(
+        "已开屏幕会话 #{id}（{}）\n接下来：screen_shot 截图；kind=vnc 时还能 screen_pointer / screen_key / screen_type 操作对面；不用了 screen_close。",
+        jstr(&v, "label")
+    ))
+}
+
+fn screen_list_text() -> Result<String, String> {
+    let list = crate::remote_screen::rs_list();
+    if list.is_empty() {
+        return Ok("（没有活着的屏幕会话；screen_open 开一路）".into());
+    }
+    Ok(list
+        .iter()
+        .map(|s| {
+            format!(
+                "#{}  {}  {}",
+                s.get("id").and_then(|x| x.as_u64()).unwrap_or(0),
+                jstr(s, "kind"),
+                jstr(s, "label")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+fn screen_shot(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let id = args.get("session").and_then(|v| v.as_u64()).ok_or("缺少 session（screen_open 给的 id）")? as u32;
+    let rel = arg_str(args, "save_as").unwrap_or_else(|| format!("shot_{}.png", crate::now_ms()));
+    let path = ws_path(ctx, &rel)?;
+    let v = crate::remote_screen::rs_snapshot(id, Some(path.to_string_lossy().to_string()))?;
+    Ok(format!(
+        "会话 #{}（{}）\nPNG：{}（{} 字节，{}x{}；对方桌面 {}x{}，帧时间 {}ms 前）\n\n字符画（@ 亮 / 空格 暗，只能看版面，读不了文字）：\n{}",
+        id,
+        jstr(&v, "label"),
+        path.display(),
+        v.get("bytes").and_then(|x| x.as_u64()).unwrap_or(0),
+        v.get("w").and_then(|x| x.as_u64()).unwrap_or(0),
+        v.get("h").and_then(|x| x.as_u64()).unwrap_or(0),
+        v.get("nat_w").and_then(|x| x.as_u64()).unwrap_or(0),
+        v.get("nat_h").and_then(|x| x.as_u64()).unwrap_or(0),
+        v.get("age_ms").and_then(|x| x.as_i64()).unwrap_or(0),
+        jstr(&v, "preview"),
+    ))
+}
+
+/// 键名 → X11 keysym（和前端 capKeysym 一张表，别各写一套）
+fn keysym_of(key: &str) -> Option<u32> {
+    // 空格要单独处理：下面做了 trim()，单个空格会被 trim 成空串 → 被当成"认不得这个键"丢掉。
+    // 实测就是这样：agent 敲 `echo abc > f` 时那个空格没了，它只好改用 ${IFS} 绕过去。
+    if key == " " {
+        return Some(0x20);
+    }
+    let k = key.trim();
+    let named: &[(&str, u32)] = &[
+        ("enter", 0xff0d), ("return", 0xff0d), ("tab", 0xff09), ("esc", 0xff1b), ("escape", 0xff1b),
+        ("backspace", 0xff08), ("delete", 0xffff), ("del", 0xffff), ("space", 0x20),
+        ("up", 0xff52), ("down", 0xff54), ("left", 0xff51), ("right", 0xff53),
+        ("home", 0xff50), ("end", 0xff57), ("pgup", 0xff55), ("pgdn", 0xff56), ("insert", 0xff63),
+        ("ctrl", 0xffe3), ("shift", 0xffe1), ("alt", 0xffe9), ("super", 0xffeb),
+        ("caps", 0xffe5), ("num", 0xff7f),
+    ];
+    let low = k.to_ascii_lowercase();
+    if let Some((_, ks)) = named.iter().find(|(n, _)| *n == low) {
+        return Some(*ks);
+    }
+    if let Some(n) = low.strip_prefix('f') {
+        if let Ok(i) = n.parse::<u32>() {
+            if (1..=12).contains(&i) {
+                return Some(0xffbe + i - 1);
+            }
+        }
+    }
+    if let Ok(n) = low.parse::<u32>() {
+        return Some(n); // 直接给 keysym 数值也行
+    }
+    if let Some(hex) = low.strip_prefix("0x") {
+        if let Ok(n) = u32::from_str_radix(hex, 16) {
+            return Some(n); // 0xff0d 这种写法也认
+        }
+    }
+    let mut it = k.chars();
+    let c = it.next()?;
+    if it.next().is_none() {
+        let cp = c as u32;
+        return Some(if cp <= 0xff { cp } else if cp <= 0xffff { cp } else { 0x0100_0000 + cp });
+    }
+    None
+}
+
+fn screen_pointer(args: &Value) -> Result<String, String> {
+    let id = args.get("session").and_then(|v| v.as_u64()).ok_or("缺少 session")? as u32;
+    let x = args.get("x").and_then(|v| v.as_i64()).ok_or("缺少 x")?;
+    let y = args.get("y").and_then(|v| v.as_i64()).ok_or("缺少 y")?;
+    if !(0..=32767).contains(&x) || !(0..=32767).contains(&y) {
+        return Err("x/y 要在 0..32767 之间".into());
+    }
+    let button = arg_str(args, "button").unwrap_or_else(|| "left".into());
+    let mask = match button.as_str() {
+        "middle" => 2u8,
+        "right" => 4u8,
+        _ => 1u8,
+    };
+    crate::remote_screen::rs_pointer(id, x as u16, y as u16, 0)?;
+    if args.get("click").and_then(|v| v.as_bool()).unwrap_or(false) {
+        std::thread::sleep(Duration::from_millis(80));
+        crate::remote_screen::rs_pointer(id, x as u16, y as u16, mask)?;
+        std::thread::sleep(Duration::from_millis(60));
+        crate::remote_screen::rs_pointer(id, x as u16, y as u16, 0)?;
+        Ok(format!("已移动到 ({x},{y}) 并点了一下（{button}）"))
+    } else {
+        Ok(format!("已移动到 ({x},{y})"))
+    }
+}
+
+fn screen_key(args: &Value) -> Result<String, String> {
+    let id = args.get("session").and_then(|v| v.as_u64()).ok_or("缺少 session")? as u32;
+    let key = arg_str(args, "key").ok_or("缺少 key")?;
+    let ks = keysym_of(&key).ok_or_else(|| {
+        format!("认不得这个键：{key}（可以用 enter/tab/esc/backspace/up/down/left/right/home/end/pgup/pgdn/f1-f12，或单个字符）")
+    })?;
+    match args.get("down").and_then(|v| v.as_bool()) {
+        Some(true) => crate::remote_screen::rs_key(id, ks, true)?,
+        Some(false) => crate::remote_screen::rs_key(id, ks, false)?,
+        None => {
+            crate::remote_screen::rs_key(id, ks, true)?;
+            std::thread::sleep(Duration::from_millis(30));
+            crate::remote_screen::rs_key(id, ks, false)?;
+        }
+    }
+    Ok(format!("已按键 {key}（keysym 0x{ks:04X}）"))
+}
+
+fn screen_type(args: &Value) -> Result<String, String> {
+    let id = args.get("session").and_then(|v| v.as_u64()).ok_or("缺少 session")? as u32;
+    let text = arg_str(args, "text").ok_or("缺少 text")?;
+    let mut n = 0usize;
+    for c in text.chars() {
+        let key = match c {
+            '\n' => "enter".to_string(),
+            '\t' => "tab".to_string(),
+            other => other.to_string(),
+        };
+        let Some(ks) = keysym_of(&key) else { continue };
+        crate::remote_screen::rs_key(id, ks, true)?;
+        std::thread::sleep(Duration::from_millis(25));
+        crate::remote_screen::rs_key(id, ks, false)?;
+        std::thread::sleep(Duration::from_millis(25));
+        n += 1;
+    }
+    Ok(format!(
+        "已敲入 {n} 个字符（回车用 enter）\n注意：对方如果没把焦点放在输入框里，字符会丢 —— 先 screen_shot 看画面，必要时 screen_pointer 点一下要输入的地方。"
+    ))
+}
+
+fn screen_close(args: &Value) -> Result<String, String> {
+    match args.get("session").and_then(|v| v.as_u64()) {
+        Some(id) => {
+            crate::remote_screen::rs_stop(id as u32);
+            Ok(format!("已关屏幕会话 #{id}"))
+        }
+        None => {
+            crate::remote_screen::rs_stop_all();
+            Ok("已关掉所有屏幕会话".into())
+        }
+    }
 }
 
 fn which(exe: &str) -> Option<String> {

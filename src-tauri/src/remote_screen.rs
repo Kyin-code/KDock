@@ -45,6 +45,66 @@ struct RsSession {
     kind: String,
     label: String,
     evt: Option<Sender<VncEvt>>,
+    /// 最近一帧（agent 的 screen_shot 要用；界面那条路走 rs://frame 事件）
+    last: Arc<Mutex<Option<LastFrame>>>,
+}
+
+/// 最近一帧的像素（RGB）。太大就压到 ~200 万像素以内再存，别让 4K 会话吃掉几十 MB。
+#[derive(Clone)]
+pub struct LastFrame {
+    /// 原始桌面尺寸（服务器那头报的）
+    pub nat_w: u32,
+    pub nat_h: u32,
+    /// 实际存下来的尺寸（≤ KEEP_MAX_PX 像素）
+    pub w: u32,
+    pub h: u32,
+    pub rgb: Vec<u8>,
+    pub ts: i64,
+}
+
+const KEEP_MAX_PX: u64 = 2_000_000;
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// 把这一帧的 RGB 存成"最近一帧"（超大帧先缩到 KEEP_MAX_PX 以内）
+fn store_last(slot: &Arc<Mutex<Option<LastFrame>>>, rgb: Vec<u8>, w: u32, h: u32, nat_w: u32, nat_h: u32) {
+    let px = (w as u64) * (h as u64);
+    let (rgb, w, h) = if px > KEEP_MAX_PX {
+        let k = (KEEP_MAX_PX as f64 / px as f64).sqrt() as f32;
+        maybe_scale(rgb, w, h, k.max(0.05))
+    } else {
+        (rgb, w, h)
+    };
+    if let Ok(mut g) = slot.lock() {
+        *g = Some(LastFrame { nat_w, nat_h, w, h, rgb, ts: now_ms() });
+    }
+}
+
+/// 把一帧 RGB 画成粗糙的字符画（给看不到图片的 agent 一点版面信息：窗口在哪、有没有变化）
+pub fn ascii_preview(rgb: &[u8], w: u32, h: u32, cols: usize, rows: usize) -> String {
+    if w == 0 || h == 0 || rgb.len() < (w as usize) * (h as usize) * 3 {
+        return String::new();
+    }
+    let ramp = b" .:-=+*#%@";
+    let mut out = String::with_capacity((cols + 1) * rows);
+    for r in 0..rows {
+        for c in 0..cols {
+            let x = (c * w as usize / cols).min(w as usize - 1);
+            let y = (r * h as usize / rows).min(h as usize - 1);
+            let o = (y * w as usize + x) * 3;
+            // 亮度（0.299R + 0.587G + 0.114B）
+            let lum = (rgb[o] as u32 * 299 + rgb[o + 1] as u32 * 587 + rgb[o + 2] as u32 * 114) / 1000;
+            let k = (lum as usize * (ramp.len() - 1) / 255).min(ramp.len() - 1);
+            out.push(ramp[k] as char);
+        }
+        out.push('\n');
+    }
+    out
 }
 
 static RS_SEQ: AtomicU32 = AtomicU32::new(1);
@@ -282,6 +342,7 @@ fn vnc_thread(
     quality: u8,
     scale: f32,
     view_only: bool,
+    last: Arc<Mutex<Option<LastFrame>>>,
     evt: Receiver<VncEvt>,
 ) {
     let addr = match (host.as_str(), port).to_socket_addrs().ok().and_then(|mut it| it.next()) {
@@ -315,6 +376,8 @@ fn vnc_thread(
     let mut need_full = true;
     let frame_ms = (1000 / fps.max(1)) as u64;
     let mut last_emit = Instant::now() - Duration::from_millis(frame_ms);
+    // agent 的 screen_shot 用：最多 500ms 存一帧，别每帧都克隆一份原图
+    let mut last_store = Instant::now() - Duration::from_millis(1000);
     let mut frames = 0u32;
     let mut fps_t0 = Instant::now();
     let mut cur_fps = 0f32;
@@ -469,6 +532,11 @@ fn vnc_thread(
                             }
                             emit_frame(&app, session, tw, th, j, cur_fps);
                         }
+                        // 存一份最近一帧：agent 的 screen_shot 从这儿取（界面那条路仍是 rs://frame）
+                        if last_store.elapsed().as_millis() >= 500 {
+                            store_last(&last, rgb, tw, th, w as u32, h as u32);
+                            last_store = Instant::now();
+                        }
                         dirty = false;
                         last_emit = Instant::now();
                     }
@@ -551,7 +619,18 @@ fn ffmpeg_args(url: &str, transport: &str, w: u32, h: u32, fps: u32) -> Vec<Stri
 }
 
 #[allow(clippy::too_many_arguments)]
-fn ffmpeg_thread(app: AppHandle, session: u32, stop: Arc<AtomicBool>, url: String, transport: String, w: u32, h: u32, fps: u32, quality: u8) {
+fn ffmpeg_thread(
+    app: AppHandle,
+    session: u32,
+    stop: Arc<AtomicBool>,
+    url: String,
+    transport: String,
+    w: u32,
+    h: u32,
+    fps: u32,
+    quality: u8,
+    last: Arc<Mutex<Option<LastFrame>>>,
+) {
     let exe = match find_ffmpeg() {
         Some(p) => p,
         None => {
@@ -621,6 +700,7 @@ fn ffmpeg_thread(app: AppHandle, session: u32, stop: Arc<AtomicBool>, url: Strin
     let mut frames = 0u32;
     let mut fps_t0 = Instant::now();
     let mut cur_fps = 0f32;
+    let mut last_store = Instant::now() - Duration::from_millis(1000);
     while !stop.load(Ordering::Relaxed) {
         let t0 = Instant::now();
         if out.read_exact(&mut buf).is_err() {
@@ -639,6 +719,11 @@ fn ffmpeg_thread(app: AppHandle, session: u32, stop: Arc<AtomicBool>, url: Strin
                 fps_t0 = Instant::now();
             }
             emit_frame(&app, session, w, h, j, cur_fps);
+        }
+        // 存一份最近一帧给 agent 的 screen_shot（500ms 一次，别每帧克隆）
+        if last_store.elapsed().as_millis() >= 500 {
+            store_last(&last, rgb.clone(), w, h, w, h);
+            last_store = Instant::now();
         }
         let used = t0.elapsed().as_millis() as u64;
         if used < frame_ms {
@@ -690,8 +775,10 @@ pub fn rs_open(
             let (tx, rx) = channel::<VncEvt>();
             let (a2, st2) = (app.clone(), stop.clone());
             let (h2, pw, sc, vo) = (host.clone(), password.unwrap_or_default(), scale, view_only.unwrap_or(false));
-            std::thread::spawn(move || vnc_thread(a2, id, st2, h2, port, pw, fps, quality, sc, vo, rx));
-            RS.lock().expect("rs mutex").insert(id, RsSession { stop, kind: kind.clone(), label: format!("VNC {host}:{port}"), evt: Some(tx) });
+            let last = Arc::new(Mutex::new(None));
+            let last2 = last.clone();
+            std::thread::spawn(move || vnc_thread(a2, id, st2, h2, port, pw, fps, quality, sc, vo, last2, rx));
+            RS.lock().expect("rs mutex").insert(id, RsSession { stop, kind: kind.clone(), label: format!("VNC {host}:{port}"), evt: Some(tx), last });
             format!("VNC {host}:{port}")
         }
         "rtsp" | "rtmp" | "h264" | "ffmpeg" => {
@@ -703,8 +790,10 @@ pub fn rs_open(
             let h = size_h.unwrap_or(720).clamp(64, 2160);
             let tr = transport.unwrap_or_else(|| "tcp".into());
             let (a2, st2, u2) = (app.clone(), stop.clone(), url.clone());
-            std::thread::spawn(move || ffmpeg_thread(a2, id, st2, u2, tr, w, h, fps, quality));
-            RS.lock().expect("rs mutex").insert(id, RsSession { stop, kind: kind.clone(), label: format!("{} {url}", kind.to_uppercase()), evt: None });
+            let last = Arc::new(Mutex::new(None));
+            let last2 = last.clone();
+            std::thread::spawn(move || ffmpeg_thread(a2, id, st2, u2, tr, w, h, fps, quality, last2));
+            RS.lock().expect("rs mutex").insert(id, RsSession { stop, kind: kind.clone(), label: format!("{} {url}", kind.to_uppercase()), evt: None, last });
             format!("{kind} {url}")
         }
         other => return Err(format!("不认识的来源：{other}（vnc / rtsp / rtmp / h264）")),
@@ -758,6 +847,56 @@ pub fn rs_key(id: u32, keysym: u32, down: bool) -> Result<(), String> {
         let _ = tx.send(VncEvt::Key { keysym, down });
     }
     Ok(())
+}
+
+/// 把某个会话**当前这一帧**存成 PNG —— 给 agent 的 screen_shot 用。
+///
+/// 为什么要存文件：模型自己看不到像素（Kimi/DeepSeek 这类文本模型）或要交给别的工具看图，
+/// 所以这里把帧落到磁盘，同时回一张粗字符画让它至少能判断"窗口在哪、画面变没变"。
+#[tauri::command]
+pub fn rs_snapshot(id: u32, save_to: Option<String>) -> Result<Value, String> {
+    let (label, kind, mut frame) = {
+        let g = RS.lock().expect("rs mutex");
+        let s = g.get(&id).ok_or_else(|| format!("会话 {id} 不在（先用 screen_open 开一路）"))?;
+        let f = s.last.lock().map_err(|_| "帧缓存锁坏了".to_string())?.clone();
+        (s.label.clone(), s.kind.clone(), f)
+    };
+    // 刚开的会话往往还没收到第一帧（VNC 握手 + 首个全量要一两秒）——
+    // 这里等一等，别让 agent 刚 screen_open 就白挨一次 "还没收到画面"。
+    let mut waited = 0u64;
+    while frame.is_none() && waited < 10_000 {
+        std::thread::sleep(Duration::from_millis(120));
+        waited += 120;
+        if let Ok(g) = RS.lock() {
+            if let Some(s) = g.get(&id) {
+                frame = s.last.lock().map(|x| x.clone()).unwrap_or(None);
+            } else {
+                break;
+            }
+        }
+    }
+    let Some(f) = frame else {
+        return Err(format!("{label}：等了 10 秒还没收到画面（服务端没推帧？检查对端 VNC 是不是在共享桌面）"));
+    };
+    let preview = ascii_preview(&f.rgb, f.w, f.h, 72, 22);
+    let img = image::RgbImage::from_raw(f.w, f.h, f.rgb).ok_or("帧数据不完整")?;
+    let path = save_to.unwrap_or_else(|| format!("shot_{}.png", now_ms()));
+    let bytes = {
+        use image::ImageEncoder;
+        let mut buf: Vec<u8> = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut buf)
+            .write_image(img.as_raw(), f.w, f.h, image::ColorType::Rgb8.into())
+            .map_err(|e| format!("编码 PNG 失败: {e}"))?;
+        std::fs::write(&path, &buf).map_err(|e| format!("写 {path} 失败: {e}"))?;
+        buf.len()
+    };
+    Ok(json!({
+        "path": path, "bytes": bytes, "label": label, "kind": kind,
+        "w": f.w, "h": f.h, "nat_w": f.nat_w, "nat_h": f.nat_h,
+        "age_ms": (now_ms() - f.ts).max(0),
+        "preview": preview,
+        "hint": "preview 是粗字符画：@ = 亮/白，空格 = 暗/黑；它只能看版面（窗口位置/画面有没有变），读不了文字。",
+    }))
 }
 
 #[tauri::command]

@@ -3586,6 +3586,10 @@ pub fn run() {
                 // ── 安卓（ADB）：设备 / shell / 推拉 / APK / 投屏 / 反向控制 / scrcpy ──
                 android::adb_status,
                 android::adb_devices,
+                android::adb_mdns,
+                android::adb_connect,
+                android::adb_pair,
+                android::adb_disconnect,
                 android::adb_shell,
                 android::adb_push,
                 android::adb_pull,
@@ -3606,6 +3610,7 @@ pub fn run() {
                 remote_screen::rs_list,
                 remote_screen::rs_pointer,
                 remote_screen::rs_key,
+                remote_screen::rs_snapshot,
                 remote_screen::rs_ffmpeg,
             // ── Agent ──
             agent::agent_config_get,

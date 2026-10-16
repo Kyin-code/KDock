@@ -19,6 +19,17 @@ use super::store::agent_dir;
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
+/// agent 当前会话的工作区。给 `server-filesystem` 这类 MCP 自动带上当"可访问目录"：
+/// 配置里往往只写死了某一个目录（实测用户那份是 D:\env），于是 agent 看不到自己的工作区、
+/// 只能把文件拷到那个目录里再看 —— 既费事又留下垃圾。
+static EXTRA_ROOTS: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+pub fn set_extra_roots(roots: Vec<String>) {
+    if let Ok(mut g) = EXTRA_ROOTS.lock() {
+        *g = roots;
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(from = "RawMcp")]
 pub struct McpServer {
@@ -182,6 +193,21 @@ impl Client {
         #[cfg(not(windows))]
         let needs_shell = false;
 
+        // filesystem 这类 server：把 agent 当前工作区也当成可访问目录加进去
+        let is_fs_server = srv.command.to_lowercase().contains("server-filesystem")
+            || srv.args.iter().any(|a| a.to_lowercase().contains("server-filesystem"));
+        let mut extra: Vec<String> = Vec::new();
+        if is_fs_server {
+            if let Ok(g) = EXTRA_ROOTS.lock() {
+                for r in g.iter() {
+                    let r = r.trim();
+                    if !r.is_empty() && !srv.args.iter().any(|a| a.trim().eq_ignore_ascii_case(r)) {
+                        extra.push(r.to_string());
+                    }
+                }
+            }
+        }
+
         let mut cmd = if needs_shell {
             #[cfg(windows)]
             let c = Command::new("cmd");
@@ -195,6 +221,7 @@ impl Client {
             // 命令 + 参数先拼成"一整条命令行"，再交给 shell。
             let mut parts = vec![cmd_quote(&srv.command)];
             parts.extend(srv.args.iter().map(|a| cmd_quote(a)));
+            parts.extend(extra.iter().map(|a| cmd_quote(a)));
             let line = parts.join(" ");
             #[cfg(windows)]
             {
@@ -216,6 +243,7 @@ impl Client {
         }
         if !needs_shell {
             cmd.args(&srv.args);
+            cmd.args(&extra);
         }
         for (k, v) in &srv.env {
             cmd.env(k, v);

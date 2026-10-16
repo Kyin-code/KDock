@@ -87,6 +87,28 @@ pub fn spawn(cmd: &str) -> std::io::Result<std::process::Child> {
         .spawn()
 }
 
+/// 跑命令前先把几个目录塞到 PATH 最前面。
+///
+/// 为什么：agent 用 local_run 时看的是**系统 PATH**，而 KDock 自己装的东西（adb / scrcpy /
+/// ffmpeg / plink）都在 `%ENVDIR%` 下 —— 它看不见，只能全盘 `Get-ChildItem -Recurse` 去找，
+/// 实测白烧好几分钟、还找不到我们的那份。这里等价于"KDock 装的东西默认就能直接调"。
+pub fn run_with_path(
+    cmd: &str,
+    timeout_ms: u64,
+    should_stop: &dyn Fn() -> bool,
+    extra_path: &str,
+) -> Result<(i32, String, String), String> {
+    let prefix = extra_path.trim();
+    if prefix.is_empty() {
+        return run(cmd, timeout_ms, should_stop);
+    }
+    #[cfg(windows)]
+    let patched = format!("set \"PATH={prefix};%PATH%\" && {cmd}");
+    #[cfg(not(windows))]
+    let patched = format!("PATH=\"{prefix}:$PATH\" {cmd}");
+    run(&patched, timeout_ms, should_stop)
+}
+
 /// 跑完（或超时/被叫停）返回 (退出码, stdout, stderr)。文本已按本机代码页解好。
 pub fn run(cmd: &str, timeout_ms: u64, should_stop: &dyn Fn() -> bool) -> Result<(i32, String, String), String> {
     let mut child = spawn(cmd).map_err(|e| format!("起进程失败: {e}"))?;

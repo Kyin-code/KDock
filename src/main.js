@@ -3140,6 +3140,62 @@ async function adbInit() {
 function bindAdb() {
   adbOnShow();
   $("adb-refresh").onclick = () => adbRefreshDevices();
+  // ── 无线调试（Android 11+）：配对 → 连接 ──
+  const wlLog = (t) => {
+    const box = $("adb-wl-log");
+    if (!box) return;
+    box.hidden = false;
+    box.textContent += t + "\n";
+  };
+  const wlArgs = () => {
+    const raw = $("adb-wl-host").value.trim();
+    const port = Number($("adb-wl-port").value) || null;
+    const [h, p] = raw.includes(":") ? raw.split(":") : [raw, ""];
+    return { host: h, port: port || (p ? Number(p) : null) };
+  };
+  if ($("adb-mdns")) $("adb-mdns").onclick = async () => {
+    wlLog("$ adb mdns services");
+    try {
+      const r = await invoke("adb_mdns");
+      wlLog((r.raw || "").trim() || en("（没发现广播：设备上要打开「无线调试」，两边要在同一网段）"));
+      // 广播里带 IP:端口 的话，顺手填进上面的输入框，省得手抄
+      const m = /(\d+\.\d+\.\d+\.\d+):(\d+)/.exec(r.raw || "");
+      if (m && !$("adb-wl-host").value.trim()) {
+        $("adb-wl-host").value = m[1];
+        $("adb-wl-port").value = m[2];
+      }
+    } catch (e) { wlLog("失败：" + e); }
+  };
+  if ($("adb-pair")) $("adb-pair").onclick = async () => {
+    const a = wlArgs();
+    const code = $("adb-wl-code").value.trim();
+    if (!a.host || !a.port || !code) { toast(en("配对要填 地址 + 配对端口 + 6 位配对码")); return; }
+    wlLog(`$ adb pair ${a.host}:${a.port} ${code}`);
+    try {
+      const r = await invoke("adb_pair", { host: a.host, port: a.port, code });
+      wlLog(r.text || en("配对成功，接着点「连接」（端口通常和配对端口不同）"));
+      pushSys("[ADB] " + en("配对成功，接着点「连接」（端口通常和配对端口不同）"));
+    } catch (e) { wlLog(en("配对失败：") + e); toast(String(e)); }
+  };
+  if ($("adb-connect")) $("adb-connect").onclick = async () => {
+    const a = wlArgs();
+    if (!a.host) { toast("要填设备地址"); return; }
+    wlLog(`$ adb connect ${a.host}:${a.port || 5555}`);
+    try {
+      const r = await invoke("adb_connect", { host: a.host, port: a.port });
+      wlLog(r.text || "已连接");
+      await adbRefreshDevices(true);
+    } catch (e) { wlLog(en("连接失败：") + e); toast(String(e)); }
+  };
+  if ($("adb-disconnect")) $("adb-disconnect").onclick = async () => {
+    const a = wlArgs();
+    if (!a.host) { toast("要填设备地址"); return; }
+    try {
+      const r = await invoke("adb_disconnect", { host: a.host, port: a.port });
+      wlLog(r.text || "已断开");
+      await adbRefreshDevices(true);
+    } catch (e) { wlLog(en("断开失败：") + e); }
+  };
   $("adb-mir").onclick = adbMirrorStart;
   $("adb-mir-stop").onclick = () => adbStopMirror();
   $("adb-scrcpy").onclick = async () => {
@@ -9232,13 +9288,21 @@ async function bindAgentEvents() {
     yes.className = "btn small primary"; yes.textContent = "允许";
     const no = document.createElement("button");
     no.className = "btn small danger"; no.textContent = "拒绝";
-    const done = async (ok) => {
-      acts.innerHTML = `<span class="hint">${ok ? "已允许" : "已拒绝"}</span>`;
-      await invoke("agent_approval_result", { id: p.id, ok }).catch(() => {});
+    // 「本会话都允许」：一次任务里同一个工具能弹十几次，点烦了 —— 给一条"别再问了"的路
+    const always = document.createElement("button");
+    always.className = "btn small";
+    always.textContent = "本会话都允许";
+    always.title = `这个会话里再遇到「${p.tool}」就直接放行，不再问`;
+    const done = async (ok, all) => {
+      acts.innerHTML = `<span class="hint">${ok ? (all ? `已允许（本会话内不再问 ${p.tool}）` : "已允许") : "已拒绝"}</span>`;
+      await invoke("agent_approval_result", {
+        id: p.id, ok, always: all ? p.tool : null, session: all ? (p.session || (agMeta && agMeta.id) || null) : null,
+      }).catch(() => {});
     };
-    yes.onclick = () => done(true);
-    no.onclick = () => done(false);
-    acts.appendChild(yes); acts.appendChild(no);
+    yes.onclick = () => done(true, false);
+    always.onclick = () => done(true, true);
+    no.onclick = () => done(false, false);
+    acts.appendChild(yes); acts.appendChild(always); acts.appendChild(no);
     card.appendChild(ttl); card.appendChild(pre); card.appendChild(acts);
     box.appendChild(card);
     agScrollTail(true);
@@ -9286,6 +9350,25 @@ async function bindAgentEvents() {
 let LANG = localStorage.getItem("kdock_lang") === "zh" ? "zh" : "en";
 const EN = {
   "调试": "Debug", "设备": "Device", "工具": "Tools",
+  // 安卓 ADB：无线调试（Android 11+）
+  "无线调试（Android 11+）": "Wireless debugging (Android 11+)",
+  "找设备": "Find devices",
+  "列出局域网里正在广播的无线调试设备（adb mdns services）": "List wireless-debugging devices advertising on the LAN (adb mdns services)",
+  "配对": "Pair", "配对码": "Pairing code",
+  "手机「使用配对码配对设备」里那 6 位": "the 6 digits from “Pair device with pairing code”",
+  "192.168.1.37 或 192.168.1.37:37000": "192.168.1.37 or 192.168.1.37:37000",
+  "adb pair（只用一次；配对成功后再点「连接」）": "adb pair (one-off; then hit Connect)",
+  "adb connect：连到无线调试页面上显示的那个端口": "adb connect: use the port shown on the device's wireless-debugging screen",
+  "重新列设备（新插的线 / 新开的无线调试点这个）": "Re-list devices (after plugging in a cable or enabling wireless debugging)",
+  "没看到设备？两条路：① USB：手机打开「开发者选项 → USB 调试」，插线后在手机上允许这台电脑；② 无线调试（Android 11+）：手机打开「开发者选项 → 无线调试」，先用下面的「配对」填手机弹窗上的地址和配对码，再「连接」到无线调试页面上显示的那个端口。":
+    "No device? Two ways: (1) USB — enable Developer options → USB debugging and allow this PC on the phone; (2) Wireless debugging (Android 11+) — enable Developer options → Wireless debugging, use Pair below with the address and pairing code shown on the phone, then Connect to the port shown on the phone's wireless-debugging screen.",
+  "（没发现广播：设备上要打开「无线调试」，两边要在同一网段）": "(no advertisement found: enable Wireless debugging on the device and keep both on the same subnet)",
+  "配对要填 地址 + 配对端口 + 6 位配对码": "Pairing needs the address, the pairing port and the 6-digit code",
+  "配对成功，接着点「连接」（端口通常和配对端口不同）": "Paired. Now hit Connect (the connect port usually differs from the pairing port)",
+  "配对失败：": "Pairing failed: ", "连接失败：": "Connect failed: ", "断开失败：": "Disconnect failed: ", "失败：": "Failed: ",
+  // 审批卡
+  "本会话都允许": "Allow for this session",
+  "已允许": "Allowed", "已拒绝": "Denied",
   "传输": "Transfer", "命令表": "Commands", "固件升级": "Firmware", "烧录": "Flash",
   "文件管理": "Files", "实时图表": "Charts", "中控编排": "Flow", "示波器": "Scope",
   "屏幕捕获": "Capture", "逻辑分析仪": "Logic",

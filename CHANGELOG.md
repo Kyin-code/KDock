@@ -18,6 +18,17 @@
 ## [未发布]
 
 ### 新增
+- **agent 能直接调安卓 ADB 了**（以前只能靠本机命令硬啃）：新增 `adb_devices / adb_mdns /
+  adb_connect / adb_pair / adb_shell / adb_screenshot / adb_push / adb_pull / adb_install`，
+  和「安卓 ADB」页共用同一套后端（`android.rs`）。
+- **agent 能直接开屏幕会话并操作对面**：新增 `screen_open / screen_list / screen_shot /
+  screen_pointer / screen_key / screen_type / screen_close`（复用「屏幕共享」页那套 RFB 实现，
+  所以 VNC 会话**键鼠回传**一并可用）。`screen_shot` 把当前帧存成 PNG 落到工作区，并回一张
+  粗字符画 —— 给**没有视觉能力**的模型一点版面信息（窗口在哪、画面有没有变）。
+- **「安卓 ADB」页新增无线调试（Android 11+）**：找设备（`adb mdns services`）/ 配对（配对码）/
+  连接 / 断开。以前这页只认 USB 插线，无线调试的设备**根本没有入口**。
+- **审批卡新增「本会话都允许」**：同一个工具（例如 `adb_shell`）在本次会话里不再反复弹窗 ——
+  实测一个任务能弹十几次。
 - **环境配置**新增 7 个组件（都能检测 + 一键安装）：Android Platform Tools（adb）、scrcpy、FFmpeg、
   Tftpd64、OpenSSH 客户端（DISM 可选组件）、OpenSSH 服务端（sshd）、PuTTY plink。
   清单里新增 `%ENVDIR%` 占位符与"下载单文件"（`Plan::Fetch`）两种能力；
@@ -38,6 +49,19 @@
   （不链接它的库，规避 GPL/LGPL）；画面支持全屏按钮与 F11/Esc，全屏时键鼠直接作用到被控端。
 
 ### 修复
+- **输出被 max_tokens 截断后不再静默结束**：以前 `finish_reason=length` 时循环直接退出 ——
+  要是思考把额度吃光了，正文一个字都没有，用户看到的是"它停在那儿、什么都没说"（实测就是这样）。
+  现在会自动续写（最多 3 次）并留一条注记；真的一点产出都没有时也会明说，不再装没事。
+- **`screen_type` 会吞掉空格**：键名表里对入参做了 `trim()`，单个空格被 trim 成空串后当作
+  "认不得这个键"丢掉 —— `echo abc > f` 会被敲成 `echoabc>f`。agent 自己撞上并绕过（改用
+  `${IFS}`），已修（空格单独处理）。
+- **agent 的「本机命令」自动带上 KDock 装工具的目录**（`%ENVDIR%` 及其下的 adb / scrcpy /
+  ffmpeg / plink）：以前它只看到系统 PATH，连 adb.exe 都要全盘搜（实测白烧好几分钟）。
+- **filesystem 这类 MCP 自动加上当前会话的工作区**：配置里往往只写死了某一个目录（实测那份是
+  `D:\env`），agent 看不到自己的工作区，只能把文件拷过去再看，既费事又留垃圾。
+- `screen_shot` 会**等第一帧**（刚 `screen_open` 就截图不再立刻报"还没收到画面"）。
+- 工作区内的写文件（`workspace_write` / `workspace_mkdir`）不再要审批：改的是 agent 自己的工作区，
+  以前每写个脚本都要点一次"允许"。
 - **agent 的「本机命令」修了两个老毛病**（都是实测踩出来的）：
   ① 命令会被外层再包一层引号 —— `$_`、`$env:x` 被吃掉（`$_.Name` 变成 `.Name`）、
   结尾的 `D:\` 被当成转义引号（`dir /b D:\` 直接报语法错）；现在用 `raw_arg` 把命令

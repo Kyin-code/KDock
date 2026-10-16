@@ -405,6 +405,9 @@ pub struct SessionMeta {
     /// 权限：read(只读) / ask(危险动作先问) / auto(自动)
     #[serde(default = "default_perm")]
     pub perm: String,
+    /// 用户点过「本会话都允许」的工具名：这些不再弹审批（一次任务里点 20 多次太累）
+    #[serde(default)]
+    pub allow: Vec<String>,
     /// 用户用 `/goal` 设定的目标（一直生效，每轮都会进系统提示）
     #[serde(default)]
     pub goal: String,
@@ -535,6 +538,7 @@ pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<Sess
         usage_recent: Vec::new(),
         turns: 0,
         perm: default_perm(),
+        allow: Vec::new(),
         goal: String::new(),
         user_name: String::new(),
         agent_name: String::new(),

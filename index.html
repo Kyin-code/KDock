@@ -2228,7 +2228,31 @@
             <select id="adb-dev"></select>
           </div>
           <div class="state"><span class="dot" id="adb-state">未检测</span></div>
-          <p class="hint" id="adb-hint">没看到设备？手机要先打开「开发者选项 → USB 调试」，插线后在手机上允许这台电脑。</p>
+          <p class="hint" id="adb-hint">没看到设备？两条路：① USB：手机打开「开发者选项 → USB 调试」，插线后在手机上允许这台电脑；② 无线调试（Android 11+）：手机打开「开发者选项 → 无线调试」，先用下面的「配对」填手机弹窗上的地址和配对码，再「连接」到无线调试页面上显示的那个端口。</p>
+
+          <div class="cardtitle">无线调试（Android 11+）
+            <span class="grow"></span>
+            <button id="adb-mdns" class="btn small" title="列出局域网里正在广播的无线调试设备（adb mdns services）">找设备</button>
+          </div>
+          <div class="field">
+            <label for="adb-wl-host">地址</label>
+            <div class="inline">
+              <input id="adb-wl-host" class="grow" placeholder="192.168.1.37 或 192.168.1.37:37000" />
+              <input id="adb-wl-port" type="number" class="num" placeholder="端口" />
+            </div>
+          </div>
+          <div class="field">
+            <label for="adb-wl-code">配对码</label>
+            <div class="inline">
+              <input id="adb-wl-code" class="grow" placeholder="手机「使用配对码配对设备」里那 6 位" />
+              <button id="adb-pair" class="btn small" title="adb pair（只用一次；配对成功后再点「连接」）">配对</button>
+            </div>
+          </div>
+          <div class="btnrow">
+            <button id="adb-connect" class="btn primary" title="adb connect：连到无线调试页面上显示的那个端口">连接</button>
+            <button id="adb-disconnect" class="btn" title="adb disconnect">断开</button>
+          </div>
+          <pre id="adb-wl-log" class="dbgout adblog" hidden></pre>
 
           <div class="cardtitle">投屏</div>
           <div class="field"><label for="adb-fps">帧率</label><input id="adb-fps" type="number" min="1" max="30" value="6" class="num" /> fps</div>

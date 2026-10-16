@@ -143,6 +143,80 @@ pub fn adb_devices() -> Result<Vec<Value>, String> {
     Ok(list)
 }
 
+/// 把 "IP" / "IP:端口" 拼成 adb 要的 target（默认 5555）
+fn adb_target(host: &str, port: Option<u16>, def_port: u16) -> Result<String, String> {
+    let h = host.trim();
+    if h.is_empty() {
+        return Err("要填设备地址（IP 或 IP:端口）".into());
+    }
+    if h.contains(':') {
+        Ok(h.to_string())
+    } else {
+        Ok(format!("{}:{}", h, port.unwrap_or(def_port)))
+    }
+}
+
+/// 无线调试列表（Android 11+ 的 `adb mdns services`）：配对/连接前先看这个
+#[tauri::command]
+pub fn adb_mdns() -> Result<Value, String> {
+    let (_, out, err) = adb_run(&["mdns", "services"], 15_000)?;
+    let text = if out.trim().is_empty() { err.trim().to_string() } else { out };
+    let list: Vec<String> = text
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.to_lowercase().starts_with("list of discovered"))
+        .map(|l| l.to_string())
+        .collect();
+    Ok(json!({ "raw": text.trim(), "list": list }))
+}
+
+/// 连一台（已配对的）无线调试设备：`adb connect IP[:端口]`，默认 5555
+#[tauri::command]
+pub fn adb_connect(host: String, port: Option<u16>) -> Result<Value, String> {
+    let target = adb_target(&host, port, 5555)?;
+    let (code, out, err) = adb_run(&["connect", &target], 30_000)?;
+    let text = format!("{}{}", out.trim(), err.trim());
+    let low = text.to_lowercase();
+    // adb 的"失败"并不总体现在退出码上：得看词
+    let bad = ["failed", "cannot", "refused", "unable", "no route", "timed out"]
+        .iter()
+        .any(|k| low.contains(k));
+    if bad {
+        return Err(format!(
+            "连 {target} 失败：{text}\n（Android 11+ 的无线调试要先在设备上打开「无线调试」，\
+             用设备上显示的配对码在这里先配对；配对端口和连接端口不是同一个）"
+        ));
+    }
+    Ok(json!({ "target": target, "code": code, "text": text }))
+}
+
+/// 配对新设备（Android 11+）：`adb pair IP:配对端口 配对码`
+#[tauri::command]
+pub fn adb_pair(host: String, port: Option<u16>, code: String) -> Result<Value, String> {
+    let target = adb_target(&host, port, 0)?;
+    if target.ends_with(":0") {
+        return Err("配对待填设备上显示的「IP 地址和端口」（形如 192.168.1.37:37000）".into());
+    }
+    let c = code.trim();
+    if c.is_empty() {
+        return Err("配对要填设备上显示的 6 位配对码".into());
+    }
+    let (exit, out, err) = adb_run(&["pair", &target, c], 60_000)?;
+    let text = format!("{}{}", out.trim(), err.trim());
+    if !text.to_lowercase().contains("successfully paired") {
+        return Err(format!("配对 {target} 失败：{text}"));
+    }
+    Ok(json!({ "target": target, "code": exit, "text": text }))
+}
+
+/// 断开一台无线调试设备：`adb disconnect IP[:端口]`
+#[tauri::command]
+pub fn adb_disconnect(host: String, port: Option<u16>) -> Result<Value, String> {
+    let target = adb_target(&host, port, 5555)?;
+    let (code, out, err) = adb_run(&["disconnect", &target], 20_000)?;
+    Ok(json!({ "target": target, "code": code, "text": format!("{}{}", out.trim(), err.trim()) }))
+}
+
 /// 跑一条 shell 命令（点一次跑一条，不是长连接）
 #[tauri::command]
 pub fn adb_shell(serial: String, cmd: String, timeout_ms: Option<u64>) -> Result<Value, String> {

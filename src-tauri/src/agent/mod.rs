@@ -34,6 +34,8 @@ use tools::{Link, ToolCtx};
 /// 这种"多看几眼"的活儿跑到一半就被掐断（用户抱怨过）。现在给到 100 轮，
 /// 真正的刹车交给：上下文预算（compact/trim）+ 用户按停止 + 模型自己收尾。
 const MAX_ROUNDS: usize = 100;
+/// 被 max_tokens 截断后自动续写的次数上限（续写是"接着说完"，不是重跑）
+const MAX_TRUNC_CONTINUE: usize = 3;
 
 /// 当前这一轮是否被要求停止。工具层里的长循环（读串口、传文件、烧录、升级…）不在 turn 的
 /// 调用栈上，拿不到那一轮的 `Arc<AtomicBool>`，所以这里挂一个进程级标志给它们查。
@@ -611,13 +613,26 @@ pub fn agent_skills_dir(app: AppHandle) -> String {
 
 /// 前端把"允许/拒绝"点完送回来
 #[tauri::command]
-pub fn agent_approval_result(app: AppHandle, id: u64, ok: bool) -> Result<Value, String> {
+pub fn agent_approval_result(app: AppHandle, id: u64, ok: bool, always: Option<String>, session: Option<String>) -> Result<Value, String> {
     let st = app.state::<Arc<AgentState>>().inner().clone();
+    // 「本会话都允许」：先把它记进会话 meta，之后同类工具直接放行（一次任务点几十下太累）
+    let mut allowed: Option<String> = None;
+    if ok {
+        if let (Some(tool), Some(sid)) = (always.as_ref(), session.as_ref()) {
+            if let Some(mut meta) = store::session_meta_of(&app, sid) {
+                if !meta.allow.iter().any(|x| x == tool) {
+                    meta.allow.push(tool.clone());
+                    let _ = store::session_update_meta(&app, &meta);
+                }
+                allowed = Some(tool.clone());
+            }
+        }
+    }
     let tx = st.approve_waiters.lock().map_err(|_| "mutex".to_string())?.remove(&id);
     match tx {
         Some(tx) => {
             let _ = tx.send(ok);
-            Ok(json!({ "ok": true }))
+            Ok(json!({ "ok": true, "allowed": allowed }))
         }
         None => Ok(json!({ "ok": false, "reason": "这条审批已经不用管了" })),
     }
@@ -1646,7 +1661,10 @@ fn run_turn(
     let _ = std::fs::create_dir_all(&ws);
     emit(&app, "agent://state", json!({ "running": true, "session": session_id }));
 
-    let perm = store::session_meta_of(&app, &session_id).map(|m| m.perm).unwrap_or_else(|| "ask".into());
+    let (perm, allow) = match store::session_meta_of(&app, &session_id) {
+        Some(m) => (m.perm, m.allow),
+        None => ("ask".to_string(), Vec::new()),
+    };
     // goal / 称呼这类"会话状态"走注记（见 Event::State），不再进系统提示
     let _ = append_state_note(&app, &session_id);
     let result: Result<(), String> = (|| {
@@ -1663,6 +1681,8 @@ fn run_turn(
         // MCP 的工具是动态的，但**不能每轮都去 spawn 一遍问 tools/list**：
         // 一是慢（npx 握手好几秒），二是 tools 在 prompt 前缀里，清单一变前缀缓存就整段失效。
         // all_tool_schemas_cached 按"配置指纹 + 10 分钟"复用，并把顺序排死。
+        // 顺手把本会话工作区告诉 MCP 层：filesystem 这类 server 会把它当成可访问目录加进去
+        mcp::set_extra_roots(vec![ws.to_string_lossy().to_string()]);
         let (mcp_schemas, mcp_refreshed) = mcp::all_tool_schemas_cached(&app);
         if mcp_refreshed && !mcp_schemas.is_empty() {
             emit(
@@ -1674,6 +1694,8 @@ fn run_turn(
         if !mcp_schemas.is_empty() {
             tools_schema.extend(mcp_schemas);
         }
+        // 截断续写的次数（跨轮累计，别每轮清零 —— 不然就变成"无限续写"了）
+        let mut trunc_continues = 0usize;
         for round in 0..MAX_ROUNDS {
             if stop.load(Ordering::Relaxed) {
                 store::session_append(&app, &session_id, &Event::Note { text: "用户停止".into(), ts: 0 })?;
@@ -1762,10 +1784,40 @@ fn run_turn(
                 store::session_append(&app, &session_id, &Event::Note { text: "用户停止（模型流已断）".into(), ts: 0 })?;
                 return Ok(());
             }
+            // 被 max_tokens 截断：正文可能一个字都没吐（思考就把额度吃光了）——
+            // 直接结束的话，用户看到的是"它停在那儿、什么都没说"，还以为是 bug。
+            // 和 codex / opencode 一样：自动接着把它说完（续写最多 MAX_TRUNC_CONTINUE 次）。
+            if matches!(out.finish.as_str(), "length" | "max_tokens" | "max_output_tokens")
+                && trunc_continues < MAX_TRUNC_CONTINUE
+                && st.pending.lock().map(|p| p.is_empty()).unwrap_or(true)
+            {
+                trunc_continues += 1;
+                store::session_append(&app, &session_id, &Event::Note {
+                    text: format!(
+                        "模型输出撞到 max_tokens 上限被截断（finish={}），自动续写第 {} / {} 次",
+                        out.finish, trunc_continues, MAX_TRUNC_CONTINUE
+                    ),
+                    ts: 0,
+                })?;
+                emit(&app, "agent://note", json!({ "session": session_id, "text": "输出被截断，自动续写…" }));
+                continue;
+            }
             if out.tool_calls.is_empty() {
                 // 跑着的时候用户又补了话：别收尾，带着新要求继续
                 if !st.pending.lock().map(|p| p.is_empty()).unwrap_or(true) {
                     continue;
+                }
+                // 什么产出都没有（正文空、思考空、也没工具调用）：说清楚，别静默结束
+                if out.content.trim().is_empty() && out.reasoning.trim().is_empty() {
+                    store::session_append(&app, &session_id, &Event::Note {
+                        text: format!(
+                            "模型这一轮没有任何产出（finish={}，prompt {} / completion {} tokens）。\
+                             可以再说一次让它继续，或者换一个模型 / 调大输出上限。",
+                            if out.finish.is_empty() { "?" } else { &out.finish },
+                            out.usage.prompt_tokens, out.usage.completion_tokens
+                        ),
+                        ts: 0,
+                    })?;
                 }
                 return Ok(());
             }
@@ -1786,6 +1838,7 @@ fn run_turn(
                     session: &session_id,
                     perm: &perm,
                     approve: &|tool: &str, a: &Value| ask_user(&app, &st, &session_id, tool, a),
+                    allowed: &|tool: &str| allow.iter().any(|x| x == tool),
                     host: &|tool: &str, a: &Value, t: u64| host_call(&app, &st, tool, a, t),
                     log: &|s: &str| emit(&app, "agent://log", json!({ "text": s })),
                 };
