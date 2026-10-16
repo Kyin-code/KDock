@@ -902,7 +902,7 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "flash" => flash(ctx, args),
         "scope" => crate::scope::raw(&arg_str(args, "cmd").ok_or("缺少 cmd")?),
         "scope_connect" => {
-            let ip = arg_str(args, "ip").unwrap_or_else(|| "192.168.1.23".into());
+            let ip = arg_str(args, "ip").unwrap_or_else(|| "192.168.1.100".into());
             let port = arg_u64(args, "port", 5555) as u16;
             let idn = crate::scope::connect(&ip, port)?;
             Ok(format!("已连接 {ip}:{port}\n{idn}"))

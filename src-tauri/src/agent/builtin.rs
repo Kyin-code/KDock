@@ -15,6 +15,8 @@ use tauri::{AppHandle, Manager};
 pub struct Block {
     pub id: &'static str,
     pub title: &'static str,
+    /// 内部说明（**不返回给界面**）：给写代码的人看这条是干嘛的
+    #[allow(dead_code)]
     pub desc: &'static str,
     /// 核心项不给关：关掉它这个助手就不成立了
     pub optional: bool,
@@ -110,15 +112,16 @@ pub fn set_enabled(app: &AppHandle, id: &str, on: bool) -> Result<(), String> {
     off_write(app, &cur)
 }
 
+/// 给界面用的清单：**只给标题和开关**，不给正文/说明 ——
+/// 这是程序自带的内部规矩，不该让终端用户看到内容（要改的是代码里的 BLOCKS）
 pub fn list(app: &AppHandle) -> Vec<Value> {
     let off = off_list(app);
     BLOCKS
         .iter()
         .map(|b| {
             json!({
-                "id": b.id, "title": b.title, "desc": b.desc, "body": b.body,
+                "id": b.id, "title": b.title,
                 "optional": b.optional, "enabled": !off.contains(&b.id.to_string()),
-                "bytes": b.body.len(),
             })
         })
         .collect()

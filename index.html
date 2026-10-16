@@ -292,7 +292,7 @@
                 <div class="cardtitle">全局指导（每轮都在场）<span class="grow"></span>
                   <span id="set-guidance-path" class="lb"></span></div>
                 <textarea id="set-guidance" rows="7" class="agskill"
-                  placeholder="人格 / 口吻 / 通用规矩写这儿（等价于 Codex 的全局 AGENTS.md）。&#10;例：# 身份&#10;- 你叫小卡，说话简短，先给结论。"></textarea>
+                  placeholder="人格 / 口吻 / 通用规矩写这儿（等价于 Codex 的全局 AGENTS.md）。&#10;例：&#10;# 身份&#10;- 说话简短，先给结论。&#10;- 做事前先看现状，改设备状态前先说明。"></textarea>
                 <div class="trow">
                   <button id="set-guidance-save" class="btn small primary">保存指导</button>
                   <button id="set-guidance-open" class="btn small">打开所在目录</button>
@@ -360,11 +360,8 @@
             <!-- 工具：只读清单 + 开关（工具定义在请求最前面，是最大的那一块 token） -->
             <div class="setpane" data-setpane="tools" hidden>
               <div class="cardtitle">agent 能用的工具<span class="grow"></span><span id="set-tool-sum" class="lb"></span></div>
-              <p class="hint">这里的开关是<b>只读清单 + 使用/不使用</b>：关掉用不上的工具，主要作用是让模型少被无关工具干扰、
-                少误调（能力控制），<b>不是省 token 的手段</b>：实测在 DeepSeek 这条线上，工具数从 60 个关到 0 个，
-                接口报的 <code>prompt_tokens</code> 一个数都没变（工具定义没被算进 prompt）。
-                不过别的厂商（比如 Anthropic 的显式缓存）工具块是在前缀里的，所以这里仍然<b>按会话冻结</b>：
-                开关对新会话生效；想让当前会话立刻吃上，去 Agent 信息页点「刷新骨架」。</p>
+              <p class="hint">这里是<b>只读清单 + 使用/不使用</b>：关掉用不上的工具，模型会少被无关工具干扰、少误调。
+                开关对<b>新会话</b>生效（工具清单按会话固定，这样前面的上下文才好复用缓存）。</p>
               <input id="set-tool-filter" class="dirinput" placeholder="搜索工具名 / 说明" />
               <div id="set-tool-list" class="agentlist scrollable"></div>
             </div>
@@ -2086,7 +2083,7 @@
         <!-- 示波器参数 -->
         <div class="parampane" data-param="scope" hidden>
           <div class="cardtitle">连接</div>
-          <div class="field"><label for="sc-host">IP</label><input id="sc-host" value="192.168.1.23" /></div>
+          <div class="field"><label for="sc-host">IP</label><input id="sc-host" placeholder="示波器 IP，例如 192.168.1.100" /></div>
           <div class="field"><label for="sc-port">端口</label><input id="sc-port" type="number" value="5555" /></div>
           <div class="btnrow">
             <button id="sc-open" class="btn primary">连接</button>

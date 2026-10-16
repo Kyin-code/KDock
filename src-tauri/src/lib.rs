@@ -3689,8 +3689,6 @@ pub fn run() {
             agent::agent_tool_set,
             agent::agent_guidance_get,
             agent::agent_guidance_set,
-            agent::agent_prompt_preview,
-            agent::agent_prefix_refresh,
             agent::agent_skills_workspace,
             agent::agent_skill_convert,
             agent::agent_skill_archive,

@@ -2426,7 +2426,8 @@ async function scAutoReconnect() {
   if (scReconnecting) return false;
   scReconnecting = true;
   try {
-    const host = ($("sc-host").value || "").trim() || "192.168.1.23";
+    // 默认值只做占位，别写死某个具体机器（仓库是公开的）
+    const host = ($("sc-host").value || "").trim() || "192.168.1.100";
     const port = Number($("sc-port").value) || 5555;
     const idn = await invoke("scope_open", { host, port });
     scLog(`自动重连 ${host}:${port} → ${idn}`);
@@ -2988,19 +2989,6 @@ async function bindCapture() {
     else if (e.key === "Escape" && capFs) { e.preventDefault(); capSetFullscreen(false); }
   });
   capSetSrc($("cap-src").value);
-  // 自测用的把手（跟 window.__sqRx / window.__dbgOnGdb 一个性质）：
-  // 键鼠回传这条链路不好从外面观察，留个口子方便排障/自动化测试
-  window.__cap = {
-    src: capSrcName,
-    running: () => capRunning,
-    session: () => capSession,
-    wh: () => capWH,
-    ctlOn: capCtlOn,
-    remoteXY: capRemoteXY,
-    keysym: capKeysym,
-    pointer: (x, y, mask) => invoke("rs_pointer", { id: capSession, x, y, mask }),
-    key: (keysym, down) => invoke("rs_key", { id: capSession, keysym, down }),
-  };
   // 枚举显示器要过 DXGI，启动时也要花点时间 —— 留到第一次进「屏幕共享」页再列（见 showPane）
   capRefresh = refresh;
 }
@@ -6806,23 +6794,6 @@ function agRenderInfo() {
     row("Token", `${en("输入")} ${agK(inTok)} / ${en("输出")} ${agK(outTok)}`) +
     row("缓存命中", hit + miss > 0 ? `${hitRate}%（${agK(hit)} / ${agK(hit + miss)}）` : "—", hitRate >= 50 ? "ok" : "") +
     (() => {
-      // 逐轮命中率：Δ（这一轮新加的 token）越大，命中率越低 —— 1 − Δ/P。
-      // 只列最近 6 轮，够看出"是哪一轮掉的"。
-      const r = (agMeta && agMeta.usage_recent) || [];
-      if (!r.length) return "";
-      const tail = r.slice(-6).map((u) => {
-        const tot = (u.hit || 0) + (u.miss || 0);
-        const pct2 = tot ? Math.round(((u.hit || 0) / tot) * 100) : 0;
-        return `<span class="wsr" title="${en("命中")} ${agK(u.hit)} / ${en("未命中")} ${agK(u.miss)}">${pct2}%</span>`;
-      }).join("");
-      return `<div class="row"><span class="k">${en("最近几轮")}</span><span class="v">${tail}</span></div>`;
-    })() +
-    `<div class="trow" style="gap:6px">
-       <button id="ag-prompt-view" class="btn small" title="${en("看这个会话实际发给模型的系统提示（骨架）+ 工具清单")}">${en("查看系统提示")}</button>
-       <button id="ag-prefix-refresh" class="btn small" title="${en("改了技能/指导文件/工具开关后，让本会话立刻吃上（代价：本会话缓存重算一次）")}">${en("刷新骨架")}</button>
-       ${agBreak && agBreak.frozen ? `<span class="sub">${en("骨架已冻结（前缀稳定 → 缓存命中率高）")}</span>` : `<span class="sub">${en("骨架未冻结")}</span>`}
-     </div>` +
-    (() => {
       // 速度按"实际跑的那条 profile"取：优先当前生效的（下一轮就是它跑），
       // 没有它的数据再退回这个会话记录的那条
       const activeId = agCfg && agCfg.activeId;
@@ -6835,34 +6806,6 @@ function agRenderInfo() {
     `<div class="sub">${en("按")} ${agEscape(model || "?")} ${en("的价格估算（元/百万 token），可在 main.js 的 AG_PRICE 里改")}</div>` +
     `<div class="sub">${en("出字速度只算模型正在出字的那段（工具调用、等待不算）")}</div>`;
   // 上面那两个按钮是每次重画都新建的，绑一次就行
-  const pv = agEl("ag-prompt-view");
-  if (pv) pv.onclick = agShowPrompt;
-  const pr = agEl("ag-prefix-refresh");
-  if (pr) pr.onclick = async () => {
-    if (!agMeta) return;
-    const r = await agConfirm(en("刷新上下文骨架会让本会话的前缀缓存重算一次（下一轮输入 token 会贵一点），继续？"), en("刷新骨架"), false);
-    if (!r) return;
-    try {
-      const out = await invoke("agent_prefix_refresh", { sessionId: agMeta.id, toolsToo: false });
-      toast(String((out && out.note) || "ok"));
-      agRefreshBreakdown();
-    } catch (e) { toast(String(e)); }
-  };
-}
-
-/** 「查看系统提示」：把骨架原文摆出来（用户问"技能到底怎么进上下文的"时，答案就在这儿） */
-async function agShowPrompt() {
-  if (!agMeta) return toast(en("先开一个会话"));
-  try {
-    const p = await invoke("agent_prompt_preview", { sessionId: agMeta.id });
-    const head = `${en("骨架")}：${p.frozen ? en("已冻结") : en("未冻结")} · ${p.chars} ${en("字")}\n` +
-      `${en("工作区")}：${p.workspace}\n${en("工具")}（${(p.tools || []).length}）：${(p.tools || []).join(", ")}\n` +
-      "────────\n";
-    agDialog({
-      title: en("这个会话实际发给模型的系统提示"),
-      text: head + (p.system || ""),
-    });
-  } catch (e) { toast(String(e)); }
 }
 
 /* ── 上下文成分分析（参考 opencode 的 context 面板）：把占 token 的东西按类目拆开 ── */
@@ -6907,9 +6850,8 @@ function agRenderBreakdown() {
     `<div class="agctx-legend">${legend}` +
     `<div class="r"><span class="dot" style="background:var(--surface-3)"></span><span class="n">${en("剩余可用")}</span>` +
     `<span class="v">${agK(b.free || 0)} · ${freePct.toFixed(0)}%</span></div></div>` +
-    // 系统提示按三层拆开报：内置指令 / 技能索引 / 指导文件 —— "谁在一直占上下文"要一眼看明白
-    `<div class="sub">${en("系统提示里")}: ${en("内置指令")} ${agK(b.systemBuiltin || 0)} · ` +
-    `${en("技能索引")} ${agK(b.systemSkills || 0)} · ${en("指导文件")} ${agK(b.systemGuidance || 0)}</div>` +
+    // 只报"你自己的东西"占多少：指导文件（AGENTS.md）与技能索引都是用户能看见/能改的
+    `<div class="sub">${en("其中指导文件")} ${agK(b.systemGuidance || 0)} · ${en("技能索引")} ${agK(b.systemSkills || 0)}</div>` +
     (b.dropped
       ? `<div class="sub">${en("已被摘要压掉")}: ${agK(b.dropped)} tokens · ${b.coveredEvents} ${en("条旧事件；原文仍在会话文件里，可用 history_search 回查")}</div>`
       : "") +
@@ -7863,15 +7805,10 @@ function agRenderSkillTable() {
     row.appendChild(sw);
     box.appendChild(row);
   }
-  // 三层的"当前占用"一句话说清：内置 / 技能索引 / 指导文件（工具定义在工具页）
-  invoke("agent_prompt_preview", { sessionId: (agMeta && agMeta.id) || "" }).then((p) => {
-    const foot = document.createElement("div");
-    foot.className = "agrow empty";
-    const frozen = p.frozen ? en("骨架已冻结") : en("骨架未冻结（下一轮生成）");
-    foot.textContent = en("系统提示 ") + String(p.chars || 0) + en(" 字 · ") + frozen + " · " +
-      en("技能只占索引；正文要模型 skill_read 才进上下文");
-    box.appendChild(foot);
-  }).catch(() => {});
+  const foot = document.createElement("div");
+  foot.className = "agrow empty";
+  foot.textContent = en("技能在这里只管开关：正文不进上下文，模型需要时自己读");
+  box.appendChild(foot);
 }
 
 function agRenderMcpTable() {
@@ -7953,22 +7890,18 @@ async function renderBuiltinPage() {
   if (!box) return;
   const list = await invoke("agent_builtin_list").catch(() => []);
   box.innerHTML = "";
-  let onBytes = 0;
+  let on = 0;
   for (const b of list) {
-    if (b.enabled) onBytes += b.bytes || 0;
+    if (b.enabled) on++;
     const row = document.createElement("div");
     row.className = "row" + (b.enabled ? "" : " off");
     const nm = document.createElement("span");
     nm.className = "nm"; nm.textContent = en(b.title) + (b.optional ? "" : en("（核心）"));
-    const tag = document.createElement("span");
-    tag.className = "tag";
-    tag.textContent = en(b.desc || "");
-    row.title = b.body || "";
-    row.appendChild(nm); row.appendChild(tag);
+    row.appendChild(nm);
     if (b.optional) {
       const sw = document.createElement("input");
       sw.type = "checkbox"; sw.className = "sw"; sw.checked = !!b.enabled;
-      sw.title = en("关掉就不进系统提示（改完对新会话生效；当前会话点「刷新骨架」立刻生效）");
+      sw.title = en("关掉就不再带上这条（对新会话生效）");
       sw.onchange = async () => {
         try {
           await invoke("agent_builtin_set", { id: b.id, on: sw.checked });
@@ -7986,7 +7919,7 @@ async function renderBuiltinPage() {
     box.appendChild(row);
   }
   const sum = agEl("set-builtin-sum");
-  if (sum) sum.textContent = `${list.filter((x) => x.enabled).length}/${list.length} · ${(onBytes / 1024).toFixed(1)} KB`;
+  if (sum) sum.textContent = `${on}/${list.length}`;
 }
 
 /* ── 工作区技能（项目级）＋ 归档 ─────────────────────────────────── */
@@ -10857,25 +10790,11 @@ const EN = {
   "转为工作区专属": "Move to workspace", "打开 .kdock_skill 目录": "Open .kdock_skill folder",
   "删除技能": "Delete skill", "删除归档": "Delete archive", "已还原到全局技能": "Restored to global skills",
   "已还原到工作区": "Restored to the workspace", "已转换：": "Moved: ",
-  "关掉就不进系统提示（改完对新会话生效；当前会话点「刷新骨架」立刻生效）":
-    "Off = not in the system prompt (takes effect for new sessions; use Refresh skeleton for this session)",
+  "关掉就不再带上这条（对新会话生效）": "Turns this block off (applies to new sessions)",
   "已打开 ": "Enabled ", "已关闭 ": "Disabled ",
-  "查看系统提示": "View system prompt", "刷新骨架": "Refresh skeleton",
-  "骨架已冻结（前缀稳定 → 缓存命中率高）": "Skeleton frozen (stable prefix → high cache hit rate)",
-  "骨架未冻结": "skeleton not frozen",
-  "看这个会话实际发给模型的系统提示（骨架）+ 工具清单": "See the exact system prompt (skeleton) and tool list sent for this session",
-  "改了技能/指导文件/工具开关后，让本会话立刻吃上（代价：本会话缓存重算一次）":
-    "After editing skills / guidance / tool switches, apply them to this session (costs one cache rebuild)",
-  "刷新上下文骨架会让本会话的前缀缓存重算一次（下一轮输入 token 会贵一点），继续？":
-    "Refreshing the skeleton rebuilds this session's prefix cache (next request costs more input). Continue?",
-  "刚开这个会话时定下的系统提示（技能、指导文件、工具清单都已快照）":
-    "The system prompt fixed when this session started (skills, guidance and tools are snapshotted)",
-  "先开一个会话": "Open a session first",
-  "这个会话实际发给模型的系统提示": "The system prompt actually sent for this session",
-  "骨架": "Skeleton", "已冻结": "frozen", "未冻结": "not frozen", "字": "chars",
-  "工作区": "Workspace", "工具": "Tools",
-  "系统提示里": "Inside the system prompt", "技能索引": "skill index", "指导文件": "guidance",
-  "最近几轮": "Recent rounds", "命中": "hit", "未命中": "miss",
+  "技能索引": "skill index", "指导文件": "guidance", "其中指导文件": "of which guidance",
+  "技能在这里只管开关：正文不进上下文，模型需要时自己读":
+    "Skills here are on/off only: the body never enters the context unless the model reads it",
   "已把常驻技能迁移到「全局指导」：": "Migrated always-on skills into global guidance: ",
   "agent 能用的工具": "Tools the agent can use",
   "搜索工具名 / 说明": "Search tool name / description",

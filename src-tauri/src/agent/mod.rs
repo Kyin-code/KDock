@@ -885,44 +885,6 @@ pub fn agent_guidance_set(app: AppHandle, text: String, workspace: bool, path: O
     Ok(json!({ "ok": true, "path": p }))
 }
 
-/// 本会话现在实际会发给模型的系统提示（骨架）+ 工具清单。
-/// 用户问"技能到底以什么形式进了上下文"时，答案就在这儿，不用猜。
-#[tauri::command]
-pub fn agent_prompt_preview(app: AppHandle, session_id: String) -> Value {
-    let ws = workspace_of(&app, &session_id);
-    let meta = store::session_meta_of(&app, &session_id);
-    let frozen = meta.as_ref().map(|m| !m.system_prompt.trim().is_empty()).unwrap_or(false);
-    let text = meta
-        .as_ref()
-        .map(|m| m.system_prompt.clone())
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| system_prompt(&app, &ws));
-    let names: Vec<String> = tools_schema_frozen(&app, &session_id)
-        .iter()
-        .filter_map(|v| v["function"]["name"].as_str().map(|s| s.to_string()))
-        .collect();
-    json!({
-        "system": text,
-        "tools": names,
-        "frozen": frozen,
-        "workspace": ws.to_string_lossy(),
-        "chars": text.chars().count(),
-    })
-}
-
-/// 刷新"上下文骨架"：清掉冻结的系统提示 + 工具清单，下一轮重新生成。
-/// 代价：本会话的前缀缓存重置一次（改完技能/指导文件想让本会话就吃上，点这个）。
-#[tauri::command]
-pub fn agent_prefix_refresh(app: AppHandle, session_id: String, tools_too: Option<bool>) -> Result<Value, String> {
-    let mut meta = store::session_meta_of(&app, &session_id).ok_or("找不到这个会话")?;
-    meta.system_prompt = String::new();
-    if tools_too.unwrap_or(false) {
-        meta.tools = Vec::new();
-    }
-    store::session_update_meta(&app, &meta)?;
-    Ok(json!({ "ok": true, "note": "骨架已重置：下一轮重新生成（本会话缓存会重算一次）" }))
-}
-
 /// 工作区技能（项目级）：存在即生效，没有启停
 #[tauri::command]
 pub fn agent_skills_workspace(workspace: String) -> Vec<store::SkillInfo> {
@@ -1076,7 +1038,8 @@ fn state_note(perm: &str, goal: &str, names: &str) -> Option<String> {
 }
 
 /// 冻结的骨架：本会话第一次请求时生成并写进 meta，之后原样复用。
-/// 想改（改了技能/指导文件/工具开关）：界面上点「刷新骨架」→ 清空它，下一轮重建。
+/// 想改（改了技能/指导文件/工具开关）：**新开会话**就吃新的 ——
+/// 会话中途不动它是有意的：前缀稳，缓存才命中。
 fn system_prompt_frozen(app: &AppHandle, session_id: &str, workspace: &std::path::Path) -> String {
     if let Some(m) = store::session_meta_of(app, session_id) {
         if !m.system_prompt.trim().is_empty() {
