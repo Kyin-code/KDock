@@ -2721,3 +2721,42 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
 .parampane .trow.cmdhead { flex-wrap: nowrap; gap: 6px; }
 .parampane .trow.cmdhead > .lb { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .parampane .trow.cmdhead > .grow { display: none; }
+
+/* ============ 窄窗：调试页（虽然平时不会开很小，但同一套降级给它也铺上）============
+   · 中间：那一行工具（停下就刷新面板 / 刷新面板 / 清空）收掉，只留「调试控制台 + 状态点」；
+     侧栏四块（断点 / 调用栈 / 局部变量 / 寄存器）从右侧 330px 挪到下面，改成一行两列；
+   · 下面那条参数区：跟传输/烧录一样压平（分组标题收起、控件横排）。 */
+@media (max-width: 980px) {
+  .workpane.dbgpane > .trow:first-child > label.chk,
+  .workpane.dbgpane > .trow:first-child > #dbg-refresh,
+  .workpane.dbgpane > .trow:first-child > #dbg-clear { display: none; }
+  .dbgpane .dbggrid { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 1fr) auto; }
+  .dbgpane .dbgside {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 8px; align-content: start; max-height: 46%; overflow: auto;
+  }
+  /* 侧栏里"标题 + 列表"还是一对，跟着列走 */
+  .dbgpane .dbgside > .cardtitle { grid-column: auto; margin: 2px 0 0; }
+  .dbgpane .dbglist { max-height: 96px; }
+
+  .params .parampane[data-param="debug"]:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]) {
+    display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+    column-width: auto; overflow-x: auto; overflow-y: hidden;
+  }
+  .params .parampane[data-param="debug"] > * { break-inside: auto; }
+  .params .parampane[data-param="debug"] > .cardtitle { display: none; }
+  .params .parampane[data-param="debug"] .field {
+    display: flex; align-items: center; gap: 6px; margin: 0; flex: 0 0 auto; grid-template-columns: none;
+  }
+  .params .parampane[data-param="debug"] .field > label { flex: 0 0 auto; margin: 0; }
+  .params .parampane[data-param="debug"] .field > .inline { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  .params .parampane[data-param="debug"] .btnrow {
+    display: flex; flex-direction: row; flex-wrap: wrap; margin: 0; flex: 0 0 auto;
+  }
+  .params .parampane[data-param="debug"] input { max-width: 12rem; }
+}
+@media (max-width: 760px) {
+  .params .parampane[data-param="debug"] .field > label { display: none; }
+  .params .parampane[data-param="debug"] input { max-width: 8.5rem; }
+  .dbgpane .dbgside { grid-template-columns: minmax(0, 1fr); max-height: 40%; }
+}
