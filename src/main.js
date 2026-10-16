@@ -4132,8 +4132,7 @@ function refreshHistory() {
   });
 }
 
-let qsEditIdx = -1;                  // -1 = 正在新增；>=0 = 正在改第几条
-
+/* ── 快捷发送：主页面只管"点一下发"，增 / 改 / 删都在弹窗里（跟指令表一个路子） ── */
 function qsCell(cls, text, tip) {
   const e = document.createElement("span");
   e.className = "c " + cls;
@@ -4149,30 +4148,104 @@ function qsActBtn(icon, tip, fn, cls) {
   b.onclick = (ev) => { ev.stopPropagation(); fn(); };
   return b;
 }
-/** 上方那行输入框跟着"现在是在加还是改"变样子 */
-function qsSyncForm() {
-  $("qs-save").textContent = en(qsEditIdx >= 0 ? "保存" : "添加");
-  $("qs-save").classList.toggle("primary", qsEditIdx < 0);
-  $("qs-cancel").hidden = qsEditIdx < 0;
+
+/** 一条快捷项的编辑器（新增传 -1，改传下标）：名称 / 内容 / HEX */
+async function qsEditEntry(i) {
+  const cur = i >= 0 ? qsItems[i] : null;
+  const v = await kdForm({
+    title: en(cur ? "编辑快捷发送" : "新增快捷发送"),
+    okText: en(cur ? "保存" : "添加"),
+    fields: [
+      { id: "label", label: en("名称"), value: cur ? cur.label || "" : "", ph: en("列表里显示的名字（留空就用内容前几个字）") },
+      { id: "payload", label: en("内容"), value: cur ? cur.payload || "" : "", ph: en("文本直接写；HEX 形如 41 54 0D 0A") },
+      { id: "hex", label: en("HEX"), type: "checkbox", value: !!(cur && cur.hex) },
+    ],
+  });
+  if (!v) return false;
+  const payload = String(v.payload == null ? "" : v.payload).trim();
+  if (!payload) { toast(en("先填要发送的内容")); return false; }
+  const one = { label: String(v.label == null ? "" : v.label).trim() || payload.slice(0, 12), payload, hex: !!v.hex };
+  if (i >= 0) { qsItems[i] = one; toast(en("已保存")); }
+  else { qsItems.push(one); toast(en("已加入快捷发送")); }
+  qsSave();
+  qsRender();
+  return true;
 }
-function qsResetForm() {
-  qsEditIdx = -1;
-  $("qs-label").value = "";
-  $("qs-payload").value = "";
-  $("qs-hex").checked = false;
+
+/** 「✎ 编辑」打开的弹窗：整张表都能在这儿增删改（样式借指令表编辑器那套） */
+function qsOpenEditor() {
+  const mask = document.createElement("div");
+  mask.className = "kdmodal";
+  const box = document.createElement("div");
+  box.className = "kdbox cmdedit";
+  box.style.width = "min(620px, 94vw)";
+  box.style.maxWidth = "min(620px, 94vw)";
+  const t = document.createElement("div");
+  t.className = "kdttl";
+  t.textContent = en("快捷发送编辑器");
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent = en("主页面点一行就直接发出去；加 / 改 / 删都在这里做，改完立刻存到本地。");
+  const bar = document.createElement("div");
+  bar.className = "trow cmdbar";
+  const add = document.createElement("button");
+  add.className = "btn small primary";
+  add.textContent = en("＋ 新增一条");
+  const sp = document.createElement("span");
+  sp.className = "grow";
+  const close = document.createElement("button");
+  close.className = "btn small";
+  close.textContent = en("关闭");
+  bar.append(add, sp, close);
+  const list = document.createElement("div");
+  list.className = "cmdlistscroll scrollable";
+  const redraw = () => {
+    list.innerHTML = "";
+    if (!qsItems.length) {
+      const p = document.createElement("p");
+      p.className = "hint";
+      p.textContent = en("（还没有快捷项，点上面「＋ 新增一条」）");
+      list.appendChild(p);
+      return;
+    }
+    qsItems.forEach((it, i) => {
+      const row = document.createElement("div");
+      row.className = "qsrow";
+      row.append(qsCell("lab", it.label || it.payload), qsCell("pay", it.payload), qsCell("kind", it.hex ? "HEX" : en("文本")));
+      const acts = document.createElement("span");
+      acts.className = "acts";
+      acts.append(
+        qsActBtn("▶", "直接发送", () => sendPayload(it.payload, it.hex)),
+        qsActBtn("✎", "改这一条", async () => { if (await qsEditEntry(i)) redraw(); }),
+        qsActBtn("✕", "删除这一条", () => { qsItems.splice(i, 1); qsSave(); qsRender(); redraw(); }, "del"),
+      );
+      row.appendChild(acts);
+      list.appendChild(row);
+    });
+  };
+  redraw();
+  add.onclick = async () => { if (await qsEditEntry(-1)) redraw(); };
+  close.onclick = () => mask.remove();
+  mask.onclick = (e) => { if (e.target === mask) mask.remove(); };
+  box.append(t, hint, bar, list);
+  mask.appendChild(box);
+  document.body.appendChild(mask);
+  if (LANG === "en") langWalk();
 }
+
 function qsRender() {
   const box = $("qs-list");
+  if (!box) return;
   const q = ($("qs-filter").value || "").trim().toLowerCase();
   const hit = (it) => !q || (it.label + " " + it.payload).toLowerCase().includes(q);
   const shown = qsItems.map((it, i) => ({ it, i })).filter((x) => hit(x.it));
   box.innerHTML = "";
   if (!shown.length) {
-    box.appendChild(qsCell("muted", en(qsItems.length ? "没有匹配的条目" : "（还没有快捷项，下面加一条）")));
+    box.appendChild(qsCell("muted", en(qsItems.length ? "没有匹配的条目" : "（还没有快捷项，点上面的「✎ 编辑」加一条）")));
   }
   for (const { it, i } of shown) {
     const row = document.createElement("div");
-    row.className = "qsrow" + (i === qsEditIdx ? " sel" : "");
+    row.className = "qsrow";
     row.title = en("点这一行 = 直接发出去");
     row.append(
       qsCell("lab", en(it.label || it.payload)),
@@ -4183,7 +4256,7 @@ function qsRender() {
     acts.className = "acts";
     acts.append(
       qsActBtn("▶", "直接发送", () => sendPayload(it.payload, it.hex)),
-      qsActBtn("✎", "改这一条", () => qsStartEdit(i)),
+      qsActBtn("✎", "改这一条", () => qsEditEntry(i)),
       qsActBtn("✕", "删除这一条", () => qsDelItem(i), "del"),
     );
     row.appendChild(acts);
@@ -4193,48 +4266,18 @@ function qsRender() {
   if ($("qs-count")) {
     $("qs-count").textContent = q ? shown.length + " / " + qsItems.length : (qsItems.length ? String(qsItems.length) : "");
   }
-  qsSyncForm();
   if (LANG === "en") langWalk();       // 行是现拼的，英文界面下补翻一次
-}
-function qsStartEdit(i) {
-  const it = qsItems[i];
-  if (!it) return;
-  qsEditIdx = i;
-  $("qs-label").value = it.label || "";
-  $("qs-payload").value = it.payload || "";
-  $("qs-hex").checked = !!it.hex;
-  qsRender();
-  $("qs-payload").focus();
 }
 function qsDelItem(i) {
   qsItems.splice(i, 1);
-  if (qsEditIdx === i) qsResetForm();
-  else if (qsEditIdx > i) qsEditIdx--;
   qsSave();
   qsRender();
 }
 
 function bindQuickSend() {
   qsRender();
-  $("qs-save").onclick = () => {
-    const payload = $("qs-payload").value;
-    if (!payload.trim()) return toast("先填要发送的内容");
-    const item = { label: $("qs-label").value.trim() || payload.slice(0, 12), payload, hex: $("qs-hex").checked };
-    if (qsEditIdx >= 0) { qsItems[qsEditIdx] = item; toast("已保存"); }
-    else qsItems.push(item);
-    qsSave();
-    qsResetForm();
-    qsRender();
-  };
-  $("qs-cancel").onclick = () => { qsResetForm(); qsRender(); };
-  $("qs-filter").oninput = () => qsRender();
-  // 名称那格回车 → 跳到内容那格；内容那格回车 → 保存
-  $("qs-label").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); $("qs-payload").focus(); }
-  });
-  $("qs-payload").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); $("qs-save").click(); }
-  });
+  if ($("qs-edit")) $("qs-edit").onclick = () => qsOpenEditor();
+  if ($("qs-filter")) $("qs-filter").oninput = () => qsRender();
 }
 
 // ---------------- 全局错误兜底：出错别白屏、也别悄悄不干活 ----------------
@@ -4262,7 +4305,7 @@ function bindOneGutter(id, cssVar, storeKey, min, otherVar, otherMin, centerMin,
   const stacked = () => {
     const sp = document.querySelector(".split");
     if (!sp) return false;
-    return getComputedStyle(sp).gridTemplateColumns.trim().split(/s+/).length <= 3;
+    return getComputedStyle(sp).gridTemplateColumns.trim().split(/\s+/).length <= 3;
   };
   const maxFor = () => {
     const sp = document.querySelector(".split");
@@ -7033,8 +7076,13 @@ function kdForm({ title, fields, okText }) {
       const lb = document.createElement("label");
       lb.textContent = f.label || f.id;
       const inp = document.createElement("input");
-      inp.value = f.value == null ? "" : String(f.value);
-      if (f.ph) inp.placeholder = f.ph;
+      if (f.type === "checkbox") {
+        inp.type = "checkbox";
+        inp.checked = !!f.value;
+      } else {
+        inp.value = f.value == null ? "" : String(f.value);
+        if (f.ph) inp.placeholder = f.ph;
+      }
       inputs[f.id] = inp;
       row.append(lb, inp);
       box.appendChild(row);
@@ -7052,12 +7100,13 @@ function kdForm({ title, fields, okText }) {
     const close = (val) => { mask.remove(); document.removeEventListener("keydown", onKey); resolve(val); };
     const collect = () => {
       const out = {};
-      for (const [k, el] of Object.entries(inputs)) out[k] = el.value;
+      for (const [k, el] of Object.entries(inputs)) out[k] = el.type === "checkbox" ? el.checked : el.value;
       return out;
     };
     const onKey = (e) => {
       if (e.key === "Escape") { e.preventDefault(); close(null); }
-      if (e.key === "Enter" && document.activeElement && document.activeElement.tagName === "INPUT") {
+      if (e.key === "Enter" && document.activeElement && document.activeElement.tagName === "INPUT" &&
+          document.activeElement.type !== "checkbox") {
         e.preventDefault(); close(collect());
       }
     };
@@ -8844,6 +8893,19 @@ const EN = {
   "已加解码器：": "Decoder added: ",
   "载入示例": "Load demo",
   "应用菜单": "App menu",
+  // 快捷发送（弹窗版）
+  "编辑快捷发送": "Edit quick-send",
+  "新增快捷发送": "New quick-send",
+  "快捷发送编辑器": "Quick-send editor",
+  "主页面点一行就直接发出去；加 / 改 / 删都在这里做，改完立刻存到本地。": "Clicking a row on the main pane sends it right away; add / edit / delete here — saved locally right after.",
+  "＋ 新增一条": "+ New entry",
+  "（还没有快捷项，点上面「＋ 新增一条」）": "(no entries yet — hit \"+ New entry\" above)",
+  "（还没有快捷项，点上面的「✎ 编辑」加一条）": "(no entries yet — use ✎ Edit above)",
+  "显示在列表里的名字（留空就用内容前几个字）": "Name shown in the list (blank = first few chars of the payload)",
+  "先填要发送的内容": "Fill in the payload first",
+  "已加入快捷发送": "Added to quick-send",
+  "已保存": "Saved",
+  "新增一条": "New entry",
   "收起参数区": "Hide params panel",
   "显示参数区": "Show params panel",
   "展开 / 收起导航（窄窗口下只显示图标）": "Expand / collapse the nav (icons only in narrow windows)",

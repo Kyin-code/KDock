@@ -405,7 +405,7 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 .parampane .dirinput { font-size: 12.5px; }
 /* 没有标签的行（按钮行 / 复选框 / 状态）也缩进到控件列，跟上面的输入框对齐；
    列表 / 表格 / 快捷发送那种数据行不缩进，它们本来就该占满宽 */
-.parampane :is(.btnrow, .trow, label.chk, .state):not(.qslist *):not(.qsrow *):not(.qsedit *):not(.cmdtable *):not(.agentlist *) { padding-left: calc(var(--plb) + var(--pgap)); }
+.parampane :is(.btnrow, .trow, label.chk, .state):not(.cmdhead):not(.qslist *):not(.qsrow *):not(.cmdtable *):not(.agentlist *) { padding-left: calc(var(--plb) + var(--pgap)); }
 /* 按钮行排成等宽网格（一排排对齐，长短不一的按钮不会把行尾拉得参差不齐） */
 .parampane .btnrow {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(6.4rem, 1fr));
@@ -2123,8 +2123,6 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .qsic:hover { background: var(--surface-3); color: hsl(var(--foreground)); }
 .qsic.del:hover { color: hsl(var(--destructive)); }
-.qsedit { margin-top: 6px; gap: 6px; }
-.qsname { flex: 0 0 auto; width: 84px; height: 26px; }
 .qsfilter { flex: 0 0 auto; width: 84px; height: 22px; font-size: 12px; }
 .cardtitle .lb { font-size: 11px; }
 
@@ -2559,7 +2557,6 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   .params .parampane[data-param="link"] > .cardtitle,
   .params .parampane[data-param="link"] > #stats,
   .params .parampane[data-param="link"] > .qstable,
-  .params .parampane[data-param="link"] > .qsedit,
   .params .parampane[data-param="link"] > .mhint,
   .params .parampane[data-param="link"] details.adv { display: none; }
   /* 只有当前这种方式的那一块展开成"一行里的几格"（[hidden] 的照旧不显示） */
@@ -2718,10 +2715,9 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   .params .parampane[data-param="files"] .field > label { display: none; }
   .params .parampane[data-param="files"] input { max-width: 8rem; }
 }
-/* 快捷发送最下面那行"添加 / 编辑"：两行排（名称 + HEX + 添加 / 内容整行），跟上面的表格左对齐 */
-.qsedit { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
-.qsedit .qsedit-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.qsedit .qsname { flex: 1 1 auto; width: auto; min-width: 0; height: 26px; }
-.qsedit .qsinput { width: 100%; height: 26px; }
-.qsedit .qsedit-row .btn { flex: 0 0 auto; }
-.qsedit label.chk { flex: 0 0 auto; white-space: nowrap; }
+/* （快捷发送的内联添加行已经改成弹窗，相关样式撤掉） */
+/* 命令表那个小标题行（「常用命令」+ ? + ✎ 编辑指令表）：右栏一窄，标题自己省略，
+   不要把编辑按钮挤到第二行 —— 整行永远一行、居左对齐 */
+.parampane .trow.cmdhead { flex-wrap: nowrap; gap: 6px; }
+.parampane .trow.cmdhead > .lb { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parampane .trow.cmdhead > .grow { display: none; }

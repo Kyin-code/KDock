@@ -1393,6 +1393,7 @@
             <span class="grow"></span>
             <input id="qs-filter" class="num qsfilter" placeholder="搜索…" />
             <span id="qs-count" class="lb"></span>
+            <button id="qs-edit" class="btn small" title="打开快捷发送编辑器：新增 / 改 / 删">✎ 编辑</button>
           </div>
           <div class="qstable">
             <div class="qshead">
@@ -1400,19 +1401,9 @@
             </div>
             <div id="qs-list" class="qsbody"></div>
           </div>
-          <!-- 快捷发送最下面这行"添加 / 编辑"：两行 —— ① 名称 + HEX + 添加/取消 ② 内容（整行）
-               原来挤在一个 .trow 里，还会被参数区"标签列"那条规则缩进 75px：305px 宽的右栏里
-               折成 5 行、名称框只剩 64px，看着就是坏的。 -->
-          <div class="qsedit">
-            <div class="qsedit-row">
-              <input id="qs-label" class="num qsname" placeholder="名称（可留空）" />
-              <label class="chk" title="勾上后按 HEX 发送"><input type="checkbox" id="qs-hex" /> HEX</label>
-              <button id="qs-save" class="btn small primary">添加</button>
-              <button id="qs-cancel" class="btn small" hidden>取消</button>
-            </div>
-            <input id="qs-payload" class="qsinput" placeholder="内容：文本直接写；HEX 形如 41 54 0D 0A" />
-          </div>
-          <span class="mhint">点某一行 = 直接发出去；✎ 改、✕ 删（改的那行会填到上面）。</span>
+          <!-- 增 / 改 / 删都放到「✎ 编辑」那个弹窗里（跟指令表一个路子）：
+               以前在下面塞了个内联表单，右栏一窄就折成 5 行、还跟表格不对齐。 -->
+          <span class="mhint">点某一行 = 直接发出去；行尾 ✎ 改、✕ 删；新增 / 批量整理点上面的「✎ 编辑」。</span>
         </div>
 
         <!-- 升级参数 -->
@@ -1529,7 +1520,7 @@
 
         <!-- 命令表：整张表放右栏，中栏留给输入/输出，点了就能直接看反馈 -->
         <div class="parampane cmdpane" data-param="cmds" hidden>
-          <div class="trow"><span class="lb">常用命令（Linux）</span><span class="grow"></span>
+          <div class="trow cmdhead"><span class="lb" title="常用命令（Linux）">常用命令（Linux）</span><span class="grow"></span>
             <button id="cmd-help" class="btn small" title="怎么用 / 怎么自定义">?</button>
             <button id="cmd-edit" class="btn small" title="打开指令表编辑器：加组 / 加指令 / 改名 / 删除 / 恢复默认">✎ 编辑指令表</button></div>
           <input id="cmd-filter" class="dirinput" placeholder="搜索命令 / 说明" />
