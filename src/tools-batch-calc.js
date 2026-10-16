@@ -552,6 +552,67 @@ function btDiffMyers(a, b, eq) {
   return out.reverse();
 }
 
+/** 右边当前那份行数组：文件 / 被固定下来的副本 / 跟着输入走的结果栏 */
+function btDiffRightLines() {
+  if (btDiffRight.mode === "file") return btDiffRight.text.split("\n");
+  if (btDiffRight.pinned != null) return btDiffRight.pinned.split("\n");
+  return $id("bt-out").value.split("\n");
+}
+
+/** 右边是不是被固定住了（改过就不再跟着输入走） */
+function btDiffSyncFollowBtn() {
+  const b = $id("bt-diff-follow");
+  if (!b) return;
+  const pinned = btDiffRight.mode === "out" && btDiffRight.pinned != null;
+  b.hidden = !pinned;
+}
+
+/** 一处差异块要往哪边搬：把 op 侧的若干行取出来 */
+function btDiffBlockLines(block) {
+  const A = $id("bt-in").value.split("\n");
+  const B = btDiffRightLines();
+  const rows = btDiffState.rows.slice(block.start, block.end + 1);
+  return {
+    A, B, rows,
+    aIdx: rows.map((r) => r.a).filter((i) => i != null),
+    bIdx: rows.map((r) => r.b).filter((i) => i != null),
+  };
+}
+/** 插到哪儿：块在对面没有对应行（纯增 / 纯删）时，插到后面第一条对应行的前面 */
+function btDiffInsertAt(block, key, other) {
+  for (let i = block.end + 1; i < btDiffState.rows.length; i++) {
+    const v = btDiffState.rows[i][key];
+    if (v != null) return v;
+  }
+  return other.length;
+}
+
+/** 把这一处从左边搬到右边（>）：右边先固定下来，然后把这一段替换掉 */
+function btDiffPushRight(block) {
+  const { A, B, aIdx, bIdx } = btDiffBlockLines(block);
+  const lines = aIdx.map((i) => A[i]);
+  if (btDiffRight.mode === "out" && btDiffRight.pinned == null) btDiffRight.pinned = B.join("\n");
+  const target = btDiffRightLines().slice();
+  const at = bIdx.length ? bIdx[0] : btDiffInsertAt(block, "b", target);
+  target.splice(at, bIdx.length, ...lines);
+  if (btDiffRight.mode === "file") btDiffRight.text = target.join("\n");
+  else btDiffRight.pinned = target.join("\n");
+  btDiffRender();
+  btMsg(T("已把这一处搬到右边") + (btDiffRight.mode === "out" ? T("（右边已固定，不再跟着输入走）") : ""));
+}
+
+/** 把这一处从右边搬回左边输入（<）：写进输入框，再按原来的流水线重算 */
+function btDiffPushLeft(block) {
+  const { A, B, aIdx, bIdx } = btDiffBlockLines(block);
+  const lines = bIdx.map((i) => B[i]);
+  const at = aIdx.length ? aIdx[0] : btDiffInsertAt(block, "a", A);
+  A.splice(at, aIdx.length, ...lines);
+  $id("bt-in").value = A.join("\n");
+  btRender();          // 流水线照跑（输入变了，结果自然跟着变）
+  btDiffRender();
+  btMsg(T("已把这一处写回左边输入"));
+}
+
 /** 右边那份文本（比对用）：结果栏，或者另外挑一个文件 */
 async function btDiffPickRight() {
   try {
@@ -563,7 +624,7 @@ async function btDiffPickRight() {
     const path = typeof p === "string" ? p : (p && p.path);
     if (!path) { dcChipSel["bt-diff-right"] = new Set(["out"]); $id("bt-diff-right").dataset.val = "out"; dcChipPaint("bt-diff-right"); return; }
     const r = await invoke("file_read_text", { path });
-    btDiffRight = { mode: "file", text: r.text, name: String(path).split(/[\\/]/).pop() };
+    btDiffRight = { mode: "file", text: r.text, name: String(path).split(/[\\/]/).pop(), pinned: null };
     btDiffRender();
   } catch (e) {
     btMsg(T("导入失败：") + String(e && e.message ? e.message : e).slice(0, 90), true);
@@ -605,7 +666,7 @@ function btDiffInline(x, y) {
 }
 
 let btDiffState = { rows: [], blocks: [], cur: -1 };
-let btDiffRight = { mode: "out", text: "", name: "" };   // 右边比什么：结果栏，还是另外挑一个文件（CLion 那种两份文件对比）
+let btDiffRight = { mode: "out", text: "", name: "", pinned: null };   // 右边比什么：结果栏（跟着输入走）/ 固定下来的副本 / 另外挑的文件
 
 function btDiffRender() {
   const box = $id("bt-diff-body");
@@ -615,8 +676,7 @@ function btDiffRender() {
   const norm = (t) => (iws ? t.trim() : t);
   const eq = (x, y) => (icase ? norm(x).toLowerCase() === norm(y).toLowerCase() : norm(x) === norm(y));
   const A = $id("bt-in").value.split("\n");
-  const rightText = btDiffRight.mode === "file" ? btDiffRight.text : $id("bt-out").value;
-  const B = rightText.split("\n");
+  const B = btDiffRightLines();
   const rows = btDiffRows(btDiffOps(A, B, eq));
   const blocks = [];
   rows.forEach((r, i) => {
@@ -627,10 +687,11 @@ function btDiffRender() {
   let add = 0, del = 0, mod = 0;
   for (const r of rows) { if (r.t === "+") add++; else if (r.t === "-") del++; else if (r.t === "~") mod++; }
   const stat = $id("bt-diff-stat");
-  if (stat) stat.textContent = blocks.length
+  const rightNote = btDiffRight.mode === "file" ? "　·　" + T("右边：") + btDiffRight.name
+    : (btDiffRight.pinned != null ? "　·　" + T("右边已固定（不跟随输入）") : "");
+  if (stat) stat.textContent = (blocks.length
     ? T("{n} 处不同").replace("{n}", blocks.length) + "　" + T("改 {m} · 加 {a} · 删 {d}").replace("{m}", mod).replace("{a}", add).replace("{d}", del)
-      + (btDiffRight.mode === "file" ? "　·　" + T("右边：") + btDiffRight.name : "")
-    : T("两边完全一样");
+    : T("两边完全一样")) + rightNote;
   const frag = document.createDocumentFragment();
   const mk = (cls, txt) => { const d = document.createElement("span"); d.className = cls; d.textContent = txt; return d; };
   const mkHl = (cls, pre, mid, suf) => {
@@ -647,12 +708,29 @@ function btDiffRender() {
     row.dataset.row = String(i);
     row.appendChild(mk("ln ln-l", r.a == null ? "" : String(r.a + 1)));
     row.appendChild(mk("tx tx-l", r.a == null ? "" : A[r.a]));
+    const arrows = document.createElement("span");
+    arrows.className = "arrows";
+    if (r.t !== "=" && blocks.some((b) => b.start === i)) {
+      const blk = blocks.find((b) => b.start === i);
+      const bR = document.createElement("button");
+      bR.type = "button";
+      bR.textContent = ">";
+      bR.title = T("把这一处搬到右边");
+      bR.onclick = () => btDiffPushRight(blk);
+      const bL = document.createElement("button");
+      bL.type = "button";
+      bL.textContent = "<";
+      bL.title = T("把这一处写回左边输入");
+      bL.onclick = () => btDiffPushLeft(blk);
+      arrows.append(bR, bL);
+    }
+    row.appendChild(arrows);
     row.appendChild(mk("ln ln-r", r.b == null ? "" : String(r.b + 1)));
     row.appendChild(mk("tx tx-r", r.b == null ? "" : B[r.b]));
     if (r.t === "~") {
       const hl = btDiffInline(A[r.a], B[r.b]);
       row.replaceChild(mkHl("tx tx-l", hl.aPre, hl.aMid, hl.aSuf), row.children[1]);
-      row.replaceChild(mkHl("tx tx-r", hl.bPre, hl.bMid, hl.bSuf), row.children[3]);
+      row.replaceChild(mkHl("tx tx-r", hl.bPre, hl.bMid, hl.bSuf), row.children[4]);
     }
     if (r.a == null || r.b == null) {
       row.classList.add("blank");
@@ -663,6 +741,7 @@ function btDiffRender() {
   box.textContent = "";
   box.appendChild(frag);
   btDiffState = { rows, blocks, cur: blocks.length ? 0 : -1 };
+  btDiffSyncFollowBtn();
   btDiffMark();
 }
 
@@ -777,11 +856,12 @@ export function initBatch(opts) {
     onChange: (v) => {
       const last = v;
       if (last === "file") { if (!btDiffRight.text) btDiffPickRight(); else btDiffRender(); }
-      else { btDiffRight = { mode: "out", text: "", name: "" }; btDiffRender(); }
+      else { btDiffRight = { mode: "out", text: "", name: "", pinned: null }; btDiffRender(); }
     },
   });
   $id("bt-diff-open").onclick = () => btDiffOpen(true);
   $id("bt-diff-close").onclick = () => btDiffOpen(false);
+  $id("bt-diff-follow").onclick = () => { btDiffRight.pinned = null; btDiffRender(); btMsg(T("右边恢复跟随输入")); };
   $id("bt-diff-prev").onclick = () => btDiffGo(-1);
   $id("bt-diff-next").onclick = () => btDiffGo(1);
   for (const id of ["bt-diff-icase", "bt-diff-iws"]) {

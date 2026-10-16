@@ -1773,7 +1773,15 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   border: 1px solid var(--surface-line); border-radius: 10px; background: var(--surface-1);
   font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; line-height: 1.55;
 }
-.btdiffrow { display: grid; grid-template-columns: 3.4rem minmax(0, 1fr) 3.4rem minmax(0, 1fr); }
+/* 中间留一列专门放 > < 两个箭头（跟 CLion 一样：点一下就把这处搬到对面） */
+.btdiffrow { display: grid; grid-template-columns: 3.4rem minmax(0, 1fr) 2.6rem 3.4rem minmax(0, 1fr); }
+.btdiffrow .arrows { display: flex; align-items: center; justify-content: center; gap: 2px; padding: 0; background: var(--surface-2); }
+.btdiffrow .arrows button {
+  width: 1.15rem; height: 1.15rem; padding: 0; line-height: 1; font-size: 11px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--surface-line); border-radius: 4px; background: var(--surface-1); color: hsl(var(--muted-foreground));
+}
+.btdiffrow .arrows button:hover { border-color: hsl(var(--primary) / 0.8); color: hsl(var(--primary)); }
 .btdiffrow > * { padding: 0 6px; white-space: pre; overflow: hidden; }
 .btdiffrow .ln { text-align: right; color: hsl(var(--muted-foreground) / 0.7); background: var(--surface-2); user-select: none; }
 .btdiffrow .tx { border-left: 1px solid var(--surface-line-soft); }

@@ -8752,6 +8752,17 @@ const EN = {
   "RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent":
     "The standard LAN port on RIGOL DS1000Z series scopes (TCP 5555, SCPI text). Once connected the agent",
   "工具干同样的事。": "can do the same things with the same tools.",
+  // 批量文本：比对箭头
+  "跟随输入": "Follow input",
+  "右边改过之后就不再跟着输入走了，点这个恢复跟随": "Once the right side is edited it stops following the input; click to follow again",
+  "把这一处搬到右边": "Move this block to the right",
+  "把这一处写回左边输入": "Write this block back to the input",
+  "已把这一处搬到右边": "Moved this block to the right",
+  "（右边已固定，不再跟着输入走）": " (right side pinned, no longer following the input)",
+  "已把这一处写回左边输入": "Wrote this block back to the input",
+  "右边已固定（不跟随输入）": "right side pinned (not following input)",
+  "右边恢复跟随输入": "the right side follows the input again",
+
   // 批量文本：比对右边来源
   "挑一个文件跟输入比": "Pick a file to compare with the input",
   "右边：": "right: ",
