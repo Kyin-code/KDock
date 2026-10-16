@@ -3,6 +3,7 @@
 import { save as dlgSave, open as dlgOpen } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
+import { VB_FORMATS, VB_DEPTHS, VB_TIMINGS, VB_PRESETS, VB_IFACES, vbCompute, vbVerdict, vbState } from "./video-bandwidth.js";
 
 const $id = (id) => document.getElementById(id);
 /** 翻译：main.js 把 en() 挂在 window 上（这个文件是独立模块，拿不到它的作用域） */
@@ -1559,7 +1560,7 @@ function calcRenderBaud() {
 
 
 /* ============================== 数据计算（二级菜单） ==============================
-   文件校验 / IEEE 浮点在下面各自的函数里；这里放：进制·字节序、AES、RSA。
+   文件校验 / IEEE 浮点在下面各自的函数里；这里放：进制·字节序、AES、RSA、视频带宽计算。
    AES / RSA 走系统 WebCrypto —— 全在本机算，密钥只在这个框里，不写盘、不外发。 */
 
 /** 点一行就把那一行的值复制走（各进制一览 / 换算结果都用它） */
@@ -1880,6 +1881,205 @@ async function dcRsa(op) {
   }
 }
 
+/* ---------- 视频带宽计算（数据计算页第 8 块） ----------
+   算法在 video-bandwidth.js 里（纯函数、不碰 DOM）：这里只负责输入框、四个带宽数、
+   时序明细、以及"逐接口版本能不能扛住"那三条列表。 */
+const VB_GROUPS = [["dp", "DisplayPort"], ["dpam", "DisplayPort Alt Mode on USB-C"], ["hdmi", "HDMI"]];
+const VB_UNITS = { maximum: "带宽（峰值）", line: "Line", active: "Active", dsc: "DSC（8 bpp 下限）" };
+const VB_STATE_TXT = { ok: "支持", light: "支持（轻度 DSC）", heavy: "支持（重度 DSC）", no: "不支持" };
+const VB_STATE_EN = { ok: "Supported", light: "Supported, light DSC", heavy: "Supported, heavy DSC", no: "Not supported" };
+/** 这一块的结论文案自带中英两份：公共词典里 "支持" 被别的地方占着（译成了 Formats），不能复用 */
+const vbIsEn = () => document.documentElement.dataset.lang === "en";
+const vbStateText = (st) => (vbIsEn() ? VB_STATE_EN[st] : VB_STATE_TXT[st]);
+
+const vbFmtG = (v) => (v / 1e9).toFixed(2);
+const vbMHz = (v) => (v / 1e6).toFixed(3) + " MHz";
+const vbKHz = (v) => (v / 1e3).toFixed(2) + " kHz";
+
+/** 输入框里现在这套规格 */
+function vbInputs() {
+  return {
+    width: Number($id("vb-w").value),
+    height: Number($id("vb-h").value),
+    refreshRate: Number($id("vb-r").value),
+    colorDepth: Number(dcChipVal("vb-depth")),
+    colorFormat: dcChipVal("vb-format") || "rgb444",
+    timing: dcChipVal("vb-timing") || "cvt_rb2",
+  };
+}
+
+/** 算不出来时的说明：把"为什么"讲清楚（别学原页面那样一律 N/A） */
+function vbProblemBox(e, inp) {
+  const box = el("div", "vbblock bad");
+  const head = el("div", "vbblock-head");
+  const spec = `${inp.width}×${inp.height}@${inp.refreshRate}Hz`;
+  const field = { width: T("宽度"), height: T("高度"), refreshRate: T("刷新率"), colorDepth: T("色深") }[e.field || ""] || "";
+  let title = T("这套规格算不出来"), why = String(e.message || e);
+  if (e.vbCode === "no-dmt") {
+    title = T("DMT 表里没有这套时序");
+    why = T("DMT 是标准分辨率表（最大 4096×2160），{spec} 不在里面 —— 表里没有 144Hz 这种高刷，也没有非标准分辨率。").replace("{spec}", spec);
+  } else if (e.vbCode === "no-cea") {
+    title = T("CTA-861 表里没有这套时序");
+    why = T("CTA-861 只收广播视频模式（而且只认逐行），{spec} 不在里面。").replace("{spec}", spec);
+  } else if (e.vbCode === "zero") {
+    why = T("{f} 不能是 0。").replace("{f}", field);
+  } else if (e.vbCode === "bad-number") {
+    why = field ? T("{f} 得是个数字。").replace("{f}", field) : T("这几个输入都得是数字。");
+  } else if (e.vbCode === "not-finite") {
+    why = T("算出来的时序里有非法值（{f}）—— 换个规格再试。").replace("{f}", T(e.field || ""));
+  }
+  head.append(el("b", null, title), el("span", "grow"));
+  box.append(head, el("div", "vbsub", why));
+  if (e.vbCode === "no-dmt" || e.vbCode === "no-cea") {
+    const row = el("div", "vbrow");
+    const b1 = el("button", "btn tiny", T("改用 CVT-RBv2"));
+    b1.onclick = () => { dcChipSel["vb-timing"] = new Set(["cvt_rb2"]); const c = $id("vb-timing"); if (c) c.dataset.val = "cvt_rb2"; dcChipPaint("vb-timing"); vbRender(); };
+    const b2 = el("button", "btn tiny", T("改用 CVT"));
+    b2.onclick = () => { dcChipSel["vb-timing"] = new Set(["cvt"]); const c = $id("vb-timing"); if (c) c.dataset.val = "cvt"; dcChipPaint("vb-timing"); vbRender(); };
+    row.append(b1, b2);
+    box.appendChild(row);
+  }
+  return box;
+}
+
+/** 四个带宽数 + 时序明细 */
+function vbRenderOut(sig) {
+  const box = $id("vb-out");
+  box.innerHTML = "";
+  const grid = el("div", "vbnums");
+  for (const key of ["maximum", "line", "active", "dsc"]) {
+    const t = el("div", "vbnum");
+    t.append(el("span", "lb", T(VB_UNITS[key])));
+    const line = el("div", "vbnum-line");
+    line.append(el("b", null, vbFmtG(sig[key])), el("span", "u", "Gbps"));
+    t.appendChild(line);
+    t.title = key === "dsc"
+      ? T("DSC 按固定 8 bpp 估的理论下限，跟输入的色深无关；实际压缩码率会更高。")
+      : T("点一下复制这个数");
+    grid.appendChild(t);
+  }
+  box.appendChild(grid);
+
+  const t = sig.timing;
+  const rows = [];
+  rows.push(["像素时钟", vbMHz(sig.clock)]);
+  rows.push(["总像素（含消隐）", `${t.hTotal} × ${t.vTotal}`]);
+  rows.push(["有效像素", `${t.hActive} × ${t.vActive}（消隐 ${t.hBlank} × ${t.vBlank}）`]);
+  rows.push(["实际刷新率", `${t.vfreq.toFixed(3)} Hz` + (Math.abs(t.vfreq - sig.options.refreshRate) > 0.01 ? " · " + T("要的是 {r} Hz").replace("{r}", sig.options.refreshRate) : "")]);
+  rows.push(["行频", vbKHz(t.hfreq)]);
+  rows.push(["前后肩 / 极性", `H ${t.hFront}/${t.hSync}/${t.hBack}  V ${t.vFront}/${t.vSync}/${t.vBack}  ${t.hpol}${t.vpol}`]);
+  const srcTxt = t.source === "dmt" && t.dmtId != null
+    ? `DMT #${t.dmtId}${t.code2 ? "（" + t.code2 + "）" : ""}${t.code3 ? "（" + t.code3 + "）" : ""}`
+    : t.source === "cea" && t.vic != null ? `CTA-861 VIC ${t.vic}`
+      : t.aspect ? `${T(vbTimingLabel(t.source))} · ${t.aspect}` : T(vbTimingLabel(t.source));
+  rows.push(["时序来源", srcTxt]);
+  for (const [k, v] of rows) box.appendChild(digestRow(T(k), v, true));
+  if (t.vfreq100 !== sig.options.refreshRate) {
+    box.appendChild(el("div", "vbsub", T("查表按 ±0.5 Hz 取整匹配：请求 {a} Hz，命中的是 {b} Hz 那行。").replace("{a}", sig.options.refreshRate).replace("{b}", t.vfreq100)));
+  }
+}
+const vbTimingLabel = (key) => ({ cvt: "完整 CVT", cvt_rb: "CVT-RB", cvt_rb2: "CVT-RBv2", dmt: "DMT 查表", cea: "CTA-861 查表" }[key] || key);
+
+/** 逐接口判定列表：每行 = 版本 + 选中模式 + DSC + 结论 */
+function vbRenderIfaces(sig) {
+  const box = $id("vb-ifaces");
+  box.innerHTML = "";
+  for (const [g, label] of VB_GROUPS) {
+    const card = el("div", "vbgroup");
+    card.appendChild(el("div", "vbgroup-head", T(label)));
+    for (const face of VB_IFACES.filter((f) => f.group === g)) {
+      const v = vbVerdict(face, sig);
+      const st = vbState(v);
+      const row = el("div", "vbface");
+      row.dataset.st = st;
+      row.append(el("span", "vbver", face.version));
+      const mid = el("span", "vbbadges");
+      if (v.ok) {
+        mid.appendChild(el("span", "vbbadge mode", v.mode.name));
+        if (v.dscBPP > 0) mid.appendChild(el("span", "vbbadge dsc", `DSC ${v.dscBPP} bpp`));
+      } else {
+        mid.appendChild(el("span", "vbbadge none", v.reasonKey === "bandwidth" ? T("带宽不够") : T(v.reasonKey === "format" ? "色度格式不支持" : "色深超上限")));
+      }
+      row.appendChild(mid);
+      const right = el("span", "vbst");
+      right.appendChild(el("span", "st " + st, vbStateText(st)));
+      if (v.ok) {
+        const use = v.dscBPP > 0 ? "100" : (sig.maximum / v.mode.bandwidth * 100).toFixed(1);   // 走 DSC 的档位：用量按压缩后的 100% 记（跟参考页一致）
+        right.appendChild(el("span", "vbuse", T("用量 {p}%").replace("{p}", use)));
+      }
+      row.appendChild(right);
+      const tip = v.ok
+        ? [T("模式：{m}").replace("{m}", `${v.mode.name} —— ${v.mode.desc}`),
+           T("模式带宽 {b} Gbps").replace("{b}", vbFmtG(v.mode.bandwidth)),
+           T("需要 {b} Gbps").replace("{b}", vbFmtG(sig.maximum)),
+           v.dscBPP > 0
+             ? T("DSC 可用 {n} bpp（压缩率约 {p}%）").replace("{n}", v.dscBPP).replace("{p}", ((1 - sig.options.colorDepth / v.dscBPP) * 100).toFixed(1))
+             : T("这一档不用 DSC"),
+           face.hdr && sig.options.colorDepth >= 10 ? T("这个版本支持 HDR") : ""].filter(Boolean).join("\n")
+        : [T("原因：{r}").replace("{r}", v.reason),
+           T("最高模式带宽 {b} Gbps").replace("{b}", vbFmtG(face.modeList[0].bandwidth)),
+           T("需要 {b} Gbps").replace("{b}", vbFmtG(sig.maximum))].join("\n");
+      row.title = tip;
+      card.appendChild(row);   // 行要进这一组那张卡里，不是直接挂到列表上
+    }
+    box.appendChild(card);
+  }
+  const foot = el("div", "vbsub", T("只算带宽账：判定「支持」只代表链路带宽够，不代表插上一定能点亮（还要看 EDID、链路训练、线缆、DSC 切片）。DP Alt Mode 只按 2 lane 算，另外 2 lane 留给 USB。"));
+  box.appendChild(foot);
+}
+
+function vbRender() {
+  const out = $id("vb-out");
+  if (!out) return;
+  const inp = vbInputs();
+  let sig = null, bad = null;
+  try { sig = vbCompute(inp); } catch (e) { bad = e; }
+  if (bad) {
+    out.innerHTML = "";
+    out.appendChild(vbProblemBox(bad, inp));
+    const list = $id("vb-ifaces");
+    if (list) list.innerHTML = "";
+    return;
+  }
+  vbRenderOut(sig);
+  vbRenderIfaces(sig);
+}
+
+/** 常用规格：点了就填进输入框（色深也一起切） */
+function vbRenderPresets() {
+  const box = $id("vb-preset");
+  if (!box) return;
+  box.innerHTML = "";
+  for (const p of VB_PRESETS) {
+    const b = el("button", "chip", p.label);
+    b.type = "button";
+    b.onclick = () => {
+      $id("vb-w").value = p.width;
+      $id("vb-h").value = p.height;
+      $id("vb-r").value = p.refreshRate;
+      dcChipSel["vb-depth"] = new Set([String(p.colorDepth)]);
+      const dc = $id("vb-depth"); if (dc) dc.dataset.val = String(p.colorDepth);
+      dcChipPaint("vb-depth");
+      vbRender();
+    };
+    box.appendChild(b);
+  }
+}
+
+function initVB() {
+  if (!$id("vb-out")) return;
+  dcChips("vb-depth", VB_DEPTHS.map((d) => [String(d), String(d) + " bit"]), { onChange: vbRender });
+  dcChips("vb-format", VB_FORMATS.map((f) => [f.id, f.name]), { onChange: vbRender });
+  dcChips("vb-timing", VB_TIMINGS, { onChange: vbRender });
+  vbRenderPresets();
+  for (const id of ["vb-w", "vb-h", "vb-r"]) {
+    const i = $id(id);
+    if (i) i.addEventListener("input", vbRender);
+  }
+  vbRender();
+}
+
+
 /** 数据计算页的绑定（跟计算器一起在 initCalc 里挂一次） */
 function initDataCalc() {
   dcBindSections();
@@ -1975,6 +2175,9 @@ function initDataCalc() {
     $id("aes-iv").value = dcBytesHex(dcRandomBytes(n));
     toastMini(T("随机 IV 已生成（hex）"));
   };
+
+  // 视频带宽计算
+  initVB();
 
   // 文本哈希 / HMAC
   if ($id("hm-go")) $id("hm-go").onclick = dcHashGo;
@@ -2150,6 +2353,8 @@ export function initCalc() {
   calcRenderBaud();
   calcRenderBits();
   onLang(() => {
+    vbRenderPresets();
+    vbRender();
     calcRenderHist();
     calcRenderBaud();
     calcRenderBits();
