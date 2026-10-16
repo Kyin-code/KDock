@@ -1400,14 +1400,19 @@
             </div>
             <div id="qs-list" class="qsbody"></div>
           </div>
-          <div class="trow qsedit">
-            <input id="qs-label" class="num qsname" placeholder="名称" />
-            <input id="qs-payload" class="qsinput" placeholder="内容（HEX 形如 41 54 0D 0A）" />
-            <label class="chk" title="勾上后按 HEX 发送"><input type="checkbox" id="qs-hex" /> HEX</label>
-            <button id="qs-save" class="btn small primary">添加</button>
-            <button id="qs-cancel" class="btn small" hidden>取消</button>
+          <!-- 快捷发送最下面这行"添加 / 编辑"：两行 —— ① 名称 + HEX + 添加/取消 ② 内容（整行）
+               原来挤在一个 .trow 里，还会被参数区"标签列"那条规则缩进 75px：305px 宽的右栏里
+               折成 5 行、名称框只剩 64px，看着就是坏的。 -->
+          <div class="qsedit">
+            <div class="qsedit-row">
+              <input id="qs-label" class="num qsname" placeholder="名称（可留空）" />
+              <label class="chk" title="勾上后按 HEX 发送"><input type="checkbox" id="qs-hex" /> HEX</label>
+              <button id="qs-save" class="btn small primary">添加</button>
+              <button id="qs-cancel" class="btn small" hidden>取消</button>
+            </div>
+            <input id="qs-payload" class="qsinput" placeholder="内容：文本直接写；HEX 形如 41 54 0D 0A" />
           </div>
-          <span class="mhint">点某一行=直接发出去；✎ 改、✕ 删（改的时候上面那行变成编辑框，改完点「保存」）。</span>
+          <span class="mhint">点某一行 = 直接发出去；✎ 改、✕ 删（改的那行会填到上面）。</span>
         </div>
 
         <!-- 升级参数 -->
