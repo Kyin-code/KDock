@@ -630,12 +630,24 @@ fn set_timeout(conn: &mut Conn, ms: u64) {
 
 /// 二进制就用 HEX 呈现，免得模型把乱码当成内容
 fn text_and_hex(data: &[u8]) -> String {
-    let printable = data.iter().filter(|b| **b == b'\n' || **b == b'\r' || (32..127).contains(*b)).count();
-    if printable * 100 / data.len().max(1) >= 90 {
-        String::from_utf8_lossy(data).to_string()
-    } else {
-        format!("(二进制 {} 字节)\nHEX: {}", data.len(), kdock_core::hex::bytes_to_hex(data))
+    // 判"是不是文本"**不能**用"可打印 ASCII 占比"：UTF-8 的中文一个字 3 字节、
+    // 全都不在 32..127 里，一份纯中文的 markdown 会被算成二进制（实测踩过：
+    // 自己的 RTT_req.md 被回成 HEX，模型只能再写脚本去转码）。
+    // 正确口径：先看**整段是不是合法 UTF-8**（是 → 文本，除非含 NUL）；
+    // 不是合法 UTF-8 时再看控制字符占比（GBK 这种本地编码也当文本）。
+    if let Ok(s) = std::str::from_utf8(data) {
+        if !s.contains('\u{0}') {
+            return s.to_string();
+        }
     }
+    let ctrl = data
+        .iter()
+        .filter(|b| **b < 0x09 || (**b > 0x0d && **b < 0x20) || **b == 0x7f)
+        .count();
+    if ctrl * 100 / data.len().max(1) < 5 {
+        return crate::shell::decode(data);
+    }
+    format!("(二进制 {} 字节)\nHEX: {}", data.len(), kdock_core::hex::bytes_to_hex(data))
 }
 
 /// 借用 agent 的链路跑一段（用完还回去）
@@ -668,6 +680,19 @@ fn is_serial(ctx: &ToolCtx) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 中文纯文本**不能**被当成二进制（实测踩过：自己的 RTT_req.md 读回来是 HEX）
+    #[test]
+    fn chinese_text_is_text_not_binary() {
+        let s = "# 服务器端 agent 需要完成的事项\n中文说明：这是一份纯文本，含标点。\n";
+        assert_eq!(text_and_hex(s.as_bytes()), s, "UTF-8 中文文本应原样返回");
+        // GBK 的中文（不是合法 UTF-8）也按文本处理
+        let gbk = [0xD6u8, 0xD0, 0xCE, 0xC4, b'\n'];
+        assert_eq!(text_and_hex(&gbk), "中文\n", "GBK 文本应按本机代码页解出来");
+        // 真二进制还是给 HEX
+        let bin = [0x00u8, 0x01, 0x02, 0x00, 0x03, 0x00, 0xff, 0xfe];
+        assert!(text_and_hex(&bin).starts_with("(二进制"), "含 NUL 的按二进制走");
+    }
 
     #[test]
     /// 逻辑分析仪工具：注册齐全，读类不审批、写类审批
@@ -1241,46 +1266,17 @@ fn firmware_upgrade(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
 fn local_run(args: &Value) -> Result<String, String> {
     let cmd = arg_str(args, "cmd").ok_or("缺少 cmd")?;
     let timeout = Duration::from_millis(arg_u64(args, "timeout_ms", 15_000));
-    let mut child = if cfg!(windows) {
-        let mut c = std::process::Command::new("cmd");
-        c.args(["/C", &cmd]);
-        c
-    } else {
-        let mut c = std::process::Command::new("sh");
-        c.args(["-c", &cmd]);
-        c
+    // 引号与输出编码统一走 shell 模块：以前 args(["/C", cmd]) 会被再包一层引号，
+    // 命令里的 $_ / $env: 被外层吃掉、结尾的 D:\ 被当成转义引号，中文输出还会变乱码
+    let (code, stdout, stderr) = crate::shell::run(&cmd, timeout.as_millis() as u64, &crate::agent::stop_requested)?;
+    let mut text = format!("exit={code}\n");
+    if !stdout.trim().is_empty() {
+        text.push_str(&format!("--- stdout ---\n{}\n", stdout.trim_end()));
     }
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::piped())
-    .spawn()
-    .map_err(|e| format!("起进程失败: {e}"))?;
-    let start = Instant::now();
-    loop {
-        match child.try_wait().map_err(|e| e.to_string())? {
-            Some(status) => {
-                let out = child.wait_with_output().map_err(|e| e.to_string())?;
-                let mut text = String::new();
-                text.push_str(&format!("exit={}\n", status.code().unwrap_or(-1)));
-                let so = String::from_utf8_lossy(&out.stdout);
-                let se = String::from_utf8_lossy(&out.stderr);
-                if !so.trim().is_empty() { text.push_str(&format!("--- stdout ---\n{}\n", so.trim_end())); }
-                if !se.trim().is_empty() { text.push_str(&format!("--- stderr ---\n{}\n", se.trim_end())); }
-                let cut: String = text.chars().take(8000).collect();
-                return Ok(cut);
-            }
-            None => {
-                if crate::agent::stop_requested() {
-                    let _ = child.kill();
-                    return Err("用户停止了这条本机命令（进程已杀掉）".into());
-                }
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    return Err(format!("命令超过 {}ms 没结束，已杀掉", timeout.as_millis()));
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
+    if !stderr.trim().is_empty() {
+        text.push_str(&format!("--- stderr ---\n{}\n", stderr.trim_end()));
     }
+    Ok(text.chars().take(8000).collect())
 }
 
 fn which(exe: &str) -> Option<String> {

@@ -30,7 +30,10 @@ use tauri::{AppHandle, Emitter, Manager};
 use store::{Event, Provider};
 use tools::{Link, ToolCtx};
 
-const MAX_ROUNDS: usize = 16;
+/// 一次用户消息里最多连续跑多少轮工具。以前是 16 —— 太少：探板卡、查环境、读技能
+/// 这种"多看几眼"的活儿跑到一半就被掐断（用户抱怨过）。现在给到 100 轮，
+/// 真正的刹车交给：上下文预算（compact/trim）+ 用户按停止 + 模型自己收尾。
+const MAX_ROUNDS: usize = 100;
 
 /// 当前这一轮是否被要求停止。工具层里的长循环（读串口、传文件、烧录、升级…）不在 turn 的
 /// 调用栈上，拿不到那一轮的 `Arc<AtomicBool>`，所以这里挂一个进程级标志给它们查。

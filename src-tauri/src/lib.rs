@@ -12,6 +12,7 @@ mod kbview;
 mod netfs;
 mod remote_screen;
 mod scope;
+mod shell;
 mod storage;
 mod transport;
 mod upgrade;
@@ -1246,44 +1247,10 @@ fn file_size(path: String) -> Result<u64, String> {
 /// 跑一条本机命令（中控编排里"本机 ping"这种步骤用），返回 { code, stdout, stderr }。
 #[tauri::command]
 fn local_run(cmd: String, timeout_ms: u64) -> Result<serde_json::Value, String> {
-    use std::io::Read;
-    let mut child = {
-        let mut c = std::process::Command::new("cmd");
-        c.arg("/C").arg(&cmd)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            c.creation_flags(0x0800_0000);   // CREATE_NO_WINDOW，别闪黑框
-        }
-        c.spawn().map_err(|e| e.to_string())?
-    };
-    let t0 = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) => {}
-            Err(e) => return Err(e.to_string()),
-        }
-        if t0.elapsed().as_millis() as u64 > timeout_ms.max(200) {
-            let _ = child.kill();
-            return Err(format!("命令超时（{}ms）: {cmd}", timeout_ms));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    let mut o = std::io::BufReader::new(child.stdout.take().ok_or("拿不到 stdout")?);
-    let mut buf = Vec::new();
-    let _ = o.read_to_end(&mut buf);
-    let mut e2 = Vec::new();
-    if let Some(mut er) = child.stderr.take() { let _ = er.read_to_end(&mut e2); }
-    let code = child.wait().map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
-    Ok(serde_json::json!({
-        "code": code,
-        "stdout": String::from_utf8_lossy(&buf).to_string(),
-        "stderr": String::from_utf8_lossy(&e2).to_string(),
-    }))
+    // 引号与输出编码都交给 shell 模块统一处理（以前这里的 args(["/C", cmd]) 会被再包一层引号，
+    // 中文系统的 GBK 输出也会变成乱码）
+    let (code, stdout, stderr) = shell::run(&cmd, timeout_ms, &|| false)?;
+    Ok(serde_json::json!({ "code": code, "stdout": stdout, "stderr": stderr }))
 }
 /// 读一个 openocd `.cfg` 的文本内容。用途：点“开发板”时，板级 cfg 里通常写着
 /// `source [find target/stm32f4x.cfg]` / `interface/stlink.cfg`，据此把芯片、适配器一起选好。
