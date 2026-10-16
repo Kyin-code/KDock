@@ -91,6 +91,9 @@ function btRender() {
 
 /* ================== 批量文本：对输入框"选区优先"地改 ================== */
 
+/** 作用范围（查找/替换 与 大小写/缩进 共用一处）：sel = 选中部分，line = 每一行，all = 整篇 */
+const btScope = () => dcChipVal("bt-scope") || "all";
+
 function btSelRange() {
   const ta = $id("bt-in");
   const s = ta.selectionStart || 0;
@@ -98,10 +101,10 @@ function btSelRange() {
   return { ta, s, e, has: e > s };
 }
 
-/** transform 只吃一段文本、还一段文本；有选区（且勾了"只处理选中"）就只改那段 */
+/** transform 只吃一段文本、还一段文本；范围选"选中部分"（且有选区）就只改那段 */
 function btApply(fn, forceSelection) {
   const { ta, s, e, has } = btSelRange();
-  const only = forceSelection || $id("bt-selection-only").checked;
+  const only = forceSelection || btScope() === "sel";
   if (has && (only || forceSelection)) {
     const out = fn(ta.value.slice(s, e));
     ta.value = ta.value.slice(0, s) + out + ta.value.slice(e);
@@ -203,24 +206,38 @@ function btReplaceOne() {
   btFindStep(1);
 }
 
+/** 全部替换：按"范围"走 —— 选中部分 / 每一行 / 整篇（每行与整篇对 ^ $ 这类锚点的含义不同） */
 function btReplaceAll() {
   const p = btPattern();
   if (!p) return;
-  const rep = $id("bt-replace").value;
+  const repText = $id("bt-replace").value;
   const ta = $id("bt-in");
   const { s, e, has } = btSelRange();
-  if (has && $id("bt-selection-only").checked) {
-    const seg = ta.value.slice(s, e);
+  const scope = btScope();
+  let hits = 0;
+  const run = (text) => {
+    if (scope === "line") {
+      return text.split("\n").map((l) => {
+        p.re.lastIndex = 0;
+        hits += (l.match(p.re) || []).length;
+        p.re.lastIndex = 0;
+        return l.replace(p.re, repText);
+      }).join("\n");
+    }
     p.re.lastIndex = 0;
-    const out = seg.replace(p.re, rep);
+    hits = (text.match(p.re) || []).length;
+    p.re.lastIndex = 0;
+    return text.replace(p.re, repText);
+  };
+  if (scope === "sel" && has) {
+    const out = run(ta.value.slice(s, e));
     ta.value = ta.value.slice(0, s) + out + ta.value.slice(e);
     ta.setSelectionRange(s, s + out.length);
   } else {
-    p.re.lastIndex = 0;
-    ta.value = ta.value.replace(p.re, rep);
+    ta.value = run(ta.value);
   }
   btRender();
-  btMsg(T("已全部替换"));
+  btMsg(hits ? T("已替换 ") + hits + T(" 处") : T("没找到要替换的"));
 }
 
 /* ==================== 批量文本：JSON / 正则 / 缩进 ==================== */
@@ -232,7 +249,7 @@ function btJsonFormat(min) {
   btApply((text) => {
     const trimmed = text.trim();
     if (!trimmed) return text;
-    const indent0 = Number($id("bt-json-indent").value) || 2;
+    const indent0 = Number(dcChipVal("bt-json-indent")) || 2;
     try {
       const v = JSON.parse(trimmed);
       produced = min ? JSON.stringify(v) : JSON.stringify(v, null, indent0);
@@ -313,7 +330,7 @@ function btFormatBrace(src) {
     }
     if (c === "(") { paren++; out += c; i++; continue; }
     if (c === ")") { paren = Math.max(0, paren - 1); out += c; i++; continue; }
-    if (c === "{") { out += " {"; indent++; nl(); i++; continue; }
+    if (c === "{") { out = out.replace(/[ \t]+$/, "") + " {"; indent++; nl(); i++; continue; }
     if (c === "}") { indent = Math.max(0, indent - 1); if (!out.endsWith("\n")) nl(); out += "}"; i++; continue; }
     if (c === ";") {
       out += ";";
@@ -327,23 +344,6 @@ function btFormatBrace(src) {
   return out.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
 }
 
-function btRegexRun() {
-  const pat = $id("bt-re-pat").value;
-  if (!pat) { btMsg(T("先写个正则"), true); return; }
-  let re;
-  try { re = new RegExp(pat, "g"); } catch (e) {
-    btMsg(T("正则写错了：") + String(e.message || e).slice(0, 80), true);
-    return;
-  }
-  const rep = $id("bt-re-rep").value;
-  const scope = $id("bt-re-scope").value;
-  btApply((text) => {
-    if (scope === "line") return text.split("\n").map((l) => l.replace(re, rep)).join("\n");
-    return text.replace(re, rep);
-  });
-  btMsg(T(scope === "line" ? "正则批量处理完成（每行单独）" : "正则批量处理完成（全文）"));
-}
-
 const btCase = (mode) => (text) => {
   if (mode === "upper") return text.toUpperCase();
   if (mode === "lower") return text.toLowerCase();
@@ -351,7 +351,7 @@ const btCase = (mode) => (text) => {
 };
 
 function btIndentRun() {
-  const kind = $id("bt-indent").value;
+  const kind = dcChipVal("bt-indent") || "brace";
   if (kind === "json") return btJsonFormat(false);
   if (kind === "brace") return btApply(btFormatBrace);
   if (kind === "tabs2") return btApply((t) => t.replace(/\t/g, "  "));
@@ -384,6 +384,13 @@ async function btSendAll() {
   btSending = false;
   $id("bt-send").classList.remove("primary");
   if ($id("bt-state").textContent.startsWith(T("发送中"))) $id("bt-state").textContent = T("发完了");
+}
+
+/** 右栏那三组小选择器（作用范围 / JSON 缩进 / 缩进方式）：文字跟语言走，抽出来，切语言时重建一遍 */
+function btInitChips() {
+  dcChips("bt-scope", [["sel", T("选中部分")], ["line", T("每一行")], ["all", T("整篇")]], { onChange: btUpdateCount });
+  dcChips("bt-json-indent", [["2", T("2 空格")], ["4", T("4 空格")], ["1", T("1 空格")]]);
+  dcChips("bt-indent", [["brace", T("花括号自动")], ["tabs2", T("Tab → 2 空格")], ["tabs4", T("Tab → 4 空格")], ["strip", T("去掉行首缩进")]]);
 }
 
 export function initBatch(opts) {
@@ -429,10 +436,14 @@ export function initBatch(opts) {
     }
   });
 
-  // JSON / 正则 / 大小写 / 缩进
+  btInitChips();
+  // 右栏这几张卡也是可折叠的（各自记状态）
+  const btPane = document.querySelector('.parampane[data-param="batch"]');
+  bindSections(btPane ? [...btPane.querySelectorAll(".dcsection")] : [], BT_OPEN_KEY, "bt-expand-all", "bt-collapse-all");
+
+  // JSON / 大小写 / 缩进
   $id("bt-json-fmt").onclick = () => btJsonFormat(false);
   $id("bt-json-min").onclick = () => btJsonFormat(true);
-  $id("bt-re-run").onclick = btRegexRun;
   document.querySelectorAll(".bt-case-btn").forEach((b) => { b.onclick = () => btApply(btCase(b.dataset.case)); });
   $id("bt-indent-run").onclick = btIndentRun;
   $id("bt-out-to-in").onclick = () => {
@@ -458,7 +469,7 @@ export function initBatch(opts) {
   $id("bt-send").onclick = btSendAll;
   btRender();
   // 切语言时把这一页里"运行时拼出来的"文字重画一遍
-  onLang(() => { btRender(); btUpdateCount(); });
+  onLang(() => { btInitChips(); btRender(); btUpdateCount(); btMsg(""); $id("bt-state").textContent = ""; });   // 小标签重建成当前语言；旧提示/状态是上一门语言拼的，清掉
 }
 
 /* ============================== 计算器 ============================== */
@@ -2230,19 +2241,18 @@ function dcAesIvHint() {
   el2.textContent = mode === "GCM" ? T("GCM：IV 12 字节，密文自带 16 字节认证标签") : T(mode + "：IV 16 字节，密文长度是 16 的整数倍");
 }
 
-/** 数据计算页的折叠区块：状态记在本机；标题里的按钮/下拉只干活，不顺手把这块收起来 */
-const DC_OPEN_KEY = "kdock_dc_open";
-function dcBindSections() {
-  const secs = [...document.querySelectorAll(".dcsection")];
+/** 折叠区块的公共绑定：状态记在本机；标题里的按钮/下拉只干活，不顺手把这块收起来。
+    key 是 localStorage 的键，secs 里每块用 dataset 里的名字当家（dcsec / btsec）。 */
+function bindSections(secs, key, expandId, collapseId) {
   if (!secs.length) return;
+  const name = (s) => s.dataset.dcsec || s.dataset.btsec || "";
   let open = [];
-  try { open = JSON.parse(localStorage.getItem(DC_OPEN_KEY) || "[]") || []; } catch (_) { open = []; }
+  try { open = JSON.parse(localStorage.getItem(key) || "[]") || []; } catch (_) { open = []; }
   // 第一次用（没有记录）就打开第一块，别让整页看着是空的
-  const first = !localStorage.getItem(DC_OPEN_KEY);
-  secs.forEach((s, i) => { s.open = first ? i === 0 : open.includes(s.dataset.dcsec); });
-  const save = () => {
-    localStorage.setItem(DC_OPEN_KEY, JSON.stringify(secs.filter((s) => s.open).map((s) => s.dataset.dcsec)));
-  };
+  const first = !localStorage.getItem(key);
+  const list = open.map(String);
+  secs.forEach((s, i) => { s.open = first ? i === 0 : list.includes(name(s)); });
+  const save = () => { localStorage.setItem(key, JSON.stringify(secs.filter((s) => s.open).map(name))); };
   for (const s of secs) {
     s.addEventListener("toggle", save);
     const sum = s.querySelector("summary");
@@ -2254,8 +2264,16 @@ function dcBindSections() {
     }
   }
   const all = (v) => { secs.forEach((s) => { s.open = v; }); save(); };
-  if ($id("dc-expand-all")) $id("dc-expand-all").onclick = () => all(true);
-  if ($id("dc-collapse-all")) $id("dc-collapse-all").onclick = () => all(false);
+  if ($id(expandId)) $id(expandId).onclick = () => all(true);
+  if ($id(collapseId)) $id(collapseId).onclick = () => all(false);
+}
+
+const DC_OPEN_KEY = "kdock_dc_open";
+const BT_OPEN_KEY = "kdock_bt_open";
+/** 数据计算页那 8 块（只认这一页里的，别把批量文本右栏的卡也一起收进去） */
+function dcBindSections() {
+  const pane = document.querySelector('.workpane[data-work="datacalc"]');
+  bindSections(pane ? [...pane.querySelectorAll(".dcsection")] : [], DC_OPEN_KEY, "dc-expand-all", "dc-collapse-all");
 }
 
 export function initCalc() {

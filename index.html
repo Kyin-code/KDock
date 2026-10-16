@@ -618,6 +618,7 @@
             <span class="grow"></span>
             <span id="bt-state" class="lb"></span>
           </div>
+          <p class="hint">一行一行发到当前串口（每行按上面的行尾设置），发完自动停；发送中再点一次就停下。</p>
         </div>
 
         <!-- 计算器：上部 1/3 只显示（小字算式 + 大字结果），下部 2/3 = 控制行 + 左键盘 / 右 32 位控制板 -->
@@ -1464,98 +1465,178 @@
             下次开机还在（「设置 → 缓存」里能看到它、也能删）。</p>
         </div>
 
-        <!-- 批量文本参数 -->
+        <!-- 批量文本参数：跟"数据计算"一样是一张张可折叠的卡；"改输入框"的动作共用同一个范围 -->
         <div class="parampane" data-param="batch" hidden>
-          <div class="cardtitle">搜索 / 替换
-            <span class="kbd-hint">Ctrl+F</span></div>
-          <div class="field"><label for="bt-find">查找</label><input id="bt-find" class="dirinput" placeholder="要查找的内容" /></div>
-          <div class="trow bt-findopts">
-            <label class="chk"><input type="checkbox" id="bt-find-word" /> 全词</label>
-            <label class="chk" title="忽略大小写 + 空白灵活（空格可以匹配换行/多空格）"><input type="checkbox" id="bt-find-fuzzy" /> 模糊</label>
-            <label class="chk"><input type="checkbox" id="bt-find-re" /> 正则</label>
-          </div>
-          <div class="field"><label for="bt-replace">替换成</label><input id="bt-replace" class="dirinput" placeholder="留空 = 删除匹配" /></div>
-          <div class="trow">
-            <button id="bt-find-prev" class="btn small" title="上一个（Shift+Enter）">↑</button>
-            <button id="bt-find-next" class="btn small" title="下一个（Enter / F3）">↓ 找下一个</button>
-            <button id="bt-replace-one" class="btn small">替换</button>
-            <button id="bt-replace-all" class="btn small primary">全部替换</button>
-          </div>
-          <p class="hint" id="bt-find-count">没在找</p>
-          <p class="hint" id="bt-msg"></p>
-
-          <div class="cardtitle">JSON 整理</div>
-          <div class="trow">
-            <button id="bt-json-fmt" class="btn small">格式化</button>
-            <button id="bt-json-min" class="btn small">压缩成一行</button>
-            <select id="bt-json-indent" class="tight">
-              <option value="2" selected>缩进 2</option>
-              <option value="4">缩进 4</option>
-              <option value="1">缩进 1（Tab 宽）</option>
-            </select>
-          </div>
-          <p class="hint">按标准 JSON 解析后再排版；解析失败会告诉你错在第几个字符。</p>
-
-          <div class="cardtitle">正则批量处理</div>
-          <div class="field"><label for="bt-re-pat">正则</label><input id="bt-re-pat" class="dirinput" placeholder="例：^(\w+)=(\d+)$" /></div>
-          <div class="field"><label for="bt-re-rep">替换为</label><input id="bt-re-rep" class="dirinput" placeholder="例：$1 -> $2" /></div>
-          <div class="trow">
-            <select id="bt-re-scope" class="tight">
-              <option value="line">每行单独</option>
-              <option value="all">全文一起</option>
-            </select>
-            <button id="bt-re-run" class="btn small primary">批量处理</button>
-          </div>
-          <p class="hint">选中一段就只处理那段；没选就按下面的"范围"处理。用 <code>$1 $2</code> 引用捕获组。</p>
-
-          <div class="cardtitle">大小写 / 缩进</div>
-          <div class="trow">
-            <button class="btn small bt-case-btn" data-case="upper">大写</button>
-            <button class="btn small bt-case-btn" data-case="lower">小写</button>
-            <button class="btn small bt-case-btn" data-case="title">首字母大写</button>
-          </div>
-          <div class="trow">
-            <select id="bt-indent" class="tight">
-              <option value="json">JSON 自动</option>
-              <option value="brace">花括号自动（C/JS）</option>
-              <option value="tabs2">Tab → 2 空格</option>
-              <option value="tabs4">Tab → 4 空格</option>
-              <option value="strip">去掉行首缩进</option>
-            </select>
-            <button id="bt-indent-run" class="btn small primary">整理</button>
-          </div>
-          <label class="chk"><input type="checkbox" id="bt-selection-only" /> 只处理选中部分（没选就整篇）</label>
-          <div class="trow">
-            <button id="bt-out-to-in" class="btn small" title="把右边结果搬回左边输入，继续往下处理">结果 → 输入</button>
+          <div class="trow dctools">
+            <span class="lb">批量文本</span>
+            <span class="grow"></span>
+            <button id="bt-expand-all" class="btn small">全部展开</button>
+            <button id="bt-collapse-all" class="btn small">全部折叠</button>
           </div>
 
-          <div class="cardtitle">逐行处理</div>
-          <label class="chk"><input type="checkbox" id="bt-trim" checked /> 去掉首尾空白</label>
-          <label class="chk"><input type="checkbox" id="bt-skip-empty" checked /> 丢掉空行</label>
-          <label class="chk"><input type="checkbox" id="bt-dedupe" /> 去重（保留首次出现）</label>
-          <label class="chk"><input type="checkbox" id="bt-sort" /> 排序</label>
-          <label class="chk"><input type="checkbox" id="bt-number" /> 加行号 <input type="number" id="bt-num-start" class="num" value="1" /> 起</label>
-          <div class="field"><label for="bt-prefix">前缀</label><input id="bt-prefix" class="dirinput" placeholder="例：AT+" /></div>
-          <div class="field"><label for="bt-suffix">后缀</label><input id="bt-suffix" class="dirinput" placeholder="例：\r\n" /></div>
-          <div class="field"><label for="bt-case">大小写</label>
-            <select id="bt-case" class="tight">
-              <option value="">不改</option>
-              <option value="upper">转大写</option>
-              <option value="lower">转小写</option>
-            </select>
-          </div>
-          <div class="cardtitle">输出格式</div>
-          <select id="bt-format" class="tight wide">
-            <option value="lines">原样（一行一条）</option>
-            <option value="hexarr">HEX 数组 0x41,0x42…</option>
-            <option value="hexstr">HEX 字符串 4142…</option>
-            <option value="json">JSON 数组</option>
-            <option value="csv">逗号连接</option>
-            <option value="carray">C 数组 {0x41,0x42}</option>
-          </select>
-          <p class="hint">十六进制那几种是按 <b>UTF-8 字节</b> 转的，中文也行。</p>
-          <div class="cardtitle">发送</div>
-          <p class="hint">「逐行发送」按上面的间隔一条条发到当前串口，发完自动停；中途再点一次就停。</p>
+          <!-- ① 所有"改左边输入框"的动作都收在这一张卡里，共用一个范围（选中 / 每行 / 整篇） -->
+          <details class="calccard dcsection" data-btsec="edit" open>
+            <summary class="dcsum">
+              <span class="dcttl">查找 / 替换 / 改写</span>
+              <span class="grow"></span>
+              <span class="dchint">Ctrl+F 找 · F3 下一个</span>
+            </summary>
+            <div class="dcbody">
+              <div class="dcrow">
+                <label class="dclb">查找</label>
+                <div class="dcctl"><input id="bt-find" class="dirinput grow" placeholder="要查找的内容" /></div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">替换成</label>
+                <div class="dcctl"><input id="bt-replace" class="dirinput grow" placeholder="留空 = 删掉匹配" /></div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">匹配</label>
+                <div class="dcctl">
+                  <label class="chk"><input type="checkbox" id="bt-find-word" /> 全词</label>
+                  <label class="chk" title="忽略大小写；空格还能匹配换行 / 多个空格"><input type="checkbox" id="bt-find-fuzzy" /> 模糊</label>
+                  <label class="chk"><input type="checkbox" id="bt-find-re" /> 正则</label>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">范围</label>
+                <div class="dcctl">
+                  <div class="dcchips" id="bt-scope" data-val="all"></div>
+                  <span id="bt-find-count" class="hint"></span>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">替换</label>
+                <div class="dcctl">
+                  <button id="bt-find-prev" class="btn small" title="上一个（Shift+Enter）">↑</button>
+                  <button id="bt-find-next" class="btn small" title="下一个（Enter / F3）">↓ 找下一个</button>
+                  <button id="bt-replace-one" class="btn small">替换</button>
+                  <button id="bt-replace-all" class="btn small primary">全部替换</button>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">大小写</label>
+                <div class="dcctl">
+                  <button class="btn small bt-case-btn" data-case="upper">大写</button>
+                  <button class="btn small bt-case-btn" data-case="lower">小写</button>
+                  <button class="btn small bt-case-btn" data-case="title">首字母大写</button>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">缩进</label>
+                <div class="dcctl">
+                  <div class="dcchips" id="bt-indent" data-val="brace"></div>
+                  <button id="bt-indent-run" class="btn small primary">整理</button>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb"></label>
+                <div class="dcctl"><span class="hint">这一卡改的是<b>左边输入框</b>；范围选「选中部分」时只改选中的那段；正则里的 ^ $ 在「每一行」和「整篇」下含义不同。</span></div>
+              </div>
+              <p class="hint" id="bt-msg"></p>
+            </div>
+          </details>
+
+          <!-- ② JSON 整理 -->
+          <details class="calccard dcsection" data-btsec="json">
+            <summary class="dcsum">
+              <span class="dcttl">JSON 整理</span>
+              <span class="grow"></span>
+              <span class="dchint">格式化 · 压缩</span>
+            </summary>
+            <div class="dcbody">
+              <div class="dcrow">
+                <label class="dclb">缩进</label>
+                <div class="dcctl"><div class="dcchips" id="bt-json-indent" data-val="2"></div></div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb"></label>
+                <div class="dcctl">
+                  <button id="bt-json-fmt" class="btn small primary">格式化</button>
+                  <button id="bt-json-min" class="btn small">压缩成一行</button>
+                </div>
+              </div>
+              <p class="hint">按标准 JSON 解析后再排版（看不懂就告诉你错在第几个字符，并退一步按花括号重排）。一行一份 JSON 的日志也认。</p>
+            </div>
+          </details>
+
+          <!-- ③ 逐行处理：这张卡是"结果 / 发送"用的流水线，改一下马上生效 -->
+          <details class="calccard dcsection" data-btsec="lines">
+            <summary class="dcsum">
+              <span class="dcttl">逐行处理</span>
+              <span class="grow"></span>
+              <span class="dchint">实时作用在结果与发送</span>
+            </summary>
+            <div class="dcbody">
+              <div class="dcrow">
+                <label class="dclb">行</label>
+                <div class="dcctl">
+                  <label class="chk"><input type="checkbox" id="bt-trim" checked /> 去首尾空白</label>
+                  <label class="chk"><input type="checkbox" id="bt-skip-empty" checked /> 丢掉空行</label>
+                  <label class="chk"><input type="checkbox" id="bt-dedupe" /> 去重</label>
+                  <label class="chk"><input type="checkbox" id="bt-sort" /> 排序</label>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">行号</label>
+                <div class="dcctl">
+                  <label class="chk"><input type="checkbox" id="bt-number" /> 加行号</label>
+                  <input type="number" id="bt-num-start" class="num" min="0" max="999999" value="1" />
+                  <span class="hint">从几开始</span>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">前缀</label>
+                <div class="dcctl"><input id="bt-prefix" class="dirinput grow" placeholder="例：AT+" /></div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">后缀</label>
+                <div class="dcctl"><input id="bt-suffix" class="dirinput grow" placeholder="例：\r\n" /></div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb">每行大小写</label>
+                <div class="dcctl">
+                  <select id="bt-case" class="tight">
+                    <option value="">不改</option>
+                    <option value="upper">转大写</option>
+                    <option value="lower">转小写</option>
+                  </select>
+                </div>
+              </div>
+              <p class="hint">前缀 / 后缀里可以写 <code>\r</code> <code>\n</code> <code>\t</code>（按控制字符发）。</p>
+            </div>
+          </details>
+
+          <!-- ④ 输出格式 -->
+          <details class="calccard dcsection" data-btsec="out">
+            <summary class="dcsum">
+              <span class="dcttl">输出格式</span>
+              <span class="grow"></span>
+              <span class="dchint">原样 · HEX · JSON · CSV</span>
+            </summary>
+            <div class="dcbody">
+              <div class="dcrow">
+                <label class="dclb">格式</label>
+                <div class="dcctl">
+                  <select id="bt-format" class="tight wide">
+                    <option value="lines">原样（一行一条）</option>
+                    <option value="hexarr">HEX 数组 0x41,0x42…</option>
+                    <option value="hexstr">HEX 字符串 4142…</option>
+                    <option value="json">JSON 数组</option>
+                    <option value="csv">逗号连接</option>
+                    <option value="carray">C 数组 {0x41,0x42}</option>
+                  </select>
+                </div>
+              </div>
+              <div class="dcrow">
+                <label class="dclb"></label>
+                <div class="dcctl">
+                  <button id="bt-out-to-in" class="btn small" title="把右边结果搬回左边输入，接着往下处理">结果 → 输入</button>
+                  <span class="hint">HEX 那几种按 UTF-8 字节转（中文也行）</span>
+                </div>
+              </div>
+            </div>
+          </details>
         </div>
 
         <!-- 计算器参数：这里只放历史记录（标记过的才会留下），值本身在中间显示区 -->

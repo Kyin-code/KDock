@@ -1701,6 +1701,20 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .btarrow { display: flex; align-items: center; justify-content: center; color: hsl(var(--muted-foreground)); opacity: .6; }
 
+/* 批量文本右栏：跟"数据计算"同一套行式布局（标签列 + 控件列），只是右栏只有 ~300px，标签列收窄；
+   卡也是 .dcsection 那套折叠样式，展开状态单独记一份 */
+.parampane[data-param="batch"] .dcrow { grid-template-columns: 4.6rem minmax(0, 1fr); gap: 8px; }
+.parampane[data-param="batch"] .dcrow > .dclb { padding-top: 7px; font-size: 12px; }
+.parampane[data-param="batch"] .dcsection { margin-bottom: 8px; }
+.parampane[data-param="batch"] .dcsection > .dcsum { padding: 8px 10px; min-height: 2.1rem; }
+.parampane[data-param="batch"] .dcsection > .dcsum .dcttl { font-size: 12.5px; }
+.parampane[data-param="batch"] .dcsection > .dcsum .dchint { font-size: 11px; }
+.parampane[data-param="batch"] .dcbody { gap: 6px; padding: 0 10px 10px; }
+.parampane[data-param="batch"] .dcchips button { height: 24px; padding: 0 8px; font-size: 11.5px; }
+.parampane[data-param="batch"] .hint { font-size: 11.5px; line-height: 1.55; margin: 0; }
+.parampane[data-param="batch"] .dcrow > .dcctl > .dirinput, .parampane[data-param="batch"] .dcrow > .dcctl > select { min-width: 0; }
+.parampane[data-param="batch"] .trow.dctools { margin-bottom: 8px; }
+
 /* 计算器 */
 .calcin {
   flex: 1 1 auto; min-width: 0; height: 32px; padding: 0 11px;

@@ -8108,7 +8108,7 @@ const EN = {
   "改工作区": "Change workspace", "删除当前会话": "Delete session",
   "期待方式": "Match mode", "包含文本": "Contains text", "正则表达式": "Regex",
   "位判断(HEX)": "Bit test (HEX)", "任意数据": "any data", "忽略大小写": "Ignore case",
-  "期望值(HEX)": "Expected (HEX)", "掩码(HEX)": "Mask (HEX)", "正则": "regex", "位判断": "bit test",
+  "期望值(HEX)": "Expected (HEX)", "掩码(HEX)": "Mask (HEX)", "正则": "Regex", "位判断": "bit test",
   "如 A0000028D000": "e.g. A0000028D000", "如 ^SVR1 或 Directory": "e.g. ^SVR1 or Directory",
   "同长度，留空=逐字节比较；如 F00000000000": "Same length; empty = byte-by-byte, e.g. F00000000000",
   "在收到的字节流里找一段，使 (数据 & 掩码) == (期望值 & 掩码)。":
@@ -8495,7 +8495,7 @@ const EN = {
   "统计占用": "disk usage of a path", "文件系统占用": "filesystem usage",
   "递归列目录（需已安装）": "recursive listing (if installed)", "猜文件类型": "guess file type",
   "回显 / 重定向": "echo / redirect", "搜索文本": "search text", "流编辑": "stream edit",
-  "按列处理": "process columns", "按分隔符取列": "cut by delimiter", "排序": "sort",
+  "按列处理": "process columns", "按分隔符取列": "cut by delimiter", "排序": "Sort",
   "去重（配合 sort）": "de-duplicate (after sort)", "统计行/字/字节": "count lines/words/bytes",
   "字符替换": "translate characters", "比较两个文件": "diff two files", "十六进制查看": "hex view",
   "内核 / 架构信息": "kernel / arch info", "内存占用": "memory usage", "进程列表": "process list",
@@ -8736,6 +8736,42 @@ const EN = {
   "RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent":
     "The standard LAN port on RIGOL DS1000Z series scopes (TCP 5555, SCPI text). Once connected the agent",
   "工具干同样的事。": "can do the same things with the same tools.",
+  // 批量文本：缩进那几个小标签
+  "2 空格": "2 spaces",
+  "4 空格": "4 spaces",
+  "1 空格": "1 space",
+
+  // 批量文本（补）
+  "格式化 · 压缩": "Format · minify",
+  "原样 · HEX · JSON · CSV": "As-is · HEX · JSON · CSV",
+  "一行一行发到当前串口（每行按上面的行尾设置），发完自动停；发送中再点一次就停下。": "Sends one line at a time on the current port (each line uses the line ending above) and stops when done; click again while sending to stop.",
+
+  // 批量文本右栏（重排后的那几张卡）
+  "查找 / 替换 / 改写": "Find / replace / rewrite",
+  "Ctrl+F 找 · F3 下一个": "Ctrl+F to find · F3 next",
+  "匹配": "Match",
+  "选中部分": "Selection",
+  "每一行": "Each line",
+  "整篇": "Whole text",
+  "留空 = 删掉匹配": "empty = delete the match",
+  "已替换 ": "replaced ",
+  "没找到要替换的": "nothing to replace",
+  "这一卡改的是": "This card edits the ",
+  "左边输入框": "left input box",
+  "；范围选「选中部分」时只改选中的那段；正则里的 ^ $ 在「每一行」和「整篇」下含义不同。": "; with Selection it only touches the selected part. In regex mode ^ and $ differ between Each line and Whole text.",
+  "按标准 JSON 解析后再排版（看不懂就告诉你错在第几个字符，并退一步按花括号重排）。一行一份 JSON 的日志也认。": "Parses it as real JSON, then re-indents (on failure it tells you the character position and falls back to brace re-indenting). One JSON per line also works.",
+  "实时作用在结果与发送": "applies live to the result and to sending",
+  "按行": "Lines",
+  "行号": "Numbering",
+  "从几开始": "start at",
+  "去首尾空白": "Trim",
+  "去重": "Dedupe",
+  "每行大小写": "Line case",
+  "前缀 / 后缀里可以写": "Prefix / suffix accept ",
+  "（按控制字符发）。": " (sent as control characters).",
+  "HEX 那几种按 UTF-8 字节转（中文也行）": "The HEX ones use UTF-8 bytes (Chinese included)",
+  "花括号自动": "Auto braces",
+
   // 视频带宽计算（第二组：明细/悬停提示）
   "色深": "Color depth",
   "时序": "Timing",
