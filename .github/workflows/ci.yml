@@ -7,6 +7,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  # Persistent cargo cache outside the checkout, so that
+  # actions/checkout's `git clean -ffdx` cannot wipe it.
+  CARGO_TARGET_DIR: D:/CI/cargo-target/kdock
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -54,7 +59,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kdock-windows-x64
-          if-no-files-found: warn
+          # Fail loudly instead of publishing an empty artifact.
+          if-no-files-found: error
           path: |
-            src-tauri/target/release/*.exe
+            ${{ env.CARGO_TARGET_DIR }}/release/*.exe
             dist/**
