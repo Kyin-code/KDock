@@ -40,7 +40,18 @@ const LA = {
   sel: 0,                     // 当前通道（测量用）
   drag: null,
 };
-const DPR = () => Math.min(2, window.devicePixelRatio || 1);
+/* 画布后备分辨率 = CSS 尺寸 × 有效 DPR（系统缩放 × 软件自己的"放大"）。
+   以前这里硬性 min(2, dpr)：只要有效 DPR 超过 2（比如 150% 显示缩放 + 1.6 倍放大 = 2.4），
+   后备位图就比屏幕上的实际像素少，浏览器把它**放大**贴上去 —— 整页波形就糊了（实测 3.0 时被拉 1.5 倍）。
+   现在按真实 DPR 走，只加一个"像素总量"上限兜住极端情况下的内存。 */
+function pixelBudgetDpr(w, h) {
+  const raw = window.devicePixelRatio || 1;
+  let dpr = Math.min(3, raw);
+  const maxPixels = 12_000_000;                 // 约 46MB 的位图，再大就意义不大了
+  const cssPixels = Math.max(1, w * h);
+  if (cssPixels * dpr * dpr > maxPixels) dpr = Math.max(1, Math.sqrt(maxPixels / cssPixels));
+  return dpr;
+}
 const COLORS = ["#4ea1ff", "#ffd166", "#7ee787", "#ff8fa3", "#c792ea", "#7fd1e0", "#f5a97f", "#c9d1d9"];
 const ROW_H = 30;
 
@@ -270,7 +281,7 @@ function renderWave() {
   if (c.style.minHeight !== minH + "px") c.style.minHeight = minH + "px";
   const box = c.getBoundingClientRect();
   if (box.width < 4 || box.height < 4) return;          // 还没布局好（隐藏中）就别画，否则画布被压成 0×0
-  const dpr = DPR();
+  const dpr = pixelBudgetDpr(box.width, box.height);
   if (c.width !== Math.round(box.width * dpr) || c.height !== Math.round(box.height * dpr)) {
     c.width = Math.round(box.width * dpr);
     c.height = Math.round(box.height * dpr);
@@ -815,6 +826,16 @@ export function initLogic() {
     msg(T("已加解码器：") + (DECODERS[kind] ? DECODERS[kind].name : kind));
   });
   window.addEventListener("resize", () => { if (!$id("la-canvas").closest("[hidden]")) renderAll(); });
+  /* 有效 DPR 变了（换个缩放的显示器、改软件的"放大"）但不一定伴随 resize：
+     用 matchMedia 监听"当前这个 dppx"，命中一次就重画并重新挂一次监听。
+     不补这一步，画布会保持旧的位图被拉伸贴上去 —— 表现就是"页面突然糊了"。 */
+  const watchDpr = () => {
+    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    const on = () => { renderAll(); watchDpr(); };
+    if (mq.addEventListener) mq.addEventListener("change", on, { once: true });
+    else if (mq.addListener) mq.addListener(function h() { mq.removeListener(h); on(); });
+  };
+  watchDpr();
   bindInteract();
   loadScenario(scn ? scn.value : undefined);   // 进页面先给一段示例，省得对着空屏
   if (window.kdockOnLang) window.kdockOnLang(() => { renderAll(); });
