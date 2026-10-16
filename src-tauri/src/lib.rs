@@ -6,6 +6,7 @@
 mod agent;
 mod checksum;
 mod debug;
+mod env_setup;
 mod kbview;
 mod scope;
 mod storage;
@@ -3518,6 +3519,8 @@ pub fn run() {
             file_read_text,
             file_read_bytes,
             file_write_text,
+            env_setup::env_scan,
+            env_setup::env_install,
             storage::command_table_get,
             storage::command_table_save,
             storage::cache_items,

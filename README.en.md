@@ -28,6 +28,7 @@ live charts, flow orchestration — plus an Agent that can drive all of it. All 
 | **Helpers** | Command reference (standard Linux commands), batch text processing, calculator (with a 32-bit bit board, IEEE 754 and file checksums) |
 | **Firmware** | `.fw` package parsing & verification, **serial in-app upgrade (YMODEM)**, **network upgrade (service channel)**, version manifest from an HTTP server |
 | **Flashing** | Drives external programmers (OpenOCD / J-Link / STM32CubeProgrammer) for flash, erase, verify and reset |
+| **Environment** | One-click detection and install of drivers / toolchains (CH34x · FTDI · J-Link+JFlash · arm-none-eabi-gcc · OpenOCD · PulseView(sigrok) · RT-Thread Env · ST-Link · Zadig): read-only scan of this PC (PATH / registry / pnputil / common folders), bundled installers first, winget / git one-click install, first-run check for required drivers |
 | **Device files** | List directories, pull/push files, CRC verification (serial uses base64, network uses offset-based reads/writes) |
 | **Visualization** | Live charts (multi-channel), screen capture, **oscilloscope** (RIGOL DS1000Z series over SCPI: state, 13 auto-measurements, multi-channel waveform, screenshot, timebase/trigger control), logic analyzer slot |
 | **Flow** | Chain local commands / TCP / UDP / serial into a timed flow with branches, run it with one click |
@@ -151,6 +152,46 @@ The same abilities are exposed to the **Agent** as tools: `scope_connect` / `sco
 
 > Note: the DS1000Z SCPI socket accepts a **single** client at a time. KDock reconnects automatically when
 > it gets kicked, but do not drive the scope from two programs at once.
+
+## Environment setup
+
+**Environment setup** (left nav → the **Environment** group): drivers and toolchains without hopping through
+vendor sites — one scan, then install whatever is missing.
+
+**Nine items**: CH34x / CH340 serial driver, FTDI FT2232 / D2XX, SEGGER J-Link (incl. JFlash / GDB Server / RTT),
+GNU Arm Embedded Toolchain (arm-none-eabi-gcc), OpenOCD, logic analyzer (PulseView / sigrok), RT-Thread Env,
+ST-Link USB driver, Zadig (WinUSB for FX2 logic analyzers).
+
+**The scan is read-only** and never touches your machine: PATH plus a few extra roots, the driver list from
+`pnputil /enum-drivers` (that is how CH34x / FTDI / ST-Link are recognized), the registry (J-Link's version),
+and common folders on each drive (matched by pattern, not a full-disk walk). All nine scan in **0.3 s**
+(measured), cached for 15 minutes; "Rescan" forces a refresh.
+
+**Installing** goes in this order:
+
+1. Is there a bundled installer in `<exe folder>\drivers\<item id>\` (`.exe` / `.msi` / `.inf`)? Then use it —
+   **no network at all**. A few-MB driver (CH340 / FTDI, whose vendors gate the download behind a login) can
+   ship next to the app this way.
+2. Otherwise follow the plan: winget (official packages for the Arm toolchain / OpenOCD / PulseView / Zadig),
+   git clone (RT-Thread Env), or download into your Downloads folder and run the installer.
+3. Installing a USB driver raises **one UAC prompt** (`Start-Process -Verb RunAs`) — drivers need elevation and
+   the app never bypasses it silently.
+
+WCH / FTDI / SEGGER / ST gate their downloads behind a consent checkbox or a login, so there is no stable direct
+link; those items get "Open website" + "I downloaded it — install from local" (drop the installer into the bundled
+folder above). The **install folder** is yours to pick: portable items (toolchain zips / git repos) unpack there;
+left blank it prefers `F:\ENV`, otherwise `KDock\env` under your user folder.
+
+**First-run check**: runs once after startup and **only prompts when a required item is missing** (today the only
+required one is the CH340 serial driver — without a COM port you cannot do anything). "Open it" jumps to the page,
+"Cancel" stops the nagging; updatable items only raise a toast. **The app never downloads or installs anything by
+itself** — even the scan is strictly read-only.
+
+The same capabilities are on the **Agent**: `env_scan` (scan this PC, read-only, no approval — same inventory the
+page shows) and `env_install` (install / update one item, **needs approval**; the UI switches to Environment setup
+so the user watches the progress and log live).
+
+## Using the Agent
 
 ## Using the Agent
 

@@ -288,6 +288,17 @@ pub fn catalog() -> Vec<ToolDef> {
             "save_as":{"type":"string","description":"相对工作区的文件名，默认 shot.png"}
         }}), true);
 
+    // ── 环境配置（左导航「环境 → 环境配置」那一页）：扫描只读，安装要审批 ──
+    push("env_scan", "扫描本机已有的**驱动与工具链**（只读）：CH34x / CH340 串口驱动、FTDI FT2232 / D2XX、SEGGER J-Link（含 JFlash / GDB Server / RTT）、GNU Arm Embedded Toolchain、OpenOCD、逻辑分析仪（PulseView / sigrok）、RT-Thread Env、ST-Link 驱动、Zadig。每项给：装没装、版本（有的才知道）、路径或命中的驱动/注册项。缺哪些**必需项**也一并回。跟环境配置页看到的是同一份数据。",
+        json!({"type":"object","properties":{
+            "force":{"type":"boolean","description":"true = 丢掉 15 分钟缓存重新扫"}
+        }}), true);
+    push("env_install", "装 / 更新环境配置里的某一项（**会真的下载并安装，可能弹一次 UAC**，所以要先说清楚你要装什么、装到哪）。id 取自 env_scan 的返回，例如 ch34x / ft2232 / jlink / armgcc / openocd / pulseview / rtthread_env / stlink / zadig。装的时候界面会自动切到环境配置页、进度和日志都在那儿，用户全程看得见。优先用内置安装包（<exe 同目录>\\drivers\\<id>\\），没有才走 winget / git clone / 下载安装器。",
+        json!({"type":"object","properties":{
+            "id":{"type":"string","description":"组件 id，取自 env_scan"},
+            "dir":{"type":"string","description":"便携类（工具链 / git 仓库）的安装目录；留空就用环境配置页里设置的那个"}
+        },"required":["id"]}), true);
+
     t
 }
 
@@ -678,6 +689,23 @@ mod tests {
         }
         assert!(po.schema["required"].as_array().unwrap().iter().any(|v| v == "mode"));
     }
+
+    #[test]
+    fn env_tools_are_registered_and_gated() {
+        let names: Vec<&str> = catalog().iter().map(|d| d.name).collect();
+        for n in ["env_scan", "env_install"] {
+            assert!(names.contains(&n), "缺工具 {n}");
+        }
+        // 扫描只读、不审批；安装会动系统、必须审批
+        assert!(!is_dangerous("env_scan"));
+        assert!(is_dangerous("env_install"));
+        // 两个都在前端实现（装的时候要把进度画出来），所以必须是 host
+        assert!(is_host("env_scan") && is_host("env_install"));
+        let ins = catalog().into_iter().find(|d| d.name == "env_install").unwrap();
+        assert!(ins.schema["properties"].as_object().unwrap().contains_key("id"));
+        assert!(ins.schema["properties"].as_object().unwrap().contains_key("dir"));
+        assert!(ins.schema["required"].as_array().unwrap().iter().any(|v| v == "id"));
+    }
 }
 
 pub fn is_dangerous(name: &str) -> bool {
@@ -688,6 +716,7 @@ pub fn is_dangerous(name: &str) -> bool {
             | "workspace_write" | "workspace_mkdir" | "skill_create" | "skill_update"
             | "skill_delete" | "flow_run" | "capture_save"
             | "la_config" | "la_capture" | "la_save"
+            | "env_install"
     )
 }
 

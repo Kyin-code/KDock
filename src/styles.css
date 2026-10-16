@@ -2760,3 +2760,46 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   .params .parampane[data-param="debug"] input { max-width: 8.5rem; }
   .dbgpane .dbgside { grid-template-columns: minmax(0, 1fr); max-height: 40%; }
 }
+
+/* ================= 环境配置页 ================= */
+.envpane { gap: 8px; }
+.envdir { max-width: 22rem; height: 26px; }
+.envgrid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr));
+  gap: 8px 10px; align-content: start; min-height: 120px; overflow: auto;
+}
+.envcard {
+  display: flex; flex-direction: column; gap: 6px; padding: 9px 11px;
+  border: 1px solid hsl(var(--border) / 0.55); border-radius: 11px;
+  background: hsl(var(--card) / 0.55); min-width: 0;
+}
+.envcard.ok { border-color: hsl(var(--success) / 0.45); }
+.envcard.bad { border-color: hsl(var(--destructive) / 0.5); }
+.envcard .ktop { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.envcard .kname { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.envcard .kbadge { flex: 0 0 auto; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: var(--surface-3); color: hsl(var(--muted-foreground)); }
+.envcard .kbadge.warn { background: hsl(var(--warning) / 0.18); color: hsl(var(--warning)); }
+.envcard .kbadge.kind { background: hsl(var(--border) / 0.35); color: hsl(var(--muted-foreground)); }
+.envcard.ok .kbadge { background: hsl(var(--success) / 0.2); color: hsl(var(--success)); }
+.envcard.bad .kbadge { background: hsl(var(--destructive) / 0.16); color: hsl(var(--destructive)); }
+.envcard .kmeta { font-size: 11px; color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.envcard .kdesc { font-size: 11.5px; color: hsl(var(--muted-foreground) / 0.95); line-height: 1.45; }
+.envcard .kacts { display: flex; align-items: center; gap: 6px; margin-top: auto; }
+.envbar { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+.envbar > div { height: 100%; width: 0%; background: hsl(var(--primary)); transition: width .2s ease; }
+.envlog {
+  margin: 0; padding: 7px 9px; min-height: 92px; max-height: 240px; overflow: auto;
+  background: var(--surface-0); border: 1px solid var(--surface-line); border-radius: 9px;
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 11.5px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-all; color: hsl(var(--foreground) / 0.9);
+}
+.envfilters .seg label { font-size: 12px; }
+
+/* 窄窗：环境页参数区也压平（跟传输/烧录一套），卡片一列 */
+@media (max-width: 980px) {
+  .envgrid { grid-template-columns: minmax(0, 1fr); }
+  .params .parampane[data-param="env"]:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]) {
+    display: block; column-width: 20rem; column-gap: 16px;
+  }
+  .params .parampane[data-param="env"] > * { break-inside: avoid; }
+}

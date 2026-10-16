@@ -1146,6 +1146,7 @@ const WORK_OF = {
   chart: "chart", seq: "seq", flash: "flash", scope: "scope", capture: "capture", logic: "logic",
   debug: "debug",
   agent: "agent",
+  env: "env",
 };
 
 /** 窄窗时参数区是「整行挪到下面」的一条：按当前这张面板的内容量决定它多高（30~55vh 之间），
@@ -1186,6 +1187,7 @@ function showPane(tab) {
   if (tab === "calc") initCalc();
   if (tab === "datacalc") initCalc();          // 折叠区块的初始化在 initCalc 里（只有一次）
   if (tab === "logic") initLogic();
+  if (tab === "env") envRefresh();
   if (tab === "scope") { scSetView(scView); scResizePlot(); }
   kbSyncSoon();                                 // 知识库页：进来就贴、离开就收（详见 kbSync）
   if (LANG === "en") langWalk();   // 这一页里"切过来才渲染"的文字（提示语/空态）再扫一遍
@@ -1640,7 +1642,7 @@ async function flDetectTools(clearFirst) {
     for (const id of ["fl-tool-openocd", "fl-tool-scripts", "fl-tool-jlink", "fl-tool-stm32"]) $(id).value = "";
   }
   flCfgSave();
-  $("fl-tool-state").textContent = "检测中…";
+  $("fl-tool-state").textContent = en("检测中…");
   try {
     const r = await invoke("flash_tools", { overrides: FL_CFG });
     const seg = [];
@@ -4280,6 +4282,290 @@ function bindQuickSend() {
   if ($("qs-filter")) $("qs-filter").oninput = () => qsRender();
 }
 
+/* ══════════ 环境配置：驱动 / 工具链 的检测与一键安装 ══════════
+   后端（env_setup.rs）负责真干活：扫描（PATH / 注册表 / pnputil / 各盘常见目录）、
+   下载（到"下载"文件夹）、解包 / 装 MSI / 跑安装器 / winget / git clone，进度走 env://progress 事件。
+   前端只做：列出来、给按钮、把日志和进度画出来。 */
+let envData = null;                 // env_scan 的结果
+let envKind = "全部";               // 类别过滤
+let envBusy = null;                 // 正在装的组件 id
+
+/** 这一块元素多，抽个建元素的小工具（main.js 其它页是手搓 document.createElement） */
+function envEl(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+const envDirPref = () => (localStorage.getItem("kdock_env_dir") || "").trim();
+function envSyncDirInputs() {
+  const v = envDirPref();
+  for (const id of ["env-dir", "env-dir2"]) {
+    const e = $(id);
+    if (e && document.activeElement !== e) e.value = v;
+  }
+}
+/** 后端（env_setup.rs）的日志是中文的。英文界面下按模式过一遍：整行是拼出来的，查不到字典。
+    顺序有讲究：越具体的放前面（"（模拟）会跑 winget…" 要在通用的 "（模拟）…" 之前）。 */
+const ENV_LOG_EN = [
+  [/^准备安装 (.+)$/, (m) => "Preparing to install " + en(m[1])],
+  [/^已存在，直接用：(.+)$/, (m) => "Already there, reusing: " + m[1]],
+  [/^开始下载 (.+)$/, (m) => "Starting download " + m[1]],
+  [/^下载中 (\d+)%$/, (m) => "Downloading " + m[1] + "%"],
+  [/^下载完成：(\d+) MB$/, (m) => "Download finished: " + m[1] + " MB"],
+  [/^下载失败[:：]?\s*(.*)$/, (m) => "Download failed" + (m[1] ? ": " + m[1] : "")],
+  [/^等待 UAC 授权 \/ 安装中…$/, "Waiting for UAC / installing…"],
+  [/^安装中…$/, "Installing…"],
+  [/^安装命令已执行$/, "Install command finished"],
+  [/^PowerShell 没返回输出（可能被 UAC 拒绝）$/, "PowerShell returned nothing (UAC may have been denied)"],
+  [/^不认识的组件：(.+)$/, (m) => "Unknown component: " + m[1]],
+  [/^内置驱动：(.+)$/, (m) => "Bundled driver: " + m[1]],
+  [/^用了内置驱动：$/, "Used the bundled driver:"],
+  [/^已执行：(.+)$/, (m) => "Ran: " + m[1]],
+  [/^（模拟）会跑 winget install --id (.+) --silent$/, (m) => "(dry run) would run: winget install --id " + m[1] + " --silent"],
+  [/^（模拟）会在 (.+) 里跑 git pull$/, (m) => "(dry run) would run git pull in " + m[1]],
+  [/^（模拟）会 git clone (\S+) (\S+)$/, (m) => "(dry run) would git clone " + m[1] + " " + m[2]],
+  [/^（模拟）会解压 (.+) → (.+)（strip (\d+) 层）$/, (m) => "(dry run) would unzip " + m[1] + " → " + m[2] + " (strip " + m[3] + " levels)"],
+  [/^（模拟）下载到 (.+)，会执行：(.+)$/, (m) => "(dry run) would download to " + m[1] + ", then run: " + m[2]],
+  [/^（模拟）会执行 (.+)$/, (m) => "(dry run) would run " + m[1]],
+  [/^（模拟）(.+)$/, (m) => "(dry run) " + m[1]],
+  [/^已有仓库，执行 git pull$/, "Repo already there — running git pull"],
+  [/^git clone 失败（PATH 里有 git 吗？）$/, "git clone failed (is git on PATH?)"],
+  [/^已注册驱动 (.+)$/, (m) => "Driver registered " + m[1]],
+  [/^注册表 (.+)$/, (m) => "Registry " + m[1]],
+  [/^完成$/, "Done"],
+  [/^「(.+)」没有直接的自动下载地址（要登录\/授权），请到官网下载安装：(.+)$/,
+    (m) => "\u201c" + en(m[1]) + "\u201d has no direct download (needs login / consent) — get it from: " + m[2]],
+];
+function envLogLine(line) {
+  if (LANG !== "en") return line;
+  for (const [re, to] of ENV_LOG_EN) {
+    const m = line.match(re);
+    if (!m) continue;
+    return typeof to === "function" ? to(m) : line.replace(re, to);
+  }
+  return en(line);
+}
+function envLog(text) {
+  const box = $("env-log");
+  if (!box) return;
+  const lines = String(text).replace(/\r\n/g, "\n").split("\n");
+  for (const l of lines) {
+    if (!l.trim() && lines.length > 1) continue;
+    box.textContent += `[${new Date().toLocaleTimeString()}] ${envLogLine(l)}\n`;
+  }
+  box.scrollTop = box.scrollHeight;
+}
+function envProg(pct, name) {
+  const bar = $("env-bar"), nm = $("env-prog-name");
+  if (bar) bar.style.width = Math.max(0, Math.min(100, pct)) + "%";
+  if (nm && name != null) nm.textContent = en(name);
+}
+
+async function envRefresh(force) {
+  const box = $("env-grid");
+  if (!box) return;
+  envSyncDirInputs();
+  if (!envData || force) {
+    if (!envData) { box.textContent = ""; box.appendChild(envEl("p", "hint", en("正在扫描本机…"))); }
+    try {
+      envData = await invoke("env_scan", { force: !!force });
+    } catch (e) {
+      box.textContent = "";
+      box.appendChild(envEl("p", "hint", en("扫描失败：") + String(e)));
+      return;
+    }
+  }
+  envRenderGrid();
+  envRenderFirst();
+}
+
+function envRenderGrid() {
+  const box = $("env-grid");
+  if (!box || !envData) return;
+  const all = envData.items || [];
+  const onlyMissing = $("env-only-missing") && $("env-only-missing").checked;
+  const kinds = ["全部", ...new Set(all.map((x) => x.kind))];
+  const seg = $("env-kinds");
+  const wantKey = LANG + "|" + kinds.join("|");      // 语言也要算进 key：切语言时标签得重画
+  if (seg && seg.dataset.built !== wantKey) {
+    seg.dataset.built = wantKey;
+    seg.textContent = "";
+    for (const k of kinds) {
+      const label = envEl("label");
+      const inp = document.createElement("input");
+      inp.type = "radio"; inp.name = "env-kind"; inp.value = k;
+      inp.checked = k === envKind;
+      inp.onchange = () => { envKind = k; envRenderGrid(); };
+      label.appendChild(inp);
+      label.appendChild(document.createTextNode(" " + en(k)));
+      seg.appendChild(label);
+    }
+  }
+  const items = all.filter((x) =>
+    (envKind === "全部" || x.kind === envKind) && (!onlyMissing || !x.installed || x.outdated));
+  if ($("env-sum")) {
+    const ok = all.filter((x) => x.installed).length;
+    const bad = all.filter((x) => !x.installed).length;
+    const up = all.filter((x) => x.outdated).length;
+    $("env-sum").textContent = en("已装 ") + ok + "/" + all.length +
+      (bad ? en(" · 未装 ") + bad : "") + (up ? en(" · 可更新 ") + up : "");
+  }
+  if ($("env-hint-line")) {
+    const miss = (envData.missingRequired || []).map((k) => {
+      const it = all.find((x) => x.id === k);
+      return en(it ? it.name : k);
+    });
+    $("env-hint-line").textContent = miss.length ? en("缺必需项：") + miss.join("、") : en("必需项都齐了");
+  }
+  box.textContent = "";
+  if (!items.length) { box.appendChild(envEl("p", "hint", en("没有符合条件的组件"))); return; }
+  for (const it of items) {
+    const card = envEl("div", "envcard" + (it.installed ? (it.outdated ? "" : " ok") : " bad"));
+    const top = envEl("div", "ktop");
+    top.appendChild(envEl("span", "kname", en(it.name)));
+    top.appendChild(envEl("span", "kbadge" + (it.installed ? (it.outdated ? " warn" : " ok") : ""),
+      it.installed ? (it.outdated ? en("可更新") : (it.version ? "v" + it.version : en("已装"))) : en("未安装")));
+    top.appendChild(envEl("span", "kbadge kind", en(it.kind)));
+    card.appendChild(top);
+    card.appendChild(envEl("div", "kmeta", it.path || envLogLine(it.detail || "")));
+    card.appendChild(envEl("div", "kdesc", en(it.desc)));
+    const acts = envEl("div", "kacts");
+    if (it.autoInstall) {
+      const b = envEl("button", "btn small" + (it.installed ? "" : " primary"),
+        en(it.installed ? "更新 / 重装" : "一键安装"));
+      b.onclick = () => envInstall(it.id);
+      acts.appendChild(b);
+    } else {
+      const b = envEl("button", "btn small", en("打开官网"));
+      b.title = en("这个要登录 / 同意条款才能下：官网下完，把安装包丢进内置目录就能一键装。");
+      b.onclick = () => openExternal(it.url);
+      acts.appendChild(b);
+      const b2 = envEl("button", "btn small", en("我下好了，用本地的装"));
+      b2.title = en("把安装包放进 <exe 同目录>\\drivers\\<组件id>\\ 之后再点这个");
+      b2.onclick = () => envInstall(it.id);
+      acts.appendChild(b2);
+    }
+    if (it.path) {
+      const b3 = envEl("button", "btn small", en("定位"));
+      b3.onclick = () => invoke("open_folder", { path: String(it.path).replace(/[\\/][^\\/]*$/, "") }).catch(() => {});
+      acts.appendChild(b3);
+    }
+    card.appendChild(acts);
+    box.appendChild(card);
+  }
+  if (LANG === "en") langWalk();
+  syncParamStrip();
+}
+
+function envRenderFirst() {
+  const box = $("env-first");
+  if (!box || !envData) return;
+  const all = envData.items || [];
+  const miss = all.filter((x) => x.required && !x.installed);
+  const up = all.filter((x) => x.outdated);
+  box.textContent = "";
+  const row = (k, v, cls) => {
+    const d = envEl("div", "row");
+    d.appendChild(envEl("span", "k", k));
+    d.appendChild(envEl("span", "v" + (cls ? " " + cls : ""), v));
+    box.appendChild(d);
+  };
+  row(en("必需项"), miss.length ? miss.map((x) => en(x.name)).join("、") : en("齐了"), miss.length ? "err" : "");
+  row(en("可更新"), up.length ? up.map((x) => en(x.name) + " " + x.version + " → " + (x.minVersion || "")).join("、") : en("无"), "");
+  row(en("上次扫描"), new Date().toLocaleTimeString(), "");
+}
+
+/** 装 / 更新一项。opts.throw = 出错时抛出（agent 走这条路，好让它知道失败原因）；
+    返回值是给 agent 看的文本小结（界面上的日志/进度照旧画）。 */
+async function envInstall(id, opts) {
+  if (envBusy) {
+    const m = en("先等这个装完：") + envBusy;
+    toast(m);
+    if (opts && opts.throw) throw new Error(m);
+    return null;
+  }
+  const it = envData && (envData.items || []).find((x) => x.id === id);
+  const dry = localStorage.getItem("kdock_env_dry") === "1";
+  envBusy = id;
+  envProg(2, it ? en(it.name) : id);
+  envLog(`=== ${en("开始")} ${it ? en(it.name) : id}${dry ? en("（模拟，不真装）") : ""} ===`);
+  try {
+    const log = await invoke("env_install", { id, dir: envDirPref() || null, dry });
+    if (log) envLog(String(log));
+    envLog(en("完成，重新扫描…"));
+    envData = null;
+    await envRefresh(true);
+    const all = (envData && envData.items) || [];
+    const miss = (envData && envData.missingRequired) || [];
+    return `${it ? it.name : id}：${log ? String(log) : "ok"}\n` +
+      `重扫：已装 ${all.filter((x) => x.installed).length}/${all.length}；` +
+      (miss.length ? `仍缺必需项 ${miss.join(", ")}` : "必需项齐了");
+  } catch (e) {
+    envLog(en("失败：") + String(e));
+    toast(String(e));
+    if (opts && opts.throw) throw new Error(String(e));
+    return null;
+  } finally {
+    envBusy = null;
+    envProg(0, "");
+  }
+}
+
+/** 首次运行：缺必需驱动就提示一次（只提示，不自动装；用户点了「去看看」才进环境配置页） */
+async function envFirstRunCheck() {
+  if (localStorage.getItem("kdock_env_skip") === "1") return;
+  try {
+    const d = await invoke("env_scan", {});
+    if (!envData) envData = d;
+    if (d.missingRequired && d.missingRequired.length) {
+      const names = d.missingRequired.map((k) => {
+        const it = (d.items || []).find((x) => x.id === k);
+        return en(it ? it.name : k);
+      }).join("、");
+      const msg = en("环境检查：有必需驱动没装") + "\n" + names + (LANG === "en" ? ".\n" : "。\n") +
+        en("现在去「环境配置」一键安装？（需要提权的会弹一次 UAC）");
+      agDialog({ title: en("环境配置"), text: msg, okText: en("去看看") }).then((r) => {
+        if (r.ok) showPane("env");
+        else localStorage.setItem("kdock_env_skip", "1");    // 以后不再啰嗦
+      });
+    } else if (d.outdated && d.outdated.length) {
+      toast(en("有 ") + d.outdated.length + en(" 个组件可以更新（环境配置页）"));
+    }
+  } catch (_) {}
+}
+
+function bindEnv() {
+  envSyncDirInputs();
+  const setDir = (v) => { localStorage.setItem("kdock_env_dir", v || ""); envSyncDirInputs(); };
+  if ($("env-scan")) $("env-scan").onclick = async () => { envLog(en("开始扫描本机…")); await envRefresh(true); envLog(en("扫描完成")); };
+  if ($("env-rescan")) $("env-rescan").onclick = () => envRefresh(true);
+  if ($("env-fix-required")) $("env-fix-required").onclick = async () => {
+    const miss = (envData ? envData.items || [] : []).filter((x) => x.required && !x.installed && x.autoInstall);
+    if (!miss.length) return toast(en("必需项没有能一键装的（点卡片上的官网入口自己去装）"));
+    for (const m of miss) await envInstall(m.id);
+  };
+  for (const [btn, inp] of [["env-dir-pick", "env-dir"], ["env-dir-pick2", "env-dir2"]]) {
+    if ($(btn)) $(btn).onclick = async () => {
+      const p = await dlgOpen({ directory: true, multiple: false, title: en("选一个统一的安装位置") });
+      const dir = typeof p === "string" ? p : (p && p.path);
+      if (dir) setDir(dir);
+    };
+  }
+  for (const id of ["env-dir", "env-dir2"]) if ($(id)) $(id).onchange = (e) => setDir(e.target.value.trim());
+  if ($("env-only-missing")) $("env-only-missing").onchange = () => envRenderGrid();
+  // 后端装东西时的进度：下载百分比 / 解包 / 装驱动 / git clone
+  listen("env://progress", (ev) => {
+    const p = ev.payload || {};
+    if (p.pct != null) envProg(p.pct, p.text || "");
+    if (p.text) envLog(p.text);
+  });
+  // 切语言时这一页是运行时画的，得自己重画一遍
+  window.kdockOnLang(() => { if (envData) { envRenderGrid(); envRenderFirst(); } });
+  envRefresh();
+}
+
 // ---------------- 全局错误兜底：出错别白屏、也别悄悄不干活 ----------------
 function bindErrorBanner() {
   const show = (msg) => {
@@ -5061,12 +5347,12 @@ function agDialog(opts) {
     const ok = agEl("ag-dlg-ok");
     const cancel = agEl("ag-dlg-cancel");
     if (!box) { resolve({ ok: false, value: "" }); return; }
-    title.textContent = opts.title || "确认";
+    title.textContent = opts.title || en("确认");
     text.textContent = opts.text || "";
     const wantInput = !!opts.input;
     input.hidden = !wantInput;
     input.value = opts.def || "";
-    ok.textContent = opts.okText || "确定";
+    ok.textContent = opts.okText || en("确定");
     ok.className = "btn small " + (opts.danger ? "danger" : "primary");
     box.hidden = false;
     const finish = (v) => {
@@ -7020,6 +7306,9 @@ const TOOL_DESC_EN = {
   flow_connect: "Connect from.port → to on the existing canvas. Port names come from flow_get kinds[type].outs; self-loops, duplicates and unknown ports are rejected.",
   flow_delete: "Delete a node or an edge from the canvas (pass a node id or an edge key; the start node cannot be deleted).",
   flow_set: "Import a whole flow onto the canvas (**replaces what is there** and saves it; the user sees/edits/runs it right away). Format: {nodes:[{id,type,x,y,...}],edges:[{from,port,to}]}; unknown kinds and dangling edges are dropped and reported.",
+  // 环境配置（驱动 / 工具链）
+  env_scan: "Scan this PC for drivers and toolchains (read-only): CH34x/CH340, FTDI FT2232/D2XX, SEGGER J-Link (+JFlash/GDB Server/RTT), GNU Arm toolchain, OpenOCD, logic analyzer (PulseView/sigrok), RT-Thread Env, ST-Link driver, Zadig. Reports installed/version/path per item and which **required** ones are missing. Same data the Environment setup page shows.",
+  env_install: "Install / update one item (really downloads and installs, may raise one UAC prompt). id comes from env_scan. The UI switches to the Environment setup page so the user watches the progress.",
 };
 
 // ── 关于本软件：作者 / 仓库 / 版本 ────────────────────────────────
@@ -7627,6 +7916,27 @@ const AG_HOST = {
   async la_config(a) { initLogic(); return laAgentConfig(a || {}); },
   async la_capture(a) { initLogic(); return laAgentCapture(a || {}); },
   async la_save(a) { initLogic(); return laAgentSave(a || {}); },
+  // 环境配置：扫本机（只读）+ 装 / 更新（要审批；装的时候切到环境页让用户看着）
+  async env_scan(a) {
+    const d = await invoke("env_scan", { force: !!(a && a.force) });
+    envData = d;
+    envRenderGrid();
+    envRenderFirst();
+    const items = d.items || [];
+    const line = (x) => {
+      const st = x.installed
+        ? (x.outdated ? `可更新（当前 ${x.version || "?"} → 至少 ${x.minVersion || "?"}）` : `已装${x.version ? " " + x.version : ""}`)
+        : "未安装";
+      return `- ${x.id}  ${x.name} [${x.kind}]：${st}` + (x.path ? `\n    ${x.path}` : (x.detail ? `\n    ${x.detail}` : ""));
+    };
+    return `已装 ${items.filter((x) => x.installed).length}/${items.length}；必需项缺失：${(d.missingRequired || []).length ? (d.missingRequired || []).join(", ") : "无"}\n` +
+      items.map(line).join("\n");
+  },
+  async env_install(a) {
+    showPane("env");                       // 用户得看得见进度和日志
+    if (!envData) await envRefresh(true);
+    return (await envInstall(a.id, { throw: true })) || "（没有返回）";
+  },
   async ui_goto(a) {
     const map = { transfer: "link", firmware: "upgrade", flow: "seq", files: "files", flash: "flash",
                   chart: "chart", capture: "capture", scope: "scope", logic: "logic", commands: "cmds" };
@@ -7765,6 +8075,9 @@ const AG_HOST = {
     return "已存 " + path0 + `（${bytes.length} 字节）`;
   },
 };
+
+// 便于自测 / 排障：直接调某个 host 工具（跟 agent://host_call 走的是同一张表）
+window.__agHost = AG_HOST;
 
 async function agHostCall(p) {
   const fn = AG_HOST[p.tool];
@@ -9240,6 +9553,86 @@ const EN = {
   "{\"b\":1,\"a\":[1,2,{\"c\":true}]}  或  \\\"{\\\\\\\"a\\\\\\\":1}\\\"（转义过的也行）": "{\"b\":1,\"a\":[1,2,{\"c\":true}]}  or  \"{\\\"a\\\":1}\" (escaped also works)",
   "可留空；例：-ex \"target extended-remote :3333\"": "Optional; e.g. -ex \"target extended-remote :3333\"",
   "JLink.exe (DLL 内置库)": "JLink.exe (built-in DLL)",
+  "环境": "Environment",
+  "环境配置": "Environment setup",
+  "驱动 / 工具链的一键检测与安装": "Detect and one-click install drivers / toolchains",
+  "安装位置（留空 = 默认）": "Install folder (blank = default)",
+  "选一个目录当统一安装位置": "Pick one folder as the shared install location",
+  "选目录": "Pick folder",
+  "扫描会读 PATH / 注册表 / pnputil 的驱动列表和各盘常见目录": "Reads PATH, the registry, pnputil driver list and common folders on each drive",
+  "只看缺失": "Missing only",
+  "扫描本机": "Scan this PC",
+  "类别": "Category",
+  "全部": "All",
+  "小驱动可以内置：把安装包丢进 ": "Small drivers can be bundled: drop the installer into ",
+  "（exe / msi / inf 都认），点安装时会优先用本地的，不走网络。": " (exe / msi / inf all work); installing then prefers the local copy and skips the network.",
+  "首次运行检查": "First-run check",
+  "装齐必需项": "Install required",
+  "重新扫描": "Rescan",
+  "「必需项」指的是认不出设备就没法干活的那几个（比如 CH340 串口驱动）。缺了会在启动后提示一次，随时可以在这里补。": "\"Required\" means the items you cannot work without (the CH340 serial driver, say). If one is missing you get one prompt after startup; you can always add it here.",
+  "安装位置": "Install folder",
+  "例如 F:\\ENV": "e.g. F:\\ENV",
+  "便携类（工具链 zip / git 仓库）解到这儿；winget 装的走系统默认位置。留空 = 自动（优先 F:\\ENV，没有就用用户目录下 KDock\\env）。": "Portable items (toolchain zips / git repos) unpack here; winget installs use the system default. Blank = auto (F:\\ENV if present, otherwise KDock\\env in your user folder).",
+  "安装进度": "Install progress",
+  "去看看": "Open it",
+  "小驱动可以内置：把安装包丢进": "Small drivers can be bundled: drop the installer into ",
+  "drivers\\<组件id>\\": "drivers\\<item id>\\",
+  "检测中…": "Detecting…",
+  "需要装 USB 驱动的会弹一次 UAC 授权（驱动必须提权，我们不做静默绕过）。WCH / FTDI / SEGGER 官网的下载要点勾选同意，所以那几项只给官网入口 —— 或者把安装包丢进上面的\"内置\"目录，一键装。": "Installing a USB driver raises one UAC prompt (drivers need elevation and we never bypass it silently). WCH / FTDI / SEGGER gate their downloads behind a consent checkbox, so those items only link to the official site — or drop the installer into the bundled folder above and use the one-click install.",
+  "正在扫描本机…": "Scanning this PC…",
+  "扫描失败：": "Scan failed: ",
+  "没有符合条件的组件": "No component matches the filter",
+  "已装 ": "Installed ",
+  " · 未装 ": " · missing ",
+  " · 可更新 ": " · updatable ",
+  "缺必需项：": "Missing required: ",
+  "必需项都齐了": "All required items present",
+  "可更新": "Update available",
+  "已装": "installed",
+  "未安装": "Not installed",
+  "更新 / 重装": "Update / reinstall",
+  "一键安装": "Install",
+  "打开官网": "Open website",
+  "这个要登录 / 同意条款才能下：官网下完，把安装包丢进内置目录就能一键装。": "Needs a login / consent click to download: grab it from the site, drop the installer into the bundled folder, then one-click install.",
+  "我下好了，用本地的装": "I downloaded it — install from local",
+  "把安装包放进 <exe 同目录>\\drivers\\<组件id>\\ 之后再点这个": "Put the installer in <exe folder>\\drivers\\<item id>\\ first, then click this",
+  "定位": "Locate",
+  "必需项": "Required",
+  "齐了": "All set",
+  "上次扫描": "Last scan",
+  "先等这个装完：": "Wait for this one to finish: ",
+  "（模拟，不真装）": " (dry run, nothing is installed)",
+  "完成，重新扫描…": "Done, rescanning…",
+  "失败：": "Failed: ",
+  "环境检查：有必需驱动没装": "Environment check: required drivers are missing",
+  "现在去「环境配置」一键安装？（需要提权的会弹一次 UAC）": "Open Environment setup and install now? (anything needing elevation raises one UAC prompt)",
+  "有 ": "There are ",
+  " 个组件可以更新（环境配置页）": " components with updates (Environment setup page)",
+  "开始扫描本机…": "Scanning this PC…",
+  "扫描完成": "Scan finished",
+  "选一个统一的安装位置": "Pick a shared install location",
+  "必需项没有能一键装的（点卡片上的官网入口自己去装）": "The required items have no one-click install (use their website link on the card)",
+  "USB 驱动": "USB driver",
+  "调试器": "Debugger",
+  "工具链": "Toolchain",
+  "运行时": "Runtime",
+  "CH34x / CH340 串口驱动": "CH34x / CH340 serial driver",
+  "FTDI FT2232 / D2XX 驱动": "FTDI FT2232 / D2XX driver",
+  "SEGGER J-Link（含 JFlash / GDB Server / RTT）": "SEGGER J-Link (JFlash / GDB Server / RTT included)",
+  "GNU Arm Embedded Toolchain（arm-none-eabi-gcc）": "GNU Arm Embedded Toolchain (arm-none-eabi-gcc)",
+  "逻辑分析仪：PulseView / sigrok": "Logic analyzer: PulseView / sigrok",
+  "RT-Thread Env 工具": "RT-Thread Env tools",
+  "ST-Link USB 驱动": "ST-Link USB driver",
+  "Zadig（给逻辑分析仪装 WinUSB）": "Zadig (WinUSB for the logic analyzer)",
+  "WCH 的 USB 转串口（CH340/CH341/CH343/CH9102）。插上板子认不出 COM 口、或者出现带感叹号的未知设备，就是它没装。": "WCH USB-to-serial (CH340/CH341/CH343/CH9102). If the board shows up as an unknown device with a warning triangle instead of a COM port, this is what is missing.",
+  "FTDI 的 FT2232H/FT232H 双通道芯片（CMSIS-DAP 调试器、FT2232 逻辑分析仪都用它）。装了才有 COM 口和 D2XX 通道。": "FTDI dual-channel FT2232H/FT232H (used by CMSIS-DAP debuggers and FT2232 logic analyzers). Without it you get neither a COM port nor the D2XX channel.",
+  "J-Link 的软件包与 USB 驱动：JLink.exe / JFlash.exe / JLinkGDBServerCL.exe / JLinkRTTViewer.exe 都在里面，烧录页与调试页都用它。": "The J-Link software pack and USB driver: JLink.exe / JFlash.exe / JLinkGDBServerCL.exe / JLinkRTTViewer.exe all live here, and both the Flash and Debug pages use it.",
+  "编译 ARM 工程的 gcc/g++/gdb/newlib。装完把 bin 目录加到用户 PATH，命令行和本软件的调试页就能直接用。": "gcc/g++/gdb/newlib for ARM projects. Once its bin folder is on your user PATH, both the shell and this app's Debug page can use it right away.",
+  "开源调试/烧录器（0.12 起自带 CMSIS-DAP、ST-Link、J-Link 驱动）。烧录页选 OpenOCD 时用的就是它。": "Open-source debugger/flasher (0.12+ bundles CMSIS-DAP, ST-Link and J-Link drivers). This is what the Flash page uses when you pick OpenOCD.",
+  "就是你那台开源逻辑分析仪用的软件（FX2 芯片 + fx2lafw 固件，sigrok 出的 PulseView）。装完插上设备就能抓波形。": "The software for that open-source logic analyzer of yours (FX2 chip + fx2lafw firmware, PulseView by sigrok). Install it, plug the device in and capture.",
+  "RT-Thread 的命令行环境（env.exe / env.bat，来自 RT-ThreadStudio 或官方 env 仓库）：scons、menuconfig、pkgs 都靠它。": "RT-Thread's command-line environment (env.exe / env.bat, from RT-ThreadStudio or the official env repo): scons, menuconfig and pkgs all rely on it.",
+  "ST-Link / ST-Link V2-1 调试器的 WinUSB 驱动（OpenOCD 走它）。用 ST 官方 CUBE 或驱动包安装。": "WinUSB driver for ST-Link / ST-Link V2-1 debuggers (OpenOCD goes through it). Install it from ST's official CUBE or driver pack.",
+  "开源逻辑分析仪（FX2 / fx2lafw）在 Windows 上要用 WinUSB 驱动，Zadig 就是干这个的：跑一次、选设备、装 WinUSB。": "The open-source logic analyzer (FX2 / fx2lafw) needs a WinUSB driver on Windows and Zadig is the tool for that: run it once, pick the device, install WinUSB.",
 };
 const en = (t) => (LANG === "en" && EN[t]) ? EN[t] : t;
 // 分文件写的小模块（批量文本/计算器）也要能翻译 + 切语言时重画
@@ -9292,7 +9685,7 @@ const TB_PAGES = [["link", "传输"], ["cmds", "命令表"], ["upgrade", "固件
   ["agent", "Agent"],
   ["files", "文件管理"], ["chart", "实时图表"], ["seq", "中控编排"], ["scope", "示波器"],
   ["capture", "屏幕捕获"], ["logic", "逻辑分析仪"],
-  ["batch", "批量文本"], ["calc", "计算器"], ["datacalc", "数据计算"]];
+  ["batch", "批量文本"], ["calc", "计算器"], ["datacalc", "数据计算"], ["env", "环境配置"]];
 const TB_THEME_NAME = { dark: "暗色", light: "亮色", auto: "跟随系统" };
 function tbCmd(action) { return invoke("win_ctl", { action }).catch((e) => toast("窗口操作失败: " + e)); }
 function tbCloseMenus() {
@@ -9578,6 +9971,8 @@ async function main() {
   bindScope();
   bindKb();
   bindDebug();
+  bindEnv();                    // 环境配置：驱动 / 工具链
+  setTimeout(envFirstRunCheck, 900);       // 首次运行检查：缺必需驱动才提示一次（不挡启动）
   listen("debug://gdb", (ev) => { if (window.__dbgOnGdb) window.__dbgOnGdb(String(ev.payload || "")); });
   listen("debug://server", (ev) => { dbgPrint("[server] " + String(ev.payload || "") + "\n"); });
   bindScrollFollow();

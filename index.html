@@ -391,6 +391,11 @@
           <button class="navitem" data-tab="files"><i>▤</i><span>文件管理</span></button>
         </div>
         <div class="navsec">
+          <div class="navgroup">环境</div>
+          <button class="navitem" data-tab="env" title="驱动 / 工具链的一键检测与安装"><i>⛭</i><span>环境配置</span></button>
+        </div>
+
+        <div class="navsec">
           <div class="navgroup">工具</div>
           <button class="navitem" data-tab="chart"><i>∿</i><span>实时图表</span></button>
           <button class="navitem" data-tab="seq"><i>≣</i><span>中控编排</span></button>
@@ -517,6 +522,31 @@
             <textarea id="tx" rows="3" placeholder="文本直接输入；HEX 形如 41 54 0D 0A（Enter 发送 / Shift+Enter 换行）"></textarea>
           </div>
           <div class="outfoot"></div>
+          </div>
+        </div>
+
+        <!-- 环境配置：驱动 / 工具链 一键检测与安装 -->
+        <div class="workpane envpane" data-work="env" hidden>
+          <div class="trow">
+            <span class="lb">环境配置</span>
+            <span id="env-sum" class="lb"></span>
+            <span class="grow"></span>
+            <input id="env-dir" class="dirinput envdir" placeholder="安装位置（留空 = 默认）" />
+            <button id="env-dir-pick" class="btn small" title="选一个目录当统一安装位置">选目录</button>
+            <label class="chk" title="扫描会读 PATH / 注册表 / pnputil 的驱动列表和各盘常见目录"><input type="checkbox" id="env-only-missing" /> 只看缺失</label>
+            <button id="env-scan" class="btn small primary">扫描本机</button>
+          </div>
+          <div class="trow envfilters">
+            <span class="lb">类别</span>
+            <div class="seg" id="env-kinds"></div>
+            <span class="grow"></span>
+            <span id="env-hint-line" class="lb"></span>
+          </div>
+          <div id="env-grid" class="envgrid grow"></div>
+          <div class="trow">
+            <span class="lb">小驱动可以内置：把安装包丢进 </span>
+            <code id="env-bundled-path">drivers\&lt;组件id&gt;\</code>
+            <span class="lb">（exe / msi / inf 都认），点安装时会优先用本地的，不走网络。</span>
           </div>
         </div>
 
@@ -1325,6 +1355,31 @@
               <button id="dbg-reset" class="btn small danger" title="monitor reset halt（openocd 语法；J-Link 用 monitor reset）">复位</button>
             </div>
           </div>
+
+        <!-- 环境配置参数 -->
+        <div class="parampane" data-param="env" hidden>
+          <div class="cardtitle">首次运行检查</div>
+          <div id="env-first" class="aginfo dcinfo"></div>
+          <div class="btnrow">
+            <button id="env-fix-required" class="btn primary">装齐必需项</button>
+            <button id="env-rescan" class="btn">重新扫描</button>
+          </div>
+          <p class="hint">「必需项」指的是认不出设备就没法干活的那几个（比如 CH340 串口驱动）。缺了会在启动后提示一次，随时可以在这里补。</p>
+
+          <div class="cardtitle">安装位置</div>
+          <div class="field"><label for="env-dir2">目录</label>
+            <div class="inline">
+              <input id="env-dir2" placeholder="例如 F:\ENV" />
+              <button id="env-dir-pick2" class="btn icon" title="选目录">…</button>
+            </div>
+          </div>
+          <p class="hint">便携类（工具链 zip / git 仓库）解到这儿；winget 装的走系统默认位置。留空 = 自动（优先 F:\ENV，没有就用用户目录下 KDock\env）。</p>
+
+          <div class="cardtitle">安装进度<span class="grow"></span><span id="env-prog-name" class="lb"></span></div>
+          <div class="envbar"><div id="env-bar"></div></div>
+          <pre id="env-log" class="envlog"></pre>
+          <p class="hint">需要装 USB 驱动的会弹一次 UAC 授权（驱动必须提权，我们不做静默绕过）。WCH / FTDI / SEGGER 官网的下载要点勾选同意，所以那几项只给官网入口 —— 或者把安装包丢进上面的"内置"目录，一键装。</p>
+        </div>
 
         <!-- 传输参数 -->
         <div class="parampane" data-param="link" hidden>
