@@ -131,7 +131,7 @@ let history = [];
 let rxBuffer = [];
 let rxMode = "text";
 let tailEntry = null;      // "正在长的半行"（设备还没发换行），渲染在最后一行、就地更新
-let rxLineNo = 0;          // 已经渲染过多少行 —— 给"序号"用（单调递增，日志裁掉老行时也不会重排）
+let rxEntryNo = 0;          // 已经来了多少条日志 —— 给「序号」用（一条一个号；单调递增，裁掉老行或切显示模式都不会乱）
 // 高数据量时的两条保护（参考 OxideSerial 的做法）：
 //   1) 入队后不立刻重绘，攒到下一帧(RAF)一次性重绘 —— 否则每个分片都全量重刷 DOM
 //   2) 日志上限，超了丢最老的 —— 之前是无上限，长时间跑会把内存和渲染都拖垮
@@ -151,10 +151,7 @@ function flushRxPending() {
 
 function pushEntry(e) {
   if (rxPaused) return;
-  if (e.no0 == null) {
-    e.no0 = rxLineNo + 1;
-    rxLineNo += Math.max(1, entryLines(e).length);   // 一条可能带好几行，按行数往后排
-  }
+  if (e.no == null) e.no = ++rxEntryNo;              // 一条一个号（多行的话只在这一条的第一行显示）
   rxPending.push(e);
   if (rxTimer !== null) return;
   // 攒 ~16ms 一帧再重绘；**不能只靠 requestAnimationFrame** ——
@@ -529,7 +526,8 @@ function termRender() {
   return st.lines.slice(-1000).join("\n");              // 只渲染最后 1000 行
 }
 
-function lineHtml(e) {
+/** 一行日志的 HTML：左边一格是行号栏（不可选），右边是正文 —— 折行只缩进正文那一列 */
+function lineRows(e) {
   const cls = e.dir === "TX" ? "tx" : e.dir === "SYS" ? "sys" : "rx-l";
   const tsOn = $("show-ts") && $("show-ts").checked;
   const dirOn = $("show-dir") && $("show-dir").checked;
@@ -540,10 +538,8 @@ function lineHtml(e) {
   if (tsOn && dirOn) pfx = `<span class="ts">[${fmtTs(e.ts_ms)} ${dir}]</span> `;
   else if (tsOn) pfx = `<span class="ts">[${fmtTs(e.ts_ms)}]</span> `;
   else if (dirOn) pfx = dir + " ";
-  return entryLines(e).map((l, i) => {
-    const no = noOn && e.no0 != null ? `<span class="no">${e.no0 + i}</span> ` : "";   // 一条多行时，每行自己一个号
-    return no + pfx + l;
-  }).join("\n") + "\n";
+  const no = noOn ? String(e.no != null ? e.no : rxEntryNo + 1) : "";   // 半行（还没成整行）先按下一条的号显示
+  return entryLines(e).map((l, i) => `<div class="rxline"><span class="nox" aria-hidden="true">${i === 0 ? no : ""}</span><span class="rxtx">${pfx}${l}</span></div>`).join("");
 }
 
 function redrawRx() {
@@ -551,9 +547,11 @@ function redrawRx() {
   // 重画会重建整段内容：先记住用户现在看的位置，画完再放回去（跟随最新时才跳到底部）
   const keepTop = box.scrollTop;
   const wasBottom = stickBottom || keepTop + box.clientHeight >= box.scrollHeight - 8;
-  const tail = tailEntry ? lineHtml(tailEntry) : "";
+  const tail = tailEntry ? lineRows(tailEntry) : "";
+  const noOn = $("show-no") && $("show-no").checked;
+  box.classList.toggle("with-no", !!noOn);            // 只管左边那一列显不显示
   if (asciiMode) box.textContent = termRender();          // 终端就是纯文本，不走 HTML
-  else box.innerHTML = rxBuffer.map(lineHtml).join("") + tail;
+  else box.innerHTML = rxBuffer.map(lineRows).join("") + tail;
   if (wasBottom && $("autoscroll").checked) {
     box.scrollTop = box.scrollHeight;
   } else {
@@ -713,7 +711,7 @@ function toggleLoop() {
 
 async function reloadFromBackend() {
   const lines = await invoke("get_log");
-  rxLineNo = 0;
+  rxEntryNo = 0;
   rxBuffer = lines.map((l) => {
     const bytes = (l.data.match(/[0-9A-Fa-f]{2}/g) || []).map((h) => parseInt(h, 16));
     const e = {
@@ -723,8 +721,7 @@ async function reloadFromBackend() {
       hex: bytes.map((b) => b.toString(16).padStart(2, "0").toUpperCase()).join(" "),
       ascii: bytes.map((b) => (b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : ".")).join(""),
     };
-    e.no0 = rxLineNo + 1;
-    rxLineNo += Math.max(1, entryLines(e).length);
+    e.no = ++rxEntryNo;
     return e;
   });
   redrawRx();
@@ -741,7 +738,7 @@ async function doReplay() {
       toast("回放结束");
       return;
     }
-    $("rx").innerHTML += lineHtml(snapshot[i]);
+    $("rx").innerHTML += lineRows(snapshot[i]);
     if ($("autoscroll").checked) $("rx").scrollTop = $("rx").scrollHeight;
     const delay = gaps[i] ?? 0;
     i += 1;
@@ -8980,8 +8977,15 @@ function tbToggle(id) {
   const e = $(id);
   if (e) { e.checked = !e.checked; e.dispatchEvent(new Event("change", { bubbles: true })); }
 }
+/** 输出区的纯文本（不含左侧行号栏）：复制、统计都用它 */
+function rxPlainText() {
+  const box = $("rx");
+  const rows = [...box.querySelectorAll(".rxline .rxtx")];
+  if (!rows.length) return box.textContent || "";        // ASCII 终端模式没有行结构，直接给
+  return rows.map((r) => r.textContent).join("\n");
+}
 function tbCopyRx() {
-  const t = $("rx").textContent || "";
+  const t = rxPlainText();
   navigator.clipboard.writeText(t).then(() => toast(`已复制 ${t.length} 字符`)).catch(() => toast("复制失败"));
 }
 function tbSyncTheme() {
@@ -9190,7 +9194,7 @@ async function main() {
   $("send").onclick = doSend;
   $("clear").onclick = async () => {
     rxBuffer = [];
-    rxLineNo = 0;          // 清屏后序号从 1 重数
+    rxEntryNo = 0;         // 清屏后序号从 1 重数
     await invoke("clear_log");
     redrawRx();
     if (asciiMode) $("rx").focus();     // ASCII 交互时别把焦点丢在按钮上，否则敲不动

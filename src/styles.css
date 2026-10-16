@@ -425,7 +425,7 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 /* ── 输出区 ── */
 .outpane { position: relative; flex: 1; min-height: 140px; display: flex; }
 .rx {
-  flex: 1; margin: 0; padding: 12px 14px; overflow: auto;
+  flex: 1; margin: 0; padding: 10px 0; overflow: auto;
   border-radius: 14px; border: 1px solid hsl(var(--border) / 0.55);
   background: var(--surface-0);
   font-family: Consolas, "Cascadia Mono", "JetBrains Mono", monospace; font-size: 12.5px;
@@ -433,8 +433,20 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 .rx:focus { outline: 2px solid hsl(var(--ring) / 0.35); outline-offset: 1px; }
-/* 序号列：定宽右对齐，像 IDE 左边那排行号（可选中，复制一行时序号也跟着走） */
-.rx .no { display: inline-block; min-width: 2.9em; text-align: right; margin-right: 4px; color: hsl(var(--muted-foreground) / 0.75); }
+/* 序号 = 左边真正的行号栏：不可选（复制不带它）、定宽右对齐；正文折行也只缩进正文那一列 */
+.rx .rxline { display: grid; grid-template-columns: 0 minmax(0, 1fr); align-items: start; }
+.rx.with-no .rxline { grid-template-columns: var(--rx-no-w, 3.4rem) minmax(0, 1fr); }
+.rx .nox {
+  align-self: stretch;    /* 行号栏底色要盖住整行（正文折行时也是） */
+  user-select: none; text-align: right; padding: 0 8px 0 10px;
+  color: hsl(var(--muted-foreground) / 0.68);
+  background: var(--surface-2); border-right: 1px solid var(--surface-line-soft);
+}
+.rx .rxtx { padding: 0 14px 0 12px; white-space: pre-wrap; word-break: break-all; }
+/* 关掉序号时整列收干净（连内边距都不留），正文回到原来的左边距 */
+.rx:not(.with-no) .nox { padding: 0; border-right: 0; background: none; }
+.rx:not(.with-no) .rxtx { padding-left: 14px; }
+.rx.typing { padding: 12px 14px; }
 .rx .ts { color: hsl(var(--muted-foreground) / 0.7); }
 .rx .tx { color: hsl(var(--warning)); }
 .rx .sys { color: hsl(var(--primary)); }
