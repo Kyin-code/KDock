@@ -1337,7 +1337,7 @@
           <div class="cardtitle">连接</div>
           <div class="field">
             <label for="mode">方式</label>
-            <select id="mode">
+            <select id="mode" title="连接方式：串口 / TCP 客户端 / TCP 服务端 / UDP">
               <option value="serial">串口</option>
               <option value="tcp_client">TCP Client</option>
               <option value="tcp_server">TCP Server</option>
@@ -1348,16 +1348,16 @@
             <div class="field">
               <label for="ports">串口</label>
               <div class="inline">
-                <select id="ports"></select>
+                <select id="ports" title="串口（窄窗口下这一排的标签会收起来）"></select>
                 <button id="refresh" class="btn icon" title="重新扫描串口">↻</button>
               </div>
             </div>
-            <div class="field"><label for="baud">波特率</label><select id="baud"></select></div>
+            <div class="field"><label for="baud">波特率</label><select id="baud" title="波特率"></select></div>
             <div class="field">
               <label for="baud-custom-chk">自定义</label>
               <div class="inline">
-                <input type="checkbox" id="baud-custom-chk" class="chk" />
-                <input id="baud-custom" type="number" min="1" max="4000000" placeholder="例如 250000" disabled />
+                <input type="checkbox" id="baud-custom-chk" class="chk" title="用右边这个自定义波特率（窄窗口下「自定义」三个字会收起来）" />
+                <input id="baud-custom" type="number" min="1" max="4000000" placeholder="例如 250000" title="自定义波特率（左边那个勾打开才生效）" disabled />
               </div>
             </div>
             <details class="adv">
@@ -1369,7 +1369,7 @@
             </details>
           </div>
           <div data-mode="tcp_client" hidden>
-            <div class="field"><label for="tcp-client-host">目标 IP</label><input id="tcp-client-host" value="192.168.1.100" /></div>
+            <div class="field"><label for="tcp-client-host">目标 IP</label><input id="tcp-client-host" title="目标 IP" value="192.168.1.100" /></div>
             <div class="field"><label for="tcp-client-port">端口</label><input id="tcp-client-port" type="number" value="6666" /></div>
           </div>
           <div data-mode="tcp_server" hidden>

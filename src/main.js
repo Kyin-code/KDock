@@ -9103,6 +9103,12 @@ function tbToggle(id) {
   if (e) { e.checked = !e.checked; e.dispatchEvent(new Event("change", { bubbles: true })); }
 }
 
+/** 切一组单选（显示 / 发送的 文本↔HEX）。窄窗下那两行工具收起来了，菜单里得能切。 */
+function tbSetRadio(name, value) {
+  const r = document.querySelector(`input[name="${name}"][value="${value}"]`);
+  if (r && !r.checked) { r.checked = true; r.dispatchEvent(new Event("change", { bubbles: true })); }
+}
+
 function tbCopyRx() {
   const t = logPlainText("rx");
   navigator.clipboard.writeText(t).then(() => toast(`已复制 ${t.length} 字符`)).catch(() => toast("复制失败"));
@@ -9134,6 +9140,14 @@ function tbMenuDefs() {
       { t: "暂停接收", chk: () => $("pause") && $("pause").checked, run: () => tbToggle("pause") },
       { t: "自动滚动", chk: () => $("autoscroll") && $("autoscroll").checked, run: () => tbToggle("autoscroll") },
       { t: "ASCII 交互", chk: () => $("ascii-mode") && $("ascii-mode").checked, run: () => tbToggle("ascii-mode") },
+      { sep: 1 },
+      // 这几个开关在窄窗口下跟着"显示那一行"一起收起来了（见 styles.css 里 .workpane.shell 那几条），
+      // 所以菜单里必须留一份，不然小窗口里就没法切了
+      { t: "时间戳", chk: () => $("show-ts") && $("show-ts").checked, run: () => tbToggle("show-ts") },
+      { t: "行号（序号）", chk: () => $("show-no") && $("show-no").checked, run: () => tbToggle("show-no") },
+      { t: "方向标记", chk: () => $("show-dir") && $("show-dir").checked, run: () => tbToggle("show-dir") },
+      { t: "显示用 HEX", chk: () => rxMode === "hex", run: () => tbSetRadio("rx-mode", rxMode === "hex" ? "text" : "hex") },
+      { t: "发送用 HEX", chk: () => txMode() === "hex", run: () => tbSetRadio("tx-mode", txMode() === "hex" ? "text" : "hex") },
     ]},
     { label: "视图", items: [
       ...TB_PAGES.map((p) => ({ t: p[1], run: () => tbShow(p[0]) })),
