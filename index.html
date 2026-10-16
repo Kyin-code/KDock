@@ -431,7 +431,7 @@
             <span class="outclock" id="out-clock" title="当前时间">--:--:--</span>
           </div>
           <div class="outpane">
-            <pre id="rx" class="rx" tabindex="0" spellcheck="false"></pre>
+            <pre id="rx" class="rx lognum" tabindex="0" spellcheck="false"></pre>
             <button id="rx-jump" class="jump" hidden title="回到最新（上翻时自动停住跟随）">↓ 最新</button>
             <!-- 拖这个小角手手改下面输入区的高度（放在**输出框**的右下角，
                  不要放输入框里，否则跟文本框自带的 resize 一样误导） -->
@@ -581,6 +581,7 @@
         <!-- 文件：大列表当操作区 -->
         <div class="workpane" data-work="files" hidden>
           <div class="trow"><span class="lb">设备文件</span><span class="grow"></span>
+            <label class="chk" title="列表左边显示行号（跟传输页的「序号」是同一个开关）"><input type="checkbox" id="fl-no" /> 序号</label>
             <span id="fl-state" class="dot"></span></div>
           <select id="fl-items" size="18" class="list biglist"></select>
         </div>
@@ -1098,7 +1099,7 @@
               <span class="grow"></span>
               <button id="sq-clear-log" class="btn small">清空日志</button>
             </div>
-            <div id="sq-log" class="seqlog scrollable"></div>
+            <div id="sq-log" class="seqlog scrollable lognum"></div>
           </div>
         </div>
 
@@ -1125,7 +1126,7 @@
               <span class="lb">烧录日志</span><span class="grow"></span>
               <button id="fl-log-clear" class="btn small">清空</button>
             </div>
-            <pre id="fl-log" class="rx flashlog scrollable" tabindex="0"></pre>
+            <pre id="fl-log" class="rx flashlog scrollable lognum" tabindex="0"></pre>
           </div>
         </div>
 

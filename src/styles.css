@@ -436,18 +436,18 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 }
 .rx:focus { outline: 2px solid hsl(var(--ring) / 0.35); outline-offset: 1px; }
 /* 序号 = 左边真正的行号栏：不可选（复制不带它）、定宽右对齐；正文折行也只缩进正文那一列 */
-.rx .rxline { display: grid; grid-template-columns: 0 minmax(0, 1fr); align-items: start; }
-.rx.with-no .rxline { grid-template-columns: var(--rx-no-w, 3.4rem) minmax(0, 1fr); }
-.rx .nox {
+.lognum .rxline { display: grid; grid-template-columns: 0 minmax(0, 1fr); align-items: start; }
+.lognum.with-no .rxline { grid-template-columns: var(--rx-no-w, 3.4rem) minmax(0, 1fr); }
+.lognum .nox {
   align-self: stretch;    /* 行号栏底色要盖住整行（正文折行时也是） */
   user-select: none; text-align: right; padding: 0 8px 0 10px;
   color: hsl(var(--muted-foreground) / 0.68);
   background: var(--surface-2); border-right: 1px solid var(--surface-line-soft);
 }
-.rx .rxtx { padding: 0 14px 0 12px; white-space: pre-wrap; word-break: break-all; }
+.lognum .rxtx { padding: 0 14px 0 12px; white-space: pre-wrap; word-break: break-all; }
 /* 关掉序号时整列收干净（连内边距都不留），正文回到原来的左边距 */
-.rx:not(.with-no) .nox { padding: 0; border-right: 0; background: none; }
-.rx:not(.with-no) .rxtx { padding-left: 14px; }
+.lognum:not(.with-no) .nox { padding: 0; border-right: 0; background: none; }
+.lognum:not(.with-no) .rxtx { padding-left: 14px; }
 .rx.typing { padding: 12px 14px; }
 .rx .ts { color: hsl(var(--muted-foreground) / 0.7); }
 .rx .tx { color: hsl(var(--warning)); }
@@ -741,6 +741,9 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
 }
 .seqlog { min-height: 54px; max-height: 150px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 11px; line-height: 1.5; }
 .seqlog .l { white-space: pre-wrap; word-break: break-all; }
+/* 运行日志里的每一行也是"左行号 + 右正文"（.l / .err / .ok 的配色照旧作用在正文那一格） */
+.seqlog.lognum { padding: 0; }
+.seqlog .rxtx.l { padding-left: 10px; }
 .seqlog .l.err { color: hsl(var(--destructive)); }
 .seqlog .l.ok { color: hsl(var(--success)); }
 .logbar { margin-top: 6px; }

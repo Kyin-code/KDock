@@ -131,7 +131,25 @@ let history = [];
 let rxBuffer = [];
 let rxMode = "text";
 let tailEntry = null;      // "正在长的半行"（设备还没发换行），渲染在最后一行、就地更新
-let rxEntryNo = 0;          // 已经来了多少条日志 —— 给「序号」用（一条一个号；单调递增，裁掉老行或切显示模式都不会乱）
+let rxEntryNo = 0;
+let flLogNo = 0;            // 烧录日志的行号
+let sqLogNo = 0;            // 编排运行日志的行号
+
+/** 序号开关（默认开）：三处日志（传输 #rx / 烧录 #fl-log / 编排 #sq-log）和文件列表共用一个设置 */
+const logNoOn = () => localStorage.getItem("kdock_show_no") !== "0";
+/** 一行日志的 DOM 串：左边行号栏（不可选、复制不带）+ 右边正文 */
+function logRowHtml(no, inner, cls) {
+  return `<div class="rxline"><span class="nox" aria-hidden="true">${no == null ? "" : no}</span>` +
+    `<span class="rxtx${cls ? " " + cls : ""}">${inner}</span></div>`;
+}
+/** 纯文本：从「一行一行」的结构里取正文（复制 / 统计用，不含行号） */
+function logPlainText(boxId) {
+  const box = $(boxId);
+  if (!box) return "";
+  const rows = [...box.querySelectorAll(".rxline .rxtx")];
+  if (!rows.length) return box.textContent || "";
+  return rows.map((r) => r.textContent).join("\n");
+}          // 已经来了多少条日志 —— 给「序号」用（一条一个号；单调递增，裁掉老行或切显示模式都不会乱）
 // 高数据量时的两条保护（参考 OxideSerial 的做法）：
 //   1) 入队后不立刻重绘，攒到下一帧(RAF)一次性重绘 —— 否则每个分片都全量重刷 DOM
 //   2) 日志上限，超了丢最老的 —— 之前是无上限，长时间跑会把内存和渲染都拖垮
@@ -531,15 +549,23 @@ function lineRows(e) {
   const cls = e.dir === "TX" ? "tx" : e.dir === "SYS" ? "sys" : "rx-l";
   const tsOn = $("show-ts") && $("show-ts").checked;
   const dirOn = $("show-dir") && $("show-dir").checked;
-  const noOn = $("show-no") && $("show-no").checked;
   const dir = `<span class="${cls}">${e.dir}</span>`;
   // 方向标记跟时间戳绑在一起（一个方括号前缀，SSCOM 那样）；只有方向没时间戳时才单独占一个词
   let pfx = "";
   if (tsOn && dirOn) pfx = `<span class="ts">[${fmtTs(e.ts_ms)} ${dir}]</span> `;
   else if (tsOn) pfx = `<span class="ts">[${fmtTs(e.ts_ms)}]</span> `;
   else if (dirOn) pfx = dir + " ";
-  const no = noOn ? String(e.no != null ? e.no : rxEntryNo + 1) : "";   // 半行（还没成整行）先按下一条的号显示
-  return entryLines(e).map((l, i) => `<div class="rxline"><span class="nox" aria-hidden="true">${i === 0 ? no : ""}</span><span class="rxtx">${pfx}${l}</span></div>`).join("");
+  const no = e.no != null ? e.no : rxEntryNo + 1;   // 半行（还没成整行）先按下一条的号显示
+  return entryLines(e).map((l, i) => logRowHtml(i === 0 ? no : null, pfx + l)).join("");
+}
+
+/** 序号开关统一走这里：存本机、两个页面的勾选框同步、所有日志容器的列跟着显隐、文件列表重画 */
+function logNoSet(on, silent) {
+  localStorage.setItem("kdock_show_no", on ? "1" : "0");
+  for (const id of ["show-no", "fl-no"]) { const c = $(id); if (c) c.checked = on; }
+  for (const el of document.querySelectorAll(".lognum")) el.classList.toggle("with-no", on);
+  if ($("rx")) redrawRx();
+  if (!silent && $("fl-items")) flList();
 }
 
 function redrawRx() {
@@ -548,8 +574,7 @@ function redrawRx() {
   const keepTop = box.scrollTop;
   const wasBottom = stickBottom || keepTop + box.clientHeight >= box.scrollHeight - 8;
   const tail = tailEntry ? lineRows(tailEntry) : "";
-  const noOn = $("show-no") && $("show-no").checked;
-  box.classList.toggle("with-no", !!noOn);            // 只管左边那一列显不显示
+  box.classList.toggle("with-no", logNoOn());            // 只管左边那一列显不显示
   if (asciiMode) box.textContent = termRender();          // 终端就是纯文本，不走 HTML
   else box.innerHTML = rxBuffer.map(lineRows).join("") + tail;
   if (wasBottom && $("autoscroll").checked) {
@@ -989,11 +1014,13 @@ async function flList() {
     flDirOf = dir;
     const sel = $("fl-items");
     sel.innerHTML = "";
+    let idx = 1;
     for (const it of items) {
       const o = document.createElement("option");
       o.value = it.name;
       if (it.is_dir) o.dataset.dir = "1";
-      o.textContent = `${it.is_dir ? "DIR " : "FILE"}   ${String(it.size).padStart(10)}   ${it.name}`;
+      const noTxt = logNoOn() ? String(idx++).padStart(3) + "  " : "";      // 左边序号（跟日志同一开关）
+      o.textContent = `${noTxt}${it.is_dir ? "DIR " : "FILE"}   ${String(it.size).padStart(10)}   ${it.name}`;
       sel.appendChild(o);
     }
     if (!items.length) sel.innerHTML = '<option value="">（空目录）</option>';
@@ -1767,9 +1794,16 @@ function flashSync() {
   $("fl-cmd").textContent = preview;
 }
 
+/** 烧录日志：一行一行进，每行带行号（清空后从 1 重数） */
 function flashLog(text) {
   const el = $("fl-log");
-  el.textContent += text;
+  if (!el) return;
+  el.classList.toggle("with-no", logNoOn());
+  const lines = String(text == null ? "" : text).split("\n");
+  while (lines.length && lines[0] === "" && !el.childElementCount) lines.shift();   // 开头那个换行不留空行
+  let html = "";
+  for (const line of lines) html += line.trim() === "" ? logRowHtml(null, "") : logRowHtml(++flLogNo, escapeHtml(line));   // 空行不占号（跟传输页的多行日志一致）
+  el.insertAdjacentHTML("beforeend", html);
   el.scrollTop = el.scrollHeight;
 }
 
@@ -1836,7 +1870,7 @@ function bindFlash() {
   $("fl-dev-filter").oninput = flRenderDevs;
   $("fl-src").onchange = flRenderDevs;
   $("fl-dev-reload").onclick = () => flLoadDevs(false);
-  $("fl-log-clear").onclick = () => { $("fl-log").textContent = ""; };
+  $("fl-log-clear").onclick = () => { $("fl-log").innerHTML = ""; flLogNo = 0; };
   $("fl-dev-goto").onclick = () => { $("fl-dev-filter").focus(); $("fl-dev-filter").select(); };
   // 烧录工具路径：浏览 / 自动检测 / 清空
   const browseTool = (btnId, inputId, dir) => {
@@ -2661,10 +2695,8 @@ function sqEdgeFrom(id, port) { return sqEdgesFrom(id, port)[0]; }
 function sqEdgesInto(id) { return sqGraph.edges.filter((e) => e.to === id); }
 function sqLog(text, cls) {
   const box = $("sq-log");
-  const d = document.createElement("div");
-  d.className = "l" + (cls ? " " + cls : "");
-  d.textContent = text;
-  box.appendChild(d);
+  box.classList.toggle("with-no", logNoOn());
+  box.insertAdjacentHTML("beforeend", logRowHtml(++sqLogNo, escapeHtml(text), "l" + (cls ? " " + cls : "")));
   box.scrollTop = box.scrollHeight;
   while (box.childElementCount > 400) box.removeChild(box.firstChild);
 }
@@ -3604,7 +3636,7 @@ function bindSeq() {
   $("sq-tidy").onclick = sqAutoLayout;
   $("sq-run").onclick = sqRunGraph;
   $("sq-stop").onclick = () => { sqStop = true; sqLog("收到停止请求"); };
-  $("sq-clear-log").onclick = () => { $("sq-log").innerHTML = ""; };
+  $("sq-clear-log").onclick = () => { $("sq-log").innerHTML = ""; sqLogNo = 0; };
   $("sq-clear").onclick = () => {
     sqGraph = { nodes: [], edges: [] };
     sqEnsureStart(); sqSel = null; sqSave(); sqRender();
@@ -4691,12 +4723,14 @@ function bindDebug() {
 function bindTimestamp() {
   $("show-ts").onchange = () => redrawRx();
   if ($("show-no")) {
-    $("show-no").checked = localStorage.getItem("kdock_show_no") === "1";
-    $("show-no").onchange = () => {
-      localStorage.setItem("kdock_show_no", $("show-no").checked ? "1" : "0");
-      redrawRx();
-    };
+    $("show-no").checked = logNoOn();
+    $("show-no").onchange = () => logNoSet($("show-no").checked);
   }
+  if ($("fl-no")) {
+    $("fl-no").checked = logNoOn();
+    $("fl-no").onchange = () => logNoSet($("fl-no").checked);
+  }
+  logNoSet(logNoOn(), true);      // 开机就把行号栏的显隐定下来（默认开）
   if ($("show-dir")) {
     $("show-dir").checked = localStorage.getItem("kdock_show_dir") === "1";
     $("show-dir").onchange = () => {
@@ -8978,15 +9012,9 @@ function tbToggle(id) {
   const e = $(id);
   if (e) { e.checked = !e.checked; e.dispatchEvent(new Event("change", { bubbles: true })); }
 }
-/** 输出区的纯文本（不含左侧行号栏）：复制、统计都用它 */
-function rxPlainText() {
-  const box = $("rx");
-  const rows = [...box.querySelectorAll(".rxline .rxtx")];
-  if (!rows.length) return box.textContent || "";        // ASCII 终端模式没有行结构，直接给
-  return rows.map((r) => r.textContent).join("\n");
-}
+
 function tbCopyRx() {
-  const t = rxPlainText();
+  const t = logPlainText("rx");
   navigator.clipboard.writeText(t).then(() => toast(`已复制 ${t.length} 字符`)).catch(() => toast("复制失败"));
 }
 function tbSyncTheme() {
@@ -9371,7 +9399,7 @@ async function main() {
   });
   await listen("flash://done", (ev) => {
     // 常见坑：openocd(libusb 版) 认不到用 SEGGER 驱动的 J-Link —— 给一句可操作的提示
-    const lw = $("fl-log").textContent;
+    const lw = logPlainText("fl-log");
     if (lw.includes("No J-Link device found") || lw.includes("LIBUSB_ERROR_NOT_SUPPORTED")) {
       pushSys("[烧录] 提示：这个 openocd 是 libusb 版，认不到用 SEGGER 驱动的 J-Link；用 J-Link 探头时请把「工具」切成 J-Link Commander（openocd 适合 CMSIS-DAP / ST-Link 探头）");
     }
