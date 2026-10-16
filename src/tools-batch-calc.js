@@ -2413,7 +2413,7 @@ function vbRenderOut(sig) {
   const rows = [];
   rows.push(["像素时钟", vbMHz(sig.clock)]);
   rows.push(["总像素（含消隐）", `${t.hTotal} × ${t.vTotal}`]);
-  rows.push(["有效像素", `${t.hActive} × ${t.vActive}（消隐 ${t.hBlank} × ${t.vBlank}）`]);
+  rows.push(["有效像素", T("{a} × {b}（消隐 {c} × {d}）").replace("{a}", t.hActive).replace("{b}", t.vActive).replace("{c}", t.hBlank).replace("{d}", t.vBlank)]);
   rows.push(["实际刷新率", `${t.vfreq.toFixed(3)} Hz` + (Math.abs(t.vfreq - sig.options.refreshRate) > 0.01 ? " · " + T("要的是 {r} Hz").replace("{r}", sig.options.refreshRate) : "")]);
   rows.push(["行频", vbKHz(t.hfreq)]);
   rows.push(["前后肩 / 极性", `H ${t.hFront}/${t.hSync}/${t.hBack}  V ${t.vFront}/${t.vSync}/${t.vBack}  ${t.hpol}${t.vpol}`]);

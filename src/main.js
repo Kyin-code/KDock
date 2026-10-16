@@ -1686,7 +1686,7 @@ const flBadge = (x) => (x.src === "jlink" ? "J-Link"
   : en(x.group === "target" ? "openocd 芯片" : x.group === "board" ? "openocd 开发板" : "openocd 适配器"));
 
 async function flLoadDevs(quiet) {
-  $("fl-dev-src").textContent = "读取中…";
+  $("fl-dev-src").textContent = en("读取中…");
   const out = [];
   const srcTxt = [];
   // 1) openocd scripts（芯片 / 开发板 / 适配器）
@@ -1721,7 +1721,7 @@ async function flLoadDevs(quiet) {
       out.push({ name: d.name, desc, group: "jlink", src: "jlink", vendor: d.vendor, core: d.core });
     }
     FL_JLINK_PATH = (r && r.path) || "";
-    srcTxt.push(`J-Link：${devs.length}（${(r && r.source) || "库"}）`);
+    srcTxt.push(en("J-Link：") + devs.length + en("（") + en(String((r && r.source) || "库")) + en("）"));
     $("fl-dev-src").title = FL_JLINK_PATH ? `J-Link device DB: ${FL_JLINK_PATH}` : en("没找到 J-Link 器件库");
   } catch (e) {
     srcTxt.push(en("J-Link 器件库：没找到 JLinkDevices.xml"));
@@ -2500,12 +2500,12 @@ async function bindCapture() {
       list.forEach((m) => {
         const o = document.createElement("option");
         o.value = String(m.id);
-        o.textContent = m.name;
+        o.textContent = en("显示器 ") + (m.id + 1) + " · " + m.width + "x" + m.height;
         sel.appendChild(o);
       });
       if (!list.length) sel.innerHTML = '<option value="0">' + en("（没找到显示器）") + '</option>';
     } catch (e) {
-      $("cap-mon").innerHTML = `<option value="0">${e}</option>`;
+      $("cap-mon").innerHTML = `<option value="0">${e}</option>`;      // e 已经过 en()
     }
   };
   $("cap-start").onclick = async () => {
@@ -5576,7 +5576,7 @@ function agRenderTree() {
       const b = document.createElement("button");
       b.className = "sess" + (agMeta && agMeta.id === x.id ? " active" : "");
       const tt = document.createElement("span");
-      tt.className = "t"; tt.textContent = x.title || en("（无标题）");
+      tt.className = "t"; tt.textContent = en(x.title || "（无标题）");   // 后端给新会话的默认名就是"新会话"（存的是数据），显示时过一遍
       tt.title = (x.title || "") + " · " + new Date(x.updated).toLocaleString();
       b.appendChild(tt);
       // 点会话：先确保中间已经切到 Agent 页再加载
@@ -5629,7 +5629,7 @@ async function agNewWorkspace() {
 /** 对话头：名字 + 本会话完成了多少轮正常对话 */
 function agUpdateHeader() {
   const t = agEl("ag-title");
-  if (t) t.textContent = agMeta ? (agMeta.title || en("（无标题）")) : en("（还没选对话）");
+  if (t) t.textContent = agMeta ? en(agMeta.title || "（无标题）") : en("（还没选对话）");
   const n = agEvents.filter((e) => e.type === "assistant" && String(e.text || "").trim()).length;
   const g = agEl("ag-turns");
   if (g) g.textContent = agMeta ? n + en(" 轮") : "";
@@ -6524,7 +6524,7 @@ function agFillProvider(id) {
   if (agEl("ag-p-kind")) agEl("ag-p-kind").value = p.kind || "openai";
   agEl("ag-p-model").value = p.model;
   agEl("ag-p-key").value = "";
-  agEl("ag-p-key").placeholder = (agCfg.secrets || []).includes(p.api_key_ref) ? "已在密钥库里（留空=不改）" : "粘贴 API Key";
+  agEl("ag-p-key").placeholder = en((agCfg.secrets || []).includes(p.api_key_ref) ? "已在密钥库里（留空=不改）" : "粘贴 API Key");
   agEl("ag-p-ctx").value = p.context_window;
   agEl("ag-p-res").value = p.reserve_output;
   agEl("ag-p-temp").value = p.temperature;
@@ -6999,6 +6999,27 @@ const TOOL_DESC_EN = {
   flow_status: "Check flow progress / the tail of its log.",
   flow_stop: "Stop the running flow.",
   capture_save: "Grab a screenshot (saved into the workspace).",
+  // 主连接（用户在传输页开的那条）—— 2026-10 补
+  port_list: "List the serial ports on this PC (with friendly names / VID:PID). Use this instead of scanning with PowerShell.",
+  port_state: "Read the state of the **user's main link** (the one opened on the transfer page): type / parameters / connected / bytes.",
+  port_write: "Send data to the **main link** (text or HEX). What is sent shows up live on the user's transfer page (TX lines), so the user can watch it.",
+  port_read: "Read the recent TX/RX of the **main link** (the very log the user sees): direction + ms timestamp + content per line.",
+  port_open: "Open the **main link** (serial / TCP client / TCP server / UDP). The mode and parameters sync to the UI so the user sees them. Call port_close first if it is already open.",
+  port_close: "Close the **main link**.",
+  net_local_ips: "List this PC's IPv4 addresses — which local address to bind (TCP server / UDP) and which one to hand to the user (0.0.0.0 = all NICs).",
+  // 逻辑分析仪
+  la_state: "Read the logic analyzer state: source, sample rate, channels/points/duration, view window, cursors A/B and Δt, channel list (with current level), decoders, and the selected channel's measurements. Read-only.",
+  la_read: "Read the decoded results (read-only): every item each decoder produced (protocol bytes/fields + start/end time + CRC/parity/ACK verdicts) plus per-channel frequency/duty/pulses in the current view window.",
+  la_decoders: "List which protocols are supported, what parameters each takes (channel / baud / mode / bit order …) and their defaults, plus the built-in demo scenario ids. Call this before la_config so you do not guess parameter names. Read-only.",
+  la_config: "Change the logic-analyzer **configuration** (never the captured samples): sample rate, replace the whole decoder list (19 protocols: uart/spi/i2c/can/1wire/ds18b20/dht/ps2/nec/i2s/jtag/swd/modbus/lin/dmx512/manchester/diff_manchester/miller/pwm — see la_decoders), channel visibility, selected channel, view window, cursors.",
+  la_capture: "Start a capture. source=demo loads a built-in demo scenario (scenario: bus = UART/PWM/I2C/SPI/DS18B20/NEC, more = CAN/JTAG/I2S/PS2, enc = Manchester/DHT/LIN/Modbus/SWD/DMX); source=device reports clearly that the real-device driver is not wired up yet.",
+  la_save: "Save the current logic-analyzer data to a file (path required). format=csv (time + channels) or vcd (opens in PulseView / DSView / GTKWave); only the first 200k points are saved beyond that.",
+  // 中控编排（画布读写）
+  flow_get: "Read the flow currently on the canvas: nodes (with params and coordinates) + edges (from/port/to) + the available node kinds (and each kind's ports).",
+  flow_add_node: "Add a node to the existing canvas (leaves everything else alone). type comes from flow_get kinds; x/y default to the right of the rightmost node; params are merged onto the node.",
+  flow_connect: "Connect from.port → to on the existing canvas. Port names come from flow_get kinds[type].outs; self-loops, duplicates and unknown ports are rejected.",
+  flow_delete: "Delete a node or an edge from the canvas (pass a node id or an edge key; the start node cannot be deleted).",
+  flow_set: "Import a whole flow onto the canvas (**replaces what is there** and saves it; the user sees/edits/runs it right away). Format: {nodes:[{id,type,x,y,...}],edges:[{from,port,to}]}; unknown kinds and dangling edges are dropped and reported.",
 };
 
 // ── 关于本软件：作者 / 仓库 / 版本 ────────────────────────────────
@@ -9101,6 +9122,124 @@ const EN = {
   "改用 CVT": "use CVT",
   "只算带宽账：判定「支持」只代表链路带宽够，不代表插上一定能点亮（还要看 EDID、链路训练、线缆、DSC 切片）。DP Alt Mode 只按 2 lane 算，另外 2 lane 留给 USB。": "Bandwidth arithmetic only: Supported means the link has the bandwidth, not that it will light up (EDID, link training, cable and DSC slicing are out of scope). DP Alt Mode counts 2 lanes only; the other 2 stay with USB.",
 
+  // ── 补齐（英文模式全站扫漏出来的：调试页 / 设置 / 数据计算 / 快捷发送 / 拖动手柄 等）──
+  "清空输出": "Clear output",
+  "行号（序号）": "Line numbers",
+  "显示用 HEX": "Display as HEX",
+  "发送用 HEX": "Send as HEX",
+  "设置…": "Settings…",
+  "✎ 编辑": "✎ Edit",
+  "打开快捷发送编辑器：新增 / 改 / 删": "Open the quick-send editor: add / edit / delete",
+  "点某一行 = 直接发出去；行尾 ✎ 改、✕ 删；新增 / 批量整理点上面的「✎ 编辑」。": "Click a row = send it right away; ✎ edit / ✕ delete at the row end; add or bulk-edit via ✎ Edit above.",
+  "连接方式：串口 / TCP 客户端 / TCP 服务端 / UDP": "Link mode: serial / TCP client / TCP server / UDP",
+  "串口（窄窗口下这一排的标签会收起来）": "Serial port (labels collapse in narrow windows)",
+  "波特率": "Baud",
+  "用右边这个自定义波特率（窄窗口下「自定义」三个字会收起来）": "Use the custom baud rate on the right (the label collapses in narrow windows)",
+  "自定义波特率（左边那个勾打开才生效）": "Custom baud rate (tick the checkbox on the left first)",
+  "忽略大小写；空格还能匹配换行 / 多个空格": "Case-insensitive; a space also matches newlines / runs of spaces",
+  "把右边结果搬回左边输入，接着往下处理": "Move the right-hand result back into the left input and keep editing",
+  "只清没标记的（★ 的留下）": "Clear unstarred only (★ entries stay)",
+  "连标记的一起清掉": "Clear everything, including starred",
+  "算一次（回车同效）": "Evaluate (Enter works too)",
+  "退格（删一个字符）": "Backspace (delete one character)",
+  "取反": "NOT",
+  "打开文件": "Open file",
+  "调试控制台": "Debug console",
+  "已停下": "Stopped",
+  "停下就刷新面板": "Refresh panels when stopped",
+  "刷新面板": "Refresh panels",
+  "断点": "Breakpoints",
+  "加断点": "Add breakpoint",
+  "调用栈": "Call stack",
+  "局部变量": "Locals",
+  "寄存器": "Registers",
+  "gdb 路径": "gdb path",
+  "附加参数": "Extra args",
+  "启动 gdb": "Start gdb",
+  "关闭 gdb": "Stop gdb",
+  "可执行文件": "Executable",
+  "启动 Server": "Start server",
+  "停 Server": "Stop server",
+  "固件 / 运行控制": "Firmware / run control",
+  "载入固件": "Load firmware",
+  "▶ 继续": "▶ Continue",
+  "⏸ 暂停": "⏸ Halt",
+  "单步": "Step",
+  "下一行": "Next line",
+  "跳出函数": "Finish",
+  "每次 gdb 停下来（断点/单步/异常）就自动刷新右侧面板": "Auto-refresh the side panels whenever gdb stops (breakpoint / step / fault)",
+  "gdb 命令（回车发送）：target extended-remote :3333 / break main / continue …": "gdb commands (Enter sends): target extended-remote :3333 / break main / continue …",
+  "arm-none-eabi-gdb（留空=用 PATH 里的 gdb）": "arm-none-eabi-gdb (blank = gdb from PATH)",
+  "openocd（也可以 JLinkGDBServerCL / pyocd）": "openocd (JLinkGDBServerCL / pyocd also work)",
+  "选一个 .elf（file + load）": "Pick an .elf (file + load)",
+  "选择文件": "Choose file",
+  "monitor reset halt（openocd 语法；J-Link 用 monitor reset）": "monitor reset halt (openocd syntax; use monitor reset for J-Link)",
+  "缩小": "Zoom out",
+  "去设置里导入 / 新建技能": "Import / create skills in Settings",
+  "去设置里新增 MCP 服务": "Add an MCP server in Settings",
+  "拖动排序（同一组内）": "Drag to reorder (within the group)",
+  "拖动排序（整个指令组）": "Drag to reorder (whole group)",
+  "拖动调整对话区高度（双击复位）": "Drag to resize the chat area (double-click resets)",
+  "列表左边显示行号（跟传输页的「序号」是同一个开关）": "Show line numbers on the left (same switch as \"No.\" on the transfer page)",
+  "中文": "中文",
+  "小": "Small",
+  "标准": "Normal",
+  "大": "Large",
+  "特大": "Extra large",
+  "微软雅黑": "Microsoft YaHei",
+  "思源黑体 / Noto": "Noto Sans",
+  "Inter / 系统无衬线": "Inter / system sans",
+  "粘贴 API Key": "Paste API key",
+  "斜杠指令（/xxx）": "Slash commands (/xxx)",
+  "打开指令目录": "Open commands folder",
+  "常驻技能清单（哪几个技能的正文每轮注入系统提示）": "Always-on skills (their body is injected into the system prompt every turn)",
+  "只清「常驻」标记，技能文件本身不动": "Only clears the \"always-on\" mark; skill files stay untouched",
+  "https://…（知识库后台 / 数据集管理页）": "https://… (knowledge-base admin / dataset page)",
+  "https://…（问答 / 聊天页）": "https://… (Q&A / chat page)",
+  "↗ 系统浏览器": "↗ System browser",
+  "显示器 1 · 1920x1080": "Monitor 1 · 1920x1080",
+  "显示器 2 · 3840x2160": "Monitor 2 · 3840x2160",
+  "数值": "Value",
+  "64 位": "64-bit",
+  "128 位": "128-bit",
+  "192 位": "192-bit",
+  "256 位": "256-bit",
+  "格式化 / 压缩 / 校验 / 排序键 / 转义": "Format / minify / validate / sort keys / escape",
+  "左右随便在哪边输入，另一边实时跟着变": "Type on either side — the other follows live",
+  "CBC / CTR / GCM · 128 / 192 / 256 · 本地 WebCrypto": "CBC / CTR / GCM · 128 / 192 / 256 · local WebCrypto",
+  "OAEP-SHA256 加解密 · PKCS#1-SHA256 签名验签 · 可生成密钥对": "OAEP-SHA256 encrypt/decrypt · PKCS#1-SHA256 sign/verify · key-pair generation",
+  "把 \\n 之类的转义还原成真内容": "Turn \\n-style escapes back into real content",
+  "转成一行一字符串（便于塞进代码 / 配置）": "One string per line (easy to paste into code / config)",
+  "把计算器当前的值拿过来": "Pull in the calculator's current value",
+  "文件路径（直接粘也行，或者点右边「选文件…」）": "File path (paste it, or use \"Choose file…\" on the right)",
+  "粘一个期望值，我告诉你它跟哪一项对得上（不分大小写、空格无所谓）": "Paste an expected value; I'll tell you which entry matches (case-insensitive, spaces ignored)",
+  "HEX 或 Base64（长度跟位数对上）": "HEX or Base64 (length must match the bit width)",
+  "CBC 16 字节 / CTR 16 字节 / GCM 12 字节（HEX 或 Base64）": "CBC 16 bytes / CTR 16 bytes / GCM 12 bytes (HEX or Base64)",
+  "要加密的明文；解密时粘密文（按下面选的格式解析）": "Plaintext to encrypt; paste ciphertext when decrypting (parsed per the format below)",
+  "要算哈希的文本（UTF-8）": "Text to hash (UTF-8)",
+  "PEM/DER 文件路径，或直接粘在下面": "PEM/DER file path, or paste it below",
+  "加密：明文；解密：base64 密文；签名：待签文本；验签：base64 签名": "Encrypt: plaintext; decrypt: base64 ciphertext; sign: text; verify: base64 signature",
+  "只验签时填": "Only needed when verifying",
+  "Kyin (任开炎)": "Kyin",
+  "J-Link：": "J-Link: ",
+  "（": " (",
+  "）": ")",
+  "库": "lib",
+  "(DLL 内置库)": "(DLL, built-in lib)",
+  "文件…": "File…",
+  "失败: 还没有连接：先连上设备": "Error: not connected yet — connect to the device first",
+  "每行前面标出 RX/TX/SYS 方向；开着时间戳时会并进同一个方括号里（SSCOM 那种一个前缀）": "Tag each line with RX/TX/SYS; when timestamps are on they share one bracket (a single prefix like SSCOM)",
+  "{a} × {b}（消隐 {c} × {d}）": "{a} × {b} (blanking {c} × {d})",
+  "显示器 ": "Monitor ",
+  "一条 .md 一条指令：frontmatter 里写 name / description，正文就是提示词模板（里面的 {{args}} 会换成命令后面跟的参数）。把文件丢进下面的目录就行 —— 技能作者也能随技能一起分发。": "One .md = one command: frontmatter holds name / description, the body is the prompt template ({{args}} becomes whatever follows the command). Drop files into the folder below — skill authors can ship them with a skill.",
+  "管理页面贴在「知识库」页的中间，对话页面贴在它右边那一栏；两个都是内置浏览器（WebView2）直接渲染的真实页面，所以 Dify 这类重前端界面也能用，登录状态跟着本机 WebView2 走。": "The admin page sits in the middle of the Knowledge base page, the chat page in the right column; both are real pages rendered by the built-in browser (WebView2), so heavy front-ends like Dify work, and logins follow this machine's WebView2.",
+  "地址只保存在本机（界面偏好里），不会写进仓库、也不上传；留空的话，在知识库页点一下中间那块就会跳到这一页来填。": "Addresses are stored locally only (UI prefs) — never committed or uploaded. Leave them empty and clicking the middle of the Knowledge base page jumps here to fill them in.",
+  "左边是「文件校验 / 浮点 / 进制字节序 / AES / RSA」。AES 与 RSA 走系统的 WebCrypto（浏览器内实现，不发到网上）；密钥只在你本机的框里，不写盘。": "Left column: file hashing / floating point / byte order / AES / RSA. AES and RSA use the system WebCrypto (in-browser, nothing leaves the machine); keys stay in the boxes here and are never written to disk.",
+  "这一块是内置浏览器直接渲染的对话页面（中间那块是管理页面）。两个地址都在 设置 → 知识库 里改，配置只存在本机。": "This pane is the chat page rendered by the built-in browser (the middle one is the admin page). Both addresses live in Settings → Knowledge base, and the config stays on this machine.",
+  "RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent 也能用同一套 scope_* 工具干同样的事。": "The LAN port that ships with RIGOL DS1000Z series (TCP 5555, SCPI text). Once connected the agent can do the same things through the same scope_* tools.",
+  "{\"b\":1,\"a\":[1,2,{\"c\":true}]}  或  \\\"{\\\\\\\"a\\\\\\\":1}\\\"（转义过的也行）": "{\"b\":1,\"a\":[1,2,{\"c\":true}]}  or  \"{\\\"a\\\":1}\" (escaped also works)",
+  "可留空；例：-ex \"target extended-remote :3333\"": "Optional; e.g. -ex \"target extended-remote :3333\"",
+  "JLink.exe (DLL 内置库)": "JLink.exe (built-in DLL)",
 };
 const en = (t) => (LANG === "en" && EN[t]) ? EN[t] : t;
 // 分文件写的小模块（批量文本/计算器）也要能翻译 + 切语言时重画

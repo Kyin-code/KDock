@@ -1088,7 +1088,7 @@ fn flash_jlink_devices(path: Option<String>, exe: Option<String>) -> Result<serd
                 let devices = parse_jlink_db(&txt);
                 if !devices.is_empty() {
                     return Ok(serde_json::json!({
-                        "source": "JLink.exe (DLL 内置库)", "path": f.to_string_lossy(),
+                        "source": "JLink.exe (built-in DLL)", "path": f.to_string_lossy(),
                         "count": devices.len(), "devices": devices,
                     }));
                 }

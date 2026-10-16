@@ -280,9 +280,7 @@
             <div class="setpane" data-setpane="skills" hidden>
               <div class="setcard">
                 <div class="cardtitle">斜杠指令（/xxx）</div>
-                <p class="hint">一条 .md 一条指令：frontmatter 写 <b>name</b> / <b>description</b>，正文就是提示词模板
-                  （里面的 <b>{{args}}</b> 会换成命令后面跟的参数）。把文件丢进下面的目录就行 ——
-                  技能作者也能随技能一起分发。</p>
+                <p class="hint">一条 .md 一条指令：frontmatter 里写 name / description，正文就是提示词模板（里面的 {{args}} 会换成命令后面跟的参数）。把文件丢进下面的目录就行 —— 技能作者也能随技能一起分发。</p>
                 <div class="trow">
                   <span id="set-slash-dir" class="lb" title=""></span>
                   <span class="grow"></span>
@@ -349,13 +347,8 @@
                 <span class="grow"></span>
                 <span id="set-kb-state" class="lb"></span>
               </div>
-              <p class="hint">
-                <b>管理页面</b>贴在「知识库」页的中间，<b>对话页面</b>贴在它右边那一栏；
-                两个都是内置浏览器（WebView2）直接渲染的真实页面，所以 Dify 这类重前端界面也能用，
-                登录状态跟着本机 WebView2 走。<br />
-                地址只保存在**本机**（界面偏好里），不会写进仓库、也不上传；留空的话，
-                在知识库页点一下中间那块就会跳到这一页来填。
-              </p>
+              <p class="hint">管理页面贴在「知识库」页的中间，对话页面贴在它右边那一栏；两个都是内置浏览器（WebView2）直接渲染的真实页面，所以 Dify 这类重前端界面也能用，登录状态跟着本机 WebView2 走。</p>
+              <p class="hint">地址只保存在本机（界面偏好里），不会写进仓库、也不上传；留空的话，在知识库页点一下中间那块就会跳到这一页来填。</p>
             </div>
 
           </div>
@@ -1275,6 +1268,22 @@
             <div id="ag-mcp-table" class="agtable"></div>
           </div>
 
+
+          <!-- ③ 文本 -->
+          <div class="agppane" data-agpane="text" hidden>
+            <div class="trow">
+              <button id="ag-tx-open" class="btn small">打开文件</button>
+              <button id="ag-tx-save" class="btn small">另存为</button>
+              <button id="ag-tx-ws" class="btn small">存到工作区</button>
+              <span class="grow"></span>
+              <button id="ag-tx-clear" class="btn small danger">清空</button>
+            </div>
+            <div class="field"><label for="ag-tx-name">标题</label><input id="ag-tx-name" placeholder="（来自文件名 / agent）" /></div>
+            <textarea id="ag-tx-body" class="agtext" spellcheck="false" placeholder="这里可以看文本：打开文件、或者让 agent 用 ui_show_text 推过来。"></textarea>
+            <p class="hint" id="ag-tx-hint">只读展示 + 编辑；「存到工作区」会写进当前会话的工作区。</p>
+          </div>
+        </div>
+
           <!-- 调试参数 -->
           <div class="parampane" data-param="debug" hidden>
             <div class="cardtitle">GDB</div>
@@ -1316,21 +1325,6 @@
               <button id="dbg-reset" class="btn small danger" title="monitor reset halt（openocd 语法；J-Link 用 monitor reset）">复位</button>
             </div>
           </div>
-
-          <!-- ③ 文本 -->
-          <div class="agppane" data-agpane="text" hidden>
-            <div class="trow">
-              <button id="ag-tx-open" class="btn small">打开文件</button>
-              <button id="ag-tx-save" class="btn small">另存为</button>
-              <button id="ag-tx-ws" class="btn small">存到工作区</button>
-              <span class="grow"></span>
-              <button id="ag-tx-clear" class="btn small danger">清空</button>
-            </div>
-            <div class="field"><label for="ag-tx-name">标题</label><input id="ag-tx-name" placeholder="（来自文件名 / agent）" /></div>
-            <textarea id="ag-tx-body" class="agtext" spellcheck="false" placeholder="这里可以看文本：打开文件、或者让 agent 用 ui_show_text 推过来。"></textarea>
-            <p class="hint" id="ag-tx-hint">只读展示 + 编辑；「存到工作区」会写进当前会话的工作区。</p>
-          </div>
-        </div>
 
         <!-- 传输参数 -->
         <div class="parampane" data-param="link" hidden>
@@ -1723,8 +1717,7 @@
           <div id="calc-baud" class="aginfo"></div>
           <p class="hint">位时间 = 1 / 波特率。开 8N1 时一个字节 10 位，所以 115200 下发一个字节约 86.8 µs。</p>
           <div class="cardtitle">说明</div>
-          <p class="hint">左边是「文件校验 / 浮点 / 进制字节序 / AES / RSA」。AES 与 RSA 走系统的 WebCrypto（
-            浏览器内实现，不发到网上）；密钥只在你本机的框里，不写盘。</p>
+          <p class="hint">左边是「文件校验 / 浮点 / 进制字节序 / AES / RSA」。AES 与 RSA 走系统的 WebCrypto（浏览器内实现，不发到网上）；密钥只在你本机的框里，不写盘。</p>
         </div>
 
         <!-- 知识库参数：右栏 = 对话页面（也是内置浏览器） -->
@@ -1742,8 +1735,7 @@
           <div id="kb-chat-host" class="kbhost grow">
             <div class="placeholder kbempty" id="kb-chat-empty"></div>
           </div>
-          <p class="hint">这一块是内置浏览器直接渲染的**对话页面**（中间那块是管理页面）。
-            两个地址都在 <b>设置 → 知识库</b> 里改，配置只存在本机。</p>
+          <p class="hint">这一块是内置浏览器直接渲染的对话页面（中间那块是管理页面）。两个地址都在 设置 → 知识库 里改，配置只存在本机。</p>
         </div>
 
         <!-- 图表参数 -->
@@ -1905,8 +1897,7 @@
             <button id="sc-close" class="btn">断开</button>
           </div>
           <div class="state"><span class="dot" id="sc-state">未连接</span></div>
-          <p class="hint">RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent
-            也能用同一套 <code>scope_*</code> 工具干同样的事。</p>
+          <p class="hint">RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent 也能用同一套 scope_* 工具干同样的事。</p>
 
           <div class="cardtitle">机器状态</div>
           <div id="sc-info" class="aginfo"></div>
