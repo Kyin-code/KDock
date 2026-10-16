@@ -55,12 +55,18 @@ jobs:
       - name: Build Tauri app (release)
         run: npm run tauri build
 
+      - name: Stage artifacts
+        run: |
+          # The frontend is compiled into the executable by `tauri build`,
+          # so the dist folder is a build intermediate and must not ship.
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item -Path "$env:CARGO_TARGET_DIR\release\*.exe" -Destination release -Force
+          if (-not (Get-ChildItem release -Filter *.exe)) { throw "no executable was staged" }
+          Get-ChildItem release -Recurse -File -Name
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: kdock-windows-x64
-          # Fail loudly instead of publishing an empty artifact.
           if-no-files-found: error
-          path: |
-            ${{ env.CARGO_TARGET_DIR }}/release/*.exe
-            dist/**
+          path: release/**
