@@ -36,6 +36,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Link cargo target directory
+        # Why this exists: tauri-build resolves the plugin permission files under
+        # <repo>/target, but CARGO_TARGET_DIR points outside the checkout - the build
+        # script then dies with "failed to read plugin permissions ... app_hide.toml".
+        # A junction makes both paths the same directory. `git clean -ffdx` (run by
+        # checkout) deletes the link itself but leaves the cache behind - verified on
+        # the runner, so the cache still survives across runs.
+        if: env.CARGO_TARGET_DIR != ''
+        run: |
+          $real = $env:CARGO_TARGET_DIR
+          New-Item -ItemType Directory -Force $real | Out-Null
+          $link = Join-Path $PWD "target"
+          if (Test-Path $link) {
+            $item = Get-Item $link -Force
+            if ($item.LinkType) { Remove-Item $link -Force } else { Remove-Item $link -Recurse -Force }
+          }
+          New-Item -ItemType Junction -Path $link -Target $real | Out-Null
+          Write-Output "linked $link -> $real"
+
       - name: Toolchain versions
         run: |
           rustc --version
