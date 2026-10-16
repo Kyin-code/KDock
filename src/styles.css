@@ -207,6 +207,8 @@ body {
 .nav, .work, .params { min-height: 0; }
 .nav { border-radius: 12px; border: 1px solid hsl(var(--border) / 0.5); background: var(--surface-1); padding: 8px 7px; overflow: auto; }
 .work { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* 工作区工具栏里那种很长的状态/说明文字：占不下就省略号，别把整行撑破（窄窗实测溢出 2px） */
+.work .trow > .lb, .work .trow > .hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workpane { flex: 1; display: flex; flex-direction: column; gap: 10px; min-height: 0; min-width: 0; }
 /* 卡片是一张张往下堆的页面（计算器、批量文本、烧录…）：内容比窗口高时要能滚到底。
    传输页(.shell)和 agent 页自己管滚动（内部各有自己的滚动区/拖动条），别掺和。
@@ -549,7 +551,16 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
   .field { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .field > label { font-size: 12px; }
 }
+/* 中窄窗（980~1180 布局 px）：**还是三栏**，只是把左右两栏收窄 —— 不往下面堆，
+   这样窗口缩一点不会突然跳上去/跳下来（以前 1180 就跳，作者那套缩放下约等于物理 1480px）；
+   用户自己拖过的宽度也尊重，只是在这段里加个上限，别把中间挤没。 */
 @media (max-width: 1180px) {
+  .split { grid-template-columns: min(var(--nav-w, 152px), 15rem) 5px minmax(0, 1fr) 5px min(var(--param-w, 330px), 19rem); }
+  .nav { padding: 6px 5px; }
+}
+
+/* 再窄（<=980）：右栏才整行挪到下面（这时三栏真的挤不下了） */
+@media (max-width: 980px) {
   /* 窄窗口：左栏 + 工作区一行，参数区整行挪到下面。
      原来只改了列数没改行数，5 个子项会被挤成两行，而 grid-template-rows 只定义了第一行，
      结果中间工作区塌成 0 高（整个界面看着就"空"了）。 */
@@ -586,7 +597,10 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
   .params .parampane[data-param="batch"] .dcbody > .hint { grid-column: 1 / -1; margin: 0; }
   .cardtitle { margin: 10px 0 6px; }
 }
-@media (max-width: 1000px) {
+/* 只有真的切到"参数区在下面"（<=980）时才用 3 列；
+   以前写的是 1000 —— 于是 980~1000 这段里 .split 只有 3 列，而 split 有 5 个子项，
+   参数区和右拖动条被挤进"隐式行"，实测工作区高度直接变 0、参数区只有 24px 宽。 */
+@media (max-width: 980px) {
   .split { grid-template-columns: var(--nav-w, 260px) 6px minmax(0, 1fr); padding: 0 8px 8px; }
   .topbar { padding: 0 10px; height: 42px; }
   #status-chip { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -1690,6 +1690,7 @@ async function flLoadDevs(quiet) {
   FL_DEVS = out;
   FL_DEVS_SRC = srcTxt.join("  |  ");
   $("fl-dev-src").textContent = FL_DEVS_SRC;
+  $("fl-dev-src").title = FL_DEVS_SRC;        // 窄窗会截断成省略号，悬停能看全
   if (!quiet) pushSys(`[烧录] ${FL_DEVS_SRC}`);
   flRenderDevs();
 }
