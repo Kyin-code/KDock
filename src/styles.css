@@ -2456,3 +2456,78 @@ input.calcout {
   font-size: clamp(0.6rem, calc(0.5rem + 1.6cqh), 0.95rem);
 }
 .calcsubline .lb { font-family: inherit; }
+
+/* ================= 窄窗口 / 高 DPI 的分级降级 =================
+   实际用法很多时候不是全屏：窗口可能只有几百 CSS 像素宽（DPI 放大后更少）。
+   按"还放不放得下"分四级往下收，每一级都留了回头路：
+     ≤1120  标题栏：品牌文字收掉，五个菜单折进「☰」
+     ≤980   标题栏：中间那个页面名收掉（左边已经高亮了）；右栏参数区整行挪到下面（原有行为）
+     ≤860   标题栏：主题按钮收掉；左导航变纯图标条（分组标题 / 功能文字 / 工作区 / 会话全收起）
+     ≤720   标题栏：语言、设置收掉，连接状态缩成一个点（悬停看全文）
+   回头路：导航条顶部那个「☰」把图标条临时展开成完整导航；参数区用标题栏那个「▭」折叠；
+   语言 / 主题 / 设置在设置弹窗里都有入口。 */
+#nav-expand { display: none; }
+.tb-menu-more { display: none; }
+.tb-menu-sec {
+  padding: 6px 9px 2px; font-size: 10.5px; letter-spacing: .8px;
+  color: hsl(var(--muted-foreground) / 0.85); text-transform: uppercase;
+}
+/* ☰ 那个把五个菜单合起来的弹层：竖着排会超出窗口高度，分两栏 + 限高滚动 */
+.tb-menu-more .tb-menu-pop {
+  min-width: min(23rem, calc(100vw - 24px));
+  max-width: min(45rem, calc(100vw - 24px));
+  max-height: min(72vh, 620px); overflow: auto; columns: 2; column-gap: 8px;
+}
+.tb-menu-group { break-inside: avoid; }
+@media (max-width: 560px) { .tb-menu-more .tb-menu-pop { columns: 1; } }
+/* 参数区折叠（标题栏那个按钮切 html.noparam）：列数要跟着从 5 条变 3 条，否则空轨道还在占宽度 */
+html.noparam .split { grid-template-columns: var(--nav-w, 152px) 5px minmax(0, 1fr); }
+html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; }
+#tb-params.on { color: hsl(var(--primary)); border-color: hsl(var(--primary) / 0.5); background: hsl(var(--primary) / 0.12); }
+
+@media (max-width: 1120px) {
+  .tb-name { display: none; }                                   /* 只留 K 那个方块 logo */
+  .tb-menu-root:not(.tb-menu-more) { display: none; }           /* 五个菜单折进 ☰ */
+  .tb-menu-more { display: block; }
+}
+@media (max-width: 980px) {
+  .tb-page { display: none; }
+  #status-chip { flex: 0 1 auto; min-width: 0; max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  html.noparam .split { grid-template-columns: var(--nav-w, 300px) 6px minmax(0, 1fr); }
+}
+@media (max-width: 860px) {
+  #tb-theme-btn { display: none; }
+  /* 左导航：纯图标条 */
+  .split { --nav-w: 54px; grid-template-columns: var(--nav-w) 6px minmax(0, 1fr); }
+  html.noparam .split { grid-template-columns: var(--nav-w, 54px) 6px minmax(0, 1fr); }
+  .nav { padding: 8px 4px; gap: 4px; }
+  .navgroup { height: 1px; padding: 0; margin: 8px 6px 4px; background: hsl(var(--border) / 0.45); font-size: 0; letter-spacing: 0; overflow: hidden; }
+  .navitem { justify-content: center; padding: 0 4px; gap: 0; }
+  .navitem > span { display: none; }
+  .navsub, .navrow .navmini { display: none; }
+  #nav-expand { display: flex; }
+  /* 点 ☰ 展开：只在这一档里临时恢复成完整导航条 */
+  html.railopen .split { grid-template-columns: 152px 6px minmax(0, 1fr); }
+  html.railopen .navgroup { height: auto; padding: 10px 11px 4px; margin: 0; background: none; font-size: 11px; letter-spacing: .7px; }
+  html.railopen .navitem { justify-content: flex-start; padding: 0 11px; gap: 9px; }
+  html.railopen .navitem > span { display: inline; }
+  html.railopen .navsub { display: flex; }
+  html.railopen .navrow .navmini { display: inline-flex; }
+}
+@media (max-width: 720px) {
+  #tb-lang, #tb-settings { display: none; }                     /* 语言 / 设置：设置弹窗里都有 */
+  .tb-right { gap: 5px; }
+  #status-chip {
+    width: 13px; min-width: 13px; height: 13px; padding: 0; border-radius: 999px;
+    font-size: 0; overflow: hidden; background: hsl(var(--muted-foreground) / 0.5);
+  }
+  #status-chip.ok { background: hsl(var(--success) / 0.95); }
+  .split { padding: 0 6px 6px; }
+}
+.navbtn {
+  display: none; align-items: center; justify-content: center;
+  height: 30px; margin: 2px 4px 6px; cursor: pointer;
+  border: 1px solid hsl(var(--border) / 0.6); border-radius: 8px;
+  background: var(--surface-2); color: hsl(var(--muted-foreground)); font: inherit; font-size: 14px;
+}
+.navbtn:hover { color: hsl(var(--foreground)); border-color: hsl(var(--primary) / 0.6); }

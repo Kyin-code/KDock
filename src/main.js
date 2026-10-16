@@ -629,13 +629,22 @@ async function refreshPorts() {
   }
 }
 
+/** 顶栏那个连接状态：文字 / 颜色 / 悬停提示一起更新。
+ *  窄窗口（≤720px）它只剩一个点，全靠在 title 上挂全文。 */
+function chipSet(text, ok) {
+  const c = $("status-chip");
+  if (!c) return;
+  c.textContent = text;
+  c.className = "chip" + (ok ? " ok" : "");
+  c.title = text;
+}
+
 async function refreshStats() {
   try {
     const s = await invoke("get_stats");
     const state = en(s.connected ? "已连接" : s.listening ? "监听中" : "未连接");
     const chip = s.connected ? (s.label || en("已连接")) : state;
-    $("status-chip").textContent = chip;
-    $("status-chip").className = "chip" + (s.connected ? " ok" : "");
+    chipSet(chip, s.connected);
     $("status").textContent = s.connected ? `${state} · ${s.label || ""}` : state;
     /* 只看收/发字符数(和字节数)，不要时长/速率 */
     $("stats").textContent =
@@ -8833,6 +8842,10 @@ const EN = {
   "还没加解码器：上面选个协议点「＋」": "No decoder yet: pick a protocol above and hit +",
   "已加解码器：": "Decoder added: ",
   "载入示例": "Load demo",
+  "应用菜单": "App menu",
+  "收起参数区": "Hide params panel",
+  "显示参数区": "Show params panel",
+  "展开 / 收起导航（窄窗口下只显示图标）": "Expand / collapse the nav (icons only in narrow windows)",
   "示例场景": "Demo scenario",
   "协议": "Protocol",
   "（无）": "(none)",
@@ -9215,6 +9228,20 @@ function bindTitleBar() {
   const wrap = $("tb-menu");
   let openIdx = -1;
   const menu = tbMenuDefs();
+  /** 把一批菜单项填进弹层（单个菜单和窄窗那个「☰」合集都用它） */
+  const fillItems = (pop, items) => {
+    for (const it of items) {
+      if (it.sep) { const sp = document.createElement("div"); sp.className = "tb-menu-sep"; pop.appendChild(sp); continue; }
+      const b = document.createElement("button");
+      b.className = "tb-menu-item";
+      const left = document.createElement("span");
+      left.textContent = (it.chk && it.chk() ? "✓ " : "") + en(it.t);
+      b.appendChild(left);
+      if (it.k) { const k = document.createElement("span"); k.className = "kbd"; k.textContent = it.k; b.appendChild(k); }
+      b.onclick = (ev) => { ev.stopPropagation(); tbCloseMenus(); try { it.run(); } catch (e) { toast(String(e)); } };
+      pop.appendChild(b);
+    }
+  };
   menu.forEach((sec, idx) => {
     const root = document.createElement("div");
     root.className = "tb-menu-root";
@@ -9226,17 +9253,7 @@ function bindTitleBar() {
       btn.classList.add("active");
       const pop = document.createElement("div");
       pop.className = "tb-menu-pop";
-      for (const it of sec.items) {
-        if (it.sep) { const sp = document.createElement("div"); sp.className = "tb-menu-sep"; pop.appendChild(sp); continue; }
-        const b = document.createElement("button");
-        b.className = "tb-menu-item";
-        const left = document.createElement("span");
-        left.textContent = (it.chk && it.chk() ? "✓ " : "") + en(it.t);
-        b.appendChild(left);
-        if (it.k) { const k = document.createElement("span"); k.className = "kbd"; k.textContent = it.k; b.appendChild(k); }
-        b.onclick = (ev) => { ev.stopPropagation(); tbCloseMenus(); try { it.run(); } catch (e) { toast(String(e)); } };
-        pop.appendChild(b);
-      }
+      fillItems(pop, sec.items);
       root.appendChild(pop);
       openIdx = idx;
     };
@@ -9244,6 +9261,68 @@ function bindTitleBar() {
     btn.onmouseenter = () => { if (openIdx >= 0 && openIdx !== idx) open(); };
     root.appendChild(btn);
     wrap.appendChild(root);
+  });
+  // 窄窗口（≤1120px）里五个菜单折进这个「☰」：一次把五个菜单的内容都列出来
+  {
+    const root = document.createElement("div");
+    root.className = "tb-menu-root tb-menu-more";
+    const btn = document.createElement("button");
+    btn.className = "tb-menu-btn";
+    btn.textContent = "☰";
+    btn.title = en("应用菜单");
+    const open = () => {
+      tbCloseMenus();
+      btn.classList.add("active");
+      const pop = document.createElement("div");
+      pop.className = "tb-menu-pop";
+      menu.forEach((sec) => {
+        const g = document.createElement("div");
+        g.className = "tb-menu-group";
+        const h = document.createElement("div");
+        h.className = "tb-menu-sec";
+        h.textContent = en(sec.label);
+        g.appendChild(h);
+        fillItems(g, sec.items);
+        pop.appendChild(g);
+      });
+      root.appendChild(pop);
+      openIdx = menu.length;
+    };
+    btn.onclick = (e) => { e.stopPropagation(); if (btn.classList.contains("active")) { tbCloseMenus(); openIdx = -1; } else open(); };
+    root.appendChild(btn);
+    wrap.appendChild(root);
+  }
+  // 左导航：窄窗口下变纯图标条，那个「☰」把它临时展开（记住选择）
+  const navExpand = $("nav-expand");
+  if (navExpand) {
+    if (localStorage.getItem("kdock_railopen") === "1") document.documentElement.classList.add("railopen");
+    navExpand.onclick = () => {
+      const on = document.documentElement.classList.toggle("railopen");
+      localStorage.setItem("kdock_railopen", on ? "1" : "0");
+      window.dispatchEvent(new Event("resize"));
+    };
+  }
+  // 参数区折叠（窄窗口下特别有用：整行挪到下面那条能直接收掉）
+  const tbParams = $("tb-params");
+  if (tbParams) {
+    const paint = () => {
+      const off = document.documentElement.classList.contains("noparam");
+      tbParams.classList.toggle("on", off);
+      tbParams.title = off ? en("显示参数区") : en("收起参数区");
+    };
+    if (localStorage.getItem("kdock_noparam") === "1") document.documentElement.classList.add("noparam");
+    paint();
+    tbParams.onclick = () => {
+      const off = document.documentElement.classList.toggle("noparam");
+      localStorage.setItem("kdock_noparam", off ? "1" : "0");
+      paint();
+      syncParamStrip();
+      window.dispatchEvent(new Event("resize"));     // 中栏变宽了：让图表 / 画布跟着重排
+    };
+  }
+  // 图标条里文字都收起来了，悬停提示得有（没有的就用它的功能名补一个）
+  document.querySelectorAll(".navitem").forEach((b) => {
+    if (!b.title) { const sp = b.querySelector("span"); if (sp) b.title = sp.textContent.trim(); }
   });
   $("tb-lang").onclick = () => { applyLang(LANG === "zh" ? "en" : "zh"); tbCloseMenus(); toast(LANG === "en" ? "Language: English" : "语言：中文"); };
   document.addEventListener("click", () => { tbCloseMenus(); openIdx = -1; });
@@ -9541,8 +9620,7 @@ async function main() {
     if (!rxPaused) redrawRx();
   });
   await listen("link://reconnecting", (ev) => {
-    $("status-chip").textContent = `重连中 ${ev.payload}/20`;
-    $("status-chip").className = "chip";
+    chipSet(`重连中 ${ev.payload}/20`, false);
     pushSys(`[链路] 连接断了，1.5s 后重连（第 ${ev.payload} 次）...`);
   });
   await listen("link://reconnected", (ev) => {
