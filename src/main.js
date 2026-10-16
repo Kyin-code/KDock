@@ -1147,6 +1147,7 @@ const WORK_OF = {
   debug: "debug",
   agent: "agent",
   env: "env",
+  kb: "kb",
 };
 
 /** 窄窗时参数区是「整行挪到下面」的一条：按当前这张面板的内容量决定它多高（30~55vh 之间），
@@ -7939,8 +7940,13 @@ const AG_HOST = {
   },
   async ui_goto(a) {
     const map = { transfer: "link", firmware: "upgrade", flow: "seq", files: "files", flash: "flash",
-                  chart: "chart", capture: "capture", scope: "scope", logic: "logic", commands: "cmds" };
+                  chart: "chart", capture: "capture", scope: "scope", logic: "logic", commands: "cmds",
+                  batch: "batch", calculator: "calc", datacalc: "datacalc", env: "env", kb: "kb",
+                  knowledge: "kb", agent: "agent", debug: "debug" };
     const tab = map[a.page] || a.page;
+    // 左导航里没有的（比如调试页被藏起来）就别切了，省得切到一片空白
+    const btn = document.querySelector(`.navitem[data-tab="${tab}"]`);
+    if (!btn || btn.hidden) return `没有「${a.page}」这个页面（可用：传输/命令表/固件升级/烧录/文件管理/Agent/实时图表/中控编排/示波器/屏幕捕获/逻辑分析仪/批量文本/计算器/数据计算/环境配置/知识库）`;
     showPane(tab);
     return "已切到「" + tab + "」页";
   },
@@ -9685,7 +9691,8 @@ const TB_PAGES = [["link", "传输"], ["cmds", "命令表"], ["upgrade", "固件
   ["agent", "Agent"],
   ["files", "文件管理"], ["chart", "实时图表"], ["seq", "中控编排"], ["scope", "示波器"],
   ["capture", "屏幕捕获"], ["logic", "逻辑分析仪"],
-  ["batch", "批量文本"], ["calc", "计算器"], ["datacalc", "数据计算"], ["env", "环境配置"]];
+  ["batch", "批量文本"], ["calc", "计算器"], ["datacalc", "数据计算"], ["env", "环境配置"],
+  ["kb", "知识库"], ["debug", "调试"]];
 const TB_THEME_NAME = { dark: "暗色", light: "亮色", auto: "跟随系统" };
 function tbCmd(action) { return invoke("win_ctl", { action }).catch((e) => toast("窗口操作失败: " + e)); }
 function tbCloseMenus() {
