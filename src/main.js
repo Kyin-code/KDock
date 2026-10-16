@@ -131,6 +131,7 @@ let history = [];
 let rxBuffer = [];
 let rxMode = "text";
 let tailEntry = null;      // "正在长的半行"（设备还没发换行），渲染在最后一行、就地更新
+let rxLineNo = 0;          // 已经渲染过多少行 —— 给"序号"用（单调递增，日志裁掉老行时也不会重排）
 // 高数据量时的两条保护（参考 OxideSerial 的做法）：
 //   1) 入队后不立刻重绘，攒到下一帧(RAF)一次性重绘 —— 否则每个分片都全量重刷 DOM
 //   2) 日志上限，超了丢最老的 —— 之前是无上限，长时间跑会把内存和渲染都拖垮
@@ -150,6 +151,10 @@ function flushRxPending() {
 
 function pushEntry(e) {
   if (rxPaused) return;
+  if (e.no0 == null) {
+    e.no0 = rxLineNo + 1;
+    rxLineNo += Math.max(1, entryLines(e).length);   // 一条可能带好几行，按行数往后排
+  }
   rxPending.push(e);
   if (rxTimer !== null) return;
   // 攒 ~16ms 一帧再重绘；**不能只靠 requestAnimationFrame** ——
@@ -528,13 +533,17 @@ function lineHtml(e) {
   const cls = e.dir === "TX" ? "tx" : e.dir === "SYS" ? "sys" : "rx-l";
   const tsOn = $("show-ts") && $("show-ts").checked;
   const dirOn = $("show-dir") && $("show-dir").checked;
+  const noOn = $("show-no") && $("show-no").checked;
   const dir = `<span class="${cls}">${e.dir}</span>`;
   // 方向标记跟时间戳绑在一起（一个方括号前缀，SSCOM 那样）；只有方向没时间戳时才单独占一个词
   let pfx = "";
   if (tsOn && dirOn) pfx = `<span class="ts">[${fmtTs(e.ts_ms)} ${dir}]</span> `;
   else if (tsOn) pfx = `<span class="ts">[${fmtTs(e.ts_ms)}]</span> `;
   else if (dirOn) pfx = dir + " ";
-  return entryLines(e).map((l) => pfx + l).join("\n") + "\n";
+  return entryLines(e).map((l, i) => {
+    const no = noOn && e.no0 != null ? `<span class="no">${e.no0 + i}</span> ` : "";   // 一条多行时，每行自己一个号
+    return no + pfx + l;
+  }).join("\n") + "\n";
 }
 
 function redrawRx() {
@@ -704,15 +713,19 @@ function toggleLoop() {
 
 async function reloadFromBackend() {
   const lines = await invoke("get_log");
+  rxLineNo = 0;
   rxBuffer = lines.map((l) => {
     const bytes = (l.data.match(/[0-9A-Fa-f]{2}/g) || []).map((h) => parseInt(h, 16));
-    return {
+    const e = {
       dir: l.dir,
       ts_ms: l.ts_ms,
       text: new TextDecoder().decode(new Uint8Array(bytes)),
       hex: bytes.map((b) => b.toString(16).padStart(2, "0").toUpperCase()).join(" "),
       ascii: bytes.map((b) => (b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : ".")).join(""),
     };
+    e.no0 = rxLineNo + 1;
+    rxLineNo += Math.max(1, entryLines(e).length);
+    return e;
   });
   redrawRx();
 }
@@ -4679,6 +4692,13 @@ function bindDebug() {
 // ---------------- 时间戳 / 方向标记开关 ----------------
 function bindTimestamp() {
   $("show-ts").onchange = () => redrawRx();
+  if ($("show-no")) {
+    $("show-no").checked = localStorage.getItem("kdock_show_no") === "1";
+    $("show-no").onchange = () => {
+      localStorage.setItem("kdock_show_no", $("show-no").checked ? "1" : "0");
+      redrawRx();
+    };
+  }
   if ($("show-dir")) {
     $("show-dir").checked = localStorage.getItem("kdock_show_dir") === "1";
     $("show-dir").onchange = () => {
@@ -8752,6 +8772,10 @@ const EN = {
   "RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent":
     "The standard LAN port on RIGOL DS1000Z series scopes (TCP 5555, SCPI text). Once connected the agent",
   "工具干同样的事。": "can do the same things with the same tools.",
+  // 传输页：序号列
+  "序号": "Line no.",
+  "每行前面显示行号（从 1 开始；清屏后重新数，上翻看历史时也对得上）": "Show a line number on each line (starts at 1, restarts after clearing, and stays stable when you scroll back)",
+
   // 批量文本：比对箭头
   "跟随输入": "Follow input",
   "右边改过之后就不再跟着输入走了，点这个恢复跟随": "Once the right side is edited it stops following the input; click to follow again",
@@ -9166,6 +9190,7 @@ async function main() {
   $("send").onclick = doSend;
   $("clear").onclick = async () => {
     rxBuffer = [];
+    rxLineNo = 0;          // 清屏后序号从 1 重数
     await invoke("clear_log");
     redrawRx();
     if (asciiMode) $("rx").focus();     // ASCII 交互时别把焦点丢在按钮上，否则敲不动
