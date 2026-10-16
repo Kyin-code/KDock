@@ -8,7 +8,7 @@ import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 // 两个纯本地工具页（批量文本 / 计算器）——单独成文件，免得 main.js 再长下去
 import { initBatch, initCalc } from "./tools-batch-calc.js";
-import { initLogic, laAgentState, laAgentRead, laAgentConfig, laAgentCapture, laAgentSave } from "./logic-analyzer.js";
+import { initLogic, laAgentState, laAgentRead, laAgentDecoders, laAgentConfig, laAgentCapture, laAgentSave } from "./logic-analyzer.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -7543,6 +7543,7 @@ const AG_HOST = {
   // 逻辑分析仪：读结果（只读）+ 改配置（不动数据）+ 采集 + 存盘
   async la_state() { initLogic(); return laAgentState(); },
   async la_read(a) { initLogic(); return laAgentRead(a || {}); },
+  async la_decoders() { return laAgentDecoders(); },
   async la_config(a) { initLogic(); return laAgentConfig(a || {}); },
   async la_capture(a) { initLogic(); return laAgentCapture(a || {}); },
   async la_save(a) { initLogic(); return laAgentSave(a || {}); },
@@ -8829,6 +8830,34 @@ const EN = {
   "显示全部通道": "Show all channels",
   "删掉这个解码器": "Remove this decoder",
   "还没加解码器：上面点 + UART / + SPI": "No decoder yet: click + UART / + SPI above",
+  "还没加解码器：上面选个协议点「＋」": "No decoder yet: pick a protocol above and hit +",
+  "已加解码器：": "Decoder added: ",
+  "载入示例": "Load demo",
+  "示例场景": "Demo scenario",
+  "协议": "Protocol",
+  "（无）": "(none)",
+  "已载入示例：": "Demo loaded: ",
+  "串行": "Serial", "总线": "Bus", "编码": "Encoding", "调试": "Debug", "现场总线": "Field bus",
+  "差分 Manchester": "Differential Manchester", "NEC 红外": "NEC IR",
+  "低（一体化接收头）": "Low (IR receiver module)", "高": "High",
+  "设备→主机": "Device → host", "主机→设备": "Host → device",
+  "I2S（标准）": "I2S (standard)", "左对齐": "Left justified", "右对齐": "Right justified",
+  "低=左": "Low = left", "高=左": "High = left",
+  "现在能吃：内置示例场景、VCD、CSV、原始二进制（一个字节 = 8 个通道，采样率按上面填）。真机采集（fx2lafw / DSLogic 这类 USB 逻辑分析仪）要加驱动，下一版接。":
+    "Sources: built-in demo scenarios, VCD, CSV, raw binary (one byte = 8 channels, sample rate from the field above). Real device capture (fx2lafw / DSLogic USB analyzers) needs a driver — next version.",
+  "传感": "Sensor", "音频": "Audio", "红外": "IR", "测量": "Measure",
+  "数据位": "Data bits", "校验": "Parity", "停止位": "Stop bits", "极性": "Polarity",
+  "模式": "Mode", "位序": "Bit order", "字长": "Word size", "约定": "Convention",
+  "位深": "Bit depth", "格式": "Format", "声道": "Channels", "型号": "Model",
+  "载波电平": "Carrier level", "方向": "Direction", "比特率": "Bitrate", "波特率": "Baud",
+  "复位低电平(µs)": "Reset low (µs)", "显示前几个槽": "Show first slots",
+  "常用总线（UART / PWM / I2C / SPI / DS18B20 / NEC）": "Common buses (UART / PWM / I2C / SPI / DS18B20 / NEC)",
+  "调试与音频（CAN / JTAG / I2S / PS2）": "Debug & audio (CAN / JTAG / I2S / PS2)",
+  "编码与工业总线（Manchester / DHT / LIN / Modbus / SWD / DMX）": "Encoding & fieldbus (Manchester / DHT / LIN / Modbus / SWD / DMX)",
+  "UART 115200 · 1 kHz PWM · I2C 读写 · SPI 读 JEDEC ID · DS18B20 温度 · NEC 红外": "UART 115200 · 1 kHz PWM · I2C read/write · SPI JEDEC ID · DS18B20 temperature · NEC IR",
+  "CAN 250k（标准帧 + 扩展帧）· JTAG（IR 4 位 + DR 16 位）· I2S 16 位 · PS/2 键盘两帧": "CAN 250k (standard + extended) · JTAG (IR 4 bit + DR 16 bit) · I2S 16 bit · PS/2 keyboard frames",
+  "Manchester · 差分 Manchester · Miller · DHT22 · 1-Wire ROM · LIN · Modbus RTU · SWD · DMX512": "Manchester · differential Manchester · Miller · DHT22 · 1-Wire ROM · LIN · Modbus RTU · SWD · DMX512",
+  "（无）通道": "(none)",
   "示例信号（UART 115200 / 1kHz PWM / SPI 读 JEDEC ID）": "Demo signal (UART 115200 / 1 kHz PWM / SPI JEDEC ID read)",
   "已载入示例信号": "Demo signal loaded",
   "通道": "Channel",

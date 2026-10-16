@@ -1,13 +1,22 @@
-// ── 逻辑分析仪（第一版）：波形查看 + 协议解码 + 导入 ────────────────────────
+// ── 逻辑分析仪：波形查看 + 协议解码 + 导入导出 ──────────────────────────────
 // 参考 DSView / PulseView 的用法：左边通道列（名字 / 颜色 / 显示开关 / 当前电平），
 // 右边波形区（滚轮缩放、拖动平移、点一下放光标 A、Shift+点放 B、双击适应窗口），
-// 底下再按"解码器"各占一行画解码结果（UART / SPI）。
+// 底下按解码器各占一行，把解出来的字节/字段贴着波形画出来。
 //
-// 真机采集（fx2lafw / DSLogic 之类）这一版还没接 —— 先把查看/解码/导入这条链路做扎实，
-// 接驱动时只要把 samples 换成本机采到的就行。数据来源：示例信号 / VCD / CSV / 原始二进制。
+// 解码器在 logic-decoders.js（19 种，纯计算，Node 里能直接跑测试）；
+// 示例信号在 logic-demo.js（三个场景，按协议规范手工拼的波形）。
+// 真机采集（fx2lafw / DSLogic 这类 USB 逻辑分析仪）还没接驱动 —— 数据来源是
+// 示例 / VCD / CSV / 原始二进制；接驱动时只要把采样换一下，其余链路不用动。
+//
+// agent 那边能：读状态、读解码结果、**改配置**（采样率 / 解码器 / 通道显隐 / 视图 / 光标）、
+// 触发采集、存文件；**采集到的数据本身 agent 改不了**（只能重新采集或让用户导入）。
 
 import { open as dlgOpen } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  DECODERS, DEC_CATS, CLS_COLOR, mkCtx, decList, decDefaults, normalizeDec, decBrief, decodeItems, fmtItems,
+} from "./logic-decoders.js";
+import { scenarioList, buildScenario } from "./logic-demo.js";
 
 const $id = (id) => document.getElementById(id);
 const T = (s) => (window.kdockT ? window.kdockT(s) : s);
@@ -42,6 +51,7 @@ function setChans(list, rate, src) {
   LA.rate = rate;
   LA.n = list.length ? list[0].bits.length : 0;
   LA.src = src;
+  LA.ctx = mkCtx(rate, list);
   LA.cur = { a: null, b: null };
   LA.hover = null;
   fitView();
@@ -58,54 +68,16 @@ function fitView() {
   LA.view.t0 = 0;
 }
 
-/* ---------- 示例信号：UART("KDock\n" @115200) + 1kHz PWM + SPI(读 JEDEC ID) ---------- */
-function demoSignal() {
-  const rate = 1e6, n = 20000;                       // 1 MHz × 20 ms
-  const C = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ name: "CH" + i, color: COLORS[i], bits: new Uint8Array(n), on: true }));
-  const seg = [];                                   // 逐段描述（电平/翻转），最后逐点填
-  const put = (ch, i0, i1, v) => { for (let i = Math.max(0, i0); i < Math.min(n, i1); i++) ch.bits[i] = v ? 1 : 0; };
-
-  // CH0：UART 115200 8N1，空闲高；发 "KDock\n"
-  const uartBits = [];
-  for (const ch of [..."KDock\n"].map((c) => c.charCodeAt(0))) {
-    uartBits.push(0);                                // start
-    for (let k = 0; k < 8; k++) uartBits.push((ch >> k) & 1);
-    uartBits.push(1);                                // stop
-  }
-  const bitN = rate / 115200;
-  for (let i = 0; i < n; i++) C[0].bits[i] = 1;
-  uartBits.forEach((b, k) => {
-    const i0 = Math.round(0.5e-3 * rate + k * bitN);
-    put(C[0], i0, Math.round(0.5e-3 * rate + (k + 1) * bitN), b);
-  });
-
-  // CH1：1 kHz / 25% PWM；CH6：100 kHz 方波；CH7：10 Hz 慢方波
-  for (let i = 0; i < n; i++) {
-    const t = i / rate;
-    C[1].bits[i] = (t * 1000) % 1 < 0.25 ? 1 : 0;
-    C[6].bits[i] = (t * 100000) % 1 < 0.5 ? 1 : 0;
-    C[7].bits[i] = (t * 10) % 1 < 0.5 ? 1 : 0;
-  }
-
-  // CH3=CS（低有效）CH4=CLK（模式0：空闲低、上升沿采样）CH5=MOSI：读 JEDEC ID 0x9F → EF 40 18
-  const cs = C[3], clk = C[4], mosi = C[5];
-  for (let i = 0; i < n; i++) { cs.bits[i] = 1; clk.bits[i] = 0; mosi.bits[i] = 0; }
-  const clkT = 1 / 250000;                           // 250 kHz（1 MHz 采样 → 每个时钟 4 个点）
-  const iT = (x) => Math.round(x * rate);
-  let t = 6e-3;
-  put(cs, iT(t - 2e-6), iT(t + 33 * clkT), 0);       // 整帧 CS 拉低（前面留一点建立时间）
-  for (const byte of [0x9f, 0xef, 0x40, 0x18]) {
-    for (let k = 0; k < 8; k++) {
-      put(mosi, iT(t), iT(t + clkT), (byte >> (7 - k)) & 1);   // MOSI 整个时钟周期都稳定
-      put(clk, iT(t + clkT / 2), iT(t + clkT), 1);             // 只有后半周期高 → 上升沿时 MOSI 一定已建立
-      t += clkT;
-    }
-  }
-  put(cs, iT(t), n, 1);
-
-  if (!LA.dec.length) LA.dec = [{ kind: "uart", ch: 0, baud: 115200 }, { kind: "spi", cs: 3, clk: 4, mosi: 5 }];
-  setChans(C, rate, T("示例信号（UART 115200 / 1kHz PWM / SPI 读 JEDEC ID）"));
+/* ---------- 示例信号：三个场景，见 logic-demo.js ---------- */
+function loadScenario(id) {
+  const r = buildScenario(id);
+  if (!r) return;
+  LA.dec = r.decoders.map((d) => (normalizeDec(d, r.chans.length).dec || d));
+  setChans(r.chans, r.rate, T(r.note));
+  LA.scenario = id;
+  msg(T("已载入示例：") + T(r.note));
 }
+
 /* ============================ 导入 ============================ */
 
 /** VCD：$timescale / $var / #time / 0! 1" bx ... 只认单比特标量 */
@@ -222,51 +194,10 @@ async function importBin(path0) {
 
 /* ============================ 解码器 ============================ */
 
-/** UART：8N1，空闲高；找 start 下降沿，按位中心采样。
- *  每比特采样点数 = rate/baud 基本是小数（1 MHz 采 115200 → 8.68），
- *  所以不能用取整后的位宽去累乘 —— 误差会累积，解到第 3、4 个字节就飘了。 */
-function decodeUart(chIdx, baud) {
-  const ch = LA.chans[chIdx];
-  if (!ch) return [];
-  const out = [];
-  let i = 1;
-  while (i < LA.n) {
-    if (at(ch, i - 1) === 1 && at(ch, i) === 0) {           // 起始位（下降沿）
-      const t0 = i / LA.rate;
-      const iEnd = t2i(t0 + 10 / baud);
-      let v = 0;
-      for (let k = 0; k < 8; k++) {
-        const idx = t2i(t0 + (k + 1.5) / baud);            // 第 k 个数据位的中心（按时间算，避免取整漂移）
-        v |= (idx < LA.n ? at(ch, idx) : 1) << k;
-      }
-      const stopOk = at(ch, t2i(t0 + 9.5 / baud)) === 1;   // 停止位必须是 1，否则当成噪声，重新同步
-      if (stopOk && iEnd <= LA.n) {
-        out.push({ i0: i, i1: iEnd - 1, value: v, ok: true });
-        i = Math.max(i + 1, iEnd - 1);      // 往回退一格：位宽是小数时 round 出来的帧尾可能刚好跳过下一个起始位
-        continue;
-      }
-    }
-    i++;
-  }
-  return out;
-}
-
-/** SPI：模式0（CLK 空闲低、上升沿采样），CS 低有效 */
-function decodeSpi(csI, clkI, mosiI) {
-  const cs = LA.chans[csI], clk = LA.chans[clkI], mo = LA.chans[mosiI];
-  if (!cs || !clk || !mo) return [];
-  const out = [];
-  let bits = [], start = -1;
-  for (let i = 1; i < LA.n; i++) {
-    if (at(cs, i - 1) === 1 && at(cs, i) === 0) { bits = []; start = i; }        // CS 拉低
-    if (at(cs, i) === 0 && at(clk, i - 1) === 0 && at(clk, i) === 1) {           // 上升沿
-      if (bits.length === 0) start = i;
-      bits.push(at(mo, i));
-      if (bits.length === 8) { out.push({ i0: start, i1: i, value: bits.reduce((a, b) => (a << 1) | b, 0) }); bits = []; }
-    }
-    if (at(cs, i - 1) === 0 && at(cs, i) === 1) { bits = []; }
-  }
-  return out;
+/** 当前数据 + 一个解码器配置 → 解出来的项（走 logic-decoders.js 的注册表） */
+function decodeOf(d) {
+  if (!LA.ctx) LA.ctx = mkCtx(LA.rate, LA.chans);
+  return decodeItems(LA.ctx, d);
 }
 
 /** 测量：选中通道的频率 / 占空比 / 脉冲数（只看当前视图窗口） */
@@ -333,6 +264,10 @@ function cv() { return $id("la-canvas"); }
 function renderWave() {
   const c = cv();
   if (!c) return;
+  // 行多了（10 路 + 一堆解码器）就别硬挤：给画布一个下限，让整页滚，也不要把下面的解码行裁掉
+  const rowsWant = LA.chans.length + LA.dec.filter((d) => d.on !== false).length;
+  const minH = Math.max(200, rowsWant * 16 + 40);
+  if (c.style.minHeight !== minH + "px") c.style.minHeight = minH + "px";
   const box = c.getBoundingClientRect();
   if (box.width < 4 || box.height < 4) return;          // 还没布局好（隐藏中）就别画，否则画布被压成 0×0
   const dpr = DPR();
@@ -398,24 +333,26 @@ function renderWave() {
     }
     g.stroke();
   });
-  // 解码器行
+  // 解码器行：每个解码器一行，把解出来的每一"项"画成一个方块（颜色按项的类型分）
   dec.forEach((d, k) => {
     const top = AXIS + (LA.chans.length + k) * rowH, h = rowH - 5;
-    const res = d.kind === "uart" ? decodeUart(d.ch, d.baud)
-      : d.kind === "spi" ? decodeSpi(d.cs, d.clk, d.mosi)
-        : [];
+    const res = decodeOf(d);
     g.font = "10px ui-monospace, Consolas, monospace";
     for (const it of res) {
       const xa = t2x(it.i0 / LA.rate), xb = t2x(it.i1 / LA.rate);
       if (xb < -20 || xa > W + 20) continue;
-      const w = Math.max(10, xb - xa);
-      g.fillStyle = d.kind === "uart" ? "rgba(78,161,255,.22)" : "rgba(126,231,135,.22)";
-      g.strokeStyle = d.kind === "uart" ? "#4ea1ff" : "#7ee787";
+      const w = Math.max(8, xb - xa);
+      const col = CLS_COLOR[it.cls] || "#4ea1ff";
+      g.fillStyle = col + "33";
+      g.strokeStyle = col;
       g.beginPath(); g.rect(xa, top + 3, w, h); g.fill(); g.stroke();
-      const label = d.kind === "uart"
-        ? (it.value >= 32 && it.value < 127 ? `'${String.fromCharCode(it.value)}' 0x${it.value.toString(16).toUpperCase().padStart(2, "0")}` : "0x" + it.value.toString(16).toUpperCase().padStart(2, "0"))
-        : "0x" + it.value.toString(16).toUpperCase().padStart(2, "0");
-      if (w > 34) { g.fillStyle = fg; g.fillText(label, xa + 3, top + h / 2 + 3); }
+      if (w > 26) {                                   // 够宽才写字；写不下就裁在方块里，别糊到隔壁
+        g.save();
+        g.beginPath(); g.rect(xa + 1, top + 3, w - 2, h); g.clip();
+        g.fillStyle = fg;
+        g.fillText(String(it.text), xa + 3, top + h / 2 + 3);
+        g.restore();
+      }
     }
   });
 
@@ -469,43 +406,82 @@ function renderLabels() {
     r.style.height = rowH + "px";
     const del = el("button", "laeye", "✕"); del.title = T("删掉这个解码器");
     del.onclick = () => { LA.dec.splice(i, 1); renderAll(); };
-    r.append(del, el("span", "laname", d.kind === "uart" ? `UART ${d.baud}` : d.kind === "spi" ? "SPI" : d.kind));
+    const spec = DECODERS[d.kind];
+    r.append(del, el("span", "laname", spec ? T(spec.name) : String(d.kind)));
     box.appendChild(r);
   });
 }
 
-/** 解码器参数列表（右栏）：每条一行，能改通道/波特率、能删 */
+/** 解码器参数列表（右栏）：参数怎么排完全由 logic-decoders.js 里那份 params 决定 ——
+ *  加一个新协议不用动这里，加个 t='ch'/'num'/'enum' 的条目就行。 */
 function renderDecList() {
   const box = $id("la-dec-list");
   if (!box) return;
   box.textContent = "";
-  if (!LA.dec.length) { box.appendChild(el("p", "hint", T("还没加解码器：上面点 + UART / + SPI"))); return; }
-  const chSel = (val, onPick) => {
-    const s = document.createElement("select");
-    s.className = "tight";
-    LA.chans.forEach((c, i) => { const o = document.createElement("option"); o.value = String(i); o.textContent = c.name; if (i === val) o.selected = true; s.appendChild(o); });
-    s.onchange = () => { onPick(Number(s.value)); renderAll(); };
-    return s;
+  if (!LA.dec.length) { box.appendChild(el("p", "hint", T("还没加解码器：上面选个协议点「＋」"))); return; }
+  const chSel = (val, optional, onChange) => {
+    const sel = document.createElement("select");
+    sel.className = "tight";
+    if (optional) {
+      const o0 = document.createElement("option");
+      o0.value = "-1"; o0.textContent = T("（无）");
+      if (val == null || val < 0) o0.selected = true;
+      sel.appendChild(o0);
+    }
+    LA.chans.forEach((c, i) => {
+      const o = document.createElement("option");
+      o.value = String(i); o.textContent = c.name;
+      if (i === val) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.onchange = () => { onChange(Number(sel.value)); renderAll(); };
+    return sel;
   };
   LA.dec.forEach((d, i) => {
+    const spec = DECODERS[d.kind];
     const row = el("div", "ladecrow");
+    row.appendChild(el("span", "laname", spec ? T(spec.name) : String(d.kind)));
+    if (spec) {
+      for (const p of spec.params) {
+        row.appendChild(el("span", "lb", T(p.l)));
+        if (p.t === "ch" || p.t === "ch0") {
+          row.appendChild(chSel(d[p.k], p.t === "ch0", (v) => { d[p.k] = v; }));
+        } else if (p.t === "num") {
+          const inp = document.createElement("input");
+          inp.type = "number"; inp.className = "num"; inp.value = String(d[p.k]);
+          if (p.step) inp.step = String(p.step);
+          inp.onchange = () => {
+            let v = Number(inp.value);
+            if (!isFinite(v)) v = p.d != null ? p.d : 0;
+            if (p.min != null && v < p.min) v = p.min;
+            if (p.max != null && v > p.max) v = p.max;
+            d[p.k] = v;
+            renderAll();
+          };
+          row.appendChild(inp);
+        } else if (p.t === "enum") {
+          const sel = document.createElement("select");
+          sel.className = "tight";
+          for (const v of p.vals || []) {
+            const o = document.createElement("option");
+            o.value = String(v); o.textContent = T(String(v));      // 存的是原值，显示的是译文
+            if (String(d[p.k]) === String(v)) o.selected = true;
+            sel.appendChild(o);
+          }
+          sel.onchange = () => {
+            const raw = sel.value;
+            const want = (p.vals || []).find((v) => String(v) === raw);
+            d[p.k] = want != null ? want : raw;
+            renderAll();
+          };
+          row.appendChild(sel);
+        }
+      }
+    }
+    row.appendChild(el("span", "grow"));
     const del = el("button", "btn tiny", "✕");
     del.title = T("删掉这个解码器");
     del.onclick = () => { LA.dec.splice(i, 1); renderAll(); };
-    row.appendChild(el("span", "laname", d.kind === "uart" ? "UART" : "SPI"));
-    if (d.kind === "uart") {
-      row.appendChild(el("span", "lb", T("通道")));
-      row.appendChild(chSel(d.ch, (v) => { d.ch = v; }));
-      const b = document.createElement("input");
-      b.type = "number"; b.className = "num"; b.value = String(d.baud);
-      b.onchange = () => { d.baud = Math.max(50, Number(b.value) || 115200); renderAll(); };
-      row.appendChild(b); row.appendChild(el("span", "lb", "baud"));
-    } else {
-      row.appendChild(el("span", "lb", "CS")); row.appendChild(chSel(d.cs, (v) => { d.cs = v; }));
-      row.appendChild(el("span", "lb", "CLK")); row.appendChild(chSel(d.clk, (v) => { d.clk = v; }));
-      row.appendChild(el("span", "lb", "MOSI")); row.appendChild(chSel(d.mosi, (v) => { d.mosi = v; }));
-    }
-    row.appendChild(el("span", "grow"));
     row.appendChild(del);
     box.appendChild(row);
   });
@@ -620,12 +596,11 @@ function msg(text, bad) {
 /* ============================ 初始化 ============================ */
 
 /* ============================ agent 接口 ============================ */
-// agent 那边能：读状态、读解码结果、**改配置**（解码器/采样率/视图/光标/通道显隐）、
-// 触发一次采集（现在只有示例信号）、把数据存成文件。
+// agent 那边能：读状态、读解码结果、看支持哪些协议（la_decoders）、**改配置**
+// （解码器 / 采样率 / 视图 / 光标 / 通道显隐）、触发采集（示例场景）、把数据存成文件。
 // 数据本身（samples）agent 改不了 —— 只能通过"重新采集 / 导入"来换。
 
 const fmtHz = (f) => (f >= 1e6 ? (f / 1e6).toFixed(3) + " MHz" : f >= 1e3 ? (f / 1e3).toFixed(3) + " kHz" : f.toFixed(2) + " Hz");
-const decBrief = (d) => (d.kind === "uart" ? `UART 通道${d.ch}@${d.baud}` : `SPI CS=${d.cs} CLK=${d.clk} MOSI=${d.mosi}`);
 const hasData = () => LA.n > 0 && LA.chans.length > 0;
 
 /** agent：当前状态摘要（只读） */
@@ -655,12 +630,8 @@ export function laAgentRead(args) {
   const tail = Math.max(1, Math.min(2000, Number((args && args.tail) || 200)));
   const out = { 来源: LA.src, 采样率_Hz: LA.rate, 点数: LA.n, 解码器: [] };
   LA.dec.forEach((dd, i) => {
-    const items = dd.kind === "uart" ? decodeUart(dd.ch, dd.baud) : dd.kind === "spi" ? decodeSpi(dd.cs, dd.clk, dd.mosi) : [];
-    const shown = items.slice(-tail).map((x) => ({
-      t0_us: +(x.i0 / LA.rate * 1e6).toFixed(3), t1_us: +(x.i1 / LA.rate * 1e6).toFixed(3),
-      hex: "0x" + x.value.toString(16).toUpperCase().padStart(2, "0"),
-      ...(dd.kind === "uart" ? { ch: x.value >= 32 && x.value < 127 ? String.fromCharCode(x.value) : "", ok: x.ok } : {}),
-    }));
+    const items = decodeOf(dd);
+    const shown = fmtItems(items, LA.rate, tail);
     out.解码器.push({ "#": i, 类型: dd.kind, 配置: decBrief(dd), 共: items.length, 本次返回: shown.length, 项: shown });
   });
   const i0 = Math.max(0, Math.floor(LA.view.t0 * LA.rate)), i1 = Math.min(LA.n - 1, Math.ceil((LA.view.t0 + LA.view.span) * LA.rate));
@@ -680,13 +651,10 @@ export async function laAgentConfig(args) {
     const next = [];
     for (const d of a.decoders) {
       if (!d || typeof d !== "object") return "decoders 里每一项都要是对象";
-      if (d.kind === "uart") {
-        const ch = Number(d.ch); if (!(ch >= 0 && ch < LA.chans.length)) return `UART 的 ch 越界：${d.ch}（有 ${LA.chans.length} 路）`;
-        next.push({ kind: "uart", ch, baud: Math.max(50, Number(d.baud) || 115200), on: d.on !== false });
-      } else if (d.kind === "spi") {
-        for (const k of ["cs", "clk", "mosi"]) if (!(Number(d[k]) >= 0 && Number(d[k]) < LA.chans.length)) return `SPI 的 ${k} 越界：${d[k]}`;
-        next.push({ kind: "spi", cs: Number(d.cs), clk: Number(d.clk), mosi: Number(d.mosi), on: d.on !== false });
-      } else return `不认识的解码器类型：${d.kind}（现在支持 uart / spi）`;
+      const r = normalizeDec(d, LA.chans.length);
+      if (r.err) return r.err;
+      r.dec.on = d.on !== false;
+      next.push(r.dec);
     }
     LA.dec = next;
     done.push(`解码器=${LA.dec.map(decBrief).join("；") || "（清空）"}`);
@@ -713,14 +681,46 @@ export async function laAgentConfig(args) {
   return done.length ? "已改：" + done.join("；") + "\n（采集数据没动）" : "没有可改的字段（能改：sampleRate / decoders / channels / select / view / cursors）";
 }
 
-/** agent：开始一次采集。现在只有示例信号；真机要等驱动 */
+/** agent：开始一次采集。source=demo 载入示例场景（scenario 可选）；真机要等驱动 */
 export async function laAgentCapture(args) {
-  const src = String((args && args.source) || "demo");
-  if (src === "demo") { demoSignal(); return "已载入示例信号（UART 115200 / 1kHz PWM / SPI 读 JEDEC ID）。" + laAgentState(); }
+  const a = args || {};
+  const src = String(a.source || "demo");
+  if (src === "demo" || src === "scenario") {
+    const want = String(a.scenario || "");
+    const ids = scenarioList().map((x) => x.id);
+    if (want && !ids.includes(want)) return `没有这个示例场景：${want}（可用：${ids.join(" / ")}）`;
+    loadScenario(want || ids[0]);
+    return "已载入示例：" + LA.src + "\n" + laAgentState();
+  }
   if (src === "device" || src === "usb") {
-    return "真机采集（fx2lafw / DSLogic 这类 USB 逻辑分析仪）这一版还没接驱动，采不了 —— 现在能用的来源是 demo / 导入 VCD / CSV / 原始二进制。";
+    return "真机采集（fx2lafw / DSLogic 这类 USB 逻辑分析仪）这一版还没接驱动，采不了 —— 现在能用的来源是示例场景（source=demo）/ 导入 VCD / CSV / 原始二进制。";
   }
   return `不认识的 source：${src}（可用：demo）`;
+}
+
+/** agent：看支持哪些协议（只读）—— 每个协议能设哪些参数都在这 */
+export function laAgentDecoders() {
+  const L = [];
+  L.push("支持的协议（kind / 名称 / 分类 / 参数）：");
+  for (const cat of DEC_CATS) {
+    const list = decList().filter((x) => x.cat === cat);
+    if (!list.length) continue;
+    L.push("【" + cat + "】");
+    for (const x of list) {
+      const ps = x.params.map((p) => {
+        if (p.t === "ch") return p.l + "=通道号(必填)";
+        if (p.t === "ch0") return p.l + "=通道号或-1(不接)";
+        if (p.t === "num") return p.l + "=数字" + (p.d != null ? "(默认" + p.d + ")" : "");
+        return p.l + "=" + (p.vals || []).join("|") + (p.d != null ? "(默认" + p.d + ")" : "");
+      });
+      L.push("  · " + x.kind + " — " + x.name + "：" + ps.join("，"));
+    }
+  }
+  L.push("");
+  L.push("用法：la_config { decoders: [ {kind:'i2c', scl:2, sda:3}, {kind:'can', ch:0, bitrate:250000} ] } —— 整份替换。");
+  L.push("示例场景（la_capture {source:'demo', scenario:'…'}）：");
+  for (const x of scenarioList()) L.push("  · " + x.id + " — " + x.label);
+  return L.join("\n");
 }
 
 /** agent：把当前数据存成文件（CSV / VCD）。args: { path, format } */
@@ -764,7 +764,17 @@ export function initLogic() {
   }
   laBound = true;
   const btn = (id, fn) => { const b = $id(id); if (b) b.onclick = fn; };
-  btn("la-demo", () => { demoSignal(); msg(T("已载入示例信号")); });
+  // 示例场景（下拉选一个，或按「载入」）
+  const scn = $id("la-scn");
+  if (scn) {
+    scn.textContent = "";
+    for (const x of scenarioList()) {
+      const o = document.createElement("option");
+      o.value = x.id; o.textContent = T(x.label);
+      scn.appendChild(o);
+    }
+  }
+  btn("la-demo", () => loadScenario(scn ? scn.value : undefined));
   const rateEl = $id("la-rate");
   if (rateEl) rateEl.onchange = () => {                      // 只改"怎么解释"，不动采集到的数据
     const r = Number(rateEl.value);
@@ -777,11 +787,36 @@ export function initLogic() {
   btn("la-zin", () => zoomAt(cv().getBoundingClientRect().width / 2, 0.8));
   btn("la-zout", () => zoomAt(cv().getBoundingClientRect().width / 2, 1.25));
   btn("la-clr-cur", () => { LA.cur = { a: null, b: null }; renderAll(); });
-  btn("la-add-uart", () => { LA.dec.push({ kind: "uart", ch: Math.max(0, LA.sel), baud: 115200 }); renderAll(); });
-  btn("la-add-spi", () => { LA.dec.push({ kind: "spi", cs: 3, clk: 4, mosi: 5 }); renderAll(); });
+  // 协议下拉：按分类分组，19 种都在里面
+  const proto = $id("la-proto");
+  if (proto) {
+    proto.textContent = "";
+    const all = decList();
+    for (const cat of DEC_CATS) {
+      const list = all.filter((x) => x.cat === cat);
+      if (!list.length) continue;
+      const grp = document.createElement("optgroup");
+      grp.label = T(cat);
+      for (const x of list) {
+        const o = document.createElement("option");
+        o.value = x.kind; o.textContent = x.name;
+        grp.appendChild(o);
+      }
+      proto.appendChild(grp);
+    }
+    if (proto.options.length && !proto.value) proto.value = all[0].kind;
+  }
+  btn("la-add-dec", () => {
+    const kind = proto && proto.value ? proto.value : "uart";
+    const d = decDefaults(kind, LA.sel, LA.chans.length || 1);
+    if (!d) return;
+    LA.dec.push(normalizeDec(d, LA.chans.length || 1).dec || d);
+    renderAll();
+    msg(T("已加解码器：") + (DECODERS[kind] ? DECODERS[kind].name : kind));
+  });
   window.addEventListener("resize", () => { if (!$id("la-canvas").closest("[hidden]")) renderAll(); });
   bindInteract();
-  demoSignal();                       // 进页面先给一段示例，省得对着空屏
+  loadScenario(scn ? scn.value : undefined);   // 进页面先给一段示例，省得对着空屏
   if (window.kdockOnLang) window.kdockOnLang(() => { renderAll(); });
   requestAnimationFrame(() => renderAll());
 }

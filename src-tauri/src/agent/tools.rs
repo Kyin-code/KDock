@@ -231,23 +231,26 @@ pub fn catalog() -> Vec<ToolDef> {
         }}), true);
     push("la_state", "读逻辑分析仪的**当前状态**：数据来源、采样率、通道数/点数/时长、视图窗口、光标 A/B 与 Δt、通道列表（含当前电平）、已加的解码器、选中通道的测量（频率/占空比/脉冲/脉宽）。只读，不改任何东西。",
         json!({"type":"object","properties":{}}), true);
-    push("la_read", "读逻辑分析仪**解码出来的结果**（只读）：每个解码器的全部项（UART：字节 + 起止时间 + 停止位是否合法；SPI：字节 + 起止时间），以及每一路在当前视图窗口里的频率/占空比/脉冲数。",
+    push("la_read", "读逻辑分析仪**解码出来的结果**（只读）：每个解码器解出来的全部项（协议字节/字段 + 起止时间 + CRC/校验/应答这类判定），以及每一路在当前视图窗口里的频率/占空比/脉冲数。",
         json!({"type":"object","properties":{
             "tail":{"type":"integer","description":"每个解码器只返回最后 N 项，默认 200，最多 2000"}
         }}), true);
-    push("la_config", "改逻辑分析仪的**配置**（不动采集到的数据）：设采样率、加/删/改解码器（uart/spi + 通道 + 波特率）、显示/隐藏通道、选中某一路、移动视图窗口、放/清光标。改完界面立刻生效。",
+    push("la_decoders", "看逻辑分析仪**支持哪些协议**、每种协议能配哪些参数（通道 / 波特率 / 模式 / 位序 …）与默认值，另外列出内置的示例场景 id。配 la_config 的 decoders 之前先调它，别猜参数名。只读。",
+        json!({"type":"object","properties":{}}), true);
+    push("la_config", "改逻辑分析仪的**配置**（不动采集到的数据）：设采样率、整份替换解码器列表（19 种协议：uart/spi/i2c/can/1wire/ds18b20/dht/ps2/nec/i2s/jtag/swd/modbus/lin/dmx512/manchester/diff_manchester/miller/pwm —— 每种协议要哪些参数先调 la_decoders 看）、显示/隐藏通道、选中某一路、移动视图窗口、放/清光标。改完界面立刻生效。",
         json!({"type":"object","properties":{
             "sampleRate":{"type":"number"},
-            "decoders":{"type":"array","description":"整份替换。uart: {kind,ch,baud}；spi: {kind,cs,clk,mosi}",
+            "decoders":{"type":"array","description":"整份替换，参数名按 la_decoders：uart {kind,ch,baud,dataBits,parity,stop,polarity}；spi {kind,clk,mosi,miso,cs,mode,order,wordSize}；i2c {kind,scl,sda}；can {kind,ch,bitrate}；dht {kind,ch,model}；modbus {kind,ch,baud}；lin {kind,ch,baud}…",
                 "items":{"type":"object","properties":{"kind":{"type":"string","enum":["uart","spi"]},"ch":{"type":"integer"},"baud":{"type":"integer"},"cs":{"type":"integer"},"clk":{"type":"integer"},"mosi":{"type":"integer"}},"required":["kind"]}},
             "channels":{"type":"array","description":"通道显隐","items":{"type":"object","properties":{"i":{"type":"integer"},"on":{"type":"boolean"}}}},
             "select":{"type":"integer","description":"选中哪一路（测量就是它）"},
             "view":{"type":"object","description":"单位秒","properties":{"t0":{"type":"number"},"span":{"type":"number"}}},
             "cursors":{"type":"object","description":"单位秒；a/b 给 null 表示清掉","properties":{"a":{"type":"number"},"b":{"type":"number"}}}
         }}), true);
-    push("la_capture", "**开始一次采集**。现在支持 source=demo（内置示例信号：UART 115200 / 1kHz PWM / SPI 读 JEDEC ID）；source=device 会给明确报错（真机驱动还没接）。",
+    push("la_capture", "**开始一次采集**。source=demo 载入内置示例场景（scenario 可选：bus = 常用总线 UART/PWM/I2C/SPI/DS18B20/NEC；more = 调试与音频 CAN/JTAG/I2S/PS2；enc = 编码与工业总线 Manchester/DHT/LIN/Modbus/SWD/DMX；不给就用第一个，场景 id 也能从 la_decoders 拿）；source=device 会给明确报错（真机驱动还没接）。",
         json!({"type":"object","properties":{
-            "source":{"type":"string","enum":["demo","device"],"description":"默认 demo"}
+            "source":{"type":"string","enum":["demo","device"],"description":"默认 demo"},
+            "scenario":{"type":"string","description":"示例场景 id，见 la_decoders"}
         }}), true);
     push("la_save", "把当前逻辑分析仪的数据**存成文件**（要 path）。format=csv（time + 各通道）或 vcd（PulseView / DSView / GTKWave 能打开）；超过 20 万点只存前 20 万。",
         json!({"type":"object","properties":{
@@ -629,6 +632,27 @@ mod tests {
     use super::*;
 
     #[test]
+    /// 逻辑分析仪工具：注册齐全，读类不审批、写类审批
+    #[test]
+    fn logic_tools_are_registered_and_gated() {
+        let names: Vec<&str> = catalog().iter().map(|d| d.name).collect();
+        for n in ["la_state", "la_read", "la_decoders", "la_config", "la_capture", "la_save"] {
+            assert!(names.contains(&n), "缺工具 {n}");
+        }
+        assert!(!is_dangerous("la_state") && !is_dangerous("la_read") && !is_dangerous("la_decoders"));
+        assert!(is_dangerous("la_config") && is_dangerous("la_capture") && is_dangerous("la_save"));
+        // 都是 host 工具（活在前端）
+        for n in ["la_state", "la_read", "la_decoders", "la_config", "la_capture", "la_save"] {
+            assert!(is_host(n), "{n} 应该是 host 工具");
+        }
+        // la_config 的参数名要齐全（agent 靠它知道能改什么）
+        let d = catalog().into_iter().find(|d| d.name == "la_config").unwrap();
+        let props = d.schema["properties"].as_object().unwrap();
+        for k in ["sampleRate", "decoders", "channels", "select", "view", "cursors"] {
+            assert!(props.contains_key(k), "la_config 缺参数 {k}");
+        }
+    }
+
     fn port_tools_are_registered_and_gated() {
         let names: Vec<&str> = catalog().iter().map(|d| d.name).collect();
         for n in ["port_list", "port_state", "port_write", "port_read", "port_open", "port_close", "net_local_ips"] {

@@ -1197,7 +1197,8 @@
             <span class="lb">逻辑分析仪</span>
             <span id="la-info" class="lb"></span>
             <span class="grow"></span>
-            <button id="la-demo" class="btn small primary">示例</button>
+            <select id="la-scn" class="tight" title="示例场景"></select>
+            <button id="la-demo" class="btn small primary">载入示例</button>
             <button id="la-import" class="btn small">导入 VCD / CSV…</button>
             <button id="la-bin" class="btn small">原始二进制…</button>
           </div>
@@ -1987,13 +1988,12 @@
           <div class="cardtitle">数据来源</div>
           <div class="field"><label for="la-rate">采样率</label>
             <div class="inline"><input id="la-rate" type="number" value="1000000" /><span class="lb">Hz</span></div></div>
-          <p class="hint">现在能吃：示例信号、VCD、CSV、原始二进制（一个字节 = 8 个通道，采样率按上面填）。
-            真机采集（fx2lafw / DSLogic 这类 USB 逻辑分析仪）要加驱动，下一版接。</p>
+          <p class="hint">现在能吃：内置示例场景、VCD、CSV、原始二进制（一个字节 = 8 个通道，采样率按上面填）。真机采集（fx2lafw / DSLogic 这类 USB 逻辑分析仪）要加驱动，下一版接。</p>
 
           <div class="cardtitle">解码器</div>
           <div class="btnrow">
-            <button id="la-add-uart" class="btn small">+ UART</button>
-            <button id="la-add-spi" class="btn small">+ SPI</button>
+            <select id="la-proto" class="tight" title="协议"></select>
+            <button id="la-add-dec" class="btn small primary">＋</button>
           </div>
           <div id="la-dec-list" class="ladeclist"></div>
 
