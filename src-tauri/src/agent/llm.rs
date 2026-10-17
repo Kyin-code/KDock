@@ -77,6 +77,12 @@ pub struct ChatOut {
     pub gen_ms: u64,
     /// 首字延迟（毫秒）：请求发出 → 第一个增量到达。
     pub first_ms: u64,
+    /// 厂商响应里声明的实际模型（为空表示没返回）
+    pub response_model: String,
+    /// 厂商的请求 ID，便于对账
+    pub response_id: String,
+    /// 后端配置指纹（OpenAI 兼容接口常见；不是模型权重哈希）
+    pub system_fingerprint: String,
 }
 
 /// 流式回调：正文增量 / 思考增量
@@ -437,6 +443,21 @@ fn read_sse(
         let Ok(chunk) = serde_json::from_str::<Value>(payload) else {
             continue;
         };
+        if out.response_model.is_empty() {
+            if let Some(m) = chunk.get("model").and_then(|v| v.as_str()) {
+                out.response_model = m.to_string();
+            }
+        }
+        if out.response_id.is_empty() {
+            if let Some(id) = chunk.get("id").and_then(|v| v.as_str()) {
+                out.response_id = id.to_string();
+            }
+        }
+        if out.system_fingerprint.is_empty() {
+            if let Some(fp) = chunk.get("system_fingerprint").and_then(|v| v.as_str()) {
+                out.system_fingerprint = fp.to_string();
+            }
+        }
         if let Some(err) = chunk.get("error") {
             return Err(format!("模型报错: {err}"));
         }
@@ -543,6 +564,21 @@ fn parse_plain(text: &str) -> Result<ChatOut, String> {
             )
         })?;
     let mut out = ChatOut::default();
+    out.response_model = v
+        .get("model")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    out.response_id = v
+        .get("id")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    out.system_fingerprint = v
+        .get("system_fingerprint")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     out.content = msg
         .get("content")
         .and_then(|c| c.as_str())
@@ -611,5 +647,23 @@ mod tests {
         assert_eq!(u.cache_hit_tokens, 640);
         assert_eq!(u.cache_miss_tokens, 160);
         assert_eq!(u.cache_hit_tokens + u.cache_miss_tokens, u.prompt_tokens);
+    }
+
+    #[test]
+    fn plain_response_keeps_model_metadata() {
+        let out = parse_plain(
+            &json!({
+                "id": "chatcmpl-test",
+                "model": "deepseek-flash",
+                "system_fingerprint": "fp_backend",
+                "choices": [{ "message": { "content": "ok" } }],
+                "usage": { "prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4 }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(out.response_model, "deepseek-flash");
+        assert_eq!(out.response_id, "chatcmpl-test");
+        assert_eq!(out.system_fingerprint, "fp_backend");
     }
 }

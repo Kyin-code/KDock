@@ -7148,6 +7148,12 @@ function agRenderInfo() {
   const pricing = agEffectivePricing(prov);
   const sessionCost = agSessionCost(prov);
   const costText = agCostText(sessionCost.totals, sessionCost.approx);
+  const fp = (prov && agMeta && agMeta.model_fingerprint &&
+    (!agMeta.fingerprint_provider || agMeta.fingerprint_provider === prov.id))
+    ? agMeta.model_fingerprint : "";
+  const fpTitle = fp
+    ? [agMeta.fingerprint_model, agMeta.fingerprint_system].filter(Boolean).join(" · ")
+    : "";
   const showRateColor = pricing.peak_enabled && !!agPricingStatus && !!costText;
   const costHtml = !costText ? "—" : showRateColor
     ? `<span class="costpill ${agPricingStatus.peak ? "peak" : "offpeak"}" title="${en("北京时间")} ${AG_PEAK_WINDOWS}；${en("周末与法定节假日为谷价")}">${costText}</span>`
@@ -7176,6 +7182,9 @@ function agRenderInfo() {
     `<div class="sep"></div>` +
     row("Token", `${en("输入")} ${agK(inTok)} / ${en("输出")} ${agK(outTok)}`) +
     row("缓存命中", hit + miss > 0 ? `${hitRate}%（${agK(hit)} / ${agK(hit + miss)}）` : "—", hitRate >= 50 ? "ok" : "") +
+    row("模型指纹", fp
+      ? `<span title="${agEscape(fpTitle)}">${en("当前为")} ${agEscape(fp)}</span>`
+      : en("未采样")) +
     (() => {
       // 速度按"实际跑的那条 profile"取：优先当前生效的（下一轮就是它跑），
       // 没有它的数据再退回这个会话记录的那条
@@ -10228,6 +10237,7 @@ const EN = {
   "出字速度": "Throughput", "最近": "last", "平均": "avg",
   "价格": "Pricing", "峰价": "Peak", "谷价": "Off-peak",
   "启用峰谷计费": "Enable peak/off-peak billing",
+  "模型指纹": "Model fingerprint", "当前为": "Current", "未采样": "Not sampled",
   "美元 / 百万 token": "USD / 1M tokens", "人民币 / 百万 token": "CNY / 1M tokens",
   "缓存命中": "Cache hit", "缓存未命中": "Cache miss", "输出": "Output",
   "当前峰价": "Peak rate now", "当前谷价": "Off-peak rate now",

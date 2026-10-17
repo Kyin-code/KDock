@@ -354,6 +354,16 @@ fn parse_plain(text: &str) -> Result<ChatOut, String> {
         return Err(format!("模型报错: {err}"));
     }
     let mut out = ChatOut::default();
+    out.response_model = v
+        .get("model")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    out.response_id = v
+        .get("id")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     if let Some(arr) = v.get("content").and_then(|c| c.as_array()) {
         for (i, b) in arr.iter().enumerate() {
             match b.get("type").and_then(|t| t.as_str()).unwrap_or("") {
@@ -443,8 +453,16 @@ fn read_sse(
                 return Err(format!("模型报错: {msg}"));
             }
             "message_start" => {
-                if let Some(u) = ev.get("message").and_then(|m| m.get("usage")) {
-                    out.usage = usage_from(u);
+                if let Some(m) = ev.get("message") {
+                    if let Some(u) = m.get("usage") {
+                        out.usage = usage_from(u);
+                    }
+                    if let Some(model) = m.get("model").and_then(|x| x.as_str()) {
+                        out.response_model = model.to_string();
+                    }
+                    if let Some(id) = m.get("id").and_then(|x| x.as_str()) {
+                        out.response_id = id.to_string();
+                    }
                 }
             }
             "content_block_start" => {

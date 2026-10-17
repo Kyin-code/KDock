@@ -13,6 +13,7 @@
 pub mod anthropic;
 pub mod browser;
 mod builtin;
+pub mod fingerprint;
 pub mod llm;
 pub mod mcp;
 pub mod pricing;
@@ -2263,6 +2264,11 @@ fn run_turn(
             drop(tx);
             let _ = pump.join();
             let out = out.map_err(|e| format!("{e}"))?;
+            let fp = fingerprint::compute(
+                &provider,
+                &out.response_model,
+                &out.system_fingerprint,
+            );
 
             // 有思考也要落盘：带工具调用的那一轮，下一轮必须把 reasoning_content 带回去
             if !out.content.trim().is_empty() || !out.reasoning.trim().is_empty() {
@@ -2311,6 +2317,11 @@ fn run_turn(
                             *meta.cost_total.entry(currency.clone()).or_insert(0.0) += cost;
                         }
                     }
+                    meta.model_fingerprint = fp.id.clone();
+                    meta.fingerprint_model = fp.model.clone();
+                    meta.fingerprint_system = fp.system.clone();
+                    meta.fingerprint_provider = provider.id.clone();
+                    meta.fingerprint_at = usage_ts;
                     meta.last_tokens = out.usage.prompt_tokens;
                     // 会话级账本：Agent 信息面板用它算 token 消费 / 缓存命中率 / 花费
                     meta.total_prompt += out.usage.prompt_tokens;
@@ -2330,6 +2341,9 @@ fn run_turn(
                         "peak": peak,
                         "cost": cost,
                         "currency": currency,
+                        "fingerprint": fp.id.clone(),
+                        "response_model": out.response_model.clone(),
+                        "system_fingerprint": out.system_fingerprint.clone(),
                     }));
                     if meta.usage_recent.len() > 40 {
                         let drop = meta.usage_recent.len() - 40;

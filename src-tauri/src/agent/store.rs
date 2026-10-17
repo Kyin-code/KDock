@@ -430,6 +430,17 @@ pub struct SessionMeta {
     pub cost_prompt_tokens: u64,
     #[serde(default)]
     pub cost_completion_tokens: u64,
+    /// 最近一次真实响应生成的模型指纹（短 ID）
+    #[serde(default)]
+    pub model_fingerprint: String,
+    #[serde(default)]
+    pub fingerprint_model: String,
+    #[serde(default)]
+    pub fingerprint_system: String,
+    #[serde(default)]
+    pub fingerprint_provider: String,
+    #[serde(default)]
+    pub fingerprint_at: i64,
     /// 已经提示过"大头是系统提示+工具定义"了（同一个会话只弹一次 toast）
     #[serde(default)]
     pub warned_overhead: bool,
@@ -585,6 +596,11 @@ pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<Sess
         cost_total: std::collections::BTreeMap::new(),
         cost_prompt_tokens: 0,
         cost_completion_tokens: 0,
+        model_fingerprint: String::new(),
+        fingerprint_model: String::new(),
+        fingerprint_system: String::new(),
+        fingerprint_provider: String::new(),
+        fingerprint_at: 0,
         warned_overhead: false,
         system_prompt: String::new(),
         tools: Vec::new(),
