@@ -6494,7 +6494,7 @@ function agToolNode(ev) {
   bd.appendChild(argPre);
   if (ev.text != null) {
     const outPre = document.createElement("pre");
-    outPre.textContent = ev.text;
+    outPre.textContent = agFormatToolText(ev.text);
     bd.appendChild(outPre);
   }
   head.onclick = () => wrap.classList.toggle("open");
@@ -6502,6 +6502,24 @@ function agToolNode(ev) {
   wrap.appendChild(bd);
   if (ev.ok === false) wrap.classList.add("open");
   return wrap;
+}
+
+/** 二进制工具结果：把后端的一长串 HEX 排成 offset + 16 字节 + ASCII，便于人看 */
+function agFormatToolText(text) {
+  const s = String(text == null ? "" : text);
+  const m = s.match(/^\(二进制\s+(\d+)\s*字节\)\s*\nHEX:\s*([0-9A-Fa-f\s]+)/);
+  if (!m) return s;
+  const hex = m[2].replace(/\s+/g, "");
+  const bytes = [];
+  for (let i = 0; i + 1 < hex.length; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
+  const lines = [`(二进制 ${m[1]} 字节 / HEX)`];
+  for (let i = 0; i < bytes.length; i += 16) {
+    const row = bytes.slice(i, i + 16);
+    const hx = row.map((b) => b.toString(16).padStart(2, "0").toUpperCase()).join(" ").padEnd(47, " ");
+    const asc = row.map((b) => (b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : ".")).join("");
+    lines.push(`${i.toString(16).padStart(8, "0")}  ${hx}  |${asc}|`);
+  }
+  return lines.join("\n");
 }
 
 /**

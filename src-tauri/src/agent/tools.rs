@@ -1104,9 +1104,37 @@ fn text_and_hex(data: &[u8]) -> String {
     // 自己的 RTT_req.md 被回成 HEX，模型只能再写脚本去转码）。
     // 正确口径：先看**整段是不是合法 UTF-8**（是 → 文本，除非含 NUL）；
     // 不是合法 UTF-8 时再看控制字符占比（GBK 这种本地编码也当文本）。
+    // UTF-8 BOM：去掉 BOM，正文仍是普通文本
+    if data.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        if let Ok(s) = std::str::from_utf8(&data[3..]) {
+            if !s.contains('\u{0}') {
+                return s.to_string();
+            }
+        }
+    }
+    // UTF-16 BOM
+    if data.starts_with(&[0xFF, 0xFE]) || data.starts_with(&[0xFE, 0xFF]) {
+        if let Some(s) = decode_utf16(data, data[0] == 0xFF) {
+            return s;
+        }
+    }
     if let Ok(s) = std::str::from_utf8(data) {
         if !s.contains('\u{0}') {
             return s.to_string();
+        }
+    }
+    // 无 BOM 的 UTF-16：ASCII 内容的另一半字节通常是 NUL。
+    // 只在"偶数个字节 + 单侧 NUL 比例高 + 解出来控制字符很少"时才认，
+    // 避免把真正的二进制（比如固件）误当文本。
+    if data.len() >= 4 && data.len() % 2 == 0 {
+        let even_nul = data.iter().step_by(2).filter(|b| **b == 0).count();
+        let odd_nul = data.iter().skip(1).step_by(2).filter(|b| **b == 0).count();
+        let units = data.len() / 2;
+        if even_nul * 10 > units * 3 || odd_nul * 10 > units * 3 {
+            let le = odd_nul >= even_nul;
+            if let Some(s) = decode_utf16(data, le) {
+                return s;
+            }
         }
     }
     let ctrl = data
@@ -1121,6 +1149,34 @@ fn text_and_hex(data: &[u8]) -> String {
         data.len(),
         kdock_core::hex::bytes_to_hex(data)
     )
+}
+
+/// 解 UTF-16；`le=true` 表示小端（没有 BOM 时由调用方判断）。
+fn decode_utf16(data: &[u8], le: bool) -> Option<String> {
+    let body = if data.starts_with(&[0xFF, 0xFE]) || data.starts_with(&[0xFE, 0xFF]) {
+        &data[2..]
+    } else {
+        data
+    };
+    if body.len() % 2 != 0 {
+        return None;
+    }
+    let units: Vec<u16> = body
+        .chunks_exact(2)
+        .map(|b| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) })
+        .collect();
+    let s = String::from_utf16(&units).ok()?;
+    if s.contains('\u{0}') {
+        return None;
+    }
+    let ctrl = s
+        .chars()
+        .filter(|c| (*c as u32) < 0x20 && !matches!(*c, '\n' | '\r' | '\t'))
+        .count();
+    if ctrl * 100 / s.chars().count().max(1) >= 5 {
+        return None;
+    }
+    Some(s)
 }
 
 /// 借用 agent 的链路跑一段（用完还回去）
@@ -1423,6 +1479,28 @@ mod tests {
             text_and_hex(&bin).starts_with("(二进制"),
             "含 NUL 的按二进制走"
         );
+    }
+
+    #[test]
+    fn utf16_verilog_is_text_not_binary() {
+        let src = "module top;\n  wire a;\nendmodule\n";
+        let mut le = vec![0xFF, 0xFE];
+        for u in src.encode_utf16() {
+            le.extend_from_slice(&u.to_le_bytes());
+        }
+        assert_eq!(text_and_hex(&le), src, "UTF-16LE BOM 应显示为文本");
+
+        let mut be = vec![0xFE, 0xFF];
+        for u in src.encode_utf16() {
+            be.extend_from_slice(&u.to_be_bytes());
+        }
+        assert_eq!(text_and_hex(&be), src, "UTF-16BE BOM 应显示为文本");
+
+        let mut plain = Vec::new();
+        for u in src.encode_utf16() {
+            plain.extend_from_slice(&u.to_le_bytes());
+        }
+        assert_eq!(text_and_hex(&plain), src, "无 BOM UTF-16LE 也应识别");
     }
 
     #[test]

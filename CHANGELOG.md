@@ -126,6 +126,9 @@
 - **减少 Agent 工具调用**：`workspace_read(paths=[...])` 批量读、`workspace_write(files=[...])`
   批量写、`workspace_edit(edits=[...])` 批量改；新增 `workspace_context`（目录+搜索+文件一次拿）
   和 `workspace_check`（diff+测试一次跑）；只读工具加 90 秒会话内结果缓存。
+- **文本/进制显示修正**：`workspace_read` 现在识别 UTF-8 BOM、UTF-16LE/BE BOM 以及无 BOM
+  的 UTF-16 文本；Windows 工具导出的 UTF-16 `.v` 不再被当成“二进制”显示成 HEX。
+  真二进制结果在前端按 offset + 16 字节 + ASCII 列排版，不再是一整行 HEX。
 
 ## [0.3.0] - 2026-10-15
 
