@@ -19,6 +19,48 @@
         "https://www.cocoloop.cn/t/topic/17735",
         "https://github.com/olimorris/codecompanion.nvim/issues/3373"
       ]
+    },
+    "fpv0_293876d1": {
+      "vendor": "kimi",
+      "model": "moonshot-v1-8k",
+      "sources": [
+        "https://github.com/MoonshotAI/MoonshotAI-Cookbook/issues/41"
+      ]
+    },
+    "fpv0_e0c12c89": {
+      "vendor": "kimi",
+      "model": "moonshotai/kimi-k2.5-0127",
+      "sources": [
+        "https://github.com/bytedance/deer-flow/issues/1790"
+      ]
+    },
+    "fpv0_8cab9aba": {
+      "vendor": "kimi",
+      "model": "moonshotai/kimi-k2.6-20260420",
+      "sources": [
+        "https://github.com/anomalyco/opencode/issues/25001"
+      ]
+    },
+    "fpv0_e76aa377": {
+      "vendor": "kimi",
+      "model": "kimi-k2-0905-preview",
+      "sources": [
+        "https://github.com/AstrBotDevs/AstrBot/issues/6614"
+      ]
+    },
+    "fpv0_f0186953": {
+      "vendor": "kimi",
+      "model": "moonshotai/kimi-k2-thinking",
+      "sources": [
+        "https://github.com/vercel/ai/issues/10199"
+      ]
+    },
+    "fpv0_f7e5c49a": {
+      "vendor": "kimi",
+      "model": "kimi-k2.5",
+      "sources": [
+        "https://github.com/Kilo-Org/kilocode/issues/5875"
+      ]
     }
   },
   "vendors": {
@@ -68,9 +110,33 @@
       ]
     },
     "kimi": {
-      "fingerprint_kind": "often_null",
-      "model_source": "response.model",
+      "fingerprint_kind": "checkpoint_or_null",
+      "model_source": "checkpoint_mappings_or_response.model",
       "observations": [
+        {
+          "fingerprint": "fpv0_293876d1",
+          "model": "moonshot-v1-8k"
+        },
+        {
+          "fingerprint": "fpv0_e0c12c89",
+          "model": "moonshotai/kimi-k2.5-0127"
+        },
+        {
+          "fingerprint": "fpv0_8cab9aba",
+          "model": "moonshotai/kimi-k2.6-20260420"
+        },
+        {
+          "fingerprint": "fpv0_e76aa377",
+          "model": "kimi-k2-0905-preview"
+        },
+        {
+          "fingerprint": "fpv0_f0186953",
+          "model": "moonshotai/kimi-k2-thinking"
+        },
+        {
+          "fingerprint": "fpv0_f7e5c49a",
+          "model": "kimi-k2.5"
+        },
         {
           "fingerprint": null,
           "model": "kimi-k2.5"
@@ -81,6 +147,12 @@
         }
       ],
       "sources": [
+        "https://github.com/MoonshotAI/MoonshotAI-Cookbook/issues/41",
+        "https://github.com/bytedance/deer-flow/issues/1790",
+        "https://github.com/anomalyco/opencode/issues/25001",
+        "https://github.com/AstrBotDevs/AstrBot/issues/6614",
+        "https://github.com/vercel/ai/issues/10199",
+        "https://github.com/Kilo-Org/kilocode/issues/5875",
         "https://github.com/agentscope-ai/agentscope-java/issues/1094",
         "https://github.com/radm9898-gif/mo/issues/5"
       ]

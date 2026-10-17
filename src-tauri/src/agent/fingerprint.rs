@@ -109,6 +109,23 @@ mod tests {
     }
 
     #[test]
+    fn maps_known_kimi_fingerprints_to_checkpoint_names() {
+        let p = provider("kimi-k2.5");
+        assert_eq!(
+            compute(&p, "moonshotai/kimi-k2.5-0127", "fpv0_e0c12c89").name,
+            "moonshotai/kimi-k2.5-0127"
+        );
+        assert_eq!(
+            compute(&p, "moonshotai/kimi-k2.6-20260420", "fpv0_8cab9aba").name,
+            "moonshotai/kimi-k2.6-20260420"
+        );
+        assert_eq!(
+            compute(&p, "kimi-k2-0905-preview", "fpv0_e76aa377").name,
+            "kimi-k2-0905-preview"
+        );
+    }
+
+    #[test]
     fn unknown_fingerprint_is_explicit() {
         let p = provider("deepseek-flash");
         let f = compute(&p, "deepseek-flash", "ffffffffffffffffffffffffffffffff");
