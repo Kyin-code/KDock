@@ -775,10 +775,16 @@ pub fn agent_approval_result(
     if ok {
         if let (Some(tool), Some(sid)) = (always.as_ref(), session.as_ref()) {
             if let Some(mut meta) = store::session_meta_of(&app, sid) {
-                if !meta.allow.iter().any(|x| x == tool) {
+                if let Some(prefix) = tool.strip_prefix("cmd:") {
+                    if !prefix.trim().is_empty()
+                        && !meta.allow_cmd.iter().any(|x| x == prefix)
+                    {
+                        meta.allow_cmd.push(prefix.to_string());
+                    }
+                } else if !meta.allow.iter().any(|x| x == tool) {
                     meta.allow.push(tool.clone());
-                    let _ = store::session_update_meta(&app, &meta);
                 }
+                let _ = store::session_update_meta(&app, &meta);
                 allowed = Some(tool.clone());
             }
         }
@@ -2112,9 +2118,9 @@ fn run_turn(
         json!({ "running": true, "session": session_id }),
     );
 
-    let (perm, allow) = match store::session_meta_of(&app, &session_id) {
-        Some(m) => (m.perm, m.allow),
-        None => ("ask".to_string(), Vec::new()),
+    let (perm, allow, allow_cmd) = match store::session_meta_of(&app, &session_id) {
+        Some(m) => (m.perm, m.allow, m.allow_cmd),
+        None => ("ask".to_string(), Vec::new(), Vec::new()),
     };
     // goal / 称呼这类"会话状态"走注记（见 Event::State），不再进系统提示
     let _ = append_state_note(&app, &session_id);
@@ -2367,7 +2373,20 @@ fn run_turn(
                     session: &session_id,
                     perm: &perm,
                     approve: &|tool: &str, a: &Value| ask_user(&app, &st, &session_id, tool, a),
-                    allowed: &|tool: &str| allow.iter().any(|x| x == tool),
+                    allowed: &|tool: &str, a: &Value| {
+                        if allow.iter().any(|x| x == tool) {
+                            return true;
+                        }
+                        if matches!(tool, "local_run" | "workspace_run" | "workspace_test" | "ssh_run") {
+                            let cmd = a.get("cmd").and_then(|v| v.as_str()).unwrap_or("").trim();
+                            return !cmd.is_empty()
+                                && allow_cmd.iter().any(|p| {
+                                    let p = p.trim();
+                                    !p.is_empty() && cmd.starts_with(p)
+                                });
+                        }
+                        false
+                    },
                     host: &|tool: &str, a: &Value, t: u64| {
                         host_call(&app, &st, &session_id, tool, a, t)
                     },
@@ -2823,6 +2842,9 @@ pub async fn amd_load(force: Option<bool>) -> Result<Value, String> {
 pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
     let meta = store::session_meta_of(&app, &session_id);
     let ws = workspace_of(&app, &session_id);
+    // 工具 schema 里的 MCP filesystem 参数跟工作区有关：算统计时也用同一组 roots，
+    // 否则会先用空 roots 起一个 MCP 进程，再为真实工作区起第二个。
+    mcp::set_extra_roots(vec![ws.to_string_lossy().to_string()]);
     let events = store::session_read(&app, &session_id);
     let est = |s: &str| llm::estimate_tokens(s);
 

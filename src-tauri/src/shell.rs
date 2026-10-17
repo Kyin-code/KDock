@@ -65,7 +65,8 @@ fn decode_code_page(bytes: &[u8], code_page: u32) -> Option<String> {
 }
 
 /// 起一个跑本机命令的子进程（不弹窗、stdin 关掉、stdout/stderr 都接管道）。
-pub fn spawn(cmd: &str) -> std::io::Result<std::process::Child> {
+/// 在指定工作目录起一个命令（跨平台参数与编码规则统一在这里）。
+pub fn spawn_in(cmd: &str, cwd: Option<&std::path::Path>) -> std::io::Result<std::process::Child> {
     #[cfg(windows)]
     let mut c = {
         use std::os::windows::process::CommandExt;
@@ -81,6 +82,9 @@ pub fn spawn(cmd: &str) -> std::io::Result<std::process::Child> {
         c.args(["-c", cmd]);
         c
     };
+    if let Some(dir) = cwd {
+        c.current_dir(dir);
+    }
     c.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -109,9 +113,42 @@ pub fn run_with_path(
     run(&patched, timeout_ms, should_stop)
 }
 
+/// 同 `run_with_path`，但带工作目录（给 workspace_run / workspace_test 用）。
+pub fn run_with_path_in(
+    cmd: &str,
+    timeout_ms: u64,
+    should_stop: &dyn Fn() -> bool,
+    extra_path: &str,
+    cwd: &std::path::Path,
+) -> Result<(i32, String, String), String> {
+    let prefix = extra_path.trim();
+    #[cfg(windows)]
+    let patched = if prefix.is_empty() {
+        cmd.to_string()
+    } else {
+        format!("set \"PATH={prefix};%PATH%\" && {cmd}")
+    };
+    #[cfg(not(windows))]
+    let patched = if prefix.is_empty() {
+        cmd.to_string()
+    } else {
+        format!("PATH=\"{prefix}:$PATH\" {cmd}")
+    };
+    run_in(&patched, timeout_ms, should_stop, Some(cwd))
+}
+
 /// 跑完（或超时/被叫停）返回 (退出码, stdout, stderr)。文本已按本机代码页解好。
 pub fn run(cmd: &str, timeout_ms: u64, should_stop: &dyn Fn() -> bool) -> Result<(i32, String, String), String> {
-    let mut child = spawn(cmd).map_err(|e| format!("起进程失败: {e}"))?;
+    run_in(cmd, timeout_ms, should_stop, None)
+}
+
+pub fn run_in(
+    cmd: &str,
+    timeout_ms: u64,
+    should_stop: &dyn Fn() -> bool,
+    cwd: Option<&std::path::Path>,
+) -> Result<(i32, String, String), String> {
+    let mut child = spawn_in(cmd, cwd).map_err(|e| format!("起进程失败: {e}"))?;
     let start = Instant::now();
     let timeout = Duration::from_millis(timeout_ms.max(200));
     let status = loop {

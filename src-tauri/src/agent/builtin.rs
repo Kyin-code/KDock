@@ -50,6 +50,17 @@ pub static BLOCKS: &[Block] = &[
                5. 收尾时用中文给一句结论 + 关键数据（做了什么、看到了什么、下一步建议）。",
     },
     Block {
+        id: "code-workflow",
+        note: "通用软件工程闭环：计划、搜索、结构化编辑、测试、并行读取、子任务",
+        body: "做代码/文件任务时按闭环走：\n\
+               · 多步任务先 plan_write 列计划，完成一步就更新状态；\n\
+               · 先 workspace_search / workspace_read 看清现状，别盲改；\n\
+               · 改文件优先 workspace_edit（精确替换并回 unified diff），改完用 workspace_diff 审查；\n\
+               · 有测试就跑 workspace_test（自动识别 cargo/npm/pytest），用 workspace_run 处理其它项目命令；\n\
+               · 多个互不依赖的只读操作可以用 parallel_read 一次并行；独立子任务用 subagent_spawn，再用 subagent_wait 收结果。\n\
+               这些工具比 local_run 里手写 grep/sed/git diff 更安全，也少烧模型轮次。",
+    },
+    Block {
         id: "context-hygiene",
         note: "成本纪律：技能按需读、大输出别贴回对话、该压就压",
         body: "上下文卫生（直接影响用户的花费，务必照做）：\n\

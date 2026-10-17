@@ -1,8 +1,8 @@
 //! MCP（Model Context Protocol）最小客户端：stdio + 换行分隔的 JSON-RPC 2.0。
 //!
 //! 只做三件事：initialize / tools/list / tools/call。
-//! 每次调用**起一个新进程**（跑完就杀）：无状态、不会漏子进程，代价是每次多几百毫秒。
-//! 对我们这种"手动点一下才用到 MCP"的场景，这个取舍比维护长连接划算。
+//! 连接按 server 复用：第一次调用完成 initialize，之后同一个进程继续处理
+//! tools/list / tools/call。这样高频调用不用每次重新握手；配置变化时主动清理。
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -166,6 +166,7 @@ struct Client {
     /// 一个不响应的 MCP 服务能把整个 Agent 永久卡死。
     rx: std::sync::mpsc::Receiver<String>,
     next_id: u64,
+    info: Value,
 }
 
 impl Drop for Client {
@@ -268,7 +269,7 @@ impl Client {
                 }
             }
         });
-        Ok(Client { child, stdin, rx, next_id: 1 })
+        Ok(Client { child, stdin, rx, next_id: 1, info: Value::Null })
     }
 
     fn send(&mut self, msg: &Value) -> Result<(), String> {
@@ -351,24 +352,77 @@ impl Client {
     }
 }
 
-/// 连一次，返回 (serverInfo, tools)
-pub fn probe(srv: &McpServer) -> Result<(Value, Vec<Value>), String> {
+/// 常驻 MCP 进程池：server 配置 + filesystem extra roots 作为 key。
+static CLIENTS: LazyLock<Mutex<std::collections::HashMap<String, std::sync::Arc<Mutex<Client>>>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+fn client_key(srv: &McpServer) -> String {
+    let roots = EXTRA_ROOTS
+        .lock()
+        .map(|g| g.join("|"))
+        .unwrap_or_default();
+    format!("{}|roots={roots}", serde_json::to_string(srv).unwrap_or_default())
+}
+
+fn client_for(srv: &McpServer) -> Result<std::sync::Arc<Mutex<Client>>, String> {
+    let key = client_key(srv);
+    if let Ok(g) = CLIENTS.lock() {
+        if let Some(c) = g.get(&key) {
+            return Ok(c.clone());
+        }
+    }
     let mut c = Client::spawn(srv)?;
     let info = c.handshake()?;
-    let tools = c.tools()?;
+    c.info = info;
+    let arc = std::sync::Arc::new(Mutex::new(c));
+    if let Ok(mut g) = CLIENTS.lock() {
+        g.insert(key, arc.clone());
+    }
+    Ok(arc)
+}
+
+fn drop_client(srv: &McpServer) {
+    if let Ok(mut g) = CLIENTS.lock() {
+        g.remove(&client_key(srv));
+    }
+}
+
+pub fn shutdown_all() {
+    if let Ok(mut g) = CLIENTS.lock() {
+        g.clear(); // Drop 会 kill + wait 子进程
+    }
+}
+
+/// 连一次，返回 (serverInfo, tools)
+pub fn probe(srv: &McpServer) -> Result<(Value, Vec<Value>), String> {
+    let c = client_for(srv)?;
+    let mut g = c.lock().map_err(|_| "MCP client mutex".to_string())?;
+    let info = g.info.clone();
+    let tools = g.tools()?;
     Ok((info, tools))
 }
 
 /// 调一个工具，把 content 拼成文本
 pub fn call_tool(srv: &McpServer, tool: &str, args: &Value) -> Result<String, String> {
-    let mut c = Client::spawn(srv)?;
-    c.handshake()?;
-    let r = c.request(
-        "tools/call",
-        json!({"name": tool, "arguments": args}),
-        Duration::from_secs(120),
-    )?;
-    Ok(render_content(&r))
+    let call = |c: std::sync::Arc<Mutex<Client>>| -> Result<String, String> {
+        let mut g = c.lock().map_err(|_| "MCP client mutex".to_string())?;
+        let r = g.request(
+            "tools/call",
+            json!({"name": tool, "arguments": args}),
+            Duration::from_secs(120),
+        )?;
+        Ok(render_content(&r))
+    };
+    let c = client_for(srv)?;
+    match call(c) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            // 进程可能已经死了/协议错位：丢掉旧进程再试一次。
+            drop_client(srv);
+            let c = client_for(srv)?;
+            call(c).map_err(|e2| format!("{e}；重连后仍失败：{e2}"))
+        }
+    }
 }
 
 fn render_content(result: &Value) -> String {
@@ -437,6 +491,7 @@ pub fn invalidate_cache() {
     if let Ok(mut g) = TOOLS_CACHE.lock() {
         *g = None;
     }
+    shutdown_all();
 }
 
 /// 取所有启用 MCP 服务的工具 schema（**带缓存**），返回 (schema, 这次是否真的重新探测了)。

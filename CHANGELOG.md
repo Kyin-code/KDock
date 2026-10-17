@@ -112,6 +112,17 @@
 - **Agent 多会话隔离**：运行态、补充消息、停止标志、`link_*` 链路和浏览器页都改为按会话隔离；
   停止 A 不再停 B，A 的补充话也不会并进 B。`host_*` 这类共享前端页面的工具串行执行，
   `port_*` 主连接的写入/开关也串行化；屏幕会话记录 owner，禁止 A 操作 B 的屏幕。
+- **Agent 软件工程闭环**：新增 `workspace_edit`（精确替换 + unified diff）、`workspace_diff`
+  （git status/diff）、`workspace_search`、`workspace_run`、`workspace_test`（自动识别
+  cargo/npm/pytest）；`parallel_read` 可以一次并行做多组只读操作。
+- **计划与子任务**：`plan_write/plan_read` 把多步计划存进会话 meta；`subagent_spawn/wait/result`
+  可以开独立子会话并行处理子任务。子会话继承父会话的工作区和权限，结果通过读取会话 jsonl 返回。
+- **OCR**：新增 `screen_ocr` / `image_ocr`，调用 Windows 自带 OCR（无需 Tesseract）；
+  `screen_shot` 仍保留字符画作为版面预览。
+- **细粒度审批与 workspace 命令**：审批卡增加“允许这类命令”，按命令前缀记入会话
+  `allow_cmd`；`workspace_run/test` 强制在工作区目录执行，减少误操作。
+- **MCP 常驻进程**：同一个 MCP server 配置复用已初始化的进程，不再每次 `tools/call`
+  重新握手；配置变化或应用退出时关闭进程。
 
 ## [0.3.0] - 2026-10-15
 

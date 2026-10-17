@@ -8,7 +8,7 @@
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use crate::transport::Conn;
 use crate::upgrade;
@@ -283,6 +283,57 @@ pub fn catalog() -> Vec<ToolDef> {
         false,
     );
     push(
+        "workspace_edit",
+        "结构化改文件：把 old_text 精确替换成 new_text，返回 unified diff。old_text 必须唯一（除非 replace_all=true），找不到/多处匹配会拒绝，避免盲改。",
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"相对工作区的文件路径"},
+            "old_text":{"type":"string","description":"要替换的原文（精确匹配）"},
+            "new_text":{"type":"string","description":"替换后的文本，可为空"},
+            "replace_all":{"type":"boolean","description":"默认 false；true 才允许替换所有出现"}
+        },"required":["path","old_text","new_text"]}),
+        false,
+    );
+    push(
+        "workspace_diff",
+        "审查工作区改动：在 git 仓库里返回 git status + unified diff（可选 path 只看某个文件）；非 git 仓库会明确报错。",
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"可选的相对路径"}
+        }}),
+        false,
+    );
+    push(
+        "workspace_search",
+        "在工作区里按子串搜索代码（自动跳过 .git/target/node_modules 等），返回 路径:行号: 文本。比全盘 local_run grep 更安全、更快。",
+        json!({"type":"object","properties":{
+            "pattern":{"type":"string","description":"要找的子串"},
+            "path":{"type":"string","description":"搜索起点，默认工作区根"},
+            "ext":{"type":"string","description":"可选扩展名过滤，如 rs 或 .rs"},
+            "max_results":{"type":"integer","description":"默认 50，最多 500"},
+            "case_sensitive":{"type":"boolean","description":"默认 false"}
+        },"required":["pattern"]}),
+        false,
+    );
+    push(
+        "workspace_run",
+        "在工作区目录里跑一条本机命令（cmd /C），返回退出码和输出。命令仍然拥有本机权限；需要审批。",
+        json!({"type":"object","properties":{
+            "cmd":{"type":"string"},
+            "cwd":{"type":"string","description":"相对工作区的子目录，默认工作区根"},
+            "timeout_ms":{"type":"integer","description":"默认 120000"}
+        },"required":["cmd"]}),
+        false,
+    );
+    push(
+        "workspace_test",
+        "跑项目测试：自动识别 Cargo.toml / package.json / pytest，也允许显式给 cmd；在工作区目录执行，返回退出码 + 尾部输出。",
+        json!({"type":"object","properties":{
+            "cmd":{"type":"string","description":"不填就自动识别"},
+            "cwd":{"type":"string","description":"相对工作区的子目录，默认工作区根"},
+            "timeout_ms":{"type":"integer","description":"默认 300000"}
+        }}),
+        false,
+    );
+    push(
         "output_read",
         "读被截断的工具输出全文（大输出会落到 tool-output 目录，工具结果里会给出路径）。\
 offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接着往后读，别整段贴回对话。\
@@ -325,6 +376,57 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
         "删掉一个技能。",
         json!({"type":"object","properties":{"name":{"type":"string"},
             "scope":{"type":"string","enum":["global","workspace"],"description":"删哪一层（默认 global；本项目技能删之前会自动归档一份）"}},"required":["name"]}),
+        false,
+    );
+    push(
+        "plan_write",
+        "更新当前会话的计划/待办。items 是数组，每项 {id?, title, status}；status 用 pending / in_progress / completed。用于多步任务先列计划、每完成一步更新。",
+        json!({"type":"object","properties":{
+            "items":{"type":"array","items":{"type":"object","properties":{
+                "id":{"type":"string"},
+                "title":{"type":"string"},
+                "status":{"type":"string","enum":["pending","in_progress","completed"]}
+            },"required":["title","status"]}}
+        },"required":["items"]}),
+        false,
+    );
+    push("plan_read", "读当前会话的计划/待办。", json!({"type":"object","properties":{}}), false);
+    push(
+        "subagent_spawn",
+        "开一个子会话在后台执行独立任务（继承当前工作区和权限，返回子会话 id）。适合并行做多个互不依赖的调查/实现；用 subagent_wait 等结果。",
+        json!({"type":"object","properties":{
+            "task":{"type":"string","description":"交给子会话的完整任务"},
+            "title":{"type":"string","description":"可选标题"},
+            "provider_id":{"type":"string","description":"可选模型 profile；默认继承当前会话"}
+        },"required":["task"]}),
+        false,
+    );
+    push(
+        "subagent_wait",
+        "等一个子会话跑完（最多 timeout_ms），返回状态和最后一条回复。",
+        json!({"type":"object","properties":{
+            "session":{"type":"string","description":"subagent_spawn 返回的 id"},
+            "timeout_ms":{"type":"integer","description":"默认 120000，最大 600000"}
+        },"required":["session"]}),
+        false,
+    );
+    push(
+        "subagent_result",
+        "读子会话的最终回复和工具调用摘要（不等待）。",
+        json!({"type":"object","properties":{
+            "session":{"type":"string","description":"subagent_spawn 返回的 id"}
+        },"required":["session"]}),
+        false,
+    );
+    push(
+        "parallel_read",
+        "并行执行多个**只读**工具（workspace_read / workspace_list / workspace_search / output_read / port_list / port_state / port_read / net_local_ips / adb_devices / adb_mdns / screen_list / skill_list / history_search），一次返回全部结果。用来减少多文件读取的模型往返。",
+        json!({"type":"object","properties":{
+            "ops":{"type":"array","items":{"type":"object","properties":{
+                "tool":{"type":"string"},
+                "args":{"type":"object"}
+            },"required":["tool"]}}
+        },"required":["ops"]}),
         false,
     );
 
@@ -578,11 +680,20 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
         json!({"type":"object","properties":{}}),
         false,
     );
-    push("screen_shot", "把某一路屏幕会话的**当前画面**存成 PNG（默认存工作区），返回值里带一张粗字符画：@ = 亮/白、空格 = 暗/黑。字符画只能看版面（窗口在哪、画面有没有变），**读不了文字** —— 要读文字得让用户开视觉模型或另配 OCR。",
+    push("screen_shot", "把某一路屏幕会话的**当前画面**存成 PNG（默认存工作区），返回值里带一张粗字符画：@ = 亮/白、空格 = 暗/黑。字符画只能看版面（窗口在哪、画面有没有变），**读不了文字**；要读文字用 screen_ocr 或视觉模型。",
         json!({"type":"object","properties":{
             "session":{"type":"integer","description":"screen_open 返回的 id"},
             "save_as":{"type":"string","description":"相对工作区的文件名，默认 shot_<时间>.png"}
         },"required":["session"]}), false);
+    push("screen_ocr", "对当前屏幕截图跑 Windows 自带 OCR，返回识别出的文字（需要系统 OCR 语言包）。比 screen_shot 的字符画多一层“读字”能力；它不替代视觉模型。",
+        json!({"type":"object","properties":{
+            "session":{"type":"integer","description":"screen_open 返回的 id"},
+            "save_as":{"type":"string","description":"相对工作区的 PNG 文件名，默认 ocr_<时间>.png"}
+        },"required":["session"]}), false);
+    push("image_ocr", "对工作区里的一张图片（PNG/JPG）跑 Windows 自带 OCR，返回文字。可以先把截图/图片放到工作区再调用。",
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"相对工作区的图片路径"}
+        },"required":["path"]}), false);
     push("screen_pointer", "把对方屏幕上的鼠标移到 (x,y)；click=true 就点一下左键。**会真的操作对方机器**，只在 kind=vnc 的会话上有效。",
         json!({"type":"object","properties":{
             "session":{"type":"integer"},
@@ -642,7 +753,7 @@ pub struct ToolCtx<'a> {
     /// perm=ask 时问用户（返回 true 才执行）
     pub approve: &'a dyn Fn(&str, &Value) -> Result<bool, String>,
     /// 用户在这次会话里点过「本会话都允许」的工具：这些直接放行，不再弹审批
-    pub allowed: &'a dyn Fn(&str) -> bool,
+    pub allowed: &'a dyn Fn(&str, &Value) -> bool,
     /// host 工具：发事件给前端并等结果
     pub host: &'a dyn Fn(&str, &Value, u64) -> Result<String, String>,
     /// 进度日志
@@ -1018,6 +1129,235 @@ fn is_serial(ctx: &ToolCtx) -> bool {
         .unwrap_or(false)
 }
 
+fn plan_write(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let items = args
+        .get("items")
+        .and_then(|v| v.as_array())
+        .ok_or("items 必须是数组")?;
+    for (i, it) in items.iter().enumerate() {
+        let title = it.get("title").and_then(|v| v.as_str()).unwrap_or("").trim();
+        if title.is_empty() {
+            return Err(format!("第 {} 项缺 title", i + 1));
+        }
+        let status = it.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        if !matches!(status, "pending" | "in_progress" | "completed") {
+            return Err(format!("第 {} 项 status 必须是 pending / in_progress / completed", i + 1));
+        }
+    }
+    let mut meta = store::session_meta_of(ctx.app, ctx.session).ok_or("找不到会话")?;
+    meta.plan = items.clone();
+    meta.updated = crate::now_ms();
+    store::session_update_meta(ctx.app, &meta)?;
+    let _ = ctx.app.emit(
+        "agent://plan",
+        json!({ "session": ctx.session, "items": items }),
+    );
+    Ok(format!(
+        "计划已更新（{} 项）：\n{}",
+        items.len(),
+        format_plan(items)
+    ))
+}
+
+fn plan_read(ctx: &ToolCtx) -> Result<String, String> {
+    let meta = store::session_meta_of(ctx.app, ctx.session).ok_or("找不到会话")?;
+    if meta.plan.is_empty() {
+        return Ok("（当前没有计划）".into());
+    }
+    Ok(format_plan(&meta.plan))
+}
+
+fn format_plan(items: &[Value]) -> String {
+    let mut out = Vec::new();
+    for (i, it) in items.iter().enumerate() {
+        let status = it.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
+        let mark = match status {
+            "completed" => "✓",
+            "in_progress" => "▶",
+            _ => "○",
+        };
+        let id = it.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let title = it.get("title").and_then(|v| v.as_str()).unwrap_or("");
+        out.push(format!(
+            "{mark} {}{}  {}",
+            if id.is_empty() { String::new() } else { format!("[{id}] ") },
+            title,
+            status
+        ));
+        let _ = i;
+    }
+    out.join("\n")
+}
+
+fn subagent_spawn(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let task = arg_str(args, "task").ok_or("缺少 task")?;
+    let parent = store::session_meta_of(ctx.app, ctx.session).ok_or("找不到当前会话")?;
+    let title = arg_str(args, "title")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            let head: String = task.chars().take(24).collect();
+            format!("子任务：{head}")
+        });
+    let provider = arg_str(args, "provider_id").or_else(|| {
+        if parent.provider_id.trim().is_empty() {
+            None
+        } else {
+            Some(parent.provider_id.clone())
+        }
+    });
+    let sub = crate::agent::agent_session_new(
+        ctx.app.clone(),
+        Some(title),
+        provider,
+        Some(parent.ws.clone()),
+    )?;
+    if let Some(mut m) = store::session_meta_of(ctx.app, &sub.id) {
+        // 子会话继承父会话权限；父会话是 auto 时子会话也自动，避免后台任务卡在没人看的审批上。
+        m.perm = parent.perm.clone();
+        let _ = store::session_update_meta(ctx.app, &m);
+    }
+    crate::agent::agent_send(ctx.app.clone(), sub.id.clone(), task, None)?;
+    Ok(format!(
+        "已启动子会话 {}（{}）。用 subagent_wait 等它完成，或 subagent_result 查看。",
+        sub.id, sub.title
+    ))
+}
+
+fn subagent_wait(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let sid = arg_str(args, "session").ok_or("缺少 session")?;
+    let timeout = arg_u64(args, "timeout_ms", 120_000).min(600_000);
+    let start = Instant::now();
+    while ctx.state.running(Some(&sid)) {
+        if start.elapsed().as_millis() as u64 > timeout {
+            return Ok(format!("子会话 {sid} 还在跑（已等 {timeout} ms，未超时结束）"));
+        }
+        if crate::agent::stop_requested() {
+            return Err("父会话被停止，子会话仍在后台跑（可用 subagent_result 查看）".into());
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    subagent_result(ctx, args)
+}
+
+fn subagent_result(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let sid = arg_str(args, "session").ok_or("缺少 session")?;
+    let meta = store::session_meta_of(ctx.app, &sid).ok_or("找不到这个子会话")?;
+    let events = store::session_read(ctx.app, &sid);
+    let answer = events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            store::Event::Assistant { text, .. } if !text.trim().is_empty() => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "（还没有最终回复）".into());
+    let calls: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            store::Event::ToolCall { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .rev()
+        .take(12)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    Ok(format!(
+        "子会话：{}（{}）\n标题：{}\n状态：{}\n工具调用（最近）：{}\n--- 最终回复 ---\n{}",
+        sid,
+        meta.model,
+        meta.title,
+        if ctx.state.running(Some(&sid)) { "运行中" } else { "已结束" },
+        if calls.is_empty() { "（无）".into() } else { calls.join(", ") },
+        answer.chars().take(6000).collect::<String>()
+    ))
+}
+
+fn parallel_safe(name: &str) -> bool {
+    matches!(
+        name,
+        "workspace_read"
+            | "workspace_list"
+            | "workspace_search"
+            | "workspace_diff"
+            | "output_read"
+            | "port_list"
+            | "port_state"
+            | "port_read"
+            | "net_local_ips"
+            | "adb_devices"
+            | "adb_mdns"
+            | "screen_list"
+            | "skill_list"
+            | "history_search"
+    )
+}
+
+fn parallel_read(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let ops = args
+        .get("ops")
+        .and_then(|v| v.as_array())
+        .ok_or("ops 必须是数组")?;
+    if ops.is_empty() {
+        return Err("ops 不能为空".into());
+    }
+    if ops.len() > 8 {
+        return Err("一次最多并行 8 个只读工具".into());
+    }
+    let mut parsed: Vec<(String, Value)> = Vec::new();
+    for op in ops {
+        let name = op.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+        if !parallel_safe(name) {
+            return Err(format!("{name} 不是 parallel_read 允许的只读工具"));
+        }
+        parsed.push((name.to_string(), op.get("args").cloned().unwrap_or_else(|| json!({}))));
+    }
+    let results: Vec<Result<String, String>> = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for (name, op_args) in parsed.iter() {
+            let name = name.clone();
+            let op_args = op_args.clone();
+            let app = ctx.app.clone();
+            let ws = ctx.workspace.clone();
+            let sid = ctx.session.to_string();
+            handles.push(scope.spawn(move || {
+                let approve = |_: &str, _: &Value| Err("parallel_read 不执行危险工具".to_string());
+                let allowed = |_: &str, _: &Value| true;
+                let host = |_: &str, _: &Value, _: u64| {
+                    Err("parallel_read 不执行 host 工具".to_string())
+                };
+                let log = |_: &str| {};
+                let st = app.state::<std::sync::Arc<super::AgentState>>().inner().clone();
+                let tctx = ToolCtx {
+                    app: &app,
+                    state: &st,
+                    workspace: ws,
+                    session: &sid,
+                    perm: "read",
+                    approve: &approve,
+                    allowed: &allowed,
+                    host: &host,
+                    log: &log,
+                };
+                execute(&tctx, &name, &op_args)
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|_| Err("并行任务线程 panic".into())))
+            .collect()
+    });
+    let mut out = Vec::new();
+    for (i, (res, (name, _))) in results.into_iter().zip(parsed.iter()).enumerate() {
+        match res {
+            Ok(t) => out.push(format!("## {} ({name})\n{}", i + 1, t)),
+            Err(e) => out.push(format!("## {} ({name}) 失败\n{e}", i + 1)),
+        }
+    }
+    Ok(out.join("\n\n"))
+}
+
 /// 会改设备/改盘上东西的工具：权限管的就是这些
 #[cfg(test)]
 mod tests {
@@ -1052,6 +1392,85 @@ mod tests {
     fn background_shell_quote_is_safe_for_quotes_and_spaces() {
         assert_eq!(shell_quote_posix("echo hello world"), "'echo hello world'");
         assert_eq!(shell_quote_posix("echo it's ok"), "'echo it'\\''s ok'");
+    }
+
+    #[test]
+    fn unified_diff_marks_removed_and_added_lines() {
+        let d = unified_diff("src/a.rs", "one\ntwo\nthree\n", "one\nTWO\nthree\n");
+        assert!(d.contains("--- a/src/a.rs"));
+        assert!(d.contains("+++ b/src/a.rs"));
+        assert!(d.contains("-two"));
+        assert!(d.contains("+TWO"));
+    }
+
+    #[test]
+    fn workspace_search_finds_files_and_skips_noise_dirs() {
+        let d = std::env::temp_dir().join(format!("kdock-search-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::create_dir_all(d.join("target")).unwrap();
+        std::fs::write(d.join("src/main.rs"), "fn main() { let needle = 1; }\n").unwrap();
+        std::fs::write(d.join("target/noise.rs"), "needle in target\n").unwrap();
+        let mut hits = Vec::new();
+        search_dir(&d, &d, "needle", Some(".rs"), false, 50, 0, &mut hits);
+        assert!(hits.iter().any(|h| h.starts_with("src/main.rs:")));
+        assert!(!hits.iter().any(|h| h.contains("target/")));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn test_command_autodetection_covers_cargo_npm_pytest() {
+        let d = std::env::temp_dir().join(format!("kdock-testcmd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        assert_eq!(detect_test_cmd(&d), None);
+        std::fs::write(d.join("Cargo.toml"), "[package]\nname='x'\n").unwrap();
+        assert_eq!(detect_test_cmd(&d).as_deref(), Some("cargo test"));
+        std::fs::remove_file(d.join("Cargo.toml")).unwrap();
+        std::fs::write(d.join("package.json"), r#"{"scripts":{"test":"vitest"}}"#).unwrap();
+        assert_eq!(detect_test_cmd(&d).as_deref(), Some("npm test"));
+        std::fs::remove_file(d.join("package.json")).unwrap();
+        std::fs::write(d.join("pytest.ini"), "[pytest]\n").unwrap();
+        assert_eq!(detect_test_cmd(&d).as_deref(), Some("python -m pytest"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn parallel_read_only_accepts_read_tools() {
+        assert!(parallel_safe("workspace_read"));
+        assert!(parallel_safe("workspace_search"));
+        assert!(parallel_safe("output_read"));
+        assert!(!parallel_safe("local_run"));
+        assert!(!parallel_safe("workspace_edit"));
+        assert!(!parallel_safe("screen_pointer"));
+    }
+
+    #[test]
+    fn planning_workspace_and_subagent_tools_are_registered() {
+        let names: Vec<&str> = catalog().iter().map(|d| d.name).collect();
+        for n in [
+            "workspace_edit",
+            "workspace_diff",
+            "workspace_search",
+            "workspace_run",
+            "workspace_test",
+            "plan_write",
+            "plan_read",
+            "subagent_spawn",
+            "subagent_wait",
+            "subagent_result",
+            "parallel_read",
+            "screen_ocr",
+            "image_ocr",
+        ] {
+            assert!(names.contains(&n), "缺工具 {n}");
+        }
+        assert!(is_dangerous("workspace_run"));
+        assert!(is_dangerous("workspace_test"));
+        assert!(is_dangerous("subagent_spawn"));
+        for n in ["workspace_edit", "workspace_search", "plan_write", "parallel_read", "screen_ocr"] {
+            assert!(!is_dangerous(n), "{n} 不该要审批");
+        }
     }
 
     /// 逻辑分析仪工具：注册齐全，读类不审批、写类审批
@@ -1122,6 +1541,8 @@ mod tests {
             "screen_open",
             "screen_list",
             "screen_shot",
+            "screen_ocr",
+            "image_ocr",
             "screen_pointer",
             "screen_key",
             "screen_type",
@@ -1310,7 +1731,7 @@ mod tests {
 pub fn is_dangerous(name: &str) -> bool {
     matches!(
         name,
-        "link_send" | "device_push" | "firmware_upgrade" | "flash" | "local_run" | "port_write" | "flow_set" | "flow_add_node" | "flow_connect" | "flow_delete"
+        "link_send" | "device_push" | "firmware_upgrade" | "flash" | "local_run" | "workspace_run" | "workspace_test" | "subagent_spawn" | "port_write" | "flow_set" | "flow_add_node" | "flow_connect" | "flow_delete"
             | "port_open" | "port_close"
             | "ssh_run"
             | "skill_create" | "skill_update"
@@ -1327,7 +1748,7 @@ pub fn is_dangerous(name: &str) -> bool {
 pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String> {
     // 权限闸门：只读直接拒；需要批准就先问人
     if is_dangerous(name) || name.starts_with("mcp__") {
-        if !(ctx.allowed)(name) {
+        if !(ctx.allowed)(name, args) {
             match ctx.perm {
                 "read" => {
                     return Err(format!(
@@ -1537,6 +1958,8 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "screen_open" => screen_open(ctx, args),
         "screen_list" => screen_list_text(ctx),
         "screen_shot" => screen_shot(ctx, args),
+        "screen_ocr" => screen_ocr(ctx, args),
+        "image_ocr" => image_ocr(ctx, args),
         "screen_pointer" => screen_pointer(ctx, args),
         "screen_key" => screen_key(ctx, args),
         "screen_type" => screen_type(ctx, args),
@@ -1598,6 +2021,11 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "workspace_read" => workspace_read(ctx, args),
         "workspace_write" => workspace_write(ctx, args),
         "workspace_mkdir" => workspace_mkdir(ctx, args),
+        "workspace_edit" => workspace_edit(ctx, args),
+        "workspace_diff" => workspace_diff(ctx, args),
+        "workspace_search" => workspace_search(ctx, args),
+        "workspace_run" => workspace_run(ctx, args),
+        "workspace_test" => workspace_test(ctx, args),
         "output_read" => {
             let path = arg_str(args, "path").ok_or("缺少 path")?;
             let off = arg_u64(args, "offset", 0) as usize;
@@ -1666,6 +2094,12 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
                 }
             ))
         }
+        "plan_write" => plan_write(ctx, args),
+        "plan_read" => plan_read(ctx),
+        "subagent_spawn" => subagent_spawn(ctx, args),
+        "subagent_wait" => subagent_wait(ctx, args),
+        "subagent_result" => subagent_result(ctx, args),
+        "parallel_read" => parallel_read(ctx, args),
         "ssh_run" => ssh_run(ctx, args),
         other if other.starts_with("mcp__") => super::mcp::call_by_full_name(ctx.app, other, args),
         other if !is_known(other) => Err(format!("不认识工具 {other}")),
@@ -2306,6 +2740,38 @@ fn screen_shot(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     ))
 }
 
+fn image_ocr(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let rel = arg_str(args, "path").ok_or("缺少 path")?;
+    let path = ws_path(ctx, &rel)?;
+    if !path.is_file() {
+        return Err(format!("图片不存在：{}", path.display()));
+    }
+    let text = crate::ocr::ocr_image(&path)?;
+    Ok(format!("图片：{}\n--- OCR ---\n{}", path.display(), text))
+}
+
+fn screen_ocr(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let id = args
+        .get("session")
+        .and_then(|v| v.as_u64())
+        .ok_or("缺少 session（screen_open 给的 id）")? as u32;
+    screen_owned(ctx, id)?;
+    let rel = arg_str(args, "save_as").unwrap_or_else(|| format!("ocr_{}.png", crate::now_ms()));
+    let path = ws_path(ctx, &rel)?;
+    let v = crate::remote_screen::rs_snapshot(id, Some(path.to_string_lossy().to_string()))?;
+    let text = crate::ocr::ocr_image(&path)?;
+    Ok(format!(
+        "屏幕会话 #{}（{}）\nPNG：{}（{}x{}，{}ms 前）\n--- OCR ---\n{}",
+        id,
+        jstr(&v, "label"),
+        path.display(),
+        v.get("w").and_then(|x| x.as_u64()).unwrap_or(0),
+        v.get("h").and_then(|x| x.as_u64()).unwrap_or(0),
+        v.get("age_ms").and_then(|x| x.as_i64()).unwrap_or(0),
+        text
+    ))
+}
+
 /// 键名 → X11 keysym（和前端 capKeysym 一张表，别各写一套）
 fn keysym_of(key: &str) -> Option<u32> {
     // 空格要单独处理：下面做了 trim()，单个空格会被 trim 成空串 → 被当成"认不得这个键"丢掉。
@@ -2847,4 +3313,245 @@ fn workspace_mkdir(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
     std::fs::create_dir_all(&path).map_err(|e| format!("建目录失败: {e}"))?;
     Ok(format!("已建目录 {}", path.display()))
+}
+
+fn unified_diff(rel: &str, old: &str, new: &str) -> String {
+    let a: Vec<&str> = old.lines().collect();
+    let b: Vec<&str> = new.lines().collect();
+    let mut pre = 0usize;
+    while pre < a.len() && pre < b.len() && a[pre] == b[pre] {
+        pre += 1;
+    }
+    let mut suf = 0usize;
+    while suf < a.len().saturating_sub(pre)
+        && suf < b.len().saturating_sub(pre)
+        && a[a.len() - 1 - suf] == b[b.len() - 1 - suf]
+    {
+        suf += 1;
+    }
+    let start = pre.saturating_sub(2);
+    let end = (a.len() - suf + 2).min(a.len());
+    let b_end = (b.len() - suf + 2).min(b.len());
+    let mut out = format!(
+        "--- a/{rel}\n+++ b/{rel}\n@@ -{},{} +{},{} @@\n",
+        start + 1,
+        end.saturating_sub(start),
+        start + 1,
+        b_end.saturating_sub(start)
+    );
+    for line in &a[start..pre] {
+        out.push(' ');
+        out.push_str(line);
+        out.push('\n');
+    }
+    for line in &a[pre..a.len() - suf] {
+        out.push('-');
+        out.push_str(line);
+        out.push('\n');
+    }
+    for line in &b[pre..b.len() - suf] {
+        out.push('+');
+        out.push_str(line);
+        out.push('\n');
+    }
+    for line in &a[a.len() - suf..end] {
+        out.push(' ');
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+fn workspace_edit(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let rel = arg_str(args, "path").ok_or("缺少 path")?;
+    let old = arg_str(args, "old_text").ok_or("缺少 old_text")?;
+    let new = arg_str(args, "new_text").ok_or("缺少 new_text")?;
+    if old.is_empty() {
+        return Err("old_text 不能为空（新建文件请用 workspace_write）".into());
+    }
+    let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("读不了 {rel}: {e}"))?;
+    let count = text.matches(&old).count();
+    if count == 0 {
+        return Err(format!("old_text 在 {rel} 里找不到；没有改任何东西"));
+    }
+    if count > 1 && !arg_bool(args, "replace_all", false) {
+        return Err(format!(
+            "old_text 在 {rel} 里出现 {count} 次；要么给更长的上下文，要么 replace_all=true"
+        ));
+    }
+    let updated = if arg_bool(args, "replace_all", false) {
+        text.replace(&old, &new)
+    } else {
+        text.replacen(&old, &new, 1)
+    };
+    std::fs::write(&path, &updated).map_err(|e| format!("写失败: {e}"))?;
+    Ok(format!(
+        "已改 {}（{} 处）\n{}",
+        path.display(),
+        if arg_bool(args, "replace_all", false) { count } else { 1 },
+        unified_diff(&rel, &text, &updated)
+    ))
+}
+
+fn workspace_diff(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let mut git = std::process::Command::new("git");
+    git.args(["status", "--short"]);
+    git.current_dir(&ctx.workspace);
+    let status = git.output().map_err(|e| format!("工作区不是可用的 git 仓库（找不到 git）: {e}"))?;
+    if !status.status.success() {
+        return Err("工作区不是 git 仓库，暂时没有基线可 diff；请用 workspace_edit 的返回 diff 审查".into());
+    }
+    let mut diff = std::process::Command::new("git");
+    diff.args(["diff", "--no-color", "--"]);
+    if let Some(p) = arg_str(args, "path") {
+        diff.arg(p);
+    }
+    diff.current_dir(&ctx.workspace);
+    let out = diff.output().map_err(|e| format!("git diff 失败: {e}"))?;
+    let status_text = crate::shell::decode(&status.stdout);
+    let diff_text = crate::shell::decode(&out.stdout);
+    Ok(format!(
+        "--- git status ---\n{}\n--- git diff ---\n{}",
+        if status_text.trim().is_empty() { "（干净）" } else { status_text.trim() },
+        if diff_text.trim().is_empty() { "（没有未提交改动）" } else { diff_text.trim() }
+    ))
+}
+
+fn workspace_search(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let pattern = arg_str(args, "pattern").ok_or("缺少 pattern")?;
+    if pattern.is_empty() {
+        return Err("pattern 不能为空".into());
+    }
+    let root_rel = arg_str(args, "path").unwrap_or_else(|| ".".into());
+    let root = store::resolve_in_workspace(&ctx.workspace, &root_rel)?;
+    let ext = arg_str(args, "ext").map(|s| {
+        let s = s.trim().trim_start_matches('.').to_lowercase();
+        format!(".{s}")
+    });
+    let max = arg_u64(args, "max_results", 50).clamp(1, 500) as usize;
+    let case = arg_bool(args, "case_sensitive", false);
+    let needle = if case { pattern.clone() } else { pattern.to_lowercase() };
+    let mut hits = Vec::new();
+    search_dir(&root, &ctx.workspace, &needle, ext.as_deref(), case, max, 0, &mut hits);
+    if hits.is_empty() {
+        return Ok(format!("没有找到「{pattern}」"));
+    }
+    Ok(format!(
+        "找到 {} 处（最多显示 {max} 处）：\n{}",
+        hits.len(),
+        hits.join("\n")
+    ))
+}
+
+fn search_dir(
+    dir: &std::path::Path,
+    root: &std::path::Path,
+    needle: &str,
+    ext: Option<&str>,
+    case: bool,
+    max: usize,
+    depth: usize,
+    out: &mut Vec<String>,
+) {
+    if out.len() >= max || depth > 16 {
+        return;
+    }
+    let skip = [".git", "target", "node_modules", "dist", "build", ".venv", "__pycache__", ".kdock_skill"];
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        if out.len() >= max {
+            break;
+        }
+        let p = e.path();
+        let name = e.file_name().to_string_lossy().to_string();
+        if p.is_dir() {
+            if !skip.iter().any(|s| *s == name) {
+                search_dir(&p, root, needle, ext, case, max, depth + 1, out);
+            }
+            continue;
+        }
+        if let Some(want) = ext {
+            let got = p.extension().map(|x| format!(".{}", x.to_string_lossy().to_lowercase())).unwrap_or_default();
+            if got != want {
+                continue;
+            }
+        }
+        let Ok(md) = e.metadata() else { continue };
+        if md.len() > 1_500_000 {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&p) else { continue };
+        if bytes.contains(&0) {
+            continue;
+        }
+        let text = crate::shell::decode(&bytes);
+        for (i, line) in text.lines().enumerate() {
+            let hay = if case { line.to_string() } else { line.to_lowercase() };
+            if hay.contains(needle) {
+                let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+                let preview: String = line.trim().chars().take(300).collect();
+                out.push(format!("{rel}:{}: {preview}", i + 1));
+                if out.len() >= max {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn workspace_run(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let cmd = arg_str(args, "cmd").ok_or("缺少 cmd")?;
+    let cwd_rel = arg_str(args, "cwd").unwrap_or_else(|| ".".into());
+    let cwd = store::resolve_in_workspace(&ctx.workspace, &cwd_rel)?;
+    let timeout = arg_u64(args, "timeout_ms", 120_000).min(600_000);
+    let (code, stdout, stderr) = crate::shell::run_with_path_in(
+        &cmd,
+        timeout,
+        &crate::agent::stop_requested,
+        &env_path_prefix(),
+        &cwd,
+    )?;
+    let mut text = format!("exit={code}\n");
+    if !stdout.trim().is_empty() {
+        text.push_str(&format!("--- stdout ---\n{}\n", stdout.trim_end()));
+    }
+    if !stderr.trim().is_empty() {
+        text.push_str(&format!("--- stderr ---\n{}\n", stderr.trim_end()));
+    }
+    Ok(truncate_chars(text, 16_000))
+}
+
+fn detect_test_cmd(dir: &std::path::Path) -> Option<String> {
+    if dir.join("Cargo.toml").is_file() {
+        return Some("cargo test".into());
+    }
+    let pkg = dir.join("package.json");
+    if pkg.is_file() {
+        if let Ok(txt) = std::fs::read_to_string(&pkg) {
+            if let Ok(v) = serde_json::from_str::<Value>(&txt) {
+                if v.get("scripts").and_then(|s| s.get("test")).and_then(|t| t.as_str()).is_some() {
+                    return Some("npm test".into());
+                }
+            }
+        }
+    }
+    if dir.join("pyproject.toml").is_file()
+        || dir.join("pytest.ini").is_file()
+        || dir.join("tox.ini").is_file()
+    {
+        return Some("python -m pytest".into());
+    }
+    None
+}
+
+fn workspace_test(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let cwd_rel = arg_str(args, "cwd").unwrap_or_else(|| ".".into());
+    let cwd = store::resolve_in_workspace(&ctx.workspace, &cwd_rel)?;
+    let cmd = arg_str(args, "cmd")
+        .or_else(|| detect_test_cmd(&cwd))
+        .ok_or("没识别出测试命令（没有 Cargo.toml / npm test / pytest），请显式给 cmd")?;
+    let mut a = args.clone();
+    a["cmd"] = json!(cmd);
+    workspace_run(ctx, &a)
 }

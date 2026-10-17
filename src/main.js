@@ -9307,16 +9307,26 @@ async function bindAgentEvents() {
     always.className = "btn small";
     always.textContent = "本会话都允许";
     always.title = `这个会话里再遇到「${p.tool}」就直接放行，不再问`;
-    const done = async (ok, all) => {
-      acts.innerHTML = `<span class="hint">${ok ? (all ? `已允许（本会话内不再问 ${p.tool}）` : "已允许") : "已拒绝"}</span>`;
+    const done = async (ok, alwaysValue) => {
+      acts.innerHTML = `<span class="hint">${ok ? (alwaysValue ? `已允许（本会话内不再问 ${alwaysValue.replace(/^cmd:/, "命令 ")}）` : "已允许") : "已拒绝"}</span>`;
       await invoke("agent_approval_result", {
-        id: p.id, ok, always: all ? p.tool : null, session: all ? (p.session || (agMeta && agMeta.id) || null) : null,
+        id: p.id, ok, always: alwaysValue || null, session: alwaysValue ? (p.session || (agMeta && agMeta.id) || null) : null,
       }).catch(() => {});
     };
-    yes.onclick = () => done(true, false);
-    always.onclick = () => done(true, true);
-    no.onclick = () => done(false, false);
+    yes.onclick = () => done(true, null);
+    always.onclick = () => done(true, p.tool);
+    no.onclick = () => done(false, null);
     acts.appendChild(yes); acts.appendChild(always); acts.appendChild(no);
+    const cmd = String((p.args && p.args.cmd) || "").trim();
+    if (cmd && ["local_run", "workspace_run", "workspace_test", "ssh_run"].includes(p.tool)) {
+      const prefix = cmd.split(/\s+/).slice(0, 2).join(" ");
+      const cmdAlways = document.createElement("button");
+      cmdAlways.className = "btn small";
+      cmdAlways.textContent = "允许这类命令";
+      cmdAlways.title = `本会话里以「${prefix}」开头的命令不再问`;
+      cmdAlways.onclick = () => done(true, "cmd:" + prefix);
+      acts.appendChild(cmdAlways);
+    }
     card.appendChild(ttl); card.appendChild(pre); card.appendChild(acts);
     box.appendChild(card);
     agScrollTail(true);

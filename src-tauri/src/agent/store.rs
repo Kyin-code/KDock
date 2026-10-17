@@ -408,6 +408,12 @@ pub struct SessionMeta {
     /// 用户点过「本会话都允许」的工具名：这些不再弹审批（一次任务里点 20 多次太累）
     #[serde(default)]
     pub allow: Vec<String>,
+    /// 细粒度命令白名单：`local_run`/`workspace_run`/`ssh_run` 允许的命令前缀
+    #[serde(default)]
+    pub allow_cmd: Vec<String>,
+    /// 本会话的显式计划（plan_write 写入，供 plan_read/前端查看）
+    #[serde(default)]
+    pub plan: Vec<serde_json::Value>,
     /// 用户用 `/goal` 设定的目标（一直生效，每轮都会进系统提示）
     #[serde(default)]
     pub goal: String,
@@ -539,6 +545,8 @@ pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<Sess
         turns: 0,
         perm: default_perm(),
         allow: Vec::new(),
+        allow_cmd: Vec::new(),
+        plan: Vec::new(),
         goal: String::new(),
         user_name: String::new(),
         agent_name: String::new(),

@@ -10,6 +10,7 @@ mod debug;
 mod env_setup;
 mod kbview;
 mod netfs;
+mod ocr;
 mod remote_screen;
 mod scope;
 mod shell;
@@ -3690,6 +3691,11 @@ pub fn run() {
             debug::debug_server_stop,
             debug::debug_status
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                agent::mcp::shutdown_all();
+            }
+        });
 }
