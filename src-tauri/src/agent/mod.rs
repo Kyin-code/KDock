@@ -2320,6 +2320,8 @@ fn run_turn(
                     meta.model_fingerprint = fp.name.clone();
                     meta.fingerprint_model = fp.model.clone();
                     meta.fingerprint_system = fp.system.clone();
+                    meta.fingerprint_family = fp.family.clone();
+                    meta.fingerprint_family_source = fp.family_source.clone();
                     meta.fingerprint_provider = provider.id.clone();
                     meta.fingerprint_at = usage_ts;
                     meta.last_tokens = out.usage.prompt_tokens;

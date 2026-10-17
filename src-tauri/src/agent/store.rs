@@ -438,6 +438,10 @@ pub struct SessionMeta {
     #[serde(default)]
     pub fingerprint_system: String,
     #[serde(default)]
+    pub fingerprint_family: String,
+    #[serde(default)]
+    pub fingerprint_family_source: String,
+    #[serde(default)]
     pub fingerprint_provider: String,
     #[serde(default)]
     pub fingerprint_at: i64,
@@ -599,6 +603,8 @@ pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<Sess
         model_fingerprint: String::new(),
         fingerprint_model: String::new(),
         fingerprint_system: String::new(),
+        fingerprint_family: String::new(),
+        fingerprint_family_source: String::new(),
         fingerprint_provider: String::new(),
         fingerprint_at: 0,
         warned_overhead: false,

@@ -7152,7 +7152,13 @@ function agRenderInfo() {
     (!agMeta.fingerprint_provider || agMeta.fingerprint_provider === prov.id))
     ? agMeta.model_fingerprint : "";
   const fpTitle = fp
-    ? [agMeta.fingerprint_model, agMeta.fingerprint_system].filter(Boolean).join(" · ")
+    ? [
+        agMeta.fingerprint_family
+          ? `${agMeta.fingerprint_family}${agMeta.fingerprint_family_source ? " (" + agMeta.fingerprint_family_source + ")" : ""}`
+          : "",
+        agMeta.fingerprint_model,
+        agMeta.fingerprint_system,
+      ].filter(Boolean).join(" · ")
     : "";
   const showRateColor = pricing.peak_enabled && !!agPricingStatus && !!costText;
   const costHtml = !costText ? "—" : showRateColor

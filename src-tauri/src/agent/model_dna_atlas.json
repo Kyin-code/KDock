@@ -1,0 +1,1209 @@
+{
+  "version": 1,
+  "generated_at": "2026-10-17T14:10:36.850Z",
+  "sources": {
+    "modeldna": {
+      "repo": "https://github.com/RadicalNotion/modeldna-cli",
+      "file": "modeldna/bases.py",
+      "license": "Apache-2.0"
+    },
+    "provenance_kit": {
+      "repo": "https://github.com/cisco-ai-defense/model-provenance-kit",
+      "file": "src/provenancekit/data/database/catalog/",
+      "license": "Apache-2.0",
+      "catalog_updated_at": "2026-07-31T23:52:52.131996+00:00"
+    }
+  },
+  "modeldna_families": [
+    {
+      "id": "qwen3_5_text",
+      "display_name": "Qwen3.5 (dense)",
+      "vendor": "qwen3",
+      "match": [
+        "qwen3",
+        "dense"
+      ],
+      "vocab_size": 248320,
+      "model_type_patterns": [
+        "qwen3_5_text",
+        "qwen3_5"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "qwen3_5_moe_text",
+      "display_name": "Qwen3.5 MoE",
+      "vendor": "qwen3",
+      "match": [
+        "qwen3",
+        "moe"
+      ],
+      "vocab_size": 248320,
+      "model_type_patterns": [
+        "qwen3_5_moe_text",
+        "qwen3_5_moe"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "qwen3",
+      "display_name": "Qwen3",
+      "vendor": "qwen3",
+      "match": [
+        "qwen3"
+      ],
+      "vocab_size": [
+        151936,
+        152064
+      ],
+      "model_type_patterns": [
+        "qwen3"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "qwen2",
+      "display_name": "Qwen2.5 (incl. VL)",
+      "vendor": "qwen2",
+      "match": [
+        "qwen2",
+        "incl"
+      ],
+      "vocab_size": [
+        151936,
+        152064,
+        151680
+      ],
+      "model_type_patterns": [
+        "qwen2"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "llama3",
+      "display_name": "Llama 3.x",
+      "vendor": "llama",
+      "match": [
+        "llama"
+      ],
+      "vocab_size": 128256,
+      "model_type_patterns": [
+        "llama"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "llama2",
+      "display_name": "Llama 2",
+      "vendor": "llama",
+      "match": [
+        "llama"
+      ],
+      "vocab_size": 32000,
+      "model_type_patterns": [
+        "llama"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "mistral",
+      "display_name": "Mistral 7B family",
+      "vendor": "mistral",
+      "match": [
+        "mistral"
+      ],
+      "vocab_size": 32000,
+      "model_type_patterns": [
+        "mistral",
+        "mixtral"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "deepseek_v3",
+      "display_name": "DeepSeek V3/R1",
+      "vendor": "deepseek",
+      "match": [
+        "deepseek"
+      ],
+      "vocab_size": 129280,
+      "model_type_patterns": [
+        "deepseek_v3",
+        "deepseek_v2"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "gemma",
+      "display_name": "Gemma family",
+      "vendor": "gemma",
+      "match": [
+        "gemma"
+      ],
+      "vocab_size": [
+        256000,
+        262144
+      ],
+      "model_type_patterns": [
+        "gemma"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "glm4",
+      "display_name": "ZhipuAI GLM-4.x (4.5 / 4.6 / 4.7 / 4.6V)",
+      "vendor": "zhipuai",
+      "match": [
+        "zhipuai",
+        "glm"
+      ],
+      "vocab_size": [
+        151552,
+        151936,
+        154880
+      ],
+      "model_type_patterns": [
+        "glm4v_moe_text",
+        "glm4v_moe",
+        "glm4_moe_lite",
+        "glm4_moe",
+        "glm4",
+        "chatglm"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "internlm3",
+      "display_name": "InternLM 3",
+      "vendor": "internlm",
+      "match": [
+        "internlm"
+      ],
+      "vocab_size": 92544,
+      "model_type_patterns": [
+        "internlm2",
+        "internlm3"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "phi4",
+      "display_name": "Phi-4 family",
+      "vendor": "phi",
+      "match": [
+        "phi"
+      ],
+      "vocab_size": [
+        100352,
+        100352
+      ],
+      "model_type_patterns": [
+        "phi3",
+        "phi4"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "ministral3",
+      "display_name": "Mistral 3.x (medium/large dense)",
+      "vendor": "mistral",
+      "match": [
+        "mistral",
+        "medium",
+        "large",
+        "dense"
+      ],
+      "vocab_size": 131072,
+      "model_type_patterns": [
+        "ministral3",
+        "mistral3"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "nemotron_h",
+      "display_name": "NemotronH (NVIDIA Mamba+MoE hybrid)",
+      "vendor": "nemotronh",
+      "match": [
+        "nemotronh",
+        "nvidia",
+        "mamba",
+        "moe",
+        "hybrid"
+      ],
+      "vocab_size": 131072,
+      "model_type_patterns": [
+        "nemotron_h",
+        "nemotronh"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "seed_oss",
+      "display_name": "ByteDance Seed-OSS (dense)",
+      "vendor": "bytedance",
+      "match": [
+        "bytedance",
+        "seed",
+        "oss",
+        "dense"
+      ],
+      "vocab_size": 155136,
+      "model_type_patterns": [
+        "seed_oss"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "bailing_v2",
+      "display_name": "AntGroup Bailing-V2 / V2.5 (inclusionAI Ling)",
+      "vendor": "antgroup",
+      "match": [
+        "antgroup",
+        "bailing",
+        "inclusionai",
+        "ling"
+      ],
+      "vocab_size": 157184,
+      "model_type_patterns": [
+        "bailing_hybrid",
+        "bailing_moe",
+        "bailingmm_moe_v2_lite"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "llada2",
+      "display_name": "inclusionAI LLaDA2 (discrete-diffusion MoE)",
+      "vendor": "inclusionai",
+      "match": [
+        "inclusionai",
+        "llada2",
+        "discrete",
+        "diffusion",
+        "moe"
+      ],
+      "vocab_size": [
+        157184,
+        173568
+      ],
+      "model_type_patterns": [
+        "llada2_moe",
+        "llada2"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "kimi",
+      "display_name": "Moonshot Kimi (K2, Kimi-Linear)",
+      "vendor": "moonshot",
+      "match": [
+        "moonshot",
+        "kimi",
+        "linear"
+      ],
+      "vocab_size": 163840,
+      "model_type_patterns": [
+        "kimi_linear",
+        "kimi"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "ernie4_5_vl",
+      "display_name": "Baidu ERNIE 4.5 VL (MoE multimodal)",
+      "vendor": "baidu",
+      "match": [
+        "baidu",
+        "ernie",
+        "moe",
+        "multimodal"
+      ],
+      "vocab_size": 103424,
+      "model_type_patterns": [
+        "ernie4_5_moe_vl",
+        "ernie4_5_vl"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "qianfan_vl",
+      "display_name": "Baidu Qianfan-VL (dense multimodal)",
+      "vendor": "baidu",
+      "match": [
+        "baidu",
+        "qianfan",
+        "dense",
+        "multimodal"
+      ],
+      "vocab_size": 182025,
+      "model_type_patterns": [
+        "qianfanvl_chat",
+        "qianfan"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "interns1",
+      "display_name": "InternLM S1 (dense, long-chain reasoning)",
+      "vendor": "internlm",
+      "match": [
+        "internlm",
+        "dense",
+        "long",
+        "chain",
+        "reasoning"
+      ],
+      "vocab_size": 153216,
+      "model_type_patterns": [
+        "interns1"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "pangu_pro_moe",
+      "display_name": "FreedomIntelligence Pangu-R (Huawei Pangu-Pro-MoE)",
+      "vendor": "freedomintelligence",
+      "match": [
+        "freedomintelligence",
+        "pangu",
+        "huawei",
+        "pro",
+        "moe"
+      ],
+      "vocab_size": 153600,
+      "model_type_patterns": [
+        "pangupromoe"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "iquest_coder",
+      "display_name": "IQuest-Coder",
+      "vendor": "iquest",
+      "match": [
+        "iquest",
+        "coder"
+      ],
+      "vocab_size": 76800,
+      "model_type_patterns": [
+        "iquestcoder"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "minicpm",
+      "display_name": "OpenBMB MiniCPM",
+      "vendor": "openbmb",
+      "match": [
+        "openbmb",
+        "minicpm"
+      ],
+      "vocab_size": 73448,
+      "model_type_patterns": [
+        "minicpm"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "step3_5",
+      "display_name": "StepFun Step-3.5 Flash",
+      "vendor": "stepfun",
+      "match": [
+        "stepfun",
+        "step",
+        "flash"
+      ],
+      "vocab_size": [
+        128815,
+        128896
+      ],
+      "model_type_patterns": [
+        "step3p5"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "mimo_v2",
+      "display_name": "Xiaomi MiMo V2.x",
+      "vendor": "xiaomi",
+      "match": [
+        "xiaomi",
+        "mimo"
+      ],
+      "vocab_size": 152576,
+      "model_type_patterns": [
+        "mimo_v2"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "hunyuan_v1",
+      "display_name": "Tencent Hunyuan V1 (dense + MoT multimodal)",
+      "vendor": "tencent",
+      "match": [
+        "tencent",
+        "hunyuan",
+        "dense",
+        "mot",
+        "multimodal"
+      ],
+      "vocab_size": 120818,
+      "model_type_patterns": [
+        "hunyuan_v1_dense",
+        "hunyuan_vl_mot",
+        "hunyuan"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "gpt_oss",
+      "display_name": "OpenAI gpt-oss (via InternVL3.5 wrapper)",
+      "vendor": "openai",
+      "match": [
+        "openai",
+        "gpt",
+        "oss",
+        "via",
+        "internvl3",
+        "wrapper"
+      ],
+      "vocab_size": 200028,
+      "model_type_patterns": [
+        "gpt_oss"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "valley",
+      "display_name": "ByteDance Valley (video-language)",
+      "vendor": "bytedance",
+      "match": [
+        "bytedance",
+        "valley",
+        "video",
+        "language"
+      ],
+      "vocab_size": [
+        151675,
+        151679
+      ],
+      "model_type_patterns": [
+        "valley"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "emu3",
+      "display_name": "BAAI Emu3 family (unified vision+text)",
+      "vendor": "baai",
+      "match": [
+        "baai",
+        "emu3",
+        "unified",
+        "vision"
+      ],
+      "vocab_size": [
+        184622,
+        282926
+      ],
+      "model_type_patterns": [
+        "emu3"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "starcoder2",
+      "display_name": "BigCode StarCoder2",
+      "vendor": "bigcode",
+      "match": [
+        "bigcode",
+        "starcoder2"
+      ],
+      "vocab_size": 49152,
+      "model_type_patterns": [
+        "starcoder2",
+        "gpt_bigcode"
+      ],
+      "source": "modeldna"
+    },
+    {
+      "id": "zaya",
+      "display_name": "Zyphra ZAYA1 (Global Attn + SWA + MoE)",
+      "vendor": "zyphra",
+      "match": [
+        "zyphra",
+        "zaya1",
+        "global",
+        "attn",
+        "swa",
+        "moe"
+      ],
+      "vocab_size": 262272,
+      "model_type_patterns": [
+        "zaya"
+      ],
+      "source": "modeldna"
+    }
+  ],
+  "provenance_families": [
+    {
+      "id": "01ai--yi",
+      "display_name": "Yi",
+      "publisher": "01-ai",
+      "match": [
+        "01ai"
+      ],
+      "model_ids": [
+        "Yi-1.5-6B",
+        "Yi-1.5-9B-Chat",
+        "Yi-Coder-1.5B",
+        "Yi-Coder-9B-Chat",
+        "Yi-Coder-9B"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "allenai--bolmo",
+      "display_name": "Bolmo",
+      "publisher": "allenai",
+      "match": [
+        "bolmo",
+        "allenai"
+      ],
+      "model_ids": [
+        "Bolmo-1B"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "allenai--olmo",
+      "display_name": "OLMo",
+      "publisher": "allenai",
+      "match": [
+        "olmo",
+        "allenai"
+      ],
+      "model_ids": [
+        "OLMo-2-0425-1B-Instruct",
+        "OLMo-2-1124-13B-Instruct",
+        "OLMo-3-7B-Instruct"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "bigcode--starcoder",
+      "display_name": "StarCoder",
+      "publisher": "bigcode",
+      "match": [
+        "starcoder",
+        "bigcode"
+      ],
+      "model_ids": [
+        "starcoder2-15b",
+        "starcoder2-3b",
+        "starcoder2-7b"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "bigscience--bloom",
+      "display_name": "BLOOM",
+      "publisher": "bigscience",
+      "match": [
+        "bloom",
+        "bigscience"
+      ],
+      "model_ids": [
+        "bloomz-560m"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "codellama--codellama",
+      "display_name": "CodeLlama",
+      "publisher": "codellama",
+      "match": [
+        "codellama"
+      ],
+      "model_ids": [
+        "CodeLlama-13b-Instruct-hf",
+        "CodeLlama-7b-hf"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "coherelabs--aya",
+      "display_name": "Cohere Aya",
+      "publisher": "coherelabs",
+      "match": [
+        "cohere",
+        "aya",
+        "coherelabs"
+      ],
+      "model_ids": [
+        "aya-expanse-32b",
+        "aya-101",
+        "aya-23-35B",
+        "aya-23-8B",
+        "tiny-aya-base",
+        "tiny-aya-fire",
+        "tiny-aya-global",
+        "tiny-aya-water"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "deepseekai--deepseek",
+      "display_name": "DeepSeek",
+      "publisher": "deepseek-ai",
+      "match": [
+        "deepseek",
+        "deepseekai"
+      ],
+      "model_ids": [
+        "DeepSeek-R1-Distill-Llama-70B",
+        "DeepSeek-R1-Distill-Llama-8B",
+        "DeepSeek-R1-Distill-Qwen-1.5B",
+        "DeepSeek-R1-Distill-Qwen-14B",
+        "DeepSeek-R1-Distill-Qwen-32B",
+        "DeepSeek-R1-Distill-Qwen-7B",
+        "deepseek-coder-1.3b-instruct",
+        "deepseek-coder-7b-instruct-v1.5",
+        "DeepSeek-Coder-V2-Lite-Instruct"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "eleutherai--gpt",
+      "display_name": "GPT",
+      "publisher": "eleutherai",
+      "match": [
+        "gpt",
+        "eleutherai"
+      ],
+      "model_ids": [
+        "gpt-j-6b",
+        "gpt-neox-20b"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "eleutherai--pythia",
+      "display_name": "Pythia",
+      "publisher": "eleutherai",
+      "match": [
+        "pythia",
+        "eleutherai"
+      ],
+      "model_ids": [
+        "pythia-1.4b",
+        "pythia-6.9b"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "facebookai--roberta",
+      "display_name": "RoBERTa",
+      "publisher": "facebookai",
+      "match": [
+        "roberta",
+        "facebookai"
+      ],
+      "model_ids": [
+        "roberta-base"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "facebookai--xlm_roberta",
+      "display_name": "XLM-RoBERTa",
+      "publisher": "facebookai",
+      "match": [
+        "xlm",
+        "roberta",
+        "facebookai"
+      ],
+      "model_ids": [
+        "xlm-roberta-base",
+        "xlm-roberta-large"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "google--gemma",
+      "display_name": "Gemma",
+      "publisher": "google",
+      "match": [
+        "gemma",
+        "google"
+      ],
+      "model_ids": [
+        "gemma-1.1-2b-it",
+        "gemma-1.1-7b-it",
+        "gemma-2-27b-it",
+        "gemma-2-2b-it",
+        "gemma-2-9b-it",
+        "gemma-2b",
+        "gemma-3-1b-it",
+        "gemma-3-270m",
+        "gemma-3-27b-it",
+        "gemma-3-4b-it",
+        "gemma-7b"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "googlebert--bert",
+      "display_name": "BERT",
+      "publisher": "google-bert",
+      "match": [
+        "bert",
+        "google",
+        "googlebert"
+      ],
+      "model_ids": [
+        "bert-base-uncased"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "huggingfaceh4--zephyr",
+      "display_name": "Zephyr",
+      "publisher": "huggingfaceh4",
+      "match": [
+        "zephyr",
+        "huggingfaceh4"
+      ],
+      "model_ids": [
+        "zephyr-7b-beta"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "huggingfacetb--smollm",
+      "display_name": "SmolLM",
+      "publisher": "huggingfacetb",
+      "match": [
+        "smollm",
+        "huggingfacetb"
+      ],
+      "model_ids": [
+        "SmolLM2-1.7B",
+        "SmolLM2-135M"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "ibmgranite--granite",
+      "display_name": "Granite",
+      "publisher": "ibm-granite",
+      "match": [
+        "granite",
+        "ibm",
+        "ibmgranite"
+      ],
+      "model_ids": [
+        "granite-3.1-8b-instruct",
+        "granite-3.2-8b-instruct",
+        "granite-3.3-8b-instruct",
+        "granite-4.0-1b",
+        "granite-4.0-350m"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "internlm--internlm",
+      "display_name": "InternLM",
+      "publisher": "internlm",
+      "match": [
+        "internlm"
+      ],
+      "model_ids": [
+        "internlm2_5-1_8b-chat",
+        "internlm2_5-7b-chat",
+        "internlm2_5-20b-chat"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "liquidai--lfm",
+      "display_name": "LFM",
+      "publisher": "liquidai",
+      "match": [
+        "lfm",
+        "liquidai"
+      ],
+      "model_ids": [
+        "LFM2-2.6B",
+        "LFM2.5-1.2B-Instruct",
+        "LFM2.5-350M"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "metallama--llama",
+      "display_name": "Llama",
+      "publisher": "meta-llama",
+      "match": [
+        "llama",
+        "meta",
+        "metallama"
+      ],
+      "model_ids": [
+        "Llama-2-13b-chat-hf",
+        "Llama-2-13b-hf",
+        "Llama-2-7b-hf",
+        "Llama-3.1-70B-Instruct",
+        "Llama-3.1-8B-Instruct",
+        "Llama-3.1-8B",
+        "Llama-3.2-1B",
+        "Llama-3.2-3B",
+        "Meta-Llama-3-8B"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "microsoft--nextcoder",
+      "display_name": "microsoft--nextcoder",
+      "publisher": "microsoft",
+      "match": [
+        "microsoft",
+        "nextcoder"
+      ],
+      "model_ids": [
+        "NextCoder-14B",
+        "NextCoder-7B"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "microsoft--phi",
+      "display_name": "Phi",
+      "publisher": "microsoft",
+      "match": [
+        "phi",
+        "microsoft"
+      ],
+      "model_ids": [
+        "Phi-3-medium-4k-instruct",
+        "Phi-3-mini-4k-instruct",
+        "Phi-3.5-mini-instruct",
+        "Phi-4-mini-instruct",
+        "Phi-4-mini-reasoning",
+        "phi-1_5",
+        "phi-2",
+        "phi-4"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "mistralai--ministral",
+      "display_name": "Ministral",
+      "publisher": "mistralai",
+      "match": [
+        "ministral",
+        "mistralai"
+      ],
+      "model_ids": [
+        "Devstral-Small-2-24B-Instruct-2512",
+        "Ministral-3-3B-Base-2512",
+        "Ministral-3-3B-Reasoning-2512",
+        "Ministral-3-8B-Base-2512",
+        "Ministral-8B-Instruct-2410"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "mistralai--mistral",
+      "display_name": "Mistral",
+      "publisher": "mistralai",
+      "match": [
+        "mistral",
+        "mistralai"
+      ],
+      "model_ids": [
+        "Codestral-22B-v0.1",
+        "Magistral-Small-2506",
+        "Mistral-7B-Instruct-v0.3",
+        "Mistral-7B-v0.1",
+        "Mistral-Nemo-Instruct-2407",
+        "Mistral-Small-24B-Instruct-2501"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "nousresearch--hermes",
+      "display_name": "Hermes",
+      "publisher": "nousresearch",
+      "match": [
+        "hermes",
+        "nousresearch"
+      ],
+      "model_ids": [
+        "Hermes-2-Pro-Llama-3-8B",
+        "Hermes-3-Llama-3.1-8B",
+        "Hermes-4-14B"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "nousresearch--nouscoder",
+      "display_name": "NousCoder",
+      "publisher": "nousresearch",
+      "match": [
+        "nouscoder",
+        "nousresearch"
+      ],
+      "model_ids": [
+        "NousCoder-14B"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "nvidia--nemotron",
+      "display_name": "Nemotron",
+      "publisher": "nvidia",
+      "match": [
+        "nemotron",
+        "nvidia"
+      ],
+      "model_ids": [
+        "AceMath-RL-Nemotron-7B",
+        "AceReason-Nemotron-1.1-7B",
+        "AceReason-Nemotron-14B",
+        "AceReason-Nemotron-7B",
+        "Llama-3.1-Nemotron-8B-UltraLong-1M-Instruct",
+        "Llama-3.1-Nemotron-8B-UltraLong-2M-Instruct",
+        "Llama-3.1-Nemotron-8B-UltraLong-4M-Instruct",
+        "Llama-3.1-Nemotron-Nano-4B-v1.1",
+        "Llama-3.1-Nemotron-Nano-8B-v1",
+        "Llama-3.1-Nemotron-Nano-VL-8B-V1",
+        "NVIDIA-Nemotron-Nano-12B-v2-Base",
+        "NVIDIA-Nemotron-Nano-12B-v2",
+        "NVIDIA-Nemotron-Nano-9B-v2-Base",
+        "NVIDIA-Nemotron-Nano-9B-v2",
+        "Nemotron-4-Mini-Hindi-4B-Base",
+        "Nemotron-4-Mini-Hindi-4B-Instruct",
+        "Nemotron-Cascade-14B-Thinking",
+        "Nemotron-Cascade-8B-Thinking",
+        "Nemotron-Cascade-8B",
+        "Nemotron-Flash-1B",
+        "Nemotron-Flash-3B-Instruct",
+        "Nemotron-Mini-4B-Instruct",
+        "Nemotron-Orchestrator-8B",
+        "Nemotron-Research-Reasoning-Qwen-1.5B",
+        "Nemotron-Terminal-14B",
+        "Nemotron-Terminal-8B",
+        "OpenCodeReasoning-Nemotron-1.1-14B",
+        "OpenCodeReasoning-Nemotron-1.1-7B",
+        "OpenCodeReasoning-Nemotron-14B",
+        "OpenCodeReasoning-Nemotron-7B",
+        "OpenMath-Nemotron-1.5B",
+        "OpenMath-Nemotron-14B-Kaggle",
+        "OpenMath-Nemotron-14B",
+        "OpenMath-Nemotron-7B",
+        "OpenReasoning-Nemotron-1.5B",
+        "OpenReasoning-Nemotron-14B",
+        "OpenReasoning-Nemotron-7B"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "openaicommunity--gpt",
+      "display_name": "GPT",
+      "publisher": "openai-community",
+      "match": [
+        "gpt",
+        "openai",
+        "community",
+        "openaicommunity"
+      ],
+      "model_ids": [
+        "gpt2-medium",
+        "gpt2-xl",
+        "gpt2"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "openbmb--minicpm",
+      "display_name": "MiniCPM",
+      "publisher": "openbmb",
+      "match": [
+        "minicpm",
+        "openbmb"
+      ],
+      "model_ids": [
+        "MiniCPM4.1-8B"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "qwen--qwen",
+      "display_name": "Qwen",
+      "publisher": "qwen",
+      "match": [
+        "qwen"
+      ],
+      "model_ids": [
+        "Qwen2-1.5B",
+        "Qwen2-7B-Instruct",
+        "Qwen2-Math-1.5B-Instruct",
+        "Qwen2-Math-7B",
+        "Qwen2.5-0.5B",
+        "Qwen2.5-1.5B-Instruct",
+        "Qwen2.5-14B-Instruct",
+        "Qwen2.5-32B-Instruct",
+        "Qwen2.5-3B-Instruct",
+        "Qwen2.5-72B-Instruct",
+        "Qwen2.5-7B-Instruct",
+        "Qwen2.5-7B",
+        "Qwen2.5-Coder-7B-Instruct",
+        "Qwen3-0.6B",
+        "Qwen3-14B",
+        "Qwen3-4B-Base",
+        "Qwen3-8B",
+        "Qwen3-Embedding-4B",
+        "Qwen3.5-0.8B",
+        "Qwen3.5-4B",
+        "Qwen3.5-9B",
+        "Qwen3.5-27B"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "stabilityai--stablelm",
+      "display_name": "StableLM",
+      "publisher": "stabilityai",
+      "match": [
+        "stablelm",
+        "stabilityai"
+      ],
+      "model_ids": [
+        "stablelm-2-12b",
+        "stablelm-2-1_6b",
+        "stablelm-3b-4e1t"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "tencent--hymt",
+      "display_name": "HY-MT",
+      "publisher": "tencent",
+      "match": [
+        "tencent",
+        "hymt"
+      ],
+      "model_ids": [
+        "HY-MT1.5-7B",
+        "Hunyuan-1.8B-Pretrain",
+        "Hunyuan-4B-Pretrain"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "tencent--wedlm",
+      "display_name": "WeDLM",
+      "publisher": "tencent",
+      "match": [
+        "wedlm",
+        "tencent"
+      ],
+      "model_ids": [
+        "WeDLM-7B-Base",
+        "WeDLM-7B-Instruct",
+        "WeDLM-8B-Base"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "tesslate--omnicoder",
+      "display_name": "tesslate--omnicoder",
+      "publisher": "Tesslate",
+      "match": [
+        "tesslate",
+        "omnicoder"
+      ],
+      "model_ids": [
+        "OmniCoder-9B"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "thudm--glm",
+      "display_name": "GLM",
+      "publisher": "thudm",
+      "match": [
+        "glm",
+        "thudm"
+      ],
+      "model_ids": [
+        "chatglm3-6b",
+        "glm-4-9b-chat"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "tiiuae--falcon",
+      "display_name": "Falcon",
+      "publisher": "tiiuae",
+      "match": [
+        "falcon",
+        "tiiuae"
+      ],
+      "model_ids": [
+        "Falcon3-10B-Base",
+        "Falcon3-1B-Base",
+        "Falcon3-7B-Base",
+        "falcon-11B",
+        "falcon-7b"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "togethercomputer--redpajama",
+      "display_name": "RedPajama",
+      "publisher": "togethercomputer",
+      "match": [
+        "redpajama",
+        "togethercomputer"
+      ],
+      "model_ids": [
+        "RedPajama-INCITE-7B-Base"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "ttech--t-models",
+      "display_name": "ttech--t-models",
+      "publisher": "t-tech",
+      "match": [
+        "ttech",
+        "models",
+        "tech"
+      ],
+      "model_ids": [
+        "T-lite-it-2.1",
+        "T-pro-it-2.0-AWQ"
+      ],
+      "source": "provenance-kit"
+    },
+    {
+      "id": "zaiorg--glm",
+      "display_name": "GLM",
+      "publisher": "zai-org",
+      "match": [
+        "glm",
+        "zai",
+        "org",
+        "zaiorg"
+      ],
+      "model_ids": [
+        "GLM-4-9B-0414",
+        "glm-4-9b-chat-1m"
+      ],
+      "source": "provenance-kit"
+    }
+  ]
+}

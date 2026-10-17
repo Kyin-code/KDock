@@ -12,6 +12,7 @@ use serde::Deserialize;
 use super::store::Provider;
 
 const REGISTRY_JSON: &str = include_str!("model_fingerprints.json");
+const ATLAS_JSON: &str = include_str!("model_dna_atlas.json");
 
 #[derive(Debug, Deserialize)]
 struct Mapping {
@@ -21,6 +22,22 @@ struct Mapping {
 #[derive(Debug, Deserialize)]
 struct Registry {
     checkpoint_mappings: BTreeMap<String, Mapping>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AtlasFamily {
+    display_name: String,
+    #[serde(default, rename = "match")]
+    match_terms: Vec<String>,
+    source: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct Atlas {
+    #[serde(default)]
+    modeldna_families: Vec<AtlasFamily>,
+    #[serde(default)]
+    provenance_families: Vec<AtlasFamily>,
 }
 
 fn registry() -> &'static BTreeMap<String, Mapping> {
@@ -33,6 +50,16 @@ fn registry() -> &'static BTreeMap<String, Mapping> {
         })
 }
 
+fn atlas() -> &'static Atlas {
+    static ATLAS: OnceLock<Atlas> = OnceLock::new();
+    &ATLAS.get_or_init(|| {
+        serde_json::from_str::<Atlas>(ATLAS_JSON).unwrap_or(Atlas {
+            modeldna_families: Vec::new(),
+            provenance_families: Vec::new(),
+        })
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fingerprint {
     /// 给用户看的真实模型名，无法识别时为 unknown。
@@ -41,6 +68,10 @@ pub struct Fingerprint {
     pub model: String,
     /// 原始 system_fingerprint。
     pub system: String,
+    /// 公开 atlas 匹配出的模型族；空表示无法确认。
+    pub family: String,
+    /// 模型族数据来源（ModelDNA / Model Provenance Kit）。
+    pub family_source: String,
 }
 
 fn known(system: &str) -> Option<&'static str> {
@@ -53,6 +84,59 @@ fn generic_alias(model: &str) -> bool {
         model.trim().to_ascii_lowercase().as_str(),
         "deepseek-flash" | "deepseek-chat" | "deepseek-reasoner"
     )
+}
+
+fn normalize_model(model: &str) -> String {
+    model
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn resolve_family(model: &str) -> (String, String) {
+    let haystack = format!(" {} ", normalize_model(model));
+    let ignored = ["org", "ai", "the", "model", "family", "hf", "chat", "base", "instruct"];
+    let mut best: Option<(usize, u8, &AtlasFamily, String)> = None;
+    let groups = [
+        (&atlas().provenance_families, 2u8, "Model Provenance Kit"),
+        (&atlas().modeldna_families, 1u8, "ModelDNA Atlas"),
+    ];
+    for (families, priority, source_name) in groups {
+        for family in families {
+            for term in &family.match_terms {
+                let term = term.trim().to_ascii_lowercase();
+                if term.len() < 3 || ignored.contains(&term.as_str()) {
+                    continue;
+                }
+                if !haystack.contains(&format!(" {term} ")) {
+                    continue;
+                }
+                let score = (term.len(), priority);
+                if best
+                    .as_ref()
+                    .map(|(len, p, _, _)| score > (*len, *p))
+                    .unwrap_or(true)
+                {
+                    best = Some((
+                        score.0,
+                        score.1,
+                        family,
+                        if family.source.is_empty() {
+                            source_name.to_string()
+                        } else {
+                            family.source.clone()
+                        },
+                    ));
+                }
+            }
+        }
+    }
+    best.map(|(_, _, f, source)| (f.display_name.clone(), source))
+        .unwrap_or_default()
 }
 
 pub fn compute(provider: &Provider, response_model: &str, system_fingerprint: &str) -> Fingerprint {
@@ -73,10 +157,16 @@ pub fn compute(provider: &Provider, response_model: &str, system_fingerprint: &s
             }
         })
         .unwrap_or_else(|| "unknown".to_string());
+    let (mut family, mut family_source) = resolve_family(&name);
+    if family.is_empty() && name == "unknown" {
+        (family, family_source) = resolve_family(&model);
+    }
     Fingerprint {
         name,
         model,
         system,
+        family,
+        family_source,
     }
 }
 
@@ -156,5 +246,20 @@ mod tests {
         for name in ["mimo", "glm", "deepseek", "kimi", "claude", "gpt", "grok"] {
             assert!(v["vendors"].get(name).is_some(), "缺少 {name}");
         }
+    }
+
+    #[test]
+    fn atlas_resolves_kimi_glm_mimo_and_deepseek_families() {
+        assert_eq!(atlas().provenance_families.len(), 39);
+        assert_eq!(atlas().modeldna_families.len(), 32);
+        assert!(atlas()
+            .provenance_families
+            .iter()
+            .any(|f| f.match_terms.iter().any(|t| t == "deepseek")));
+        let p = provider("x");
+        assert_eq!(compute(&p, "kimi-k2.5", "").family, "Moonshot Kimi (K2, Kimi-Linear)");
+        assert_eq!(compute(&p, "glm-5.3", "").family, "GLM");
+        assert_eq!(compute(&p, "mimo-v2.5", "").family, "Xiaomi MiMo V2.x");
+        assert_eq!(compute(&p, "deepseek-flash", "").family, "DeepSeek");
     }
 }
