@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "updated_at": "2026-10-17",
+  "checkpoint_mappings": {
+    "e72d3c7f663d3e1383b00b3884cb4501": {
+      "vendor": "deepseek",
+      "model": "DeepSeek-V4.1-Flash-1017",
+      "sources": [
+        "https://digg.com/ai/suiut1no",
+        "https://linux.do/t/topic/3035530",
+        "https://www.zhihu.com/question/2094825372521178603"
+      ]
+    },
+    "aeb56401ca74e127821c4f9126dcb669": {
+      "vendor": "deepseek",
+      "model": "DeepSeek-V4.1-Flash",
+      "sources": [
+        "https://linux.do/t/topic/3035530",
+        "https://www.cocoloop.cn/t/topic/17735",
+        "https://github.com/olimorris/codecompanion.nvim/issues/3373"
+      ]
+    }
+  },
+  "vendors": {
+    "mimo": {
+      "fingerprint_kind": "serving_stack",
+      "model_source": "response.model",
+      "observations": [
+        {
+          "fingerprint": "vllm-0.29.1rc1.dev449+geb8798058-tp8-ea63e23f",
+          "model": "MiMo-V2.6-Pro"
+        },
+        {
+          "fingerprint": "vllm-0.1.dev16124+g4d7f212b2-tp4-ep-f9d51453",
+          "model": "mimo-v2.5"
+        }
+      ],
+      "sources": [
+        "https://github.com/microsoft/vscode/issues/338143",
+        "https://github.com/vllm-project/recipes/issues/425"
+      ]
+    },
+    "glm": {
+      "fingerprint_kind": "serving_stack",
+      "model_source": "response.model",
+      "observations": [
+        {
+          "fingerprint": "vllm-0.23.0-tp8-ep-26bc8ca3",
+          "model": "GLM-5.3-Flash"
+        },
+        {
+          "fingerprint": "vllm-0.23.0-tp8-ep-7f569517",
+          "model": "GLM-5.3-Flash"
+        }
+      ],
+      "sources": [
+        "https://github.com/drewstone/cli-bridge/issues/175",
+        "https://github.com/vllm-project/vllm-ascend/issues/16365",
+        "https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/"
+      ]
+    },
+    "deepseek": {
+      "fingerprint_kind": "checkpoint_or_serving_stack",
+      "model_source": "checkpoint_mappings",
+      "sources": [
+        "https://linux.do/t/topic/3035530",
+        "https://www.zhihu.com/question/2094825372521178603"
+      ]
+    },
+    "kimi": {
+      "fingerprint_kind": "often_null",
+      "model_source": "response.model",
+      "observations": [
+        {
+          "fingerprint": null,
+          "model": "kimi-k2.5"
+        },
+        {
+          "fingerprint": null,
+          "model": "kimi-latest"
+        }
+      ],
+      "sources": [
+        "https://github.com/agentscope-ai/agentscope-java/issues/1094",
+        "https://github.com/radm9898-gif/mo/issues/5"
+      ]
+    },
+    "claude": {
+      "fingerprint_kind": "gateway_dependent",
+      "model_source": "response.model",
+      "observations": [
+        {
+          "fingerprint": "fp",
+          "model": "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+        }
+      ],
+      "sources": [
+        "https://github.com/aws-samples/bedrock-access-gateway/issues/134",
+        "https://docs.anthropic.com/en/api/messages"
+      ]
+    },
+    "gpt": {
+      "fingerprint_kind": "serving_stack",
+      "model_source": "response.model",
+      "sources": [
+        "https://platform.openai.com/docs/api-reference/chat/object",
+        "https://github.com/falvarezma-code/snapgate-canary/issues/23"
+      ]
+    },
+    "grok": {
+      "fingerprint_kind": "serving_stack",
+      "model_source": "response.model",
+      "observations": [
+        {
+          "fingerprint": "fp_5d2223775b",
+          "model": "grok-3-mini"
+        },
+        {
+          "fingerprint": "fp_f95ce4c3856c43c4",
+          "model": "grok-4.6"
+        }
+      ],
+      "sources": [
+        "https://github.com/standardcompletions/rfcs/issues/3",
+        "https://github.com/SurmountSystems/grok-oss/issues/74"
+      ]
+    }
+  }
+}
