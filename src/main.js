@@ -6481,7 +6481,7 @@ function agToolNode(ev) {
   head.className = "th";
   const nm = document.createElement("span");
   nm.className = "nm";
-  nm.textContent = ev.name + "(" + (ev.args && Object.keys(ev.args).length ? Object.keys(ev.args).join(", ") : "") + ")";
+  nm.textContent = ev.name + (ev.args && Object.keys(ev.args).length ? " · " + agArgSummary(ev.args) : "");
   const st = document.createElement("span");
   st.className = "st";
   st.textContent = ev.ok === false ? en("失败") : ev.ok ? en("完成") : en("执行中…");
@@ -6489,13 +6489,20 @@ function agToolNode(ev) {
   head.appendChild(st);
   const bd = document.createElement("div");
   bd.className = "bd";
-  const argPre = document.createElement("pre");
-  argPre.textContent = en("参数：") + JSON.stringify(ev.args || {}, null, 2);
-  bd.appendChild(argPre);
+  const args = ev.args || {};
+  if (Object.keys(args).length) {
+    const argBox = document.createElement("details");
+    argBox.className = "agargs";
+    const argSum = document.createElement("summary");
+    argSum.textContent = en("参数") + " · " + agArgSummary(args);
+    const argPre = document.createElement("pre");
+    argPre.textContent = JSON.stringify(args, null, 2);
+    argBox.appendChild(argSum);
+    argBox.appendChild(argPre);
+    bd.appendChild(argBox);
+  }
   if (ev.text != null) {
-    const outPre = document.createElement("pre");
-    outPre.textContent = agFormatToolText(ev.text);
-    bd.appendChild(outPre);
+    bd.appendChild(agToolResult(ev.text, ev.ok === false));
   }
   head.onclick = () => wrap.classList.toggle("open");
   wrap.appendChild(head);
@@ -6504,15 +6511,44 @@ function agToolNode(ev) {
   return wrap;
 }
 
-/** 二进制工具结果：把后端的一长串 HEX 排成 offset + 16 字节 + ASCII，便于人看 */
-function agFormatToolText(text) {
-  const s = String(text == null ? "" : text);
-  const m = s.match(/^\(二进制\s+(\d+)\s*字节\)\s*\nHEX:\s*([0-9A-Fa-f\s]+)/);
-  if (!m) return s;
+/** 参数摘要：只露 3 个关键值，避免一长串 JSON 占屏 */
+function agArgSummary(args) {
+  const keys = Object.keys(args || {});
+  if (!keys.length) return en("无");
+  const one = (v) => {
+    if (typeof v === "string") {
+      const s = v.replace(/\s+/g, " ").trim();
+      return s.length > 48 ? s.slice(0, 48) + "…" : s;
+    }
+    if (Array.isArray(v)) return `[${v.length}]`;
+    if (v && typeof v === "object") return "{…}";
+    return String(v);
+  };
+  let s = keys.slice(0, 3).map((k) => `${k}=${one(args[k])}`).join(" · ");
+  if (keys.length > 3) s += ` · +${keys.length - 3}`;
+  return s;
+}
+
+function agExitBadge(text) {
+  const m = String(text).match(/(?:^|\n)(?:exit=|退出码\s*)(-?\d+)/);
+  if (!m) return null;
+  const el = document.createElement("span");
+  el.className = "agcode " + (Number(m[1]) === 0 ? "ok" : "bad");
+  el.textContent = `${en("退出码")} ${m[1]} · ${Number(m[1]) === 0 ? en("成功") : en("失败")}`;
+  return el;
+}
+
+function agParseBinary(text) {
+  const m = String(text).match(/^\(二进制\s+(\d+)\s*字节\)\s*\nHEX:\s*([0-9A-Fa-f\s]+)/);
+  if (!m) return null;
   const hex = m[2].replace(/\s+/g, "");
   const bytes = [];
   for (let i = 0; i + 1 < hex.length; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
-  const lines = [`(二进制 ${m[1]} 字节 / HEX)`];
+  return { count: Number(m[1]), bytes };
+}
+
+function agHexView(bytes) {
+  const lines = [];
   for (let i = 0; i < bytes.length; i += 16) {
     const row = bytes.slice(i, i + 16);
     const hx = row.map((b) => b.toString(16).padStart(2, "0").toUpperCase()).join(" ").padEnd(47, " ");
@@ -6520,6 +6556,153 @@ function agFormatToolText(text) {
     lines.push(`${i.toString(16).padStart(8, "0")}  ${hx}  |${asc}|`);
   }
   return lines.join("\n");
+}
+
+function agTextView(bytes) {
+  let s = "";
+  try {
+    s = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes));
+  } catch (_) {
+    s = bytes.map((b) => (b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : ".")).join("");
+  }
+  return s.replace(/[^\x09\x0a\x0d\x20-\x7e\u0080-\uffff]/g, ".");
+}
+
+/** 把路径从工具输出里拣出来，提供“打开文件/目录”按钮 */
+function agToolPaths(text) {
+  const s = String(text || "");
+  const re = /([A-Za-z]:\\[^\r\n"'<>|]+|\/(?:[^\s"'<>|]+\/)*[^\s"'<>|]+)/g;
+  const out = [];
+  for (const m of s.matchAll(re)) {
+    let p = m[1].replace(/[，。；,;:：)）\]】]+$/, "").trim();
+    if (p.length < 4 || out.includes(p)) continue;
+    out.push(p);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+function agToolbar(raw) {
+  const bar = document.createElement("div");
+  bar.className = "agtoolbar";
+  const copy = document.createElement("button");
+  copy.className = "btn tiny";
+  copy.textContent = en("复制");
+  copy.onclick = async (e) => {
+    e.stopPropagation();
+    try { await navigator.clipboard.writeText(raw); toast(en("已复制")); }
+    catch (_) { toast(en("复制失败")); }
+  };
+  bar.appendChild(copy);
+  for (const p of agToolPaths(raw)) {
+    const b = document.createElement("button");
+    b.className = "btn tiny";
+    b.textContent = /tool-output/i.test(p) ? en("打开全文") : en("打开路径");
+    b.title = p;
+    b.onclick = (e) => {
+      e.stopPropagation();
+      invoke("browser_open_external", { path: p }).catch((err) => toast(String(err)));
+    };
+    bar.appendChild(b);
+  }
+  return bar;
+}
+
+function agParseTable(text) {
+  const lines = String(text).split(/\r?\n/);
+  for (let i = 0; i + 1 < lines.length; i++) {
+    if (!lines[i].includes("|")) continue;
+    if (!/^\s*\|?[\s:|-]+\|/.test(lines[i + 1]) || !lines[i + 1].includes("|")) continue;
+    const head = lines[i].replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((x) => x.trim());
+    const rows = [];
+    for (let j = i + 2; j < lines.length && lines[j].includes("|"); j++) {
+      rows.push(lines[j].replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((x) => x.trim()));
+    }
+    if (head.length && rows.length) return { head, rows };
+  }
+  return null;
+}
+
+function agDiffNode(raw) {
+  const pre = document.createElement("pre");
+  pre.className = "agdiff";
+  for (const line of raw.split(/\r?\n/)) {
+    const span = document.createElement("span");
+    span.textContent = line + "\n";
+    if (/^diff --git|^index |^--- |^\+\+\+ /.test(line)) span.className = "meta";
+    else if (/^@@/.test(line)) span.className = "hunk";
+    else if (line.startsWith("+")) span.className = "add";
+    else if (line.startsWith("-")) span.className = "del";
+    pre.appendChild(span);
+  }
+  return pre;
+}
+
+function agToolResult(text, forceOpen) {
+  const raw = String(text == null ? "" : text);
+  const box = document.createElement("div");
+  box.className = "agresult";
+  const code = agExitBadge(raw);
+  if (code) box.appendChild(code);
+  const bin = agParseBinary(raw);
+  if (bin) {
+    const bar = document.createElement("div");
+    bar.className = "agtoolbar";
+    const hexBtn = document.createElement("button");
+    const textBtn = document.createElement("button");
+    hexBtn.className = "btn tiny on";
+    textBtn.className = "btn tiny";
+    hexBtn.textContent = "HEX";
+    textBtn.textContent = en("文本");
+    const pre = document.createElement("pre");
+    pre.className = "agbinary";
+    const paint = (mode) => {
+      hexBtn.classList.toggle("on", mode === "hex");
+      textBtn.classList.toggle("on", mode === "text");
+      pre.textContent = mode === "hex"
+        ? `${en("二进制")} ${bin.count} ${en("字节")} / HEX\n${agHexView(bin.bytes)}`
+        : `${en("二进制")} ${bin.count} ${en("字节")} / ${en("文本预览（仅可打印字符）")}\n${agTextView(bin.bytes)}`;
+    };
+    hexBtn.onclick = (e) => { e.stopPropagation(); paint("hex"); };
+    textBtn.onclick = (e) => { e.stopPropagation(); paint("text"); };
+    bar.append(hexBtn, textBtn);
+    for (const b of [...agToolbar(raw).children]) bar.appendChild(b);
+    box.append(bar, pre);
+    paint("hex");
+    return box;
+  }
+  box.appendChild(agToolbar(raw));
+  const long = raw.length > 700;
+  const details = document.createElement("details");
+  details.className = "agout";
+  details.open = forceOpen || !long;
+  const sum = document.createElement("summary");
+  sum.textContent = `${en("输出")} · ${raw.length} ${en("字符")}${long ? " · " + en("点击展开") : ""}`;
+  details.appendChild(sum);
+
+  const isDiff = /^diff --git/m.test(raw) || (/^--- /m.test(raw) && /^\+\+\+ /m.test(raw) && /^@@/m.test(raw));
+  const table = !isDiff && agParseTable(raw);
+  if (isDiff) {
+    details.appendChild(agDiffNode(raw));
+  } else if (table) {
+    const t = document.createElement("table");
+    t.className = "agtable";
+    const tr = document.createElement("tr");
+    for (const h of table.head) { const th = document.createElement("th"); th.textContent = h; tr.appendChild(th); }
+    t.appendChild(tr);
+    for (const row of table.rows) {
+      const rr = document.createElement("tr");
+      for (const cell of row) { const td = document.createElement("td"); td.textContent = cell; rr.appendChild(td); }
+      t.appendChild(rr);
+    }
+    details.appendChild(t);
+  } else {
+    const pre = document.createElement("pre");
+    pre.textContent = raw;
+    details.appendChild(pre);
+  }
+  box.appendChild(details);
+  return box;
 }
 
 /**

@@ -1323,6 +1323,36 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   border-radius: 7px; padding: 7px 9px; max-height: 260px; overflow: auto;
   font-family: Consolas, "Cascadia Mono", monospace; font-size: 11px; white-space: pre-wrap; word-break: break-all;
 }
+.agtool .agargs { margin-top: 4px; }
+.agtool .agargs > summary,
+.agtool .agout > summary {
+  cursor: pointer; color: hsl(var(--muted-foreground)); font-size: 10.5px;
+  user-select: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.agtool .agargs > summary:hover,
+.agtool .agout > summary:hover { color: hsl(var(--foreground)); }
+.agtool .agargs pre { max-height: 160px; }
+.agtool .agout { margin-top: 5px; }
+.agtool .agout[open] > summary { margin-bottom: 3px; }
+.agtool .agtoolbar { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 5px 0 2px; }
+.agtool .agtoolbar .btn { font-size: 10.5px; padding: 2px 7px; }
+.agtool .agcode {
+  display: inline-block; margin: 5px 0 2px; padding: 2px 7px; border-radius: 5px;
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 10.5px;
+}
+.agtool .agcode.ok { color: hsl(var(--success)); background: hsl(var(--success) / .10); }
+.agtool .agcode.bad { color: hsl(var(--destructive)); background: hsl(var(--destructive) / .10); }
+.agtool .agdiff { white-space: pre; word-break: normal; }
+.agtool .agdiff span { display: block; min-height: 1.35em; }
+.agtool .agdiff .add { color: hsl(145 65% 68%); background: hsl(145 55% 35% / .13); }
+.agtool .agdiff .del { color: hsl(0 70% 72%); background: hsl(0 55% 40% / .13); }
+.agtool .agdiff .hunk { color: hsl(210 85% 72%); }
+.agtool .agdiff .meta { color: hsl(var(--muted-foreground)); }
+.agtool .agtable { border-collapse: collapse; margin-top: 5px; font-size: 11px; }
+.agtool .agtable th, .agtool .agtable td {
+  border: 1px solid var(--surface-line); padding: 3px 7px; text-align: left; vertical-align: top;
+}
+.agtool .agtable th { background: hsl(var(--accent)); white-space: nowrap; }
 /* 右栏的小列表（会话 / 技能 / 工具） */
 .agentlist { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
 .agentlist .row {
