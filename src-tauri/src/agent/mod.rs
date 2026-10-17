@@ -23,7 +23,7 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
@@ -106,6 +106,8 @@ pub struct AgentState {
     pub history: Mutex<HashMap<String, Vec<browser::Page>>>,
     /// 屏幕会话 → 打开它的 agent 会话。防止 A 关掉 B 的屏幕。
     pub screen_owners: Mutex<HashMap<u32, String>>,
+    /// 只读工具的短 TTL 结果缓存：同一会话重复读同一个文件/搜索词时不再重新扫。
+    pub read_cache: Mutex<HashMap<String, (Instant, String)>>,
 }
 
 pub struct RunHandle {
@@ -144,6 +146,33 @@ impl AgentState {
         Ok(g.entry(session.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(Link::default())))
             .clone())
+    }
+    pub fn cache_get(&self, session: &str, tool: &str, args: &Value) -> Option<String> {
+        let key = format!("{session}|{tool}|{args}");
+        let mut g = self.read_cache.lock().ok()?;
+        if let Some((at, v)) = g.get(&key) {
+            if at.elapsed() < Duration::from_secs(90) {
+                return Some(v.clone());
+            }
+        }
+        g.remove(&key);
+        None
+    }
+    pub fn cache_put(&self, session: &str, tool: &str, args: &Value, text: &str) {
+        if let Ok(mut g) = self.read_cache.lock() {
+            if g.len() > 128 {
+                g.clear();
+            }
+            g.insert(
+                format!("{session}|{tool}|{args}"),
+                (Instant::now(), text.to_string()),
+            );
+        }
+    }
+    pub fn cache_clear(&self, session: &str) {
+        if let Ok(mut g) = self.read_cache.lock() {
+            g.retain(|k, _| !k.starts_with(&format!("{session}|")));
+        }
     }
 }
 

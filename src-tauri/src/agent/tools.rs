@@ -259,21 +259,25 @@ pub fn catalog() -> Vec<ToolDef> {
     );
     push(
         "workspace_read",
-        "读工作区里的文本文件。",
+        "读工作区里的文本文件。一次可以给 path，或者给 paths 数组批量读多个文件（推荐）。",
         json!({"type":"object","properties":{
-            "path":{"type":"string"},
+            "path":{"type":"string","description":"单个文件路径"},
+            "paths":{"type":"array","items":{"type":"string"},"description":"批量读取多个文件"},
             "max_bytes":{"type":"integer","description":"默认 65536"}
-        },"required":["path"]}),
+        }}),
         false,
     );
     push(
         "workspace_write",
-        "写工作区里的文件（会自动建目录）。",
+        "写工作区里的文件（会自动建目录）。一次可以给 path+content，或者给 files 数组批量创建/覆盖多个文件。",
         json!({"type":"object","properties":{
             "path":{"type":"string"},
             "content":{"type":"string"},
+            "files":{"type":"array","items":{"type":"object","properties":{
+                "path":{"type":"string"},"content":{"type":"string"}
+            },"required":["path","content"]},"description":"批量文件"},
             "append":{"type":"boolean","description":"true 表示追加"}
-        },"required":["path","content"]}),
+        }}),
         false,
     );
     push(
@@ -284,13 +288,19 @@ pub fn catalog() -> Vec<ToolDef> {
     );
     push(
         "workspace_edit",
-        "结构化改文件：把 old_text 精确替换成 new_text，返回 unified diff。old_text 必须唯一（除非 replace_all=true），找不到/多处匹配会拒绝，避免盲改。",
+        "结构化改文件：把 old_text 精确替换成 new_text，返回 unified diff。支持一次给 edits 数组批量改多个位置/文件；old_text 必须唯一（除非 replace_all=true）。",
         json!({"type":"object","properties":{
-            "path":{"type":"string","description":"相对工作区的文件路径"},
+            "path":{"type":"string","description":"单个文件的相对路径（批量时可在每个 edit 里给 path）"},
             "old_text":{"type":"string","description":"要替换的原文（精确匹配）"},
             "new_text":{"type":"string","description":"替换后的文本，可为空"},
-            "replace_all":{"type":"boolean","description":"默认 false；true 才允许替换所有出现"}
-        },"required":["path","old_text","new_text"]}),
+            "replace_all":{"type":"boolean","description":"默认 false；true 才允许替换所有出现"},
+            "edits":{"type":"array","items":{"type":"object","properties":{
+                "path":{"type":"string"},
+                "old_text":{"type":"string"},
+                "new_text":{"type":"string"},
+                "replace_all":{"type":"boolean"}
+            },"required":["old_text","new_text"]},"description":"批量编辑"}
+        }}),
         false,
     );
     push(
@@ -329,6 +339,28 @@ pub fn catalog() -> Vec<ToolDef> {
         json!({"type":"object","properties":{
             "cmd":{"type":"string","description":"不填就自动识别"},
             "cwd":{"type":"string","description":"相对工作区的子目录，默认工作区根"},
+            "timeout_ms":{"type":"integer","description":"默认 300000"}
+        }}),
+        false,
+    );
+    push(
+        "workspace_context",
+        "一次拿齐上下文：目录列表 + 可选搜索命中 + 指定文件内容。适合“先看项目再动手”，减少多次 workspace_list/search/read。",
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"目录，默认工作区根"},
+            "pattern":{"type":"string","description":"可选搜索词"},
+            "paths":{"type":"array","items":{"type":"string"},"description":"要一起读的文件"},
+            "max_files":{"type":"integer","description":"目录最多列多少项，默认 80"},
+            "max_bytes":{"type":"integer","description":"每个文件最多读多少字节，默认 20000"}
+        }}),
+        false,
+    );
+    push(
+        "workspace_check",
+        "一次完成验证：git status/diff + 项目测试（自动识别或显式 cmd），返回两段结果。改完代码优先用它，减少 diff/test 两次调用。",
+        json!({"type":"object","properties":{
+            "cmd":{"type":"string","description":"测试命令，不填自动识别"},
+            "cwd":{"type":"string","description":"相对工作区的子目录，默认根"},
             "timeout_ms":{"type":"integer","description":"默认 300000"}
         }}),
         false,
@@ -1129,6 +1161,20 @@ fn is_serial(ctx: &ToolCtx) -> bool {
         .unwrap_or(false)
 }
 
+fn cached_read(
+    ctx: &ToolCtx,
+    tool: &str,
+    args: &Value,
+    f: impl FnOnce() -> Result<String, String>,
+) -> Result<String, String> {
+    if let Some(v) = ctx.state.cache_get(ctx.session, tool, args) {
+        return Ok(format!("（缓存命中，未重复执行）\n{v}"));
+    }
+    let out = f()?;
+    ctx.state.cache_put(ctx.session, tool, args, &out);
+    Ok(out)
+}
+
 fn plan_write(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let items = args
         .get("items")
@@ -1454,6 +1500,8 @@ mod tests {
             "workspace_search",
             "workspace_run",
             "workspace_test",
+            "workspace_context",
+            "workspace_check",
             "plan_write",
             "plan_read",
             "subagent_spawn",
@@ -1467,6 +1515,7 @@ mod tests {
         }
         assert!(is_dangerous("workspace_run"));
         assert!(is_dangerous("workspace_test"));
+        assert!(is_dangerous("workspace_check"));
         assert!(is_dangerous("subagent_spawn"));
         for n in ["workspace_edit", "workspace_search", "plan_write", "parallel_read", "screen_ocr"] {
             assert!(!is_dangerous(n), "{n} 不该要审批");
@@ -1731,7 +1780,7 @@ mod tests {
 pub fn is_dangerous(name: &str) -> bool {
     matches!(
         name,
-        "link_send" | "device_push" | "firmware_upgrade" | "flash" | "local_run" | "workspace_run" | "workspace_test" | "subagent_spawn" | "port_write" | "flow_set" | "flow_add_node" | "flow_connect" | "flow_delete"
+        "link_send" | "device_push" | "firmware_upgrade" | "flash" | "local_run" | "workspace_run" | "workspace_test" | "workspace_check" | "subagent_spawn" | "port_write" | "flow_set" | "flow_add_node" | "flow_connect" | "flow_delete"
             | "port_open" | "port_close"
             | "ssh_run"
             | "skill_create" | "skill_update"
@@ -2026,6 +2075,8 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "workspace_search" => workspace_search(ctx, args),
         "workspace_run" => workspace_run(ctx, args),
         "workspace_test" => workspace_test(ctx, args),
+        "workspace_context" => workspace_context(ctx, args),
+        "workspace_check" => workspace_check(ctx, args),
         "output_read" => {
             let path = arg_str(args, "path").ok_or("缺少 path")?;
             let off = arg_u64(args, "offset", 0) as usize;
@@ -3255,63 +3306,103 @@ fn browser_find(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
 }
 
 fn workspace_list(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
-    let rel = arg_str(args, "path").unwrap_or_else(|| ".".into());
-    let dir = store::resolve_in_workspace(&ctx.workspace, &rel)?;
-    std::fs::create_dir_all(&dir).ok();
-    let mut lines = vec![format!("工作区 {}/ 下：", rel)];
-    for entry in std::fs::read_dir(&dir)
-        .map_err(|e| format!("读目录失败: {e}"))?
-        .flatten()
-    {
-        let md = entry.metadata().ok();
-        let is_dir = md.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-        let size = md.as_ref().map(|m| m.len()).unwrap_or(0);
-        let name = entry.file_name().to_string_lossy().to_string();
-        lines.push(if is_dir {
-            format!("D {name}/")
-        } else {
-            format!("F {size:>10}  {name}")
-        });
-    }
-    Ok(lines.join("\n"))
+    cached_read(ctx, "workspace_list", args, || {
+        let rel = arg_str(args, "path").unwrap_or_else(|| ".".into());
+        let dir = store::resolve_in_workspace(&ctx.workspace, &rel)?;
+        std::fs::create_dir_all(&dir).ok();
+        let mut lines = vec![format!("工作区 {}/ 下：", rel)];
+        for entry in std::fs::read_dir(&dir)
+            .map_err(|e| format!("读目录失败: {e}"))?
+            .flatten()
+        {
+            let md = entry.metadata().ok();
+            let is_dir = md.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+            let size = md.as_ref().map(|m| m.len()).unwrap_or(0);
+            let name = entry.file_name().to_string_lossy().to_string();
+            lines.push(if is_dir {
+                format!("D {name}/")
+            } else {
+                format!("F {size:>10}  {name}")
+            });
+        }
+        Ok(lines.join("\n"))
+    })
 }
 
 fn workspace_read(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
-    let rel = arg_str(args, "path").ok_or("缺少 path")?;
-    let max = arg_u64(args, "max_bytes", 65_536) as usize;
-    let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
-    let data = std::fs::read(&path).map_err(|e| format!("读不了 {rel}: {e}"))?;
-    let cut = &data[..data.len().min(max)];
-    Ok(text_and_hex(cut))
+    cached_read(ctx, "workspace_read", args, || {
+        if let Some(paths) = args.get("paths").and_then(|v| v.as_array()) {
+            if paths.is_empty() {
+                return Err("paths 不能为空".into());
+            }
+            let max = arg_u64(args, "max_bytes", 32_768) as usize;
+            let mut out = Vec::new();
+            for p in paths {
+                let rel = p.as_str().ok_or("paths 里必须是字符串")?;
+                let path = store::resolve_in_workspace(&ctx.workspace, rel)?;
+                let data = std::fs::read(&path).map_err(|e| format!("读不了 {rel}: {e}"))?;
+                let cut = &data[..data.len().min(max)];
+                out.push(format!(
+                    "===== {rel} ({} bytes) =====\n{}",
+                    data.len(),
+                    text_and_hex(cut)
+                ));
+            }
+            return Ok(out.join("\n\n"));
+        }
+        let rel = arg_str(args, "path").ok_or("缺少 path")?;
+        let max = arg_u64(args, "max_bytes", 65_536) as usize;
+        let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
+        let data = std::fs::read(&path).map_err(|e| format!("读不了 {rel}: {e}"))?;
+        let cut = &data[..data.len().min(max)];
+        Ok(text_and_hex(cut))
+    })
 }
 
 fn workspace_write(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
-    let rel = arg_str(args, "path").ok_or("缺少 path")?;
-    let content = arg_str(args, "content").unwrap_or_default();
-    let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let size = content.len();
-    if arg_bool(args, "append", false) {
-        use std::io::Write;
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|e| format!("打开失败: {e}"))?;
-        f.write_all(content.as_bytes())
-            .map_err(|e| format!("写失败: {e}"))?;
+    let mut files: Vec<(String, String)> = Vec::new();
+    if let Some(arr) = args.get("files").and_then(|v| v.as_array()) {
+        for f in arr {
+            let rel = f.get("path").and_then(|v| v.as_str()).ok_or("files 每项缺 path")?;
+            let content = f.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            files.push((rel.to_string(), content.to_string()));
+        }
     } else {
-        std::fs::write(&path, content).map_err(|e| format!("写失败: {e}"))?;
+        let rel = arg_str(args, "path").ok_or("缺少 path（或给 files 数组）")?;
+        let content = arg_str(args, "content").unwrap_or_default();
+        files.push((rel, content));
     }
-    Ok(format!("已写 {} 字节 -> {}", size, path.display()))
+    let append = arg_bool(args, "append", false);
+    let mut out = Vec::new();
+    for (rel, content) in files {
+        let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let size = content.len();
+        if append {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|e| format!("打开失败: {e}"))?;
+            f.write_all(content.as_bytes())
+                .map_err(|e| format!("写失败: {e}"))?;
+        } else {
+            std::fs::write(&path, content).map_err(|e| format!("写失败: {e}"))?;
+        }
+        out.push(format!("已写 {size} 字节 -> {}", path.display()));
+    }
+    ctx.state.cache_clear(ctx.session);
+    Ok(out.join("\n"))
 }
 
 fn workspace_mkdir(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let rel = arg_str(args, "path").ok_or("缺少 path")?;
     let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
     std::fs::create_dir_all(&path).map_err(|e| format!("建目录失败: {e}"))?;
+    ctx.state.cache_clear(ctx.session);
     Ok(format!("已建目录 {}", path.display()))
 }
 
@@ -3363,35 +3454,73 @@ fn unified_diff(rel: &str, old: &str, new: &str) -> String {
 }
 
 fn workspace_edit(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
-    let rel = arg_str(args, "path").ok_or("缺少 path")?;
-    let old = arg_str(args, "old_text").ok_or("缺少 old_text")?;
-    let new = arg_str(args, "new_text").ok_or("缺少 new_text")?;
-    if old.is_empty() {
-        return Err("old_text 不能为空（新建文件请用 workspace_write）".into());
+    let default_path = arg_str(args, "path");
+    let mut specs: Vec<(String, String, String, bool)> = Vec::new();
+    if let Some(edits) = args.get("edits").and_then(|v| v.as_array()) {
+        for (i, e) in edits.iter().enumerate() {
+            let rel = e
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| default_path.clone())
+                .ok_or_else(|| format!("第 {} 个 edit 缺 path", i + 1))?;
+            let old = e.get("old_text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let new = e.get("new_text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if old.is_empty() {
+                return Err(format!("第 {} 个 edit 的 old_text 不能为空", i + 1));
+            }
+            let all = e.get("replace_all").and_then(|v| v.as_bool()).unwrap_or(false);
+            specs.push((rel, old, new, all));
+        }
+    } else {
+        let rel = default_path.ok_or("缺少 path（或给 edits 数组）")?;
+        let old = arg_str(args, "old_text").ok_or("缺少 old_text")?;
+        let new = arg_str(args, "new_text").ok_or("缺少 new_text")?;
+        if old.is_empty() {
+            return Err("old_text 不能为空（新建文件请用 workspace_write）".into());
+        }
+        specs.push((rel, old, new, arg_bool(args, "replace_all", false)));
     }
-    let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("读不了 {rel}: {e}"))?;
-    let count = text.matches(&old).count();
-    if count == 0 {
-        return Err(format!("old_text 在 {rel} 里找不到；没有改任何东西"));
+
+    // 先全部校验/在内存里改，确认无误后再落盘，避免批量编辑改到一半失败。
+    let mut files: std::collections::HashMap<String, (String, String, usize)> =
+        std::collections::HashMap::new();
+    for (rel, old, new, all) in specs {
+        if !files.contains_key(&rel) {
+            let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
+            let text = std::fs::read_to_string(&path).map_err(|e| format!("读不了 {rel}: {e}"))?;
+            files.insert(rel.clone(), (text.clone(), text, 0));
+        }
+        let (_, text, count) = files.get_mut(&rel).unwrap();
+        let hit = text.matches(&old).count();
+        if hit == 0 {
+            return Err(format!("old_text 在 {rel} 里找不到；没有改任何东西"));
+        }
+        if hit > 1 && !all {
+            return Err(format!(
+                "old_text 在 {rel} 里出现 {hit} 次；要么给更长上下文，要么 replace_all=true"
+            ));
+        }
+        *text = if all {
+            text.replace(&old, &new)
+        } else {
+            text.replacen(&old, &new, 1)
+        };
+        *count += if all { hit } else { 1 };
     }
-    if count > 1 && !arg_bool(args, "replace_all", false) {
-        return Err(format!(
-            "old_text 在 {rel} 里出现 {count} 次；要么给更长的上下文，要么 replace_all=true"
+    let mut out = Vec::new();
+    for (rel, (before, after, count)) in files {
+        let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
+        std::fs::write(&path, &after).map_err(|e| format!("写失败: {e}"))?;
+        out.push(format!(
+            "已改 {}（{} 处）\n{}",
+            path.display(),
+            count,
+            unified_diff(&rel, &before, &after)
         ));
     }
-    let updated = if arg_bool(args, "replace_all", false) {
-        text.replace(&old, &new)
-    } else {
-        text.replacen(&old, &new, 1)
-    };
-    std::fs::write(&path, &updated).map_err(|e| format!("写失败: {e}"))?;
-    Ok(format!(
-        "已改 {}（{} 处）\n{}",
-        path.display(),
-        if arg_bool(args, "replace_all", false) { count } else { 1 },
-        unified_diff(&rel, &text, &updated)
-    ))
+    ctx.state.cache_clear(ctx.session);
+    Ok(out.join("\n\n"))
 }
 
 fn workspace_diff(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
@@ -3419,6 +3548,10 @@ fn workspace_diff(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
 }
 
 fn workspace_search(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    cached_read(ctx, "workspace_search", args, || workspace_search_inner(ctx, args))
+}
+
+fn workspace_search_inner(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let pattern = arg_str(args, "pattern").ok_or("缺少 pattern")?;
     if pattern.is_empty() {
         return Err("pattern 不能为空".into());
@@ -3554,4 +3687,46 @@ fn workspace_test(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let mut a = args.clone();
     a["cmd"] = json!(cmd);
     workspace_run(ctx, &a)
+}
+
+fn workspace_context(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    cached_read(ctx, "workspace_context", args, || {
+        let mut out = Vec::new();
+        let max_files = arg_u64(args, "max_files", 80).clamp(1, 500) as usize;
+        let list_args = json!({ "path": arg_str(args, "path").unwrap_or_else(|| ".".into()) });
+        let listing = workspace_list(ctx, &list_args)?;
+        out.push(format!(
+            "--- 目录 ---\n{}",
+            listing.lines().take(max_files + 1).collect::<Vec<_>>().join("\n")
+        ));
+        if let Some(pattern) = arg_str(args, "pattern").filter(|s| !s.trim().is_empty()) {
+            let mut sargs = json!({ "pattern": pattern, "max_results": 30 });
+            if let Some(p) = arg_str(args, "path") {
+                sargs["path"] = json!(p);
+            }
+            let hits = workspace_search_inner(ctx, &sargs)?;
+            out.push(format!("--- 搜索 ---\n{}", hits));
+        }
+        if let Some(paths) = args.get("paths").and_then(|v| v.as_array()) {
+            let max = arg_u64(args, "max_bytes", 20_000) as usize;
+            let mut reads = Vec::new();
+            for p in paths {
+                let Some(rel) = p.as_str() else { continue };
+                let path = store::resolve_in_workspace(&ctx.workspace, rel)?;
+                let data = std::fs::read(&path).map_err(|e| format!("读不了 {rel}: {e}"))?;
+                let body = text_and_hex(&data[..data.len().min(max)]);
+                reads.push(format!("===== {rel} =====\n{body}"));
+            }
+            if !reads.is_empty() {
+                out.push(format!("--- 文件 ---\n{}", reads.join("\n\n")));
+            }
+        }
+        Ok(out.join("\n\n"))
+    })
+}
+
+fn workspace_check(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let diff = workspace_diff(ctx, args).unwrap_or_else(|e| format!("（diff 不可用）{e}"));
+    let test = workspace_test(ctx, args)?;
+    Ok(format!("--- diff / status ---\n{diff}\n\n--- test ---\n{test}"))
 }

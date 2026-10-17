@@ -123,6 +123,9 @@
   `allow_cmd`；`workspace_run/test` 强制在工作区目录执行，减少误操作。
 - **MCP 常驻进程**：同一个 MCP server 配置复用已初始化的进程，不再每次 `tools/call`
   重新握手；配置变化或应用退出时关闭进程。
+- **减少 Agent 工具调用**：`workspace_read(paths=[...])` 批量读、`workspace_write(files=[...])`
+  批量写、`workspace_edit(edits=[...])` 批量改；新增 `workspace_context`（目录+搜索+文件一次拿）
+  和 `workspace_check`（diff+测试一次跑）；只读工具加 90 秒会话内结果缓存。
 
 ## [0.3.0] - 2026-10-15
 

@@ -58,6 +58,8 @@ pub static BLOCKS: &[Block] = &[
                · 改文件优先 workspace_edit（精确替换并回 unified diff），改完用 workspace_diff 审查；\n\
                · 有测试就跑 workspace_test（自动识别 cargo/npm/pytest），用 workspace_run 处理其它项目命令；\n\
                · 多个互不依赖的只读操作可以用 parallel_read 一次并行；独立子任务用 subagent_spawn，再用 subagent_wait 收结果。\n\
+               · 尽量一次工具调用覆盖一个阶段：workspace_read(paths=[...]) 批量读、workspace_write(files=[...]) 批量写、\n\
+               workspace_edit(edits=[...]) 批量改、workspace_context 一次拿目录+搜索+文件、workspace_check 一次做 diff+测试；\n\
                这些工具比 local_run 里手写 grep/sed/git diff 更安全，也少烧模型轮次。",
     },
     Block {
