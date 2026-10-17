@@ -27,6 +27,7 @@ tauri-plugin-window-state = "2"
 # （同一个用户数据目录被两个实例抢，WebView2 会直接失败：HRESULT(0x8007139F)，
 #   表现就是"打不开/闪退"——实测踩过）
 tauri-plugin-single-instance = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serialport = "4.7"
 kdock-core = { path = "../crates/kdock-core" }
 serde = { version = "1", features = ["derive"] }

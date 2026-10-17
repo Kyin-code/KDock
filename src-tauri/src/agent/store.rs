@@ -55,6 +55,36 @@ fn default_max_messages() -> u32 { 40 }
 fn default_true() -> bool { true }
 fn default_kind() -> String { "openai".into() }
 
+/// 按百万 token 计价的模型价格。峰价 / 谷价分开存，币种由用户选。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelPricing {
+    #[serde(default)]
+    pub currency: String,
+    #[serde(default)]
+    pub peak_hit: f64,
+    #[serde(default)]
+    pub peak_miss: f64,
+    #[serde(default)]
+    pub peak_out: f64,
+    #[serde(default)]
+    pub offpeak_hit: f64,
+    #[serde(default)]
+    pub offpeak_miss: f64,
+    #[serde(default)]
+    pub offpeak_out: f64,
+}
+
+impl ModelPricing {
+    pub fn cost(&self, peak: bool, hit: u64, miss: u64, out: u64) -> f64 {
+        let (h, m, o) = if peak {
+            (self.peak_hit, self.peak_miss, self.peak_out)
+        } else {
+            (self.offpeak_hit, self.offpeak_miss, self.offpeak_out)
+        };
+        (hit as f64 / 1e6) * h + (miss as f64 / 1e6) * m + (out as f64 / 1e6) * o
+    }
+}
+
 /// 一个模型供应商 profile。`api_key_ref` 只是**密钥的名字**，密钥本体在 secrets 文件里。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Provider {
@@ -80,6 +110,9 @@ pub struct Provider {
     pub supports_tools: bool,
     #[serde(default = "default_true")]
     pub supports_stream: bool,
+    /// 老配置没有这一段；缺省时界面会按模型名给一份默认价格，保存后以这里为准。
+    #[serde(default)]
+    pub pricing: Option<ModelPricing>,
 }
 
 impl Provider {
@@ -386,6 +419,9 @@ pub struct SessionMeta {
     /// 没命中缓存的输入 token（DeepSeek: prompt_cache_miss_tokens）
     #[serde(default)]
     pub total_cache_miss: u64,
+    /// 本会话累计花费，按币种分开（请求发生时按当时的峰/谷价记账）。
+    #[serde(default)]
+    pub cost_total: std::collections::BTreeMap<String, f64>,
     /// 已经提示过"大头是系统提示+工具定义"了（同一个会话只弹一次 toast）
     #[serde(default)]
     pub warned_overhead: bool,
@@ -538,6 +574,7 @@ pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<Sess
         total_completion: 0,
         total_cache_hit: 0,
         total_cache_miss: 0,
+        cost_total: std::collections::BTreeMap::new(),
         warned_overhead: false,
         system_prompt: String::new(),
         tools: Vec::new(),

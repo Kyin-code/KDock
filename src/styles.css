@@ -1386,6 +1386,17 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .aginfo .bar.hot > i { background: hsl(var(--warning)); }
 .aginfo .sub { font-size: 11px; color: hsl(var(--muted-foreground)); line-height: 1.5; }
 .aginfo .sep { height: 1px; background: var(--surface-line-soft); margin: 2px 0 1px; }
+.aginfo .pricebar {
+  padding: 6px 9px; border-radius: 6px; color: #fff; font-size: 11.5px;
+  font-weight: 650; letter-spacing: .02em;
+}
+.aginfo .pricebar.peak { background: #d97706; }
+.aginfo .pricebar.offpeak { background: #1d4ed8; }
+.pricegrid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px; flex: 1; min-width: 0;
+}
+.pricegrid input { min-width: 0; width: 100%; }
 
 /* 上下文成分：一条堆叠条 + 明细（参考 opencode 的 context 面板） */
 .agctx-bar { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--surface-3); }

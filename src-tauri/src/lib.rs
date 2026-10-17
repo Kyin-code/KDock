@@ -3386,6 +3386,7 @@ pub fn run() {
             }
             // 它内部要跑 PowerShell + WMI（好几秒），别挡着窗口显示 —— 丢后台线程慢慢补名字
             std::thread::spawn(refresh_friendly);
+            agent::schedule::start(app.handle().clone());
             // 任务栏/标题栏图标：显式再设一次。
             // 实测这台机器上 WM_GETICON 的**大图标是 0**（只有小图标有值），
             // 任务栏按钮于是显示成空白/默认图标。
@@ -3655,6 +3656,10 @@ pub fn run() {
             agent::agent_slash_dir,
             agent::agent_slash_save,
             agent::agent_slash_delete,
+            agent::schedule::agent_schedule_add,
+            agent::schedule::agent_schedule_list,
+            agent::schedule::agent_schedule_cancel,
+            agent::pricing::agent_pricing_calendar,
             // ── 三层上下文：内置指令 / 技能（全局·工作区） / 指导文件 / 工具开关 / 骨架 ──
             agent::agent_tools_list,
             agent::agent_tool_set,

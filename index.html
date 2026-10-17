@@ -202,6 +202,26 @@
                   <input id="ag-p-res" class="num" type="number" value="8192" title="单次回复最多多少 token" />
                   <span class="hint">留 2048~8192 就行</span>
                 </div>
+                <div class="field"><label for="ag-p-price-cur">价格</label>
+                  <select id="ag-p-price-cur" class="tight">
+                    <option value="USD">美元 / 百万 token</option>
+                    <option value="CNY">人民币 / 百万 token</option>
+                  </select>
+                </div>
+                <div class="field"><label>峰价</label>
+                  <div class="pricegrid">
+                    <input id="ag-p-peak-hit" class="num" type="number" min="0" step="any" placeholder="缓存命中" />
+                    <input id="ag-p-peak-miss" class="num" type="number" min="0" step="any" placeholder="缓存未命中" />
+                    <input id="ag-p-peak-out" class="num" type="number" min="0" step="any" placeholder="输出" />
+                  </div>
+                </div>
+                <div class="field"><label>谷价</label>
+                  <div class="pricegrid">
+                    <input id="ag-p-offpeak-hit" class="num" type="number" min="0" step="any" placeholder="缓存命中" />
+                    <input id="ag-p-offpeak-miss" class="num" type="number" min="0" step="any" placeholder="缓存未命中" />
+                    <input id="ag-p-offpeak-out" class="num" type="number" min="0" step="any" placeholder="输出" />
+                  </div>
+                </div>
                 <details class="adv">
                   <summary>高级</summary>
                   <div class="field"><label for="ag-p-temp">温度</label>
@@ -633,7 +653,8 @@
             <div id="ag-cmd-hint" class="hint" hidden>
               <code>/goal &lt;目标&gt;</code> 设定长期目标（每轮都带上，<code>/goal clear</code> 清除）·
               <code>/compact</code> 压缩上下文 · <code>/new</code> 新会话 ·
-              <code>/perm ask|auto|read</code> 切权限 · <code>/stop</code> 停止 · <code>/help</code>
+              <code>/perm ask|auto|read</code> 切权限 · <code>/stop</code> 停止 ·
+              <code>/timer 10m 任务</code> 倒计时 · <code>/at 09:30 任务</code> 定时 · <code>/help</code>
             </div>
             <div class="trow agcomposer">
               <button id="ag-attach" class="btn small" title="附上本机文件：复制进会话工作区，agent 就能读它">📎 文件</button>

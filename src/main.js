@@ -6979,27 +6979,66 @@ function agUpdateHeader() {
   if (agEl("ag-stop")) agEl("ag-stop").hidden = !agRunning;
 }
 
-/* ── Agent 信息面板（参考 opencode 的状态栏）：上下文占用 / 工作区 git / token / 缓存命中 / 估算花费 ──
- * 价格表就在下面 AG_PRICE，单位是"元 / 百万 token"（命中缓存的输入便宜、未命中贵、输出最贵）。
- * 不是从接口拉的，改这里就能对上你自己买的价格；匹配不到的模型走最后那条兜底。 */
-const AG_PRICE = [
-  { match: /deepseek/i, hit: 0.5, miss: 2, out: 8 },
-  { match: /glm|zhipu/i, hit: 0.5, miss: 2, out: 8 },
-  { match: /qwen|dashscope/i, hit: 0.4, miss: 2, out: 8 },
-  { match: /.*/, hit: 0.5, miss: 2, out: 8 },
-];
-const agPriceOf = (model) => AG_PRICE.find((p) => p.match.test(String(model || ""))) || AG_PRICE[AG_PRICE.length - 1];
-const agCostOf = (model, hit, miss, out) => {
-  const p = agPriceOf(model);
-  return (hit / 1e6) * p.hit + (miss / 1e6) * p.miss + (out / 1e6) * p.out;
+/* ── Agent 信息面板（参考 opencode 的状态栏）：上下文占用 / 工作区 git / token / 缓存命中 / 花费 ── */
+const AG_PRICE_FLASH = {
+  currency: "USD",
+  peak_hit: 0.006, peak_miss: 0.30, peak_out: 1.20,
+  offpeak_hit: 0.003, offpeak_miss: 0.15, offpeak_out: 0.60,
 };
-const agMoney = (y) => (!(y > 0) ? "¥0" : y < 0.01 ? "¥" + y.toFixed(4) : y < 1 ? "¥" + y.toFixed(3) : "¥" + y.toFixed(2));
+const AG_PRICE_V4_PRO = {
+  currency: "USD",
+  peak_hit: 0.044, peak_miss: 1.32, peak_out: 3.96,
+  offpeak_hit: 0.022, offpeak_miss: 0.66, offpeak_out: 1.98,
+};
+const AG_PRICE_FIXED = {
+  currency: "CNY",
+  peak_hit: 0.5, peak_miss: 2, peak_out: 8,
+  offpeak_hit: 0.5, offpeak_miss: 2, offpeak_out: 8,
+};
+const AG_PEAK_WINDOWS = "09:00–12:00 / 14:00–18:00";
+const agPriceFallback = (model) => {
+  const m = String(model || "").toLowerCase();
+  if (/deepseek-v4-pro/.test(m)) return { ...AG_PRICE_V4_PRO };
+  if (/deepseek/.test(m)) return { ...AG_PRICE_FLASH };
+  return { ...AG_PRICE_FIXED };
+};
+const agEffectivePricing = (prov) => {
+  const saved = prov && prov.pricing;
+  if (saved && Object.keys(saved).length) return {
+    currency: String(saved.currency || "CNY").toUpperCase(),
+    peak_hit: Number(saved.peak_hit) || 0,
+    peak_miss: Number(saved.peak_miss) || 0,
+    peak_out: Number(saved.peak_out) || 0,
+    offpeak_hit: Number(saved.offpeak_hit) || 0,
+    offpeak_miss: Number(saved.offpeak_miss) || 0,
+    offpeak_out: Number(saved.offpeak_out) || 0,
+  };
+  return agPriceFallback(prov && prov.model);
+};
+const agHasPeakPricing = (p) => !!p && (
+  p.peak_hit !== p.offpeak_hit || p.peak_miss !== p.offpeak_miss || p.peak_out !== p.offpeak_out
+);
+const agMoney = (y, currency) => {
+  const sym = String(currency || "CNY").toUpperCase() === "USD" ? "$" : "¥";
+  const n = Number(y) || 0;
+  if (n === 0) return sym + "0";
+  if (n < 0.01) return sym + n.toFixed(4);
+  if (n < 1) return sym + n.toFixed(3);
+  return sym + n.toFixed(2);
+};
+const agCostText = (totals) => {
+  const rows = Object.entries(totals || {}).filter(([, v]) => Number(v) > 0);
+  if (!rows.length) return "";
+  return rows.map(([cur, v]) => agMoney(v, cur)).join(" / ");
+};
 const agK = (n) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "K" : String(n || 0));
 
 let agGit = null;      // 工作区 git 快照（workspace_git 的结果）
 let agGitFor = "";     // 这份快照对应的目录
 let agBalance = null;      // 余额（agent_provider_balance 的结果，格式化过的）
 let agBalanceAt = 0;       // 上次查询时间（60 秒内不重复查）
+let agPricingStatus = null; // 峰谷状态 + 节假日表（后端统一按北京时间算）
+let agPricingAt = 0;
 async function agRefreshGit() {
   const ws = (agMeta && agMeta.workspace) || (agCfg && agCfg.workspace) || "";
   if (!ws) return;
@@ -7011,6 +7050,46 @@ async function agRefreshGit() {
     agGitFor = ws;
   }
   agRenderInfo();
+}
+
+async function agRefreshPricing(force) {
+  if (!force && agPricingStatus && Date.now() - agPricingAt < 20000) {
+    agRenderInfo();
+    return;
+  }
+  try {
+    const year = new Date().getFullYear();
+    agPricingStatus = await invoke("agent_pricing_calendar", { years: [year] });
+    agPricingAt = Date.now();
+  } catch (_) {
+    agPricingStatus = agPricingStatus || null;
+  }
+  agRenderInfo();
+}
+
+/** 老会话没有逐轮 cost 字段时，用最近留档和当前价格补一个可视估算。 */
+function agRecentCost(prov) {
+  const totals = {};
+  const providers = (agCfg && agCfg.providers) || [];
+  for (const row of (agMeta && agMeta.usage_recent) || []) {
+    let cost = Number(row.cost);
+    let cur = row.currency;
+    if (!(cost >= 0) || !cur) {
+      const rp = providers.find((x) => x.id === row.provider) || prov;
+      if (!rp) continue;
+      const price = agEffectivePricing(rp);
+      const peak = typeof row.peak === "boolean" ? row.peak : !!(agPricingStatus && agPricingStatus.peak);
+      const hit = Number(row.hit) || 0, miss = Number(row.miss) || 0, out = Number(row.out) || 0;
+      cost = peak
+        ? (hit / 1e6) * price.peak_hit + (miss / 1e6) * price.peak_miss + (out / 1e6) * price.peak_out
+        : (hit / 1e6) * price.offpeak_hit + (miss / 1e6) * price.offpeak_miss + (out / 1e6) * price.offpeak_out;
+      cur = price.currency;
+    }
+    if (!(cost > 0)) continue;
+    const key = String(cur || "CNY").toUpperCase();
+    totals[key] = (totals[key] || 0) + cost;
+  }
+  return totals;
 }
 
 /** 把信息面板重画一遍（同步，用缓存的 git 快照） */
@@ -7028,8 +7107,9 @@ function agRenderInfo() {
   const hit = (agMeta && agMeta.total_cache_hit) || 0;
   const miss = (agMeta && agMeta.total_cache_miss) || 0;
   const hitRate = hit + miss > 0 ? Math.round((hit / (hit + miss)) * 1000) / 10 : 0;
-  const model = (prov && prov.model) || (agMeta && agMeta.model) || "";
-  const cost = agCostOf(model, hit, miss, outTok);
+  const pricing = agEffectivePricing(prov);
+  const storedCost = (agMeta && agMeta.cost_total) || {};
+  const costText = agCostText(Object.keys(storedCost).length ? storedCost : agRecentCost(prov));
   const ws = (agMeta && agMeta.workspace) || (agCfg && agCfg.workspace) || "";
   const wsShort = ws ? ws.replace(/[\\/]+$/, "").split(/[\\/]/).pop() : en("（默认）");
 
@@ -7062,10 +7142,12 @@ function agRenderInfo() {
       if (!sp || !(sp.last > 0)) return row("出字速度", "—");
       return row("出字速度", `${fmtTps(sp.last)} ${en("最近")} · ${fmtTps(sp.avg)} ${en("平均")}`, "ok");
     })() +
-    row("花费", `${agMoney(cost)}`, "") +
+    row("花费", costText || "—", "") +
     (agBalance ? row("余额", agEscape(agBalance), "") : "") +
-    `<div class="sub">${en("按")} ${agEscape(model || "?")} ${en("的价格估算（元/百万 token），可在 main.js 的 AG_PRICE 里改")}</div>` +
-    `<div class="sub">${en("出字速度只算模型正在出字的那段（工具调用、等待不算）")}</div>`;
+    (agHasPeakPricing(pricing) && agPricingStatus
+      ? `<div class="pricebar ${agPricingStatus.peak ? "peak" : "offpeak"}" title="${en("北京时间")} ${AG_PEAK_WINDOWS}；${en("周末与法定节假日为谷价")}">` +
+        `${agPricingStatus.peak ? en("当前峰价") : en("当前谷价")}</div>`
+      : "");
   // 上面那两个按钮是每次重画都新建的，绑一次就行
 }
 
@@ -7154,6 +7236,7 @@ async function agOpenSession(id) {
     agRefreshGit();        // 每个会话的工作区可能不一样
     agRefreshBreakdown();
     agRefreshBalance();
+    agRefreshPricing();
   } catch (e) {
     toast(String(e));
   }
@@ -7229,6 +7312,32 @@ function agMarkPendingApprovalsAuto() {
   document.querySelectorAll("#ag-chat .agapprove .acts").forEach((a) => {
     if (a.querySelector("button")) a.innerHTML = '<span class="hint">已自动放行（权限已切到「自动」）</span>';
   });
+}
+
+function agParseDelay(s) {
+  const m = String(s || "").trim().toLowerCase().match(/^(\d+(?:\.\d+)?)([smhd])$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!(n > 0)) return null;
+  return Math.round(n * { s: 1000, m: 60000, h: 3600000, d: 86400000 }[m[2]]);
+}
+
+function agDur(ms) {
+  const n = Number(ms) || 0;
+  if (n % 86_400_000 === 0) return `${n / 86_400_000} 天`;
+  if (n % 3_600_000 === 0) return `${n / 3_600_000} 小时`;
+  if (n % 60_000 === 0) return `${n / 60_000} 分钟`;
+  return `${Math.round(n / 1000)} 秒`;
+}
+
+async function agScheduleNote(note) {
+  const rows = await invoke("agent_schedule_list").catch(() => []);
+  if (!rows.length) return note("（没有定时任务）");
+  note(`定时任务（${rows.length}）：\n` + rows.map((r) => {
+    const when = new Date(r.next_at_ms).toLocaleString();
+    const rep = r.daily ? " · 每日" : r.repeat_ms > 0 ? ` · 每 ${agDur(r.repeat_ms)}` : "";
+    return `${r.id}  ${when}${rep}  ${String(r.prompt || "").replace(/\s+/g, " ").slice(0, 50)}`;
+  }).join("\n"));
 }
 
 async function agSlash(text) {
@@ -7318,11 +7427,72 @@ async function agSlash(text) {
         : "（没有）") + "\n\n（在「设置 → 技能」里导入 / 开关；勾「常驻」的会每轮注入）");
       return true;
     }
+    case "timer":
+    case "at": {
+      const want = (cmd || "").toLowerCase();
+      const raw = arg.trim();
+      if (!raw || raw === "list" || raw === "ls") {
+        await agScheduleNote(note);
+        return true;
+      }
+      if (raw.startsWith("cancel ")) {
+        const id = raw.slice(7).trim();
+        const r = await invoke("agent_schedule_cancel", { id }).catch((e) => ({ error: String(e) }));
+        note(r.error || `已取消 ${r.removed || 0} 个任务`);
+        return true;
+      }
+      let kind, delayMs = 0, at = "", repeatMs = 0, daily = false, prompt = "";
+      if (want === "timer") {
+        const tok = raw.split(/\s+/);
+        delayMs = agParseDelay(tok.shift());
+        if (!delayMs) {
+          note("用法：/timer 10m [repeat 30m] 任务内容\n/timer list | /timer cancel <id>");
+          return true;
+        }
+        if ((tok[0] || "").toLowerCase() === "repeat") {
+          tok.shift();
+          repeatMs = agParseDelay(tok.shift()) || 0;
+          if (!repeatMs) { note("repeat 后面要写间隔，例如 30m"); return true; }
+        }
+        prompt = tok.join(" ").trim();
+        kind = "countdown";
+      } else {
+        const tok = raw.split(/\s+/);
+        const first = tok.shift() || "";
+        if (/^\d{4}-\d{2}-\d{2}$/.test(first)) {
+          at = `${first} ${tok.shift() || ""}`.trim();
+        } else {
+          at = first;
+        }
+        if ((tok[0] || "").toLowerCase() === "daily" || tok[0] === "每天") {
+          daily = true; tok.shift();
+        }
+        prompt = tok.join(" ").trim();
+        kind = "at";
+        if (!/^\d{1,2}:\d{2}$/.test(at) && !/^\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}$/.test(at)) {
+          note("用法：/at 09:30 [daily] 任务内容\n/at 2026-10-18 09:30 任务内容");
+          return true;
+        }
+      }
+      if (!prompt) { note("任务内容不能为空"); return true; }
+      try {
+        const r = await invoke("agent_schedule_add", {
+          sessionId: agMeta.id, prompt, kind, delayMs, at, repeatMs, daily,
+        });
+        const t = r.task || {};
+        note(`已创建定时任务 ${t.id}\n下次：${new Date(t.next_at_ms).toLocaleString()}` +
+          (kind === "at" && daily ? "（每日）" : repeatMs ? `（每 ${agDur(repeatMs)}）` : ""));
+      } catch (e) { note(String(e)); }
+      return true;
+    }
     case "help": {
       const custom = await invoke("agent_slash_list").catch(() => []);
       const builtin = "/goal <目标>  设定长期目标（/goal clear 清除）\n/compact  压缩上下文\n" +
         "/new  新建会话\n" +
         "/model [名字]  看 / 切换当前模型\n/perm ask|auto|read  切换权限\n/stop  停止这一轮\n" +
+        "/timer 10m [repeat 30m] <任务>  倒计时任务（可重复）\n" +
+        "/at 09:30 [daily] <任务>  指定时间任务（可每日重复）\n" +
+        "/timer list · /at list · /timer cancel <id>  查看 / 取消\n" +
         "/rename <标题>  改会话标题\n/skills  列出已启用技能\n/help  这条帮助";
       const mine = custom.length
         ? "\n\n你自己加的（放在 agent/slash/ 下的 .md）：\n" +
@@ -7582,6 +7752,7 @@ async function bindAgent() {
       agEl("ag-p-endpoint").value = p.endpoint;
       agEl("ag-p-model").value = p.model;
       agEl("ag-p-ctx").value = p.ctx;
+      agFillPricingForm(agPriceFallback(p.model));
       if (agEl("ag-p-kind")) agEl("ag-p-kind").value = p.kind || "openai";
       if (agEl("ag-preset-note")) agEl("ag-preset-note").textContent = p.note;
       agEl("ag-p-key").focus();
@@ -7725,6 +7896,7 @@ async function agUseProvider(id, silent) {
     await invoke("agent_session_set_provider", { id: sid, providerId: id }).catch(() => {});
   }
   await agLoadConfig();
+  agRefreshPricing(true);
   if (!silent) {
     const p = (agCfg.providers || []).find((x) => x.id === id);
     toast(en("后面这轮用：") + (p ? agTrName(p.name) : id));
@@ -7756,6 +7928,37 @@ async function agGuardContextFit() {
 }
 
 /** 表单现在填的是什么（探针用，不用先保存） */
+function agFormNum(id, fallback) {
+  const el = agEl(id);
+  if (!el || el.value === "") return fallback;
+  const n = Number(el.value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function agPricingFromForm() {
+  const fallback = agPriceFallback(agEl("ag-p-model") ? agEl("ag-p-model").value : "");
+  return {
+    currency: agEl("ag-p-price-cur") ? agEl("ag-p-price-cur").value : fallback.currency,
+    peak_hit: agFormNum("ag-p-peak-hit", fallback.peak_hit),
+    peak_miss: agFormNum("ag-p-peak-miss", fallback.peak_miss),
+    peak_out: agFormNum("ag-p-peak-out", fallback.peak_out),
+    offpeak_hit: agFormNum("ag-p-offpeak-hit", fallback.offpeak_hit),
+    offpeak_miss: agFormNum("ag-p-offpeak-miss", fallback.offpeak_miss),
+    offpeak_out: agFormNum("ag-p-offpeak-out", fallback.offpeak_out),
+  };
+}
+
+function agFillPricingForm(pricing) {
+  const p = pricing || AG_PRICE_FIXED;
+  if (agEl("ag-p-price-cur")) agEl("ag-p-price-cur").value = String(p.currency || "CNY").toUpperCase();
+  agEl("ag-p-peak-hit").value = p.peak_hit;
+  agEl("ag-p-peak-miss").value = p.peak_miss;
+  agEl("ag-p-peak-out").value = p.peak_out;
+  agEl("ag-p-offpeak-hit").value = p.offpeak_hit;
+  agEl("ag-p-offpeak-miss").value = p.offpeak_miss;
+  agEl("ag-p-offpeak-out").value = p.offpeak_out;
+}
+
 function agFormProvider() {
   return {
     id: (agEl("ag-p-id").value || "probe").trim(),
@@ -7770,6 +7973,7 @@ function agFormProvider() {
     max_messages: 40,
     supports_tools: agEl("ag-p-tools").checked,
     supports_stream: agEl("ag-p-stream").checked,
+    pricing: agPricingFromForm(),
   };
 }
 
@@ -7872,6 +8076,7 @@ function agFillProvider(id) {
   agEl("ag-p-temp").value = p.temperature;
   agEl("ag-p-tools").checked = !!p.supports_tools;
   agEl("ag-p-stream").checked = !!p.supports_stream;
+  agFillPricingForm(agEffectivePricing(p));
 }
 
 async function agSaveProvider() {
@@ -7897,6 +8102,7 @@ async function agSaveProvider() {
     max_messages: 40,
     supports_tools: agEl("ag-p-tools").checked,
     supports_stream: agEl("ag-p-stream").checked,
+    pricing: agPricingFromForm(),
   };
   try {
     await invoke("agent_provider_save", { provider, makeActive: true });
@@ -9450,6 +9656,7 @@ async function bindAgentEvents() {
     const el = agEl("ag-usage");
     const cache = p.cacheHit || p.cacheMiss ? ` · ${en("缓存命中")} ${p.cacheHit || 0}` : "";
     if (el) el.textContent = `in ${p.prompt} / out ${p.completion} tokens${cache}`;
+    agRefreshPricing();
     agRenderInfo();
   });
   // 出字速度（后端算好推过来）：信息页那一行 + 模型下拉里的 "xxx tok/s"
@@ -9538,7 +9745,7 @@ async function bindAgentEvents() {
     const p = ev.payload || {};
     agRenderPage(p.page || p);     // agent 打开网页时，右侧「浏览器」跟着显示
   });
-  await agOn("agent://done", async () => {
+  await agOn("agent://done", async (ev) => {
     const sid = ev.payload && ev.payload.session;
     if (sid) agRunSessions.delete(sid);
     if (agMeta && sid === agMeta.id) {
@@ -9564,8 +9771,12 @@ async function bindAgentEvents() {
       agRefreshGit();
       agRefreshBreakdown();
       agRefreshBalance();
+      agRefreshPricing();
     }
   });
+  setInterval(() => {
+    if (agMeta && agEl("ag-info") && !agEl("ag-info").hidden) agRefreshPricing(true);
+  }, 30000);
   // 状态灯上的未读角标：点一下跳回对话；窗口重新获得焦点且正看着 agent 页时自动清掉
   if (agEl("ag-state")) {
     agEl("ag-state").onclick = () => { agUnreadClear(); showPane("agent"); };
@@ -9858,8 +10069,6 @@ const EN = {
   "每轮注入系统提示，一直占上下文": "injected every turn (always occupies context)",
   "正文每轮注入，不会被压缩掉": "injected every turn, never trimmed away",
   "不是 git 仓库": "not a git repo", " · 干净": " · clean", "读取中…": "loading…",
-  "按": "estimated with", "的价格估算（元/百万 token），可在 main.js 的 AG_PRICE 里改":
-    "pricing (CNY per 1M tokens); edit AG_PRICE in main.js",
   "打开": "Open", "源码": "Source", "页面里的链接": "Links on page",
   "MCP 服务": "MCP servers", "命令": "Command", "参数": "Args", "保存": "Save",
   "测一测": "Test", "删除": "Delete", "打开文件": "Open file", "另存为": "Save as",
@@ -9975,8 +10184,12 @@ const EN = {
 
   // ============ Agent 信息 / 工作区 / 会话 ============
   "出字速度": "Throughput", "最近": "last", "平均": "avg",
-  "出字速度只算模型正在出字的那段（工具调用、等待不算）":
-    "Throughput counts only the time the model spends emitting tokens (tool calls and waiting are excluded).",
+  "价格": "Pricing", "峰价": "Peak", "谷价": "Off-peak",
+  "美元 / 百万 token": "USD / 1M tokens", "人民币 / 百万 token": "CNY / 1M tokens",
+  "缓存命中": "Cache hit", "缓存未命中": "Cache miss", "输出": "Output",
+  "当前峰价": "Peak rate now", "当前谷价": "Off-peak rate now",
+  "北京时间": "Beijing time", "周末与法定节假日为谷价":
+    "Weekends and statutory holidays use the off-peak rate",
   "更多": "More", "工作区：": "Workspace:", "重命名对话": "Rename session",
   "删除这个对话": "Delete session", "你": "You",
   "会自己动手的调试助手": "A debugging assistant that can actually do things",

@@ -2209,6 +2209,7 @@ dependencies = [
 name = "kdock"
 version = "0.3.0"
 dependencies = [
+ "chrono",
  "crc32fast",
  "des",
  "digest",

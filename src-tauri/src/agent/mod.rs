@@ -15,6 +15,8 @@ pub mod browser;
 mod builtin;
 pub mod llm;
 pub mod mcp;
+pub mod pricing;
+pub mod schedule;
 pub mod store;
 pub mod tools;
 
@@ -275,6 +277,7 @@ fn amd_provider(model: &str) -> Provider {
         max_messages: 40,
         supports_tools: true,
         supports_stream: true,
+        pricing: None,
     }
 }
 
@@ -2282,6 +2285,28 @@ fn run_turn(
             );
             if out.usage.prompt_tokens > 0 || out.usage.completion_tokens > 0 {
                 if let Some(mut meta) = store::session_meta_of(&app, &session_id) {
+                    let usage_ts = now_ms();
+                    let peak = provider
+                        .pricing
+                        .as_ref()
+                        .map(|_| pricing::is_peak_at(&app, usage_ts))
+                        .unwrap_or(false);
+                    let mut cost = 0.0;
+                    let mut currency = "CNY".to_string();
+                    if let Some(price) = provider.pricing.as_ref() {
+                        cost = price.cost(
+                            peak,
+                            out.usage.cache_hit_tokens,
+                            out.usage.cache_miss_tokens,
+                            out.usage.completion_tokens,
+                        );
+                        if !price.currency.trim().is_empty() {
+                            currency = price.currency.trim().to_ascii_uppercase();
+                        }
+                        if cost.is_finite() && cost > 0.0 {
+                            *meta.cost_total.entry(currency.clone()).or_insert(0.0) += cost;
+                        }
+                    }
                     meta.last_tokens = out.usage.prompt_tokens;
                     // 会话级账本：Agent 信息面板用它算 token 消费 / 缓存命中率 / 花费
                     meta.total_prompt += out.usage.prompt_tokens;
@@ -2290,11 +2315,16 @@ fn run_turn(
                     meta.total_cache_miss += out.usage.cache_miss_tokens;
                     // 逐轮留档：界面能画出"命中率/Δ 的走势"，排障时能一眼看出是哪一轮掉的
                     meta.usage_recent.push(json!({
-                        "ts": now_ms(),
+                        "ts": usage_ts,
                         "prompt": out.usage.prompt_tokens,
                         "hit": out.usage.cache_hit_tokens,
                         "miss": out.usage.cache_miss_tokens,
                         "out": out.usage.completion_tokens,
+                        "provider": provider.id.clone(),
+                        "model": provider.model.clone(),
+                        "peak": peak,
+                        "cost": cost,
+                        "currency": currency,
                     }));
                     if meta.usage_recent.len() > 40 {
                         let drop = meta.usage_recent.len() - 40;
