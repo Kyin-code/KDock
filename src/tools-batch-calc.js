@@ -959,6 +959,9 @@ const PAD_KEYS = [
   [["1", "d:1", ""], ["2", "d:2", ""], ["3", "d:3", ""], ["xʸ", "op:**", "op"], ["1/x", "inv", ""], ["x³", "pow3", "op"], ["n!", "fact", "op"]],
   [["0", "d:0", ""], [".", "dot", ""], ["(", "ins:(", ""], [")", "ins:)", ""], ["字节交换", "bits:bswap", "base"], ["MOD", "op:%", "op"], ["CE", "ce", ""]],
   [["清零", "bits:zero", "bit"], ["取反", "bits:not", "bit"], ["<< 1", "bits:shl", "bit"], [">> 1", "bits:shr", "bit"], ["↺ 1", "bits:rol", "bit"], ["↻ 1", "bits:ror", "bit"], ["全反", "bits:not32", "bit"]],
+  // 传统键盘必须有等号：以前只有 op:* / op:+，没有 eq 键，按完 7 × 8
+  // 只能停在 8，calc-go 又只看表达式框，整条键盘算术是断的。
+  [["=", "eq", "op eq", 7]],
 ];
 
 /** 这个数字/字母键在当前进制下能不能按（跟 Windows 计算器一样：二进制只留 0/1） */
@@ -2719,7 +2722,15 @@ export function initCalc() {
   initDataCalc();
   box.oninput = () => calcRun(box.value, false);
   box.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); calcRun(box.value); } };
-  $id("calc-go").onclick = () => calcRun(box.value);
+  $id("calc-go").onclick = () => {
+    const expr = box.value.trim();
+    // 表达式框为空、但键盘上有待计算的 op（例如 7 × 8）时，等号应该作用于键盘累积值
+    if (!expr && calcOp !== null) {
+      calcPadKey("eq");
+      return;
+    }
+    calcRun(box.value);
+  };
   // 显示进制那三个按钮：换进制 = 换显示 + 换键盘输入进制（跟 Windows 计算器一个逻辑）
   document.querySelectorAll(".calcbasebtn").forEach((b) => { b.onclick = () => calcSetBase(b.dataset.base); });
   // → 浮点数：把当前结果按 IEEE-754 单精度解释一次（再点回到整数显示）

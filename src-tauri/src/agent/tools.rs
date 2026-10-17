@@ -34,10 +34,17 @@ pub struct Link {
 pub fn catalog() -> Vec<ToolDef> {
     let mut t: Vec<ToolDef> = Vec::new();
     let mut push = |name: &'static str, description: &'static str, schema: Value, host: bool| {
-        t.push(ToolDef { name, description, schema, host });
+        t.push(ToolDef {
+            name,
+            description,
+            schema,
+            host,
+        });
     };
 
-    push("link_open", "打开一条 agent 自己的链路（串口/网口）。会先关掉上一条。",
+    push(
+        "link_open",
+        "打开一条**本会话专属**的 agent 链路（串口/网口），不会影响其它会话的链路。会先关掉本会话的上一条。",
         json!({"type":"object","properties":{
             "mode":{"type":"string","enum":["serial","tcp","udp"],"description":"链路类型"},
             "port":{"type":"string","description":"串口名，如 COM7"},
@@ -45,28 +52,56 @@ pub fn catalog() -> Vec<ToolDef> {
             "host":{"type":"string","description":"TCP/UDP 目标 IP"},
             "remote_port":{"type":"integer","description":"TCP/UDP 目标端口"},
             "local_port":{"type":"integer","description":"UDP 本地端口"}
-        },"required":["mode"]}), false);
-    push("link_close", "关掉 agent 的链路。", json!({"type":"object","properties":{}}), false);
-    push("link_status", "看 agent 链路现在通不通。", json!({"type":"object","properties":{}}), false);
-    push("link_send", "往链路发数据（文本或 HEX）。",
+        },"required":["mode"]}),
+        false,
+    );
+    push(
+        "link_close",
+        "关掉 agent 的链路。",
+        json!({"type":"object","properties":{}}),
+        false,
+    );
+    push(
+        "link_status",
+        "看 agent 链路现在通不通。",
+        json!({"type":"object","properties":{}}),
+        false,
+    );
+    push(
+        "link_send",
+        "往链路发数据（文本或 HEX）。",
         json!({"type":"object","properties":{
             "data":{"type":"string","description":"要发的内容"},
             "hex":{"type":"boolean","description":"true 表示 data 是十六进制，如 '41 54'"},
             "line_ending":{"type":"string","enum":["none","cr","lf","crlf"],"description":"行尾，默认 cr"}
-        },"required":["data"]}), false);
-    push("link_read", "读链路返回（等到静默超时或命中 until）。",
+        },"required":["data"]}),
+        false,
+    );
+    push(
+        "link_read",
+        "读链路返回（等到静默超时或命中 until）。",
         json!({"type":"object","properties":{
             "timeout_ms":{"type":"integer","description":"最多等多久，默认 3000"},
             "idle_ms":{"type":"integer","description":"静默多久算读完，默认 400"},
             "until":{"type":"string","description":"命中这个子串就立刻返回"},
             "max_bytes":{"type":"integer","description":"最多读多少字节，默认 65536"}
-        }}), false);
+        }}),
+        false,
+    );
     // ── 用户那条主连接（传输页里开的那条）：agent 也能用，而且用户全程看得见 ──
-    push("port_list", "列出本机串口（含友好名 / VID:PID）。要看有哪些口就用这个，别去跑 PowerShell 扫。",
-        json!({"type":"object","properties":{}}), false);
-    push("port_state", "看**用户在传输页开的那条主连接**的状态：类型 / 参数 / 是否连着 / 收发字节数。",
-        json!({"type":"object","properties":{}}), false);
-    push("port_write", "往**主连接**（用户在传输页开的那条）发数据，文本或 HEX。发出去的内容会实时显示在用户的传输页里（TX 行），所以这是「用户看得见」的通道。",
+    push(
+        "port_list",
+        "列出本机串口（含友好名 / VID:PID）。要看有哪些口就用这个，别去跑 PowerShell 扫。",
+        json!({"type":"object","properties":{}}),
+        false,
+    );
+    push(
+        "port_state",
+        "看**用户在传输页开的那条主连接**的状态：类型 / 参数 / 是否连着 / 收发字节数。",
+        json!({"type":"object","properties":{}}),
+        false,
+    );
+    push("port_write", "往**主连接**（用户在传输页开的那条）发数据，文本或 HEX。发出去的内容会实时显示在用户的传输页里（TX 行），所以这是「用户看得见」的通道。**主连接是多会话共享的，写入会串行化**；要让多个会话各自独立操作设备，用 link_*。",
         json!({"type":"object","properties":{
             "data":{"type":"string","description":"要发的内容"},
             "hex":{"type":"boolean","description":"true 表示 data 是十六进制，如 '41 54'"},
@@ -74,7 +109,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },"required":["data"]}), false);
     push("port_read", "读**主连接**最近的收发记录（用户在传输页看到的就是这一份）：每行给方向 + 毫秒时间戳 + 内容。",
         json!({"type":"object","properties":{"tail":{"type":"integer","description":"取最近多少条，默认 40，最多 400"}}}), false);
-    push("port_open", "打开**主连接**（用户在传输页那条）：串口 / TCP 客户端 / TCP 服务端 / UDP。连上之后界面里的方式和参数会同步过去，用户看得见。已经连着时要先 port_close。",
+    push("port_open", "打开**主连接**（用户在传输页那条）：串口 / TCP 客户端 / TCP 服务端 / UDP。连上之后界面里的方式和参数会同步过去，用户看得见。已经连着时要先 port_close。**主连接是多会话共享的**；要隔离设备操作请用 link_*。",
         json!({"type":"object","properties":{
             "mode":{"type":"string","enum":["serial","tcp_client","tcp_server","udp"],"description":"连接类型"},
             "port":{"type":"string","description":"串口名（mode=serial），如 COM7；先用 port_list 看有哪些"},
@@ -88,52 +123,97 @@ pub fn catalog() -> Vec<ToolDef> {
             "local_port":{"type":"integer","description":"tcp_server 要监听的端口 / udp 的本地端口"},
             "remote_host":{"type":"string","description":"udp 的远端 IP"}
         },"required":["mode"]}), false);
-    push("port_close", "断开**主连接**（用户在传输页那条）。", json!({"type":"object","properties":{}}), false);
+    push(
+        "port_close",
+        "断开**主连接**（用户在传输页那条）。",
+        json!({"type":"object","properties":{}}),
+        false,
+    );
     push("net_local_ips", "列本机 IPv4 地址：开 TCP 服务端 / UDP 时该填哪个本机地址、该让用户连哪个地址，用这个看（0.0.0.0 表示所有网卡）。",
         json!({"type":"object","properties":{}}), false);
-    push("device_list", "列设备上的目录（串口走 cshell ls，网口走 6666 服务通道）。",
-        json!({"type":"object","properties":{"path":{"type":"string","description":"设备上的路径，默认 /"}}}), false);
-    push("device_pull", "把设备上的文件取回本机（带 CRC32 校验）。",
+    push(
+        "device_list",
+        "列设备上的目录（串口走 cshell ls，网口走 6666 服务通道）。",
+        json!({"type":"object","properties":{"path":{"type":"string","description":"设备上的路径，默认 /"}}}),
+        false,
+    );
+    push(
+        "device_pull",
+        "把设备上的文件取回本机（带 CRC32 校验）。",
         json!({"type":"object","properties":{
             "path":{"type":"string","description":"设备上的文件路径"},
             "save_to":{"type":"string","description":"本机保存路径；不填就存到工作区里"}
-        },"required":["path"]}), false);
-    push("device_push", "把本机文件发到设备。",
+        },"required":["path"]}),
+        false,
+    );
+    push(
+        "device_push",
+        "把本机文件发到设备。",
         json!({"type":"object","properties":{
             "local":{"type":"string","description":"本机文件路径"},
             "remote":{"type":"string","description":"设备上的目标路径，默认同名放根目录"}
-        },"required":["local"]}), false);
-    push("firmware_info", "读一个 .fw 升级包的版本/大小/CRC32。",
-        json!({"type":"object","properties":{"local":{"type":"string"}},"required":["local"]}), false);
-    push("firmware_upgrade", "把 .fw 包升级进设备（串口或网口）。**会复位设备**，做完最好再确认一次版本。",
+        },"required":["local"]}),
+        false,
+    );
+    push(
+        "firmware_info",
+        "读一个 .fw 升级包的版本/大小/CRC32。",
+        json!({"type":"object","properties":{"local":{"type":"string"}},"required":["local"]}),
+        false,
+    );
+    push(
+        "firmware_upgrade",
+        "把 .fw 包升级进设备（串口或网口）。**会复位设备**，做完最好再确认一次版本。",
         json!({"type":"object","properties":{
             "local":{"type":"string","description":"本机 .fw 路径"},
             "transport":{"type":"string","enum":["auto","serial","net"],"description":"默认跟着当前链路走"},
             "host":{"type":"string","description":"走网口时的设备 IP"},
             "remote_port":{"type":"integer","description":"网口服务端口，默认 6666"}
-        },"required":["local"]}), false);
-    push("local_run", "在本机跑一条命令（cmd /C），返回退出码和输出。",
+        },"required":["local"]}),
+        false,
+    );
+    push(
+        "local_run",
+        "在本机跑一条命令（cmd /C），返回退出码和输出。",
         json!({"type":"object","properties":{
             "cmd":{"type":"string"},
             "timeout_ms":{"type":"integer","description":"默认 15000"}
-        },"required":["cmd"]}), false);
-    push("flash", "用烧录器写片（J-Link / openocd / STM32CubeProgrammer）。",
+        },"required":["cmd"]}),
+        false,
+    );
+    push(
+        "flash",
+        "用烧录器写片（J-Link / openocd / STM32CubeProgrammer）。",
         json!({"type":"object","properties":{
             "tool":{"type":"string","enum":["jlink","openocd","stm32"]},
             "file":{"type":"string","description":"要烧的 .hex/.bin/.elf"},
             "exe":{"type":"string","description":"工具可执行文件路径，不填就按 PATH 找"},
             "device":{"type":"string","description":"芯片型号，如 STM32F407VG"},
             "addr":{"type":"string","description":"bin 的烧写地址，如 0x08000000"}
-        },"required":["tool","file"]}), false);
-    push("scope", "给示波器发一条裸 SCPI 命令（RIGOL），返回设备回包。要连通就用 scope_connect。",
-        json!({"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}), false);
-    push("scope_connect", "连示波器（RIGOL DS1000Z 系，SCPI over TCP）。连上会回 *IDN?（型号+序列号+固件）。",
+        },"required":["tool","file"]}),
+        false,
+    );
+    push(
+        "scope",
+        "给示波器发一条裸 SCPI 命令（RIGOL），返回设备回包。要连通就用 scope_connect。",
+        json!({"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}),
+        false,
+    );
+    push(
+        "scope_connect",
+        "连示波器（RIGOL DS1000Z 系，SCPI over TCP）。连上会回 *IDN?（型号+序列号+固件）。",
         json!({"type":"object","properties":{
             "ip":{"type":"string","description":"示波器 IP；不填就试上次用的那个"},
             "port":{"type":"integer","description":"默认 5555"}
-        }}), false);
-    push("scope_info", "读示波器当前状态：型号、各通道开关/档位/偏移/耦合/探头、时基、采样率、触发源与电平。",
-        json!({"type":"object","properties":{}}), false);
+        }}),
+        false,
+    );
+    push(
+        "scope_info",
+        "读示波器当前状态：型号、各通道开关/档位/偏移/耦合/探头、时基、采样率、触发源与电平。",
+        json!({"type":"object","properties":{}}),
+        false,
+    );
     push("scope_measure", "自动测量某个通道：峰峰值/频率/周期/有效值/平均值/最大最小/上升下降时间/占空比。测不到（没接信号）的项回 null。",
         json!({"type":"object","properties":{
             "channel":{"type":"integer","description":"通道号 1~4"},
@@ -147,10 +227,14 @@ pub fn catalog() -> Vec<ToolDef> {
             "mode":{"type":"string","description":"NORM（默认，屏幕数据快）/ RAW（深存储，慢）"},
             "ascii_plot":{"type":"boolean","description":"true 就只回一张字符画（几十行文本，适合快速瞄一眼）"}
         }}), false);
-    push("scope_screenshot", "截示波器屏幕，存成 PNG 并回存到哪了（同时回一张可给用户看的图）。",
+    push(
+        "scope_screenshot",
+        "截示波器屏幕，存成 PNG 并回存到哪了（同时回一张可给用户看的图）。",
         json!({"type":"object","properties":{
             "path":{"type":"string","description":"存哪；不填就存到 agent 工作区"}
-        }}), false);
+        }}),
+        false,
+    );
     push("scope_control", "改示波器设置：通道档位/偏移/开关/耦合/探头、时基、触发源与电平、触发方式、RUN/STOP、自动设置。",
         json!({"type":"object","properties":{
             "channel":{"type":"integer","description":"要改的通道 1~4"},
@@ -167,50 +251,89 @@ pub fn catalog() -> Vec<ToolDef> {
             "run":{"type":"boolean","description":"true=RUN，false=STOP"},
             "autoset":{"type":"boolean","description":"true = 让示波器自己找档位（:AUT）"}
         }}), false);
-    push("workspace_list", "列 agent 工作区里的文件。",
-        json!({"type":"object","properties":{"path":{"type":"string","description":"相对路径，默认 ."}}}), false);
-    push("workspace_read", "读工作区里的文本文件。",
+    push(
+        "workspace_list",
+        "列 agent 工作区里的文件。",
+        json!({"type":"object","properties":{"path":{"type":"string","description":"相对路径，默认 ."}}}),
+        false,
+    );
+    push(
+        "workspace_read",
+        "读工作区里的文本文件。",
         json!({"type":"object","properties":{
             "path":{"type":"string"},
             "max_bytes":{"type":"integer","description":"默认 65536"}
-        },"required":["path"]}), false);
-    push("workspace_write", "写工作区里的文件（会自动建目录）。",
+        },"required":["path"]}),
+        false,
+    );
+    push(
+        "workspace_write",
+        "写工作区里的文件（会自动建目录）。",
         json!({"type":"object","properties":{
             "path":{"type":"string"},
             "content":{"type":"string"},
             "append":{"type":"boolean","description":"true 表示追加"}
-        },"required":["path","content"]}), false);
-    push("workspace_mkdir", "在工作区里建目录。",
-        json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}), false);
-    push("output_read", "读被截断的工具输出全文（大输出会落到 tool-output 目录，工具结果里会给出路径）。\
-offset/limit 按**字符**算，默认从 0 读 8000 字；一次读不完就接着往后读，别整段贴回对话。",
+        },"required":["path","content"]}),
+        false,
+    );
+    push(
+        "workspace_mkdir",
+        "在工作区里建目录。",
+        json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+        false,
+    );
+    push(
+        "output_read",
+        "读被截断的工具输出全文（大输出会落到 tool-output 目录，工具结果里会给出路径）。\
+offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接着往后读，别整段贴回对话。\
+每次只读真正需要的那一段（日志先看 tail/头尾），这是控制缓存命中率的关键。",
         json!({"type":"object","properties":{
             "path":{"type":"string","description":"工具结果里给出的那个路径（也可以只给文件名）"},
             "offset":{"type":"integer","description":"从第几个字符开始（默认 0）"},
-            "limit":{"type":"integer","description":"最多读多少字符（默认 8000，上限 40000）"}
-        },"required":["path"]}), false);
-    push("skill_list", "列出已安装的技能（名字 + 描述；标了「常驻」的技能每轮都注入全文）。",
-        json!({"type":"object","properties":{}}), false);
+            "limit":{"type":"integer","description":"最多读多少字符（默认 1200，上限 40000）"}
+        },"required":["path"]}),
+        false,
+    );
+    push(
+        "skill_list",
+        "列出已安装的技能（名字 + 描述；标了「常驻」的技能每轮都注入全文）。",
+        json!({"type":"object","properties":{}}),
+        false,
+    );
     push("skill_read", "读一个技能的完整 SKILL.md。任务或问题匹配某个技能的描述时就该先读它 —— 包括身份、口吻、自我介绍、闲聊这类问题，不是只有硬件操作才读技能。",
         json!({"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}), false);
-    push("skill_create", "新建一个技能（一份带 frontmatter 的 SKILL.md）。",
+    push(
+        "skill_create",
+        "新建一个技能（一份带 frontmatter 的 SKILL.md）。",
         json!({"type":"object","properties":{
             "name":{"type":"string","description":"技能名，会做 slug 化"},
             "description":{"type":"string","description":"一句话说明什么时候用它"},
             "body":{"type":"string","description":"正文（Markdown）"},
             "scope":{"type":"string","enum":["global","workspace"],"description":"存哪一层：global=用户级（默认），workspace=只在本项目生效（<工作区>/.kdock_skill）"}
-        },"required":["name","description"]}), false);
-    push("skill_update", "整体覆盖一个技能的 SKILL.md。",
+        },"required":["name","description"]}),
+        false,
+    );
+    push(
+        "skill_update",
+        "整体覆盖一个技能的 SKILL.md。",
         json!({"type":"object","properties":{"name":{"type":"string"},"content":{"type":"string"},
-            "scope":{"type":"string","enum":["global","workspace"],"description":"改哪一层（默认 global）"}},"required":["name","content"]}), false);
-    push("skill_delete", "删掉一个技能。",
+            "scope":{"type":"string","enum":["global","workspace"],"description":"改哪一层（默认 global）"}},"required":["name","content"]}),
+        false,
+    );
+    push(
+        "skill_delete",
+        "删掉一个技能。",
         json!({"type":"object","properties":{"name":{"type":"string"},
-            "scope":{"type":"string","enum":["global","workspace"],"description":"删哪一层（默认 global；本项目技能删之前会自动归档一份）"}},"required":["name"]}), false);
+            "scope":{"type":"string","enum":["global","workspace"],"description":"删哪一层（默认 global；本项目技能删之前会自动归档一份）"}},"required":["name"]}),
+        false,
+    );
 
     // ── SSH：远程跑一条命令（给"让 agent 去操作另一台机器"用）─────────────
     push("ssh_run", "SSH 到一台机器上跑一条命令，回退出码 + 输出。\
 密码登录走 PuTTY plink（Windows 自带的 ssh.exe 只在控制台里读密码）；没密码就用 ssh.exe + 密钥（给 key 参数）。\
-首次连接会自动记住主机指纹，之后对不上会拒绝。",
+首次连接会自动记住主机指纹，之后对不上会拒绝。\
+**启动常驻服务/守护进程时把 background 设为 true**（工具会自动 setsid + disown，只回 started）；\
+日志请在 cmd 里重定向到文件。普通命令不要设 background。",
         json!({"type":"object","properties":{
             "host":{"type":"string","description":"主机名或 IP"},
             "user":{"type":"string","description":"用户名"},
@@ -218,41 +341,66 @@ offset/limit 按**字符**算，默认从 0 读 8000 字；一次读不完就接
             "key":{"type":"string","description":"私钥路径（可空）"},
             "port":{"type":"integer","description":"端口，默认 22"},
             "cmd":{"type":"string","description":"要跑的命令（远端 shell 一行）"},
+            "background":{"type":"boolean","description":"true = 远端后台运行（setsid/disown），适合起服务；日志在 cmd 里自行重定向"},
             "timeout_ms":{"type":"integer","description":"超时毫秒，默认 60000"}
         },"required":["host","cmd"]}), false);
 
     // ── host：JS 那边实现 ───────────────────────────────────────────
-    push("browser_open", "用内置浏览器打开一个网页（抓下来抽正文，页面同时会显示在右侧「浏览器」里）。",
+    push(
+        "browser_open",
+        "用内置浏览器打开一个网页（抓下来抽正文，页面同时会显示在右侧「浏览器」里）。",
         json!({"type":"object","properties":{
             "url":{"type":"string","description":"网址，可以不带 https://"}
-        },"required":["url"]}), false);
-    push("browser_read", "读「当前页」的正文（browser_open 之后用；不传 url 就是当前页）。",
+        },"required":["url"]}),
+        false,
+    );
+    push(
+        "browser_read",
+        "读「当前页」的正文（browser_open 之后用；不传 url 就是当前页）。",
         json!({"type":"object","properties":{
             "url":{"type":"string","description":"可选，先抓这个再读"},
             "max_chars":{"type":"integer","description":"最多返回多少字，默认 12000"}
-        }}), false);
-    push("browser_find", "在「当前页」正文里找一段文字，返回前后文。",
+        }}),
+        false,
+    );
+    push(
+        "browser_find",
+        "在「当前页」正文里找一段文字，返回前后文。",
         json!({"type":"object","properties":{
             "text":{"type":"string"},
             "max_hits":{"type":"integer","description":"默认 5"}
-        },"required":["text"]}), false);
+        },"required":["text"]}),
+        false,
+    );
     push("history_search", "在**本会话的原始记录**里按关键词回查（包括已经被摘要压缩掉的那段）。上下文被压缩后，想找回细节就用它。",
         json!({"type":"object","properties":{
             "text":{"type":"string","description":"要找的关键词"},
             "max_hits":{"type":"integer","description":"最多返回几条，默认 8"}
         },"required":["text"]}), false);
-    push("ui_show_text", "把一段文本显示到右侧「文本」页（给用户看 / 自己回头看）。",
+    push(
+        "ui_show_text",
+        "把一段文本显示到右侧「文本」页（给用户看 / 自己回头看）。",
         json!({"type":"object","properties":{
             "title":{"type":"string"},
             "text":{"type":"string"}
-        },"required":["text"]}), true);
-    push("ui_goto", "把界面切到某个页（transfer/upgrade/flash/files/chart/flow/capture/scope）。",
-        json!({"type":"object","properties":{"page":{"type":"string"}},"required":["page"]}), true);
-    push("flow_run", "跑中控编排（不传 graph 就跑当前画布上的）。",
+        },"required":["text"]}),
+        true,
+    );
+    push(
+        "ui_goto",
+        "把界面切到某个页（transfer/upgrade/flash/files/chart/flow/capture/scope）。",
+        json!({"type":"object","properties":{"page":{"type":"string"}},"required":["page"]}),
+        true,
+    );
+    push(
+        "flow_run",
+        "跑中控编排（不传 graph 就跑当前画布上的）。",
         json!({"type":"object","properties":{
             "graph":{"type":"object","description":"可选，直接给编排 JSON"},
             "wait":{"type":"boolean","description":"等它跑完再返回，默认 true"}
-        }}), true);
+        }}),
+        true,
+    );
     push("la_state", "读逻辑分析仪的**当前状态**：数据来源、采样率、通道数/点数/时长、视图窗口、光标 A/B 与 Δt、通道列表（含当前电平）、已加的解码器、选中通道的测量（频率/占空比/脉冲/脉宽）。只读，不改任何东西。",
         json!({"type":"object","properties":{}}), true);
     push("la_read", "读逻辑分析仪**解码出来的结果**（只读）：每个解码器解出来的全部项（协议字节/字段 + 起止时间 + CRC/校验/应答这类判定），以及每一路在当前视图窗口里的频率/占空比/脉冲数。",
@@ -296,21 +444,39 @@ offset/limit 按**字符**算，默认从 0 读 8000 字；一次读不完就接
             "port":{"type":"string","description":"起点节点的输出端口名"},
             "to":{"type":"string","description":"终点节点 id"}
         },"required":["from","port","to"]}), true);
-    push("flow_delete", "从画布上删掉一个节点或一条连线（id 传节点 id 或连线 key 都行；开始节点不能删）。",
+    push(
+        "flow_delete",
+        "从画布上删掉一个节点或一条连线（id 传节点 id 或连线 key 都行；开始节点不能删）。",
         json!({"type":"object","properties":{
             "id":{"type":"string","description":"节点 id 或连线 key"}
-        },"required":["id"]}), true);
+        },"required":["id"]}),
+        true,
+    );
     push("flow_set", "把一份编排**整体导入画布**（**会替换掉当前画布上原有的东西**并保存，用户在界面上直接能看到/编辑/运行）。格式：{nodes:[{id,type,x,y,...该类型的参数}],edges:[{from:'节点id',port:'输出端口名',to:'节点id'}]}；不认识的类型和悬空连线会被自动丢掉并在返回值里说明。会动用户的画布，所以要先说清楚你要导入什么。",
         json!({"type":"object","properties":{
             "graph":{"type":"object","description":"{nodes:[…],edges:[…]}"}
         },"required":["graph"]}), true);
-    push("flow_status", "看中控编排跑到哪了／日志尾巴。", json!({"type":"object","properties":{}}), true);
-    push("flow_stop", "停掉正在跑的中控编排。", json!({"type":"object","properties":{}}), true);
-    push("capture_save", "抓一张屏幕（存到工作区）。",
+    push(
+        "flow_status",
+        "看中控编排跑到哪了／日志尾巴。",
+        json!({"type":"object","properties":{}}),
+        true,
+    );
+    push(
+        "flow_stop",
+        "停掉正在跑的中控编排。",
+        json!({"type":"object","properties":{}}),
+        true,
+    );
+    push(
+        "capture_save",
+        "抓一张屏幕（存到工作区）。",
         json!({"type":"object","properties":{
             "monitor":{"type":"integer","description":"显示器序号，默认 0"},
             "save_as":{"type":"string","description":"相对工作区的文件名，默认 shot.png"}
-        }}), true);
+        }}),
+        true,
+    );
 
     // ── 环境配置（左导航「环境 → 环境配置」那一页）：扫描只读，安装要审批 ──
     push("env_scan", "扫描本机已有的**驱动与工具链**（只读）：CH34x / CH340 串口驱动、FTDI FT2232 / D2XX、SEGGER J-Link（含 JFlash / GDB Server / RTT）、GNU Arm Embedded Toolchain、OpenOCD、逻辑分析仪（PulseView / sigrok）、RT-Thread Env、ST-Link 驱动、Zadig。每项给：装没装、版本（有的才知道）、路径或命中的驱动/注册项。缺哪些**必需项**也一并回。跟环境配置页看到的是同一份数据。",
@@ -324,8 +490,12 @@ offset/limit 按**字符**算，默认从 0 读 8000 字；一次读不完就接
         },"required":["id"]}), true);
 
     // ── 安卓（ADB）：agent 直接用，不必再靠 local_run 全盘找 adb.exe ──
-    push("adb_devices", "列安卓设备（USB 直连 + 已经连上的无线调试）。想用安卓做什么，先看这个。",
-        json!({"type":"object","properties":{}}), false);
+    push(
+        "adb_devices",
+        "列安卓设备（USB 直连 + 已经连上的无线调试）。想用安卓做什么，先看这个。",
+        json!({"type":"object","properties":{}}),
+        false,
+    );
     push("adb_mdns", "列无线调试的广播（Android 11+ 的 `adb mdns services`）：配对之前先看设备叫什么、在哪个 IP:端口。",
         json!({"type":"object","properties":{}}), false);
     push("adb_connect", "连一台无线调试设备（`adb connect`）。前提是设备上已经打开「开发者选项 → 无线调试」，并且已经配对过。",
@@ -345,32 +515,48 @@ offset/limit 按**字符**算，默认从 0 读 8000 字；一次读不完就接
             "cmd":{"type":"string"},
             "timeout_ms":{"type":"integer","description":"默认 20000"}
         },"required":["serial","cmd"]}), false);
-    push("adb_screenshot", "给安卓设备截屏（走 adb exec-out screencap）并存成 PNG，默认存到这个会话的工作区。",
+    push(
+        "adb_screenshot",
+        "给安卓设备截屏（走 adb exec-out screencap）并存成 PNG，默认存到这个会话的工作区。",
         json!({"type":"object","properties":{
             "serial":{"type":"string"},
             "save_as":{"type":"string","description":"相对工作区的文件名，默认 adb_shot_<时间>.png"}
-        },"required":["serial"]}), false);
-    push("adb_push", "本机文件 → 安卓设备。",
+        },"required":["serial"]}),
+        false,
+    );
+    push(
+        "adb_push",
+        "本机文件 → 安卓设备。",
         json!({"type":"object","properties":{
             "serial":{"type":"string"},
             "local":{"type":"string","description":"本机路径（相对工作区也行）"},
             "remote":{"type":"string","description":"设备上的目标路径"}
-        },"required":["serial","local","remote"]}), false);
-    push("adb_pull", "安卓设备上的文件 → 本机（默认存到这个会话的工作区）。",
+        },"required":["serial","local","remote"]}),
+        false,
+    );
+    push(
+        "adb_pull",
+        "安卓设备上的文件 → 本机（默认存到这个会话的工作区）。",
         json!({"type":"object","properties":{
             "serial":{"type":"string"},
             "remote":{"type":"string"},
             "save_as":{"type":"string","description":"相对工作区的保存名"}
-        },"required":["serial","remote"]}), false);
-    push("adb_install", "给安卓设备装 APK（reinstall=true 就是覆盖安装）。",
+        },"required":["serial","remote"]}),
+        false,
+    );
+    push(
+        "adb_install",
+        "给安卓设备装 APK（reinstall=true 就是覆盖安装）。",
         json!({"type":"object","properties":{
             "serial":{"type":"string"},
             "apk":{"type":"string","description":"本机 APK 路径"},
             "reinstall":{"type":"boolean","description":"默认 true"}
-        },"required":["serial","apk"]}), false);
+        },"required":["serial","apk"]}),
+        false,
+    );
 
     // ── 屏幕（本机桌面 / VNC / RTSP / RTMP / H.264）：一条真正能用的"看屏 + 操作"通道 ──
-    push("screen_open", "开一路屏幕会话，拿 session id。kind=vnc 时能**被控制端回传鼠标键盘**（screen_pointer / screen_key / screen_type）；kind=desktop/rtsp/rtmp/h264 只能看。会话一直活着，不用了记得 screen_close。",
+    push("screen_open", "开一路屏幕会话，拿 session id。kind=vnc 时能**被控制端回传鼠标键盘**（screen_pointer / screen_key / screen_type）；kind=desktop/rtsp/rtmp/h264 只能看（rtsp/rtmp/h264 的 width/height 是解码画布尺寸，不是源分辨率）。会话一直活着，不用了记得 screen_close。",
         json!({"type":"object","properties":{
             "kind":{"type":"string","enum":["vnc","desktop","rtsp","rtmp","h264"],"description":"默认 vnc"},
             "host":{"type":"string","description":"vnc 的服务器地址"},
@@ -381,9 +567,17 @@ offset/limit 按**字符**算，默认从 0 读 8000 字；一次读不完就接
             "fps":{"type":"integer","description":"默认 8，最高 60"},
             "quality":{"type":"integer","description":"JPEG 画质 20-95，默认 70"},
             "scale":{"type":"number","description":"缩放，1=原始；0.5 省带宽"},
+            "transport":{"type":"string","enum":["tcp","udp","auto"],"description":"RTSP 传输方式，默认 tcp"},
+            "width":{"type":"integer","description":"RTSP/RTMP/H.264 解码后的宽度，默认 1280"},
+            "height":{"type":"integer","description":"RTSP/RTMP/H.264 解码后的高度，默认 720"},
             "view_only":{"type":"boolean","description":"true = 只看不动（VNC）"}
         }}), false);
-    push("screen_list", "列当前活着的屏幕会话（id / 类型 / 标签）。", json!({"type":"object","properties":{}}), false);
+    push(
+        "screen_list",
+        "列当前活着的屏幕会话（id / 类型 / 标签）。",
+        json!({"type":"object","properties":{}}),
+        false,
+    );
     push("screen_shot", "把某一路屏幕会话的**当前画面**存成 PNG（默认存工作区），返回值里带一张粗字符画：@ = 亮/白、空格 = 暗/黑。字符画只能看版面（窗口在哪、画面有没有变），**读不了文字** —— 要读文字得让用户开视觉模型或另配 OCR。",
         json!({"type":"object","properties":{
             "session":{"type":"integer","description":"screen_open 返回的 id"},
@@ -408,8 +602,12 @@ offset/limit 按**字符**算，默认从 0 读 8000 字；一次读不完就接
             "session":{"type":"integer"},
             "text":{"type":"string"}
         },"required":["session","text"]}), false);
-    push("screen_close", "关掉一路屏幕会话（不给 session 就全关）。", 
-        json!({"type":"object","properties":{"session":{"type":"integer"}}}), false);
+    push(
+        "screen_close",
+        "关掉一路屏幕会话（不给 session 就全关）。",
+        json!({"type":"object","properties":{"session":{"type":"integer"}}}),
+        false,
+    );
 
     t
 }
@@ -425,8 +623,12 @@ pub fn schema_json(defs: &[ToolDef], allow_host: bool) -> Vec<Value> {
         .collect()
 }
 
-pub fn is_known(name: &str) -> bool { catalog().iter().any(|d| d.name == name) }
-pub fn is_host(name: &str) -> bool { catalog().iter().any(|d| d.name == name && d.host) }
+pub fn is_known(name: &str) -> bool {
+    catalog().iter().any(|d| d.name == name)
+}
+pub fn is_host(name: &str) -> bool {
+    catalog().iter().any(|d| d.name == name && d.host)
+}
 
 /// 工具执行的环境
 pub struct ToolCtx<'a> {
@@ -448,7 +650,10 @@ pub struct ToolCtx<'a> {
 }
 
 fn arg_str(args: &Value, key: &str) -> Option<String> {
-    args.get(key).and_then(|v| v.as_str()).map(|s| s.to_string()).filter(|s| !s.trim().is_empty())
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.trim().is_empty())
 }
 fn arg_u64(args: &Value, key: &str, default: u64) -> u64 {
     args.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
@@ -563,10 +768,19 @@ fn scope_info_text() -> Result<String, String> {
             }
             s.push_str(&format!(
                 "CH{n}：开 · {} V/div · 偏移 {} · {} · 探头 {}x\n",
-                c.get("scale").and_then(|x| x.as_f64()).map(|x| fmt_num(x, "V")).unwrap_or_else(|| "?".into()),
-                c.get("offset").and_then(|x| x.as_f64()).map(|x| format!("{x:.3} V")).unwrap_or_else(|| "?".into()),
+                c.get("scale")
+                    .and_then(|x| x.as_f64())
+                    .map(|x| fmt_num(x, "V"))
+                    .unwrap_or_else(|| "?".into()),
+                c.get("offset")
+                    .and_then(|x| x.as_f64())
+                    .map(|x| format!("{x:.3} V"))
+                    .unwrap_or_else(|| "?".into()),
                 c.get("coupling").and_then(|x| x.as_str()).unwrap_or("?"),
-                c.get("probe").and_then(|x| x.as_f64()).map(|x| format!("{x:.0}")).unwrap_or_else(|| "?".into()),
+                c.get("probe")
+                    .and_then(|x| x.as_f64())
+                    .map(|x| format!("{x:.0}"))
+                    .unwrap_or_else(|| "?".into()),
             ));
         }
     }
@@ -575,7 +789,8 @@ fn scope_info_text() -> Result<String, String> {
     s.push_str(&format!(
         "时基：{}\n采样率：{}\n",
         tb.map(fmt_time).unwrap_or_else(|| "?".into()),
-        sr.map(|x| format!("{} Sa/s", fmt_num(x, ""))).unwrap_or_else(|| "?".into()),
+        sr.map(|x| format!("{} Sa/s", fmt_num(x, "")))
+            .unwrap_or_else(|| "?".into()),
     ));
     if let Some(md) = v.get("memory_depth").and_then(|x| x.as_str()) {
         if !md.trim().is_empty() {
@@ -586,7 +801,10 @@ fn scope_info_text() -> Result<String, String> {
     s.push_str(&format!(
         "触发：源 {} · 电平 {} · 方式 {} · 状态 {}",
         t.get("source").and_then(|x| x.as_str()).unwrap_or("?"),
-        t.get("level").and_then(|x| x.as_f64()).map(|x| format!("{x:.3} V")).unwrap_or_else(|| "?".into()),
+        t.get("level")
+            .and_then(|x| x.as_f64())
+            .map(|x| format!("{x:.3} V"))
+            .unwrap_or_else(|| "?".into()),
         t.get("sweep").and_then(|x| x.as_str()).unwrap_or("?"),
         t.get("status").and_then(|x| x.as_str()).unwrap_or("?"),
     ));
@@ -623,7 +841,15 @@ fn ascii_plot(y: &[f64], cols: usize, rows: usize) -> String {
         };
         let (r1, r2) = (row_of(smax), row_of(smin));
         for r in r1..=r2 {
-            grid[r][c] = if r1 == r2 { '-' } else if r == r1 { '\'' } else if r == r2 { '.' } else { '|' };
+            grid[r][c] = if r1 == r2 {
+                '-'
+            } else if r == r1 {
+                '\''
+            } else if r == r2 {
+                '.'
+            } else {
+                '|'
+            };
         }
     }
     let mut out = String::new();
@@ -681,19 +907,29 @@ fn scope_wave_text(args: &Value) -> Result<String, String> {
         avg
     );
     if stride > 1 {
-        out.push_str(&format!("（返回时抽稀成 {} 点，每 {} 点取 1）\n", y.len(), stride));
+        out.push_str(&format!(
+            "（返回时抽稀成 {} 点，每 {} 点取 1）\n",
+            y.len(),
+            stride
+        ));
     }
     if cross >= 2 && span > 0.0 {
         let f_est = cross as f64 / span;
         // 一个周期至少要有 8 个采样点，否则这个"数穿越"的估计就是在数噪声
-        let per_period = if f_est > 0.0 && xinc > 0.0 { (1.0 / f_est) / xinc } else { 0.0 };
+        let per_period = if f_est > 0.0 && xinc > 0.0 {
+            (1.0 / f_est) / xinc
+        } else {
+            0.0
+        };
         if per_period >= 8.0 {
             out.push_str(&format!(
                 "按上升穿越估的频率：约 {:.4} Hz（{} 个周期）\n",
                 f_est, cross
             ));
         } else {
-            out.push_str("（这路信号相对采样率太快，数穿越估频率不可靠 —— 要准数就用 scope_measure）\n");
+            out.push_str(
+                "（这路信号相对采样率太快，数穿越估频率不可靠 —— 要准数就用 scope_measure）\n",
+            );
         }
     }
     if arg_bool(args, "ascii_plot", true) {
@@ -737,12 +973,20 @@ fn text_and_hex(data: &[u8]) -> String {
     if ctrl * 100 / data.len().max(1) < 5 {
         return crate::shell::decode(data);
     }
-    format!("(二进制 {} 字节)\nHEX: {}", data.len(), kdock_core::hex::bytes_to_hex(data))
+    format!(
+        "(二进制 {} 字节)\nHEX: {}",
+        data.len(),
+        kdock_core::hex::bytes_to_hex(data)
+    )
 }
 
 /// 借用 agent 的链路跑一段（用完还回去）
-fn with_conn<T>(ctx: &ToolCtx, f: impl FnOnce(&mut Conn) -> Result<T, String>) -> Result<T, String> {
-    let mut g = ctx.state.link.lock().map_err(|_| "link mutex".to_string())?;
+fn with_conn<T>(
+    ctx: &ToolCtx,
+    f: impl FnOnce(&mut Conn) -> Result<T, String>,
+) -> Result<T, String> {
+    let link = ctx.state.link_for(ctx.session)?;
+    let mut g = link.lock().map_err(|_| "link mutex".to_string())?;
     let mut conn = g.conn.take().ok_or("还没有链路，先 link_open")?;
     set_timeout(&mut conn, 6000);
     let r = f(&mut conn);
@@ -751,8 +995,12 @@ fn with_conn<T>(ctx: &ToolCtx, f: impl FnOnce(&mut Conn) -> Result<T, String>) -
 }
 
 /// 网口那几个操作要 `Svc` 按值拿走 Conn，所以单独一个壳：拿出来 -> 包 Svc -> 用完再还
-fn with_svc<T>(ctx: &ToolCtx, f: impl FnOnce(&mut upgrade::Svc) -> Result<T, String>) -> Result<T, String> {
-    let mut g = ctx.state.link.lock().map_err(|_| "link mutex".to_string())?;
+fn with_svc<T>(
+    ctx: &ToolCtx,
+    f: impl FnOnce(&mut upgrade::Svc) -> Result<T, String>,
+) -> Result<T, String> {
+    let link = ctx.state.link_for(ctx.session)?;
+    let mut g = link.lock().map_err(|_| "link mutex".to_string())?;
     let conn = g.conn.take().ok_or("还没有链路，先 link_open")?;
     let mut svc = upgrade::Svc::from_conn(conn);
     let r = f(&mut svc);
@@ -763,7 +1011,11 @@ fn with_svc<T>(ctx: &ToolCtx, f: impl FnOnce(&mut upgrade::Svc) -> Result<T, Str
 
 /// 当前是不是串口链路
 fn is_serial(ctx: &ToolCtx) -> bool {
-    ctx.state.link.lock().map(|g| g.mode == "serial").unwrap_or(false)
+    ctx.state
+        .link_for(ctx.session)
+        .ok()
+        .and_then(|l| l.lock().ok().map(|g| g.mode == "serial"))
+        .unwrap_or(false)
 }
 
 /// 会改设备/改盘上东西的工具：权限管的就是这些
@@ -781,27 +1033,70 @@ mod tests {
         assert_eq!(text_and_hex(&gbk), "中文\n", "GBK 文本应按本机代码页解出来");
         // 真二进制还是给 HEX
         let bin = [0x00u8, 0x01, 0x02, 0x00, 0x03, 0x00, 0xff, 0xfe];
-        assert!(text_and_hex(&bin).starts_with("(二进制"), "含 NUL 的按二进制走");
+        assert!(
+            text_and_hex(&bin).starts_with("(二进制"),
+            "含 NUL 的按二进制走"
+        );
     }
 
     #[test]
+    fn truncate_chars_never_slices_utf8_in_the_middle() {
+        let s = "中文输出".repeat(100);
+        let got = truncate_chars(s, 5);
+        assert!(got.starts_with("中文输出中"));
+        assert!(got.contains("已截"));
+        assert_eq!(truncate_chars("短".into(), 5), "短");
+    }
+
+    #[test]
+    fn background_shell_quote_is_safe_for_quotes_and_spaces() {
+        assert_eq!(shell_quote_posix("echo hello world"), "'echo hello world'");
+        assert_eq!(shell_quote_posix("echo it's ok"), "'echo it'\\''s ok'");
+    }
+
     /// 逻辑分析仪工具：注册齐全，读类不审批、写类审批
     #[test]
     fn logic_tools_are_registered_and_gated() {
         let names: Vec<&str> = catalog().iter().map(|d| d.name).collect();
-        for n in ["la_state", "la_read", "la_decoders", "la_config", "la_capture", "la_save"] {
+        for n in [
+            "la_state",
+            "la_read",
+            "la_decoders",
+            "la_config",
+            "la_capture",
+            "la_save",
+        ] {
             assert!(names.contains(&n), "缺工具 {n}");
         }
-        assert!(!is_dangerous("la_state") && !is_dangerous("la_read") && !is_dangerous("la_decoders"));
+        assert!(
+            !is_dangerous("la_state") && !is_dangerous("la_read") && !is_dangerous("la_decoders")
+        );
         assert!(is_dangerous("la_config") && is_dangerous("la_capture") && is_dangerous("la_save"));
         // 都是 host 工具（活在前端）
-        for n in ["la_state", "la_read", "la_decoders", "la_config", "la_capture", "la_save"] {
+        for n in [
+            "la_state",
+            "la_read",
+            "la_decoders",
+            "la_config",
+            "la_capture",
+            "la_save",
+        ] {
             assert!(is_host(n), "{n} 应该是 host 工具");
         }
         // la_config 的参数名要齐全（agent 靠它知道能改什么）
-        let d = catalog().into_iter().find(|d| d.name == "la_config").unwrap();
+        let d = catalog()
+            .into_iter()
+            .find(|d| d.name == "la_config")
+            .unwrap();
         let props = d.schema["properties"].as_object().unwrap();
-        for k in ["sampleRate", "decoders", "channels", "select", "view", "cursors"] {
+        for k in [
+            "sampleRate",
+            "decoders",
+            "channels",
+            "select",
+            "view",
+            "cursors",
+        ] {
             assert!(props.contains_key(k), "la_config 缺参数 {k}");
         }
     }
@@ -811,40 +1106,97 @@ mod tests {
     fn adb_and_screen_tools_are_registered_and_gated() {
         let names: Vec<&str> = catalog().iter().map(|d| d.name).collect();
         for n in [
-            "adb_devices", "adb_mdns", "adb_connect", "adb_pair", "adb_shell",
-            "adb_screenshot", "adb_push", "adb_pull", "adb_install",
+            "adb_devices",
+            "adb_mdns",
+            "adb_connect",
+            "adb_pair",
+            "adb_shell",
+            "adb_screenshot",
+            "adb_push",
+            "adb_pull",
+            "adb_install",
         ] {
             assert!(names.contains(&n), "缺 adb 工具 {n}");
         }
         for n in [
-            "screen_open", "screen_list", "screen_shot", "screen_pointer",
-            "screen_key", "screen_type", "screen_close",
+            "screen_open",
+            "screen_list",
+            "screen_shot",
+            "screen_pointer",
+            "screen_key",
+            "screen_type",
+            "screen_close",
         ] {
             assert!(names.contains(&n), "缺 screen 工具 {n}");
         }
         // 只读 / 无害的：不该弹审批（截图只往工作区写文件）
         for n in [
-            "adb_devices", "adb_mdns", "adb_connect", "adb_pair", "adb_screenshot",
-            "adb_pull", "screen_open", "screen_list", "screen_shot", "screen_close",
+            "adb_devices",
+            "adb_mdns",
+            "adb_connect",
+            "adb_pair",
+            "adb_screenshot",
+            "adb_pull",
+            "screen_open",
+            "screen_list",
+            "screen_shot",
+            "screen_close",
         ] {
             assert!(!is_dangerous(n), "{n} 不该要审批");
         }
         // 会改设备 / 会操作对方机器的：必须审批
-        for n in ["adb_shell", "adb_push", "adb_install", "screen_pointer", "screen_key", "screen_type"] {
+        for n in [
+            "adb_shell",
+            "adb_push",
+            "adb_install",
+            "screen_pointer",
+            "screen_key",
+            "screen_type",
+        ] {
             assert!(is_dangerous(n), "{n} 必须审批");
         }
         // 全是 Rust 侧实现（host 工具要前端配合，这组不能标 host）
-        for n in ["adb_devices", "adb_shell", "screen_open", "screen_shot", "screen_pointer"] {
+        for n in [
+            "adb_devices",
+            "adb_shell",
+            "screen_open",
+            "screen_shot",
+            "screen_pointer",
+        ] {
             assert!(!is_host(n), "{n} 不该是 host 工具");
         }
         // 参数名最容易写错的两个
-        let sh = catalog().into_iter().find(|d| d.name == "adb_shell").unwrap();
+        let sh = catalog()
+            .into_iter()
+            .find(|d| d.name == "adb_shell")
+            .unwrap();
         for k in ["serial", "cmd", "timeout_ms"] {
-            assert!(sh.schema["properties"].as_object().unwrap().contains_key(k), "adb_shell 缺参数 {k}");
+            assert!(
+                sh.schema["properties"].as_object().unwrap().contains_key(k),
+                "adb_shell 缺参数 {k}"
+            );
         }
-        let so = catalog().into_iter().find(|d| d.name == "screen_open").unwrap();
-        for k in ["kind", "host", "port", "password", "fps", "quality", "scale", "view_only"] {
-            assert!(so.schema["properties"].as_object().unwrap().contains_key(k), "screen_open 缺参数 {k}");
+        let so = catalog()
+            .into_iter()
+            .find(|d| d.name == "screen_open")
+            .unwrap();
+        for k in [
+            "kind",
+            "host",
+            "port",
+            "password",
+            "fps",
+            "quality",
+            "scale",
+            "view_only",
+            "transport",
+            "width",
+            "height",
+        ] {
+            assert!(
+                so.schema["properties"].as_object().unwrap().contains_key(k),
+                "screen_open 缺参数 {k}"
+            );
         }
     }
 
@@ -867,13 +1219,24 @@ mod tests {
     #[test]
     fn env_path_prefix_mentions_env_dir() {
         let p = env_path_prefix();
-        assert!(p.contains(&crate::env_setup::env_dir()), "PATH 前缀里没带 %ENVDIR%：{p}");
+        assert!(
+            p.contains(&crate::env_setup::env_dir()),
+            "PATH 前缀里没带 %ENVDIR%：{p}"
+        );
     }
 
     #[test]
     fn port_tools_are_registered_and_gated() {
         let names: Vec<&str> = catalog().iter().map(|d| d.name).collect();
-        for n in ["port_list", "port_state", "port_write", "port_read", "port_open", "port_close", "net_local_ips"] {
+        for n in [
+            "port_list",
+            "port_state",
+            "port_write",
+            "port_read",
+            "port_open",
+            "port_close",
+            "net_local_ips",
+        ] {
             assert!(names.contains(&n), "缺工具 {n}");
         }
         // 三个只读的不该要审批，写入的要
@@ -886,15 +1249,31 @@ mod tests {
         // 都是 Rust 侧实现（host=false）；标成 host 会走 agent://host_call 那条路，前端没有对应实现
         assert!(!is_host("port_write") && !is_host("port_read") && !is_host("port_list"));
         // port_open 的参数要覆盖：连接类型 / 串口 + 串口参数 / 本机地址 / 本机端口 / 远端地址 / 远端端口
-        let po = catalog().into_iter().find(|d| d.name == "port_open").unwrap();
+        let po = catalog()
+            .into_iter()
+            .find(|d| d.name == "port_open")
+            .unwrap();
         let props = po.schema["properties"].as_object().unwrap();
         for k in [
-            "mode", "port", "baud", "data_bits", "stop_bits", "parity", "flow_control",
-            "host", "local_port", "remote_host", "remote_port",
+            "mode",
+            "port",
+            "baud",
+            "data_bits",
+            "stop_bits",
+            "parity",
+            "flow_control",
+            "host",
+            "local_port",
+            "remote_host",
+            "remote_port",
         ] {
             assert!(props.contains_key(k), "port_open 缺参数 {k}");
         }
-        assert!(po.schema["required"].as_array().unwrap().iter().any(|v| v == "mode"));
+        assert!(po.schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "mode"));
     }
 
     #[test]
@@ -908,10 +1287,23 @@ mod tests {
         assert!(is_dangerous("env_install"));
         // 两个都在前端实现（装的时候要把进度画出来），所以必须是 host
         assert!(is_host("env_scan") && is_host("env_install"));
-        let ins = catalog().into_iter().find(|d| d.name == "env_install").unwrap();
-        assert!(ins.schema["properties"].as_object().unwrap().contains_key("id"));
-        assert!(ins.schema["properties"].as_object().unwrap().contains_key("dir"));
-        assert!(ins.schema["required"].as_array().unwrap().iter().any(|v| v == "id"));
+        let ins = catalog()
+            .into_iter()
+            .find(|d| d.name == "env_install")
+            .unwrap();
+        assert!(ins.schema["properties"]
+            .as_object()
+            .unwrap()
+            .contains_key("id"));
+        assert!(ins.schema["properties"]
+            .as_object()
+            .unwrap()
+            .contains_key("dir"));
+        assert!(ins.schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "id"));
     }
 }
 
@@ -967,7 +1359,10 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
                         "{}  {}{}",
                         p.port_name,
                         p.port_type,
-                        p.friendly.as_ref().map(|f| format!("  {f}")).unwrap_or_default()
+                        p.friendly
+                            .as_ref()
+                            .map(|f| format!("  {f}"))
+                            .unwrap_or_default()
                     );
                     if let (Some(v), Some(d)) = (p.vid, p.pid) {
                         s.push_str(&format!("  (VID:PID {v:04X}:{d:04X})"));
@@ -998,15 +1393,29 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
                 st.tx_bytes, st.rx_bytes, st.log_lines
             ));
             if st.elapsed_ms > 0 {
-                s.push_str(&format!("已持续：{:.1} 秒\n", st.elapsed_ms as f64 / 1000.0));
+                s.push_str(&format!(
+                    "已持续：{:.1} 秒\n",
+                    st.elapsed_ms as f64 / 1000.0
+                ));
             }
             Ok(s)
         }
         "port_write" => {
+            let _gate = ctx
+                .state
+                .port_gate
+                .lock()
+                .map_err(|_| "port gate mutex".to_string())?;
             let data = arg_str(args, "data").ok_or("缺少 data")?;
             let is_hex = args.get("hex").and_then(|v| v.as_bool()).unwrap_or(false);
             let le = arg_str(args, "line_ending").unwrap_or_else(|| "cr".to_string());
-            let ack = crate::write_main(ctx.app, &data, if is_hex { "hex" } else { "text" }, &le, false)?;
+            let ack = crate::write_main(
+                ctx.app,
+                &data,
+                if is_hex { "hex" } else { "text" },
+                &le,
+                false,
+            )?;
             // 让用户在传输页里实时看到 agent 发出去的东西（补一条 TX 行）
             let _ = ctx.app.emit(
                 "log://tx",
@@ -1016,17 +1425,28 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
             Ok(format!("已发 {} 字节到主连接：{}", ack.bytes, ack.hex))
         }
         "port_read" => {
-            let tail = args.get("tail").and_then(|v| v.as_u64()).unwrap_or(40).clamp(1, 400) as usize;
+            let tail = args
+                .get("tail")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(40)
+                .clamp(1, 400) as usize;
             Ok(crate::main_log_text(ctx.app, tail))
         }
         "port_open" => {
+            let _gate = ctx
+                .state
+                .port_gate
+                .lock()
+                .map_err(|_| "port gate mutex".to_string())?;
             let mode = arg_str(args, "mode").ok_or("缺少 mode")?;
             let mut ep = json!({ "mode": mode });
             let sarg = |k: &str| arg_str(args, k);
             let uarg = |k: &str| args.get(k).and_then(|v| v.as_u64());
             match mode.as_str() {
                 "serial" => {
-                    ep["port"] = json!(sarg("port").ok_or("mode=serial 需要 port（先用 port_list 看有哪些）")?);
+                    ep["port"] =
+                        json!(sarg("port")
+                            .ok_or("mode=serial 需要 port（先用 port_list 看有哪些）")?);
                     ep["config"] = json!({
                         "baud": uarg("baud").unwrap_or(115_200),
                         "data_bits": sarg("data_bits").unwrap_or_else(|| "eight".into()),
@@ -1037,24 +1457,37 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
                 }
                 "tcp_client" => {
                     ep["host"] = json!(sarg("host").ok_or("mode=tcp_client 需要 host（远端 IP）")?);
-                    ep["port"] = json!(uarg("remote_port").ok_or("mode=tcp_client 需要 remote_port")?);
+                    ep["port"] =
+                        json!(uarg("remote_port").ok_or("mode=tcp_client 需要 remote_port")?);
                 }
                 "tcp_server" => {
                     ep["host"] = json!(sarg("host").unwrap_or_else(|| "0.0.0.0".into()));
-                    ep["port"] = json!(uarg("local_port").ok_or("mode=tcp_server 需要 local_port（要监听的端口）")?);
+                    ep["port"] = json!(uarg("local_port")
+                        .ok_or("mode=tcp_server 需要 local_port（要监听的端口）")?);
                 }
                 "udp" => {
                     ep["local_port"] = json!(uarg("local_port").unwrap_or(0));
                     ep["remote_host"] = json!(sarg("remote_host").unwrap_or_default());
                     ep["remote_port"] = json!(uarg("remote_port").unwrap_or(0));
                 }
-                other => return Err(format!("不认识的 mode: {other}（serial / tcp_client / tcp_server / udp）")),
+                other => {
+                    return Err(format!(
+                        "不认识的 mode: {other}（serial / tcp_client / tcp_server / udp）"
+                    ))
+                }
             }
             let endpoint: crate::transport::Endpoint =
                 serde_json::from_value(ep).map_err(|e| format!("参数不对: {e}"))?;
             crate::open_main(ctx.app, endpoint, "agent")
         }
-        "port_close" => crate::close_main(ctx.app),
+        "port_close" => {
+            let _gate = ctx
+                .state
+                .port_gate
+                .lock()
+                .map_err(|_| "port gate mutex".to_string())?;
+            crate::close_main(ctx.app)
+        }
         "net_local_ips" => {
             let ips = crate::local_ips();
             if ips.is_empty() {
@@ -1064,7 +1497,8 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         }
         "link_open" => link_open(ctx, args),
         "link_close" => {
-            let mut g = ctx.state.link.lock().map_err(|_| "link mutex".to_string())?;
+            let link = ctx.state.link_for(ctx.session)?;
+            let mut g = link.lock().map_err(|_| "link mutex".to_string())?;
             let had = g.conn.take();
             g.mode.clear();
             g.label.clear();
@@ -1074,8 +1508,13 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
             Ok("链路已关闭".into())
         }
         "link_status" => {
-            let g = ctx.state.link.lock().map_err(|_| "link mutex".to_string())?;
-            Ok(if g.conn.is_some() { format!("已连接（{}）", g.label) } else { "未连接（先 link_open）".into() })
+            let link = ctx.state.link_for(ctx.session)?;
+            let g = link.lock().map_err(|_| "link mutex".to_string())?;
+            Ok(if g.conn.is_some() {
+                format!("已连接（{}）", g.label)
+            } else {
+                "未连接（先 link_open）".into()
+            })
         }
         "link_send" => link_send(ctx, args),
         "link_read" => link_read(ctx, args),
@@ -1096,12 +1535,12 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "adb_pull" => adb_pull_text(ctx, args),
         "adb_install" => adb_install_text(ctx, args),
         "screen_open" => screen_open(ctx, args),
-        "screen_list" => screen_list_text(),
+        "screen_list" => screen_list_text(ctx),
         "screen_shot" => screen_shot(ctx, args),
-        "screen_pointer" => screen_pointer(args),
-        "screen_key" => screen_key(args),
-        "screen_type" => screen_type(args),
-        "screen_close" => screen_close(args),
+        "screen_pointer" => screen_pointer(ctx, args),
+        "screen_key" => screen_key(ctx, args),
+        "screen_type" => screen_type(ctx, args),
+        "screen_close" => screen_close(ctx, args),
         "scope" => crate::scope::raw(&arg_str(args, "cmd").ok_or("缺少 cmd")?),
         "scope_connect" => {
             let ip = arg_str(args, "ip").unwrap_or_else(|| "192.168.1.100".into());
@@ -1115,7 +1554,11 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
             let items: Vec<String> = args
                 .get("items")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
                 .unwrap_or_default();
             let v = crate::scope::measure(ch, &items)?;
             Ok(scope_measure_text(&v))
@@ -1125,9 +1568,7 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
             // 不给路径就存进这个会话的工作区（用户能直接从界面打开）
             let p = arg_str(args, "path")
                 .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| {
-                    ctx.workspace.join(format!("scope_{}.png", crate::now_ms()))
-                });
+                .unwrap_or_else(|| ctx.workspace.join(format!("scope_{}.png", crate::now_ms())));
             let v = crate::scope::screenshot(Some(p))?;
             Ok(format!(
                 "截屏已保存：{}\n（{} 字节的 PNG；界面上「示波器」页点「截屏」也能直接看）",
@@ -1140,7 +1581,12 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
             let list = v
                 .get("applied")
                 .and_then(|x| x.as_array())
-                .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join("、"))
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join("、")
+                })
                 .unwrap_or_default();
             Ok(format!("已改：{list}"))
         }
@@ -1155,7 +1601,7 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "output_read" => {
             let path = arg_str(args, "path").ok_or("缺少 path")?;
             let off = arg_u64(args, "offset", 0) as usize;
-            let lim = arg_u64(args, "limit", 8000) as usize;
+            let lim = arg_u64(args, "limit", 1200) as usize;
             store::tool_output_read(ctx.app, &path, off, lim)
         }
         "skill_list" => {
@@ -1178,7 +1624,11 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
             }
             Ok(out)
         }
-        "skill_read" => store::skill_read_in(ctx.app, &ctx.workspace, &arg_str(args, "name").ok_or("缺少 name")?),
+        "skill_read" => store::skill_read_in(
+            ctx.app,
+            &ctx.workspace,
+            &arg_str(args, "name").ok_or("缺少 name")?,
+        ),
         "skill_create" => {
             let name = arg_str(args, "name").ok_or("缺少 name")?;
             let desc = arg_str(args, "description").ok_or("缺少 description")?;
@@ -1187,7 +1637,14 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
             let slug = store::slugify(&name);
             let content = format!("---\nname: {name}\ndescription: {desc}\n---\n\n{body}\n");
             let path = store::skill_write_in(ctx.app, &ctx.workspace, &scope, &slug, &content)?;
-            Ok(format!("技能已建：{slug}（{}，{path}）", if scope == "workspace" { "本项目" } else { "全局" }))
+            Ok(format!(
+                "技能已建：{slug}（{}，{path}）",
+                if scope == "workspace" {
+                    "本项目"
+                } else {
+                    "全局"
+                }
+            ))
         }
         "skill_update" => {
             let name = arg_str(args, "name").ok_or("缺少 name")?;
@@ -1200,7 +1657,14 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
             let name = arg_str(args, "name").ok_or("缺少 name")?;
             let scope = arg_str(args, "scope").unwrap_or_else(|| "global".into());
             store::skill_delete_in(ctx.app, &ctx.workspace, &scope, &name)?;
-            Ok(format!("技能已删除：{name}（{}）", if scope == "workspace" { "已归档一份到 skill-archive" } else { "全局" }))
+            Ok(format!(
+                "技能已删除：{name}（{}）",
+                if scope == "workspace" {
+                    "已归档一份到 skill-archive"
+                } else {
+                    "全局"
+                }
+            ))
         }
         "ssh_run" => ssh_run(ctx, args),
         other if other.starts_with("mcp__") => super::mcp::call_by_full_name(ctx.app, other, args),
@@ -1216,19 +1680,47 @@ fn link_open(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
 /// `ssh_run`：远程跑一条命令。有密码走 plink、没密码走 ssh.exe（见 transport::ssh_run_once）
 fn ssh_run(_ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let host = arg_str(args, "host").ok_or("缺少 host")?;
-    let cmd = arg_str(args, "cmd").ok_or("缺少 cmd")?;
+    let mut cmd = arg_str(args, "cmd").ok_or("缺少 cmd")?;
     let user = arg_str(args, "user").unwrap_or_default();
     let password = arg_str(args, "password").unwrap_or_default();
     let key = arg_str(args, "key").unwrap_or_default();
     let port = arg_u16(args, "port").unwrap_or(22);
-    let timeout = arg_u64(args, "timeout_ms", 60_000).min(30 * 60_000);
-    let (code, text) = crate::transport::ssh_run_once(&host, port, &user, &password, &key, &cmd, timeout)?;
-    let tail = if text.len() > 6000 {
-        format!("{}\n…（输出太长，已截）", &text[..6000])
+    let background = args
+        .get("background")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let mut timeout = arg_u64(args, "timeout_ms", 60_000).min(30 * 60_000);
+    if background {
+        // 远端后台进程如果继承 SSH 的 stdout/stderr，plink 会一直等它退出；
+        // 这里用 setsid + disown 把它从会话里摘出去，并且只给启动动作 15 秒。
+        cmd = format!(
+            "setsid bash -c {} </dev/null >/dev/null 2>&1 & disown; echo started",
+            shell_quote_posix(&cmd)
+        );
+        timeout = timeout.min(15_000);
+    }
+    let (code, text) =
+        crate::transport::ssh_run_once(&host, port, &user, &password, &key, &cmd, timeout)?;
+    // 只做一个内存安全上限；真正进上下文的截断由 mod.rs 的 cap_tool_result
+    // 按 token 预算做（并落盘给 output_read）。这里用 chars()，避免 UTF-8
+    // 输出里 6000 正好落在汉字中间时 panic。
+    let tail = truncate_chars(text, 256 * 1024);
+    Ok(format!("退出码 {code}\n{tail}"))
+}
+
+/// POSIX shell 单引号转义（给 background 包装用）
+fn shell_quote_posix(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// 按字符截断（不按字节），给外部进程输出做一个内存上限。
+fn truncate_chars(text: String, max: usize) -> String {
+    if text.chars().count() > max {
+        let head: String = text.chars().take(max).collect();
+        format!("{head}\n…（输出超过 {max} 字符，已截）")
     } else {
         text
-    };
-    Ok(format!("退出码 {code}\n{tail}"))
+    }
 }
 
 fn ssh_or_link(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
@@ -1237,11 +1729,11 @@ fn ssh_or_link(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         "serial" => {
             let port = arg_str(args, "port").ok_or("串口链路要给 port，例如 COM7")?;
             let baud = arg_u64(args, "baud", 115200) as u32;
-            let config: kdock_core::config::SerialConfig =
-                serde_json::from_value(json!({
-                    "baud": baud, "data_bits": "eight", "stop_bits": "one",
-                    "parity": "none", "flow_control": "none"
-                })).map_err(|e| format!("串口参数不对: {e}"))?;
+            let config: kdock_core::config::SerialConfig = serde_json::from_value(json!({
+                "baud": baud, "data_bits": "eight", "stop_bits": "one",
+                "parity": "none", "flow_control": "none"
+            }))
+            .map_err(|e| format!("串口参数不对: {e}"))?;
             crate::transport::Endpoint::Serial { port, config }
         }
         "tcp" => crate::transport::Endpoint::TcpClient {
@@ -1257,7 +1749,8 @@ fn ssh_or_link(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     };
     let label = endpoint.label();
     let mut conn = crate::transport::open_endpoint(&endpoint)?;
-    let mut g = ctx.state.link.lock().map_err(|_| "link mutex".to_string())?;
+    let link = ctx.state.link_for(ctx.session)?;
+    let mut g = link.lock().map_err(|_| "link mutex".to_string())?;
     if let Some(mut old) = g.conn.take() {
         old.shutdown();
     }
@@ -1282,10 +1775,15 @@ fn link_send(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     // 写满 + flush 放在**同一次** with_conn 里：中间松手等于把链路还回去，
     // 中控/前端可能正好插进来抢这条连接；而且 write 允许短写，必须写满。
     with_conn(ctx, |conn| {
-        conn.write_all(&payload).map_err(|e| format!("写失败: {e}"))?;
+        conn.write_all(&payload)
+            .map_err(|e| format!("写失败: {e}"))?;
         conn.flush().map_err(|e| format!("flush 失败: {e}"))
     })?;
-    Ok(format!("已发送 {} 字节（{}）", payload.len(), if hex { "HEX" } else { "文本" }))
+    Ok(format!(
+        "已发送 {} 字节（{}）",
+        payload.len(),
+        if hex { "HEX" } else { "文本" }
+    ))
 }
 
 fn link_read(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
@@ -1330,7 +1828,10 @@ fn link_read(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
             }
         }
         if out.is_empty() {
-            Ok(format!("（{}ms 内没有收到数据）", start.elapsed().as_millis()))
+            Ok(format!(
+                "（{}ms 内没有收到数据）",
+                start.elapsed().as_millis()
+            ))
         } else {
             Ok(text_and_hex(&out))
         }
@@ -1364,7 +1865,9 @@ fn device_pull(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         Some(p) => p,
         None => {
             let name = path.rsplit('/').next().unwrap_or("pull.bin").to_string();
-            store::resolve_in_workspace(&ctx.workspace, &name)?.to_string_lossy().to_string()
+            store::resolve_in_workspace(&ctx.workspace, &name)?
+                .to_string_lossy()
+                .to_string()
         }
     };
     if let Some(parent) = std::path::Path::new(&save_to).parent() {
@@ -1372,42 +1875,77 @@ fn device_pull(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     }
     let log = ctx.log;
     let r = if is_serial(ctx) {
-        with_conn(ctx, |conn| upgrade::serial_pull(conn, &path, &save_to, |s| log(s)))?
+        with_conn(ctx, |conn| {
+            upgrade::serial_pull(conn, &path, &save_to, |s| log(s))
+        })?
     } else {
-        with_svc(ctx, |svc| upgrade::svc_pull(svc, &path, &save_to, |s| log(s)))?
+        with_svc(ctx, |svc| {
+            upgrade::svc_pull(svc, &path, &save_to, |s| log(s))
+        })?
     };
-    Ok(format!("已取回 {} 字节 -> {}\ncrc32={:08X}", r.bytes, save_to, r.crc32))
+    Ok(format!(
+        "已取回 {} 字节 -> {}\ncrc32={:08X}",
+        r.bytes, save_to, r.crc32
+    ))
 }
 
 fn device_push(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let local = arg_str(args, "local").ok_or("缺少 local")?;
     let data = std::fs::read(&local).map_err(|e| format!("读不了 {local}: {e}"))?;
     let remote = arg_str(args, "remote").unwrap_or_else(|| {
-        format!("/{}", std::path::Path::new(&local).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "up.bin".into()))
+        format!(
+            "/{}",
+            std::path::Path::new(&local)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "up.bin".into())
+        )
     });
     let log = ctx.log;
     let crc = if is_serial(ctx) {
-        with_conn(ctx, |conn| upgrade::serial_upload(conn, &remote, &data, |s| log(s)))?
+        with_conn(ctx, |conn| {
+            upgrade::serial_upload(conn, &remote, &data, |s| log(s))
+        })?
     } else {
-        with_svc(ctx, |svc| upgrade::svc_upload(svc, &remote, &data, |s| log(s)))?
+        with_svc(ctx, |svc| {
+            upgrade::svc_upload(svc, &remote, &data, |s| log(s))
+        })?
     };
-    Ok(format!("已发送 {} 字节 -> {}\ncrc32={:08X}", data.len(), remote, crc))
+    Ok(format!(
+        "已发送 {} 字节 -> {}\ncrc32={:08X}",
+        data.len(),
+        remote,
+        crc
+    ))
 }
 
 fn firmware_info(args: &Value) -> Result<String, String> {
     let local = arg_str(args, "local").ok_or("缺少 local")?;
     let data = std::fs::read(&local).map_err(|e| format!("读不了 {local}: {e}"))?;
-    let name = std::path::Path::new(&local).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let name = std::path::Path::new(&local)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
     let info = upgrade::parse_fw(&data, &name)?;
     Ok(format!(
         "版本 v{}\npayload {} B  crc32={:08X}\n整包 {} B  crc32={:08X}\nboard={} name={}",
-        info.version, info.payload_size, info.payload_crc32, info.file_size, info.file_crc32, info.board, info.name))
+        info.version,
+        info.payload_size,
+        info.payload_crc32,
+        info.file_size,
+        info.file_crc32,
+        info.board,
+        info.name
+    ))
 }
 
 fn firmware_upgrade(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let local = arg_str(args, "local").ok_or("缺少 local")?;
     let data = std::fs::read(&local).map_err(|e| format!("读不了 {local}: {e}"))?;
-    let name = std::path::Path::new(&local).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let name = std::path::Path::new(&local)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
     let transport = arg_str(args, "transport").unwrap_or_else(|| "auto".into());
     let use_net = match transport.as_str() {
         "net" => true,
@@ -1417,21 +1955,34 @@ fn firmware_upgrade(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let log = ctx.log;
     let mut lines: Vec<String> = Vec::new();
     {
-        let mut log_fn = |s: &str| { log(s); };
+        let mut log_fn = |s: &str| {
+            log(s);
+        };
         let mut prog_fn = |_p: f64| {};
-        let mut cx = upgrade::Ctx { log: &mut log_fn, progress: &mut prog_fn };
+        let mut cx = upgrade::Ctx {
+            log: &mut log_fn,
+            progress: &mut prog_fn,
+        };
         if use_net {
             let host = arg_str(args, "host")
-                .or_else(|| ctx.state.link.lock().ok().and_then(|g| {
-                    let l = g.label.clone();
-                    l.strip_prefix("TCP ").and_then(|r| r.split(':').next().map(|s| s.to_string()))
-                }))
+                .or_else(|| {
+                    ctx.state
+                        .link_for(ctx.session)
+                        .ok()
+                        .and_then(|l| l.lock().ok().map(|g| g.label.clone()))
+                        .and_then(|l| {
+                            l.strip_prefix("TCP ")
+                                .and_then(|r| r.split(':').next().map(|s| s.to_string()))
+                        })
+                })
                 .ok_or("网口升级要知道设备 IP：给 host，或者先 link_open 一条 TCP 链路")?;
             let port = arg_u64(args, "remote_port", 6666) as u16;
             upgrade::net_upgrade(&mut cx, &host, port, &name, &data)?;
             lines.push(format!("网口升级完成：{host}:{port}"));
         } else {
-            with_conn(ctx, |conn| upgrade::serial_upgrade(&mut cx, conn, &name, &data))?;
+            with_conn(ctx, |conn| {
+                upgrade::serial_upgrade(&mut cx, conn, &name, &data)
+            })?;
             lines.push("串口升级完成".to_string());
         }
     }
@@ -1445,7 +1996,16 @@ fn firmware_upgrade(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
 fn env_path_prefix() -> String {
     let d = crate::env_setup::env_dir();
     let mut parts: Vec<String> = vec![d.clone()];
-    for sub in ["adb", "scrcpy", "plink", "ffmpeg", "ffmpeg\\bin", "platform-tools", "JLink", "openocd"] {
+    for sub in [
+        "adb",
+        "scrcpy",
+        "plink",
+        "ffmpeg",
+        "ffmpeg\\bin",
+        "platform-tools",
+        "JLink",
+        "openocd",
+    ] {
         let p = format!("{d}\\{sub}");
         if std::path::Path::new(&p).exists() {
             parts.push(p);
@@ -1473,7 +2033,7 @@ fn local_run(args: &Value) -> Result<String, String> {
     if !stderr.trim().is_empty() {
         text.push_str(&format!("--- stderr ---\n{}\n", stderr.trim_end()));
     }
-    Ok(text.chars().take(8000).collect())
+    Ok(truncate_chars(text, 256 * 1024))
 }
 
 /* ───────────────────────── 安卓（ADB） ───────────────────────── */
@@ -1526,7 +2086,11 @@ fn adb_port_arg(args: &Value) -> Option<u16> {
 fn adb_connect_text(args: &Value) -> Result<String, String> {
     let host = arg_str(args, "host").ok_or("缺少 host")?;
     let v = crate::android::adb_connect(host, adb_port_arg(args))?;
-    Ok(format!("adb connect {}：{}", jstr(&v, "target"), jstr(&v, "text")))
+    Ok(format!(
+        "adb connect {}：{}",
+        jstr(&v, "target"),
+        jstr(&v, "text")
+    ))
 }
 
 fn adb_pair_text(args: &Value) -> Result<String, String> {
@@ -1543,9 +2107,15 @@ fn adb_pair_text(args: &Value) -> Result<String, String> {
 fn adb_shell_text(args: &Value) -> Result<String, String> {
     let serial = arg_str(args, "serial").ok_or("缺少 serial（先用 adb_devices 看）")?;
     let cmd = arg_str(args, "cmd").ok_or("缺少 cmd")?;
-    let t = args.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(20_000);
+    let t = args
+        .get("timeout_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20_000);
     let v = crate::android::adb_shell(serial, cmd, Some(t))?;
-    let mut out = format!("exit={}\n", v.get("code").and_then(|x| x.as_i64()).unwrap_or(-1));
+    let mut out = format!(
+        "exit={}\n",
+        v.get("code").and_then(|x| x.as_i64()).unwrap_or(-1)
+    );
     let so = jstr(&v, "stdout");
     let se = jstr(&v, "stderr");
     if !so.trim().is_empty() {
@@ -1559,7 +2129,8 @@ fn adb_shell_text(args: &Value) -> Result<String, String> {
 
 fn adb_screenshot_text(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let serial = arg_str(args, "serial").ok_or("缺少 serial")?;
-    let rel = arg_str(args, "save_as").unwrap_or_else(|| format!("adb_shot_{}.png", crate::now_ms()));
+    let rel =
+        arg_str(args, "save_as").unwrap_or_else(|| format!("adb_shot_{}.png", crate::now_ms()));
     let path = ws_path(ctx, &rel)?;
     let v = crate::android::adb_screenshot(serial, path.to_string_lossy().to_string())?;
     Ok(format!(
@@ -1601,7 +2172,10 @@ fn adb_install_text(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let serial = arg_str(args, "serial").ok_or("缺少 serial")?;
     let apk = arg_str(args, "apk").ok_or("缺少 apk（本机 APK 路径）")?;
     let apk_abs = ws_path(ctx, &apk)?.to_string_lossy().to_string();
-    let re = args.get("reinstall").and_then(|v| v.as_bool()).unwrap_or(true);
+    let re = args
+        .get("reinstall")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
     let v = crate::android::adb_install(serial, apk_abs, Some(re))?;
     Ok(jstr(&v, "text"))
 }
@@ -1611,8 +2185,15 @@ fn adb_install_text(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
 /// 相对工作区的文件名 → 工作区内的绝对路径（也允许直接给工作区里的绝对路径；跑到外面就拒）
 fn ws_path(ctx: &ToolCtx, rel: &str) -> Result<std::path::PathBuf, String> {
     let p = std::path::Path::new(rel.trim());
-    let joined = if p.is_absolute() { p.to_path_buf() } else { ctx.workspace.join(p) };
-    let ws = ctx.workspace.canonicalize().unwrap_or_else(|_| ctx.workspace.clone());
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        ctx.workspace.join(p)
+    };
+    let ws = ctx
+        .workspace
+        .canonicalize()
+        .unwrap_or_else(|_| ctx.workspace.clone());
     let probe = joined.parent().unwrap_or(&joined);
     let parent = probe.canonicalize().unwrap_or_else(|_| probe.to_path_buf());
     if !parent.starts_with(&ws) {
@@ -1632,22 +2213,58 @@ fn screen_open(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         arg_str(args, "password"),
         arg_str(args, "url"),
         args.get("fps").and_then(|x| x.as_u64()).map(|n| n as u32),
-        args.get("quality").and_then(|x| x.as_u64()).map(|n| n as u8),
+        args.get("quality")
+            .and_then(|x| x.as_u64())
+            .map(|n| n as u8),
         args.get("scale").and_then(|x| x.as_f64()).map(|n| n as f32),
-        None,
-        None,
+        args.get("width").and_then(|x| x.as_u64()).map(|n| n as u32),
+        args.get("height")
+            .and_then(|x| x.as_u64())
+            .map(|n| n as u32),
         arg_str(args, "transport"),
         args.get("view_only").and_then(|x| x.as_bool()),
     )?;
     let id = v.get("id").and_then(|x| x.as_u64()).unwrap_or(0);
+    if let Ok(mut g) = ctx.state.screen_owners.lock() {
+        g.insert(id as u32, ctx.session.to_string());
+    }
     Ok(format!(
         "已开屏幕会话 #{id}（{}）\n接下来：screen_shot 截图；kind=vnc 时还能 screen_pointer / screen_key / screen_type 操作对面；不用了 screen_close。",
         jstr(&v, "label")
     ))
 }
 
-fn screen_list_text() -> Result<String, String> {
-    let list = crate::remote_screen::rs_list();
+/// 屏幕会话的归属检查：A 会话不能截图/按键/关闭 B 会话打开的屏幕。
+fn screen_owned(ctx: &ToolCtx, id: u32) -> Result<(), String> {
+    let g = ctx
+        .state
+        .screen_owners
+        .lock()
+        .map_err(|_| "screen owner mutex".to_string())?;
+    if let Some(owner) = g.get(&id) {
+        if owner != ctx.session {
+            return Err(format!(
+                "屏幕会话 #{id} 是另一个会话打开的（owner={}），不能跨会话操作",
+                owner
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn screen_list_text(ctx: &ToolCtx) -> Result<String, String> {
+    let owners = ctx
+        .state
+        .screen_owners
+        .lock()
+        .map_err(|_| "screen owner mutex".to_string())?;
+    let list: Vec<Value> = crate::remote_screen::rs_list()
+        .into_iter()
+        .filter(|s| {
+            let id = s.get("id").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+            owners.get(&id).map(|o| o == ctx.session).unwrap_or(true)
+        })
+        .collect();
     if list.is_empty() {
         return Ok("（没有活着的屏幕会话；screen_open 开一路）".into());
     }
@@ -1666,12 +2283,16 @@ fn screen_list_text() -> Result<String, String> {
 }
 
 fn screen_shot(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
-    let id = args.get("session").and_then(|v| v.as_u64()).ok_or("缺少 session（screen_open 给的 id）")? as u32;
+    let id = args
+        .get("session")
+        .and_then(|v| v.as_u64())
+        .ok_or("缺少 session（screen_open 给的 id）")? as u32;
+    screen_owned(ctx, id)?;
     let rel = arg_str(args, "save_as").unwrap_or_else(|| format!("shot_{}.png", crate::now_ms()));
     let path = ws_path(ctx, &rel)?;
     let v = crate::remote_screen::rs_snapshot(id, Some(path.to_string_lossy().to_string()))?;
     Ok(format!(
-        "会话 #{}（{}）\nPNG：{}（{} 字节，{}x{}；对方桌面 {}x{}，帧时间 {}ms 前）\n\n字符画（@ 亮 / 空格 暗，只能看版面，读不了文字）：\n{}",
+        "会话 #{}（{}）\nPNG：{}（{} 字节，输出 {}x{}；会话尺寸 {}x{}，帧时间 {}ms 前）\n\n字符画（@ 亮 / 空格 暗，只能看版面，读不了文字）：\n{}",
         id,
         jstr(&v, "label"),
         path.display(),
@@ -1694,12 +2315,30 @@ fn keysym_of(key: &str) -> Option<u32> {
     }
     let k = key.trim();
     let named: &[(&str, u32)] = &[
-        ("enter", 0xff0d), ("return", 0xff0d), ("tab", 0xff09), ("esc", 0xff1b), ("escape", 0xff1b),
-        ("backspace", 0xff08), ("delete", 0xffff), ("del", 0xffff), ("space", 0x20),
-        ("up", 0xff52), ("down", 0xff54), ("left", 0xff51), ("right", 0xff53),
-        ("home", 0xff50), ("end", 0xff57), ("pgup", 0xff55), ("pgdn", 0xff56), ("insert", 0xff63),
-        ("ctrl", 0xffe3), ("shift", 0xffe1), ("alt", 0xffe9), ("super", 0xffeb),
-        ("caps", 0xffe5), ("num", 0xff7f),
+        ("enter", 0xff0d),
+        ("return", 0xff0d),
+        ("tab", 0xff09),
+        ("esc", 0xff1b),
+        ("escape", 0xff1b),
+        ("backspace", 0xff08),
+        ("delete", 0xffff),
+        ("del", 0xffff),
+        ("space", 0x20),
+        ("up", 0xff52),
+        ("down", 0xff54),
+        ("left", 0xff51),
+        ("right", 0xff53),
+        ("home", 0xff50),
+        ("end", 0xff57),
+        ("pgup", 0xff55),
+        ("pgdn", 0xff56),
+        ("insert", 0xff63),
+        ("ctrl", 0xffe3),
+        ("shift", 0xffe1),
+        ("alt", 0xffe9),
+        ("super", 0xffeb),
+        ("caps", 0xffe5),
+        ("num", 0xff7f),
     ];
     let low = k.to_ascii_lowercase();
     if let Some((_, ks)) = named.iter().find(|(n, _)| *n == low) {
@@ -1724,13 +2363,23 @@ fn keysym_of(key: &str) -> Option<u32> {
     let c = it.next()?;
     if it.next().is_none() {
         let cp = c as u32;
-        return Some(if cp <= 0xff { cp } else if cp <= 0xffff { cp } else { 0x0100_0000 + cp });
+        return Some(if cp <= 0xff {
+            cp
+        } else if cp <= 0xffff {
+            cp
+        } else {
+            0x0100_0000 + cp
+        });
     }
     None
 }
 
-fn screen_pointer(args: &Value) -> Result<String, String> {
-    let id = args.get("session").and_then(|v| v.as_u64()).ok_or("缺少 session")? as u32;
+fn screen_pointer(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let id = args
+        .get("session")
+        .and_then(|v| v.as_u64())
+        .ok_or("缺少 session")? as u32;
+    screen_owned(ctx, id)?;
     let x = args.get("x").and_then(|v| v.as_i64()).ok_or("缺少 x")?;
     let y = args.get("y").and_then(|v| v.as_i64()).ok_or("缺少 y")?;
     if !(0..=32767).contains(&x) || !(0..=32767).contains(&y) {
@@ -1754,8 +2403,12 @@ fn screen_pointer(args: &Value) -> Result<String, String> {
     }
 }
 
-fn screen_key(args: &Value) -> Result<String, String> {
-    let id = args.get("session").and_then(|v| v.as_u64()).ok_or("缺少 session")? as u32;
+fn screen_key(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let id = args
+        .get("session")
+        .and_then(|v| v.as_u64())
+        .ok_or("缺少 session")? as u32;
+    screen_owned(ctx, id)?;
     let key = arg_str(args, "key").ok_or("缺少 key")?;
     let ks = keysym_of(&key).ok_or_else(|| {
         format!("认不得这个键：{key}（可以用 enter/tab/esc/backspace/up/down/left/right/home/end/pgup/pgdn/f1-f12，或单个字符）")
@@ -1772,8 +2425,12 @@ fn screen_key(args: &Value) -> Result<String, String> {
     Ok(format!("已按键 {key}（keysym 0x{ks:04X}）"))
 }
 
-fn screen_type(args: &Value) -> Result<String, String> {
-    let id = args.get("session").and_then(|v| v.as_u64()).ok_or("缺少 session")? as u32;
+fn screen_type(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let id = args
+        .get("session")
+        .and_then(|v| v.as_u64())
+        .ok_or("缺少 session")? as u32;
+    screen_owned(ctx, id)?;
     let text = arg_str(args, "text").ok_or("缺少 text")?;
     let mut n = 0usize;
     for c in text.chars() {
@@ -1794,15 +2451,38 @@ fn screen_type(args: &Value) -> Result<String, String> {
     ))
 }
 
-fn screen_close(args: &Value) -> Result<String, String> {
+fn screen_close(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     match args.get("session").and_then(|v| v.as_u64()) {
         Some(id) => {
+            screen_owned(ctx, id as u32)?;
             crate::remote_screen::rs_stop(id as u32);
+            if let Ok(mut g) = ctx.state.screen_owners.lock() {
+                g.remove(&(id as u32));
+            }
             Ok(format!("已关屏幕会话 #{id}"))
         }
         None => {
-            crate::remote_screen::rs_stop_all();
-            Ok("已关掉所有屏幕会话".into())
+            // 只能关自己名下的会话；UI 打开的（没有 owner）留给用户自己关。
+            let ids: Vec<u32> = {
+                let g = ctx
+                    .state
+                    .screen_owners
+                    .lock()
+                    .map_err(|_| "screen owner mutex".to_string())?;
+                g.iter()
+                    .filter(|(_, o)| o.as_str() == ctx.session)
+                    .map(|(id, _)| *id)
+                    .collect()
+            };
+            for id in &ids {
+                crate::remote_screen::rs_stop(*id);
+            }
+            if let Ok(mut g) = ctx.state.screen_owners.lock() {
+                for id in &ids {
+                    g.remove(id);
+                }
+            }
+            Ok(format!("已关掉本会话的 {} 个屏幕会话", ids.len()))
         }
     }
 }
@@ -1811,10 +2491,19 @@ fn which(exe: &str) -> Option<String> {
     let out = if cfg!(windows) {
         std::process::Command::new("where").arg(exe).output().ok()?
     } else {
-        std::process::Command::new("sh").args(["-c", &format!("command -v {exe}")]).output().ok()?
+        std::process::Command::new("sh")
+            .args(["-c", &format!("command -v {exe}")])
+            .output()
+            .ok()?
     };
-    if !out.status.success() { return None; }
-    String::from_utf8_lossy(&out.stdout).lines().next().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn flash(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
@@ -1826,9 +2515,14 @@ fn flash(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let exe = match arg_str(args, "exe") {
         Some(p) => p,
         None => match tool.as_str() {
-            "jlink" => which("JLink.exe").or_else(|| which("JLink")).ok_or("PATH 里没有 JLink.exe，请用 exe 指定全路径")?,
-            "openocd" => which("openocd.exe").or_else(|| which("openocd")).ok_or("PATH 里没有 openocd.exe，请用 exe 指定全路径")?,
-            "stm32" => which("STM32_Programmer_CLI.exe").or_else(|| which("STM32_Programmer_CLI"))
+            "jlink" => which("JLink.exe")
+                .or_else(|| which("JLink"))
+                .ok_or("PATH 里没有 JLink.exe，请用 exe 指定全路径")?,
+            "openocd" => which("openocd.exe")
+                .or_else(|| which("openocd"))
+                .ok_or("PATH 里没有 openocd.exe，请用 exe 指定全路径")?,
+            "stm32" => which("STM32_Programmer_CLI.exe")
+                .or_else(|| which("STM32_Programmer_CLI"))
                 .ok_or("PATH 里没有 STM32_Programmer_CLI.exe，请用 exe 指定全路径")?,
             other => return Err(format!("不支持的烧录工具 {other}")),
         },
@@ -1843,27 +2537,47 @@ fn flash(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
                 "device {device}\nsi SWD\nspeed 4000\nconnect\nh\nloadfile \"{file}\"\nr\ng\nexit\n");
             let tmp = std::env::temp_dir().join("kdock_agent_flash.jlink");
             std::fs::write(&tmp, script).map_err(|e| format!("写 J-Link 脚本失败: {e}"))?;
-            argv = vec!["-ExitOnError".into(), "1".into(), "-CommanderScript".into(), tmp.to_string_lossy().to_string()];
+            argv = vec![
+                "-ExitOnError".into(),
+                "1".into(),
+                "-CommanderScript".into(),
+                tmp.to_string_lossy().to_string(),
+            ];
         }
         "openocd" => {
             let cfg = arg_str(args, "config").unwrap_or_else(|| "interface/cmsis-dap.cfg".into());
             let target = arg_str(args, "target").unwrap_or_else(|| "target/stm32f4x.cfg".into());
             argv = vec![
-                "-f".into(), cfg, "-f".into(), target,
-                "-c".into(), "init".into(), "-c".into(), "halt".into(),
-                "-c".into(), format!("program \"{file}\" verify reset exit"),
+                "-f".into(),
+                cfg,
+                "-f".into(),
+                target,
+                "-c".into(),
+                "init".into(),
+                "-c".into(),
+                "halt".into(),
+                "-c".into(),
+                format!("program \"{file}\" verify reset exit"),
             ];
         }
         _ => {
             argv = vec![
-                "-c".into(), "port=SWD".into(), "-w".into(), file.clone(), addr.clone(),
-                "-v".into(), "-rst".into(),
+                "-c".into(),
+                "port=SWD".into(),
+                "-w".into(),
+                file.clone(),
+                addr.clone(),
+                "-v".into(),
+                "-rst".into(),
             ];
         }
     }
     let (log, app) = (ctx.log, ctx.app);
     (log)(&format!("[agent] 烧录: {} {}\n", exe, argv.join(" ")));
-    let _ = app.emit("flash://log", format!("\n[agent] $ {} {}\n", exe, argv.join(" ")));
+    let _ = app.emit(
+        "flash://log",
+        format!("\n[agent] $ {} {}\n", exe, argv.join(" ")),
+    );
     let mut child = std::process::Command::new(&exe)
         .args(&argv)
         .stdout(std::process::Stdio::piped())
@@ -1880,14 +2594,19 @@ fn flash(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
                     "exit={}\n{}\n{}",
                     status.code().unwrap_or(-1),
                     String::from_utf8_lossy(&out.stdout),
-                    String::from_utf8_lossy(&out.stderr));
+                    String::from_utf8_lossy(&out.stderr)
+                );
                 let _ = app.emit("flash://log", text.clone());
                 let tail: Vec<&str> = text.lines().rev().take(40).collect();
                 let mut tail: Vec<&str> = tail.into_iter().collect();
                 tail.reverse();
                 let ok = status.success();
-                return Ok(format!("烧录退出码 {}（{}）\n--- 末尾输出 ---\n{}",
-                    status.code().unwrap_or(-1), if ok { "成功" } else { "失败" }, tail.join("\n")));
+                return Ok(format!(
+                    "烧录退出码 {}（{}）\n--- 末尾输出 ---\n{}",
+                    status.code().unwrap_or(-1),
+                    if ok { "成功" } else { "失败" },
+                    tail.join("\n")
+                ));
             }
             None => {
                 if crate::agent::stop_requested() {
@@ -1923,11 +2642,26 @@ fn history_search(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         let ev: Value = serde_json::from_str(line).unwrap_or(Value::Null);
         let kind = ev.get("type").and_then(|v| v.as_str()).unwrap_or("?");
         let text = match kind {
-            "user" | "assistant" | "note" => ev.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            "tool_call" => format!("{} {}", ev.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                                   ev.get("args").cloned().unwrap_or(Value::Null)),
-            "tool_result" => ev.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            "summary" => ev.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            "user" | "assistant" | "note" => ev
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            "tool_call" => format!(
+                "{} {}",
+                ev.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                ev.get("args").cloned().unwrap_or(Value::Null)
+            ),
+            "tool_result" => ev
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            "summary" => ev
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             _ => String::new(),
         };
         let at = text.find(&needle).unwrap_or(0);
@@ -1946,21 +2680,29 @@ fn history_search(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     if hits.is_empty() {
         return Ok(format!("会话记录里没找到「{needle}」"));
     }
-    Ok(format!("在会话记录里找到 {} 处（含已压缩部分）：\n{}", hits.len(), hits.join("\n")))
+    Ok(format!(
+        "在会话记录里找到 {} 处（含已压缩部分）：\n{}",
+        hits.len(),
+        hits.join("\n")
+    ))
 }
 
 fn set_page(ctx: &ToolCtx, page: super::browser::Page) {
     if let Ok(mut g) = ctx.state.page.lock() {
-        if let Some(old) = g.replace(page.clone()) {
+        if let Some(old) = g.insert(ctx.session.to_string(), page.clone()) {
             if let Ok(mut h) = ctx.state.history.lock() {
-                h.push(old);
-                if h.len() > 30 {
-                    h.remove(0);
+                let history = h.entry(ctx.session.to_string()).or_default();
+                history.push(old);
+                if history.len() > 30 {
+                    history.remove(0);
                 }
             }
         }
     }
-    let _ = ctx.app.emit("agent://browser", &page);
+    let _ = ctx.app.emit(
+        "agent://browser",
+        json!({ "session": ctx.session, "page": page }),
+    );
 }
 
 fn browser_open(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
@@ -1986,33 +2728,64 @@ fn browser_read(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         set_page(ctx, page);
     }
     let max = arg_u64(args, "max_chars", 12_000) as usize;
-    let g = ctx.state.page.lock().map_err(|_| "page mutex".to_string())?;
-    let page = g.as_ref().ok_or("还没有打开任何网页，先 browser_open")?;
+    let g = ctx
+        .state
+        .page
+        .lock()
+        .map_err(|_| "page mutex".to_string())?;
+    let page = g
+        .get(ctx.session)
+        .ok_or("还没有打开任何网页，先 browser_open")?;
     let body: String = page.text.chars().take(max).collect();
-    let more = if page.text.chars().count() > max { "\n…(截断)" } else { "" };
-    Ok(format!("{}\n标题：{}\n--- 正文 ---\n{}{}", page.url, page.title, body, more))
+    let more = if page.text.chars().count() > max {
+        "\n…(截断)"
+    } else {
+        ""
+    };
+    Ok(format!(
+        "{}\n标题：{}\n--- 正文 ---\n{}{}",
+        page.url, page.title, body, more
+    ))
 }
 
 fn browser_find(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let needle = arg_str(args, "text").ok_or("缺少 text")?;
+    if needle.is_empty() {
+        return Err("text 不能为空".into());
+    }
     let max_hits = arg_u64(args, "max_hits", 5) as usize;
-    let g = ctx.state.page.lock().map_err(|_| "page mutex".to_string())?;
-    let page = g.as_ref().ok_or("还没有打开任何网页，先 browser_open")?;
+    let g = ctx
+        .state
+        .page
+        .lock()
+        .map_err(|_| "page mutex".to_string())?;
+    let page = g
+        .get(ctx.session)
+        .ok_or("还没有打开任何网页，先 browser_open")?;
     let text = &page.text;
     let mut out = Vec::new();
     let mut pos = 0usize;
     while out.len() < max_hits {
-        let Some(rel) = text[pos..].find(&needle) else { break };
+        let Some(rel) = text[pos..].find(&needle) else {
+            break;
+        };
         let at = pos + rel;
         let start = text[..at].rfind('\n').map(|i| i + 1).unwrap_or(0);
         let end = text[at..].find('\n').map(|i| at + i).unwrap_or(text.len());
         out.push(format!("…{}…", text[start..end].trim()));
-        pos = end.max(at + 1);
+        // 用 needle.len() 前进，至少跨过一个完整字符；at + 1 可能落在多字节 UTF-8
+        // 字符中间，下一轮 text[pos..] 会直接 panic。
+        pos = end.max(at + needle.len());
     }
     if out.is_empty() {
         return Ok(format!("当前页 {} 里没有找到「{needle}」", page.url));
     }
-    Ok(format!("在 {} 里找到 {} 处：\n{}", page.url, out.len(), out.join("\n")))
+    Ok(format!(
+        "在 {} 里找到 {} 处：\n{}",
+        page.url,
+        out.len(),
+        out.join("\n")
+    ))
 }
 
 fn workspace_list(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
@@ -2020,12 +2793,19 @@ fn workspace_list(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let dir = store::resolve_in_workspace(&ctx.workspace, &rel)?;
     std::fs::create_dir_all(&dir).ok();
     let mut lines = vec![format!("工作区 {}/ 下：", rel)];
-    for entry in std::fs::read_dir(&dir).map_err(|e| format!("读目录失败: {e}"))?.flatten() {
+    for entry in std::fs::read_dir(&dir)
+        .map_err(|e| format!("读目录失败: {e}"))?
+        .flatten()
+    {
         let md = entry.metadata().ok();
         let is_dir = md.as_ref().map(|m| m.is_dir()).unwrap_or(false);
         let size = md.as_ref().map(|m| m.len()).unwrap_or(0);
         let name = entry.file_name().to_string_lossy().to_string();
-        lines.push(if is_dir { format!("D {name}/") } else { format!("F {size:>10}  {name}") });
+        lines.push(if is_dir {
+            format!("D {name}/")
+        } else {
+            format!("F {size:>10}  {name}")
+        });
     }
     Ok(lines.join("\n"))
 }
@@ -2049,9 +2829,13 @@ fn workspace_write(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let size = content.len();
     if arg_bool(args, "append", false) {
         use std::io::Write;
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path)
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
             .map_err(|e| format!("打开失败: {e}"))?;
-        f.write_all(content.as_bytes()).map_err(|e| format!("写失败: {e}"))?;
+        f.write_all(content.as_bytes())
+            .map_err(|e| format!("写失败: {e}"))?;
     } else {
         std::fs::write(&path, content).map_err(|e| format!("写失败: {e}"))?;
     }

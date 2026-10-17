@@ -13,6 +13,7 @@
 //! 系统提示要吃前缀缓存，稳字第一。
 
 pub struct Block {
+    #[allow(dead_code)]
     pub id: &'static str,
     /// 这条例的用途（写代码的人看；不进提示词、不给界面）
     #[allow(dead_code)]

@@ -19,6 +19,7 @@ pub mod store;
 pub mod tools;
 
 use std::collections::HashMap;
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -41,9 +42,20 @@ const MAX_TRUNC_CONTINUE: usize = 3;
 /// 调用栈上，拿不到那一轮的 `Arc<AtomicBool>`，所以这里挂一个进程级标志给它们查。
 pub static STOPPED: AtomicBool = AtomicBool::new(false);
 
+thread_local! {
+    /// 当前工具线程所属会话的停止标志。工具里的长循环优先看它，
+    /// 这样 A 会话点停止不会把 B 会话的 link_read/烧录一起停掉。
+    static CURRENT_STOP: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+}
+
 #[inline]
 pub fn stop_requested() -> bool {
-    STOPPED.load(Ordering::Relaxed)
+    CURRENT_STOP.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|f| f.load(Ordering::Relaxed))
+            .unwrap_or_else(|| STOPPED.load(Ordering::Relaxed))
+    })
 }
 
 /// 老版本内置过一个免费模型（AMD Radeon Cloud 的 GLM-5.3-Flash，公开 key）。
@@ -53,9 +65,13 @@ pub fn stop_requested() -> bool {
 pub fn prune_dead_builtin(app: &AppHandle) {
     const OLD_ID: &str = "glm-5.3-flash";
     let mut cfg = store::load_providers(app);
-    let Some(pos) = cfg.providers.iter().position(|p| p.id == OLD_ID) else { return };
+    let Some(pos) = cfg.providers.iter().position(|p| p.id == OLD_ID) else {
+        return;
+    };
     // 只在"它还是默认项、而且用户从没成功用过"时才自动删：判断依据是会话里没有它的记录
-    let used = store::sessions_list(app).iter().any(|m| m.provider_id == OLD_ID);
+    let used = store::sessions_list(app)
+        .iter()
+        .any(|m| m.provider_id == OLD_ID);
     if used {
         return;
     }
@@ -71,23 +87,63 @@ pub fn prune_dead_builtin(app: &AppHandle) {
 
 #[derive(Default)]
 pub struct AgentState {
-    pub link: Mutex<Link>,
-    pub run: Mutex<Option<Arc<AtomicBool>>>,
-    /// 运行中用户"补充"的话：等这一轮的下一个边界再并进对话（codex 那种边跑边改方向）
-    pub pending: Mutex<Vec<String>>,
-    pub host_waiters: Mutex<HashMap<u64, Sender<Result<String, String>>>>,
+    /// 每个会话自己的链路：两个会话同时 link_open 不会互相顶掉。
+    pub links: Mutex<HashMap<String, Arc<Mutex<Link>>>>,
+    /// 每个会话自己的运行句柄：stop 和"边跑边补话"都不能跨会话串台。
+    pub runs: Mutex<HashMap<String, Arc<RunHandle>>>,
+    /// host 工具会直接操作同一个界面（示波器/流程/逻辑分析仪），
+    /// 多会话同时调用时串行执行，避免两路 UI 操作互相打断。
+    pub host_gate: Mutex<()>,
+    /// 传输页那条主连接是多会话共享的；写入/开关串行化，避免字节交错。
+    pub port_gate: Mutex<()>,
+    pub host_waiters: Mutex<HashMap<u64, (String, Sender<Result<String, String>>)>>,
     pub host_seq: std::sync::atomic::AtomicU64,
     /// perm=ask 时要等用户点"允许/拒绝"
-    pub approve_waiters: Mutex<HashMap<u64, Sender<bool>>>,
+    pub approve_waiters: Mutex<HashMap<u64, (String, Sender<bool>)>>,
     pub approve_seq: std::sync::atomic::AtomicU64,
-    /// 内置浏览器"当前页"（agent 和右侧浏览器面板共用）
-    pub page: Mutex<Option<browser::Page>>,
-    pub history: Mutex<Vec<browser::Page>>,
+    /// 每个会话自己的浏览器当前页和历史；同一个界面只显示最后打开的那一页
+    pub page: Mutex<HashMap<String, browser::Page>>,
+    pub history: Mutex<HashMap<String, Vec<browser::Page>>>,
+    /// 屏幕会话 → 打开它的 agent 会话。防止 A 关掉 B 的屏幕。
+    pub screen_owners: Mutex<HashMap<u32, String>>,
+}
+
+pub struct RunHandle {
+    pub stop: Arc<AtomicBool>,
+    /// 运行中用户"补充"的话：等这一轮的下一个边界再并进对话。
+    pub pending: Mutex<Vec<String>>,
+}
+
+impl RunHandle {
+    fn new() -> Self {
+        Self {
+            stop: Arc::new(AtomicBool::new(false)),
+            pending: Mutex::new(Vec::new()),
+        }
+    }
 }
 
 impl AgentState {
-    pub fn running(&self) -> bool {
-        self.run.lock().map(|g| g.is_some()).unwrap_or(false)
+    pub fn running(&self, session: Option<&str>) -> bool {
+        self.runs
+            .lock()
+            .map(|g| match session {
+                Some(id) => g.contains_key(id),
+                None => !g.is_empty(),
+            })
+            .unwrap_or(false)
+    }
+    pub fn running_sessions(&self) -> Vec<String> {
+        self.runs
+            .lock()
+            .map(|g| g.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+    pub fn link_for(&self, session: &str) -> Result<Arc<Mutex<Link>>, String> {
+        let mut g = self.links.lock().map_err(|_| "link mutex".to_string())?;
+        Ok(g.entry(session.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(Link::default())))
+            .clone())
     }
 }
 
@@ -120,8 +176,11 @@ fn resolve_provider(app: &AppHandle, want: Option<&str>) -> Result<(Provider, St
     prune_dead_builtin(app);
     let cfg = store::load_providers(app);
     if cfg.providers.is_empty() {
-        return Err("还没有可用的模型：打开「设置」（左下角齿轮，或 Ctrl+,）→ 模型与供应商 → \
-                    上面选一个厂家预设点「填入表单」，再粘上你的 API Key 保存即可。".into());
+        return Err(
+            "还没有可用的模型：打开「设置」（左下角齿轮，或 Ctrl+,）→ 模型与供应商 → \
+                    上面选一个厂家预设点「填入表单」，再粘上你的 API Key 保存即可。"
+                .into(),
+        );
     }
     let provider = store::find_provider(&cfg, want).ok_or("找不到这个供应商 profile")?;
     let key = store::secret_get(app, &provider.api_key_ref).unwrap_or_default();
@@ -244,7 +303,10 @@ pub fn load_speed(app: &AppHandle) -> Value {
 /// 删 profile 时把它的速度记录也删掉，免得列表里留一堆用不上的条目
 pub fn forget_speed(app: &AppHandle, provider_id: &str) {
     let mut all = load_speed(app);
-    let removed = all.as_object_mut().map(|m| m.remove(provider_id).is_some()).unwrap_or(false);
+    let removed = all
+        .as_object_mut()
+        .map(|m| m.remove(provider_id).is_some())
+        .unwrap_or(false);
     if !removed {
         return;
     }
@@ -271,7 +333,11 @@ pub fn record_speed(app: &AppHandle, provider_id: &str, tokens: u64, gen_ms: u64
     let tot_ms = entry.get("ms").and_then(|v| v.as_u64()).unwrap_or(0) + gen_ms;
     let samples = entry.get("samples").and_then(|v| v.as_u64()).unwrap_or(0) + 1;
     let last = tokens as f64 * 1000.0 / gen_ms as f64;
-    let avg = if tot_ms > 0 { tot_tokens as f64 * 1000.0 / tot_ms as f64 } else { 0.0 };
+    let avg = if tot_ms > 0 {
+        tot_tokens as f64 * 1000.0 / tot_ms as f64
+    } else {
+        0.0
+    };
     let rounded = |x: f64| (x * 10.0).round() / 10.0;
     let val = json!({
         "last": rounded(last), "avg": rounded(avg),
@@ -283,7 +349,11 @@ pub fn record_speed(app: &AppHandle, provider_id: &str, tokens: u64, gen_ms: u64
     if let Ok(p) = speed_path(app) {
         let _ = std::fs::write(&p, serde_json::to_string_pretty(&all).unwrap_or_default());
     }
-    emit(app, "agent://speed", json!({ "id": provider_id, "stat": val, "all": all }));
+    emit(
+        app,
+        "agent://speed",
+        json!({ "id": provider_id, "stat": val, "all": all }),
+    );
 }
 
 #[tauri::command]
@@ -304,8 +374,8 @@ pub async fn agent_config_get(app: AppHandle) -> Value {
         "workspace": store::default_workspace(&app).to_string_lossy(),
         "dataDir": store::agent_dir(&app).map(|d| d.to_string_lossy().to_string()).unwrap_or_default(),
         // 真实状态：前端切页/重连后靠它把"思考中"同步回来
-        "running": app.state::<Arc<AgentState>>().running(),
-        "link": link_snapshot(&app),
+        "running": app.state::<Arc<AgentState>>().running(None),
+        "link": link_snapshot(&app, None),
     })
 }
 
@@ -313,18 +383,40 @@ pub async fn agent_config_get(app: AppHandle) -> Value {
 /// 而这些命令是同步跑在主线程上的 —— 一旦用 lock() 就会把整个界面冻住
 /// （实测：长 link_read 期间前端每 1.5 秒轮询一次，最后被 Windows 判成"无响应"杀掉）。
 /// 拿不到锁就返回 busy，界面照常。
-fn link_snapshot(app: &AppHandle) -> Value {
+fn link_snapshot(app: &AppHandle, session: Option<&str>) -> Value {
     let st = app.state::<Arc<AgentState>>().inner().clone();
-    if let Ok(g) = st.link.try_lock() {
-        let connected = g.conn.is_some();
-        let label = g.label.clone();
-        return json!({ "connected": connected, "label": label });
+    if let Some(sid) = session {
+        let link = st.links.lock().ok().and_then(|g| g.get(sid).cloned());
+        let Some(link) = link else {
+            return json!({ "connected": false, "label": "" });
+        };
+        if let Ok(g) = link.try_lock() {
+            return json!({ "connected": g.conn.is_some(), "label": g.label.clone() });
+        }
+        return json!({ "connected": null, "label": "", "busy": true });
     }
-    json!({ "connected": null, "label": "", "busy": true })
+    if let Ok(g) = st.links.try_lock() {
+        let all = g
+            .iter()
+            .map(|(sid, l)| {
+                let (connected, label) = l
+                    .try_lock()
+                    .map(|x| (x.conn.is_some(), x.label.clone()))
+                    .unwrap_or((false, String::new()));
+                json!({ "session": sid, "connected": connected, "label": label })
+            })
+            .collect::<Vec<_>>();
+        return json!(all);
+    }
+    json!({ "busy": true })
 }
 
 #[tauri::command]
-pub fn agent_provider_save(app: AppHandle, provider: Provider, make_active: bool) -> Result<Value, String> {
+pub fn agent_provider_save(
+    app: AppHandle,
+    provider: Provider,
+    make_active: bool,
+) -> Result<Value, String> {
     let mut cfg = store::load_providers(&app);
     let id = provider.id.trim().to_string();
     if id.is_empty() {
@@ -405,13 +497,22 @@ fn ping_once(provider: &Provider, key: &str) -> Result<String, String> {
     };
     Ok(format!(
         "通了：{} · {}\n地址 {}\n回复 {:?}\ntokens in={} out={}",
-        provider.name, provider.model, url, out.content.trim(),
-        out.usage.prompt_tokens, out.usage.completion_tokens))
+        provider.name,
+        provider.model,
+        url,
+        out.content.trim(),
+        out.usage.prompt_tokens,
+        out.usage.completion_tokens
+    ))
 }
 
 /// 用**表单里刚填的值**试连（不必先保存）—— 填完 Key 就能点
 #[tauri::command]
-pub fn agent_probe_models(app: AppHandle, provider: Provider, api_key: Option<String>) -> Result<Vec<String>, String> {
+pub fn agent_probe_models(
+    app: AppHandle,
+    provider: Provider,
+    api_key: Option<String>,
+) -> Result<Vec<String>, String> {
     if provider.endpoint.trim().is_empty() {
         return Err("先填地址（endpoint）".into());
     }
@@ -420,7 +521,11 @@ pub fn agent_probe_models(app: AppHandle, provider: Provider, api_key: Option<St
 }
 
 #[tauri::command]
-pub fn agent_probe_chat(app: AppHandle, provider: Provider, api_key: Option<String>) -> Result<String, String> {
+pub fn agent_probe_chat(
+    app: AppHandle,
+    provider: Provider,
+    api_key: Option<String>,
+) -> Result<String, String> {
     if provider.endpoint.trim().is_empty() {
         return Err("先填地址（endpoint）".into());
     }
@@ -437,7 +542,11 @@ fn form_key(app: &AppHandle, provider: &Provider, typed: Option<String>) -> Stri
     if !typed.trim().is_empty() {
         return typed;
     }
-    let name = if provider.api_key_ref.trim().is_empty() { provider.id.as_str() } else { provider.api_key_ref.as_str() };
+    let name = if provider.api_key_ref.trim().is_empty() {
+        provider.id.as_str()
+    } else {
+        provider.api_key_ref.as_str()
+    };
     store::secret_get(app, name).unwrap_or_default()
 }
 
@@ -459,15 +568,20 @@ pub fn agent_session_set_perm(app: AppHandle, id: String, perm: String) -> Resul
     let mut approved = 0usize;
     if meta.perm == "auto" {
         let st = app.state::<Arc<AgentState>>().inner().clone();
-        let waiters: Vec<(u64, Sender<bool>)> = st
+        let mut g = st
             .approve_waiters
             .lock()
-            .map_err(|_| "approve mutex".to_string())?
-            .drain()
+            .map_err(|_| "approve mutex".to_string())?;
+        let ids: Vec<u64> = g
+            .iter()
+            .filter(|(_, (sid, _))| sid == &id)
+            .map(|(k, _)| *k)
             .collect();
-        approved = waiters.len();
-        for (_id, tx) in waiters {
-            let _ = tx.send(true);
+        approved = ids.len();
+        for wid in ids {
+            if let Some((_, tx)) = g.remove(&wid) {
+                let _ = tx.send(true);
+            }
         }
     }
     Ok(json!({ "ok": true, "perm": meta.perm, "autoApproved": approved }))
@@ -480,7 +594,11 @@ pub fn agent_session_set_goal(app: AppHandle, id: String, goal: String) -> Resul
     let mut meta = store::session_meta_of(&app, &id).ok_or("找不到这个会话")?;
     let text = goal.trim().to_string();
     let clearing = matches!(text.as_str(), "" | "clear" | "清除" | "清空");
-    meta.goal = if clearing { String::new() } else { text.clone() };
+    meta.goal = if clearing {
+        String::new()
+    } else {
+        text.clone()
+    };
     meta.updated = now_ms();
     store::session_update_meta(&app, &meta)?;
     append_state_note(&app, &id);
@@ -489,8 +607,12 @@ pub fn agent_session_set_goal(app: AppHandle, id: String, goal: String) -> Resul
 
 /// 把"当前权限 / 目标 / 称呼"追加成一条注记（内容没变就不追加，免得洪泛历史）
 fn append_state_note(app: &AppHandle, session_id: &str) {
-    let Some(m) = store::session_meta_of(app, session_id) else { return };
-    let Some(note) = state_note(&m.perm, &m.goal, &names_line(app, session_id)) else { return };
+    let Some(m) = store::session_meta_of(app, session_id) else {
+        return;
+    };
+    let Some(note) = state_note(&m.perm, &m.goal, &names_line(app, session_id)) else {
+        return;
+    };
     let events = store::session_read(app, session_id);
     let same = matches!(events.last(), Some(Event::State { text, .. }) if text == &note);
     if !same {
@@ -528,7 +650,10 @@ fn slash_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .join("slash");
     std::fs::create_dir_all(&d).map_err(|e| format!("建 {} 失败: {e}", d.display()))?;
     // 第一次跑：给一条示例，让用户知道格式
-    if std::fs::read_dir(&d).map(|mut i| i.next().is_none()).unwrap_or(false) {
+    if std::fs::read_dir(&d)
+        .map(|mut i| i.next().is_none())
+        .unwrap_or(false)
+    {
         let _ = std::fs::write(d.join("explain.md"), SLASH_EXAMPLE);
     }
     Ok(d)
@@ -545,27 +670,39 @@ pub struct SlashCmd {
 /// 列出自定义斜杠指令（/help 与设置页都用它）
 #[tauri::command]
 pub fn agent_slash_list(app: AppHandle) -> Vec<SlashCmd> {
-    let Ok(dir) = slash_dir(&app) else { return Vec::new() };
-    let Ok(rd) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let Ok(dir) = slash_dir(&app) else {
+        return Vec::new();
+    };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
     let mut out: Vec<SlashCmd> = Vec::new();
     for e in rd.flatten() {
         let p = e.path();
         if p.extension().and_then(|x| x.to_str()) != Some("md") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&p) else { continue };
+        let Ok(text) = std::fs::read_to_string(&p) else {
+            continue;
+        };
         let (fm, body) = store::parse_frontmatter(&text);
-        let name = fm
-            .get("name")
-            .cloned()
-            .unwrap_or_else(|| p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default());
+        let name = fm.get("name").cloned().unwrap_or_else(|| {
+            p.file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default()
+        });
         let name = name.trim().trim_start_matches('/').to_string();
         if name.is_empty() {
             continue;
         }
         out.push(SlashCmd {
             name,
-            description: fm.get("description").cloned().unwrap_or_default().trim().to_string(),
+            description: fm
+                .get("description")
+                .cloned()
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
             body: body.trim().to_string(),
             path: p.to_string_lossy().to_string(),
         });
@@ -577,18 +714,30 @@ pub fn agent_slash_list(app: AppHandle) -> Vec<SlashCmd> {
 /// 斜杠指令目录（设置页「打开目录」用）
 #[tauri::command]
 pub fn agent_slash_dir(app: AppHandle) -> String {
-    slash_dir(&app).map(|p| p.to_string_lossy().to_string()).unwrap_or_default()
+    slash_dir(&app)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default()
 }
 
 /// 存一条自定义斜杠指令
 #[tauri::command]
-pub fn agent_slash_save(app: AppHandle, name: String, description: String, body: String) -> Result<String, String> {
+pub fn agent_slash_save(
+    app: AppHandle,
+    name: String,
+    description: String,
+    body: String,
+) -> Result<String, String> {
     let slug = store::slugify(&name);
     if slug.trim().is_empty() {
         return Err("名字不能为空".into());
     }
     let p = slash_dir(&app)?.join(format!("{slug}.md"));
-    let text = format!("---\nname: {}\ndescription: {}\n---\n\n{}\n", name.trim(), description.trim(), body.trim());
+    let text = format!(
+        "---\nname: {}\ndescription: {}\n---\n\n{}\n",
+        name.trim(),
+        description.trim(),
+        body.trim()
+    );
     std::fs::write(&p, text).map_err(|e| format!("写 {} 失败: {e}", p.display()))?;
     Ok(p.to_string_lossy().to_string())
 }
@@ -613,7 +762,13 @@ pub fn agent_skills_dir(app: AppHandle) -> String {
 
 /// 前端把"允许/拒绝"点完送回来
 #[tauri::command]
-pub fn agent_approval_result(app: AppHandle, id: u64, ok: bool, always: Option<String>, session: Option<String>) -> Result<Value, String> {
+pub fn agent_approval_result(
+    app: AppHandle,
+    id: u64,
+    ok: bool,
+    always: Option<String>,
+    session: Option<String>,
+) -> Result<Value, String> {
     let st = app.state::<Arc<AgentState>>().inner().clone();
     // 「本会话都允许」：先把它记进会话 meta，之后同类工具直接放行（一次任务点几十下太累）
     let mut allowed: Option<String> = None;
@@ -628,9 +783,13 @@ pub fn agent_approval_result(app: AppHandle, id: u64, ok: bool, always: Option<S
             }
         }
     }
-    let tx = st.approve_waiters.lock().map_err(|_| "mutex".to_string())?.remove(&id);
+    let tx = st
+        .approve_waiters
+        .lock()
+        .map_err(|_| "mutex".to_string())?
+        .remove(&id);
     match tx {
-        Some(tx) => {
+        Some((_sid, tx)) => {
             let _ = tx.send(ok);
             Ok(json!({ "ok": true, "allowed": allowed }))
         }
@@ -640,7 +799,12 @@ pub fn agent_approval_result(app: AppHandle, id: u64, ok: bool, always: Option<S
 
 /// 把"文本"页/附件写进工作区（二进制也用这个）
 #[tauri::command]
-pub fn agent_workspace_write_bytes(app: AppHandle, session_id: String, path: String, data: Vec<u8>) -> Result<String, String> {
+pub fn agent_workspace_write_bytes(
+    app: AppHandle,
+    session_id: String,
+    path: String,
+    data: Vec<u8>,
+) -> Result<String, String> {
     let ws = workspace_of(&app, &session_id);
     std::fs::create_dir_all(&ws).map_err(|e| format!("建工作区失败: {e}"))?;
     let target = store::resolve_in_workspace(&ws, &path)?;
@@ -669,7 +833,12 @@ pub fn agent_session_new(
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .and_then(|id| store::workspace_by_id(&app, id))
-        .unwrap_or_else(|| store::ensure_workspaces(&app).into_iter().next().unwrap_or_else(|| store::default_workspace_entry(&app)));
+        .unwrap_or_else(|| {
+            store::ensure_workspaces(&app)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| store::default_workspace_entry(&app))
+        });
     let ws = std::path::PathBuf::from(&ws_entry.path);
     let _ = std::fs::create_dir_all(&ws);
     let mut meta = store::session_new(&app, title.as_deref().unwrap_or(""), &ws.to_string_lossy())?;
@@ -717,7 +886,11 @@ pub fn agent_session_rename(app: AppHandle, id: String, title: String) -> Result
 /// 不这么做的话会出现两套口径 —— 发送时用的是全局 active（`agent_send` 带过去的 providerId），
 /// 而会话自己记的还是旧 profile：上下文面板显示的窗口、压缩判断的预算全是旧模型的。
 #[tauri::command]
-pub fn agent_session_set_provider(app: AppHandle, id: String, provider_id: String) -> Result<Value, String> {
+pub fn agent_session_set_provider(
+    app: AppHandle,
+    id: String,
+    provider_id: String,
+) -> Result<Value, String> {
     let mut meta = store::session_meta_of(&app, &id).ok_or("找不到这个会话")?;
     let cfg = store::load_providers(&app);
     let p = cfg
@@ -735,7 +908,11 @@ pub fn agent_session_set_provider(app: AppHandle, id: String, provider_id: Strin
 }
 
 #[tauri::command]
-pub fn agent_session_set_workspace(app: AppHandle, id: String, path: String) -> Result<Value, String> {
+pub fn agent_session_set_workspace(
+    app: AppHandle,
+    id: String,
+    path: String,
+) -> Result<Value, String> {
     let mut meta = store::session_meta_of(&app, &id).ok_or("找不到这个会话")?;
     if meta.workspace != path {
         meta.workspace = path.clone();
@@ -753,7 +930,11 @@ pub fn agent_workspaces(app: AppHandle) -> Vec<store::Workspace> {
 }
 
 #[tauri::command]
-pub fn agent_workspace_new(app: AppHandle, path: String, name: Option<String>) -> Result<store::Workspace, String> {
+pub fn agent_workspace_new(
+    app: AppHandle,
+    path: String,
+    name: Option<String>,
+) -> Result<store::Workspace, String> {
     let p = std::path::PathBuf::from(&path);
     if !p.is_dir() {
         return Err(format!("这个路径不是一个目录：{path}"));
@@ -798,27 +979,55 @@ pub fn agent_skills(app: AppHandle) -> Vec<store::SkillInfo> {
 }
 
 #[tauri::command]
-pub fn agent_skill_read(app: AppHandle, name: String, scope: Option<String>, workspace: Option<String>) -> Result<String, String> {
+pub fn agent_skill_read(
+    app: AppHandle,
+    name: String,
+    scope: Option<String>,
+    workspace: Option<String>,
+) -> Result<String, String> {
     if scope.as_deref() == Some("workspace") {
-        let ws = workspace.filter(|w| !w.trim().is_empty()).ok_or("要指定工作区")?;
+        let ws = workspace
+            .filter(|w| !w.trim().is_empty())
+            .ok_or("要指定工作区")?;
         return store::skill_read_in(&app, &std::path::PathBuf::from(ws), &name);
     }
     store::skill_read(&app, &name)
 }
 
 #[tauri::command]
-pub fn agent_skill_save(app: AppHandle, name: String, content: String, scope: Option<String>, workspace: Option<String>) -> Result<String, String> {
+pub fn agent_skill_save(
+    app: AppHandle,
+    name: String,
+    content: String,
+    scope: Option<String>,
+    workspace: Option<String>,
+) -> Result<String, String> {
     if scope.as_deref() == Some("workspace") {
-        let ws = workspace.filter(|w| !w.trim().is_empty()).ok_or("要指定工作区")?;
-        return store::skill_write_in(&app, &std::path::PathBuf::from(ws), "workspace", &name, &content);
+        let ws = workspace
+            .filter(|w| !w.trim().is_empty())
+            .ok_or("要指定工作区")?;
+        return store::skill_write_in(
+            &app,
+            &std::path::PathBuf::from(ws),
+            "workspace",
+            &name,
+            &content,
+        );
     }
     store::skill_write(&app, &name, &content)
 }
 
 #[tauri::command]
-pub fn agent_skill_delete(app: AppHandle, name: String, scope: Option<String>, workspace: Option<String>) -> Result<Value, String> {
+pub fn agent_skill_delete(
+    app: AppHandle,
+    name: String,
+    scope: Option<String>,
+    workspace: Option<String>,
+) -> Result<Value, String> {
     if scope.as_deref() == Some("workspace") {
-        let ws = workspace.filter(|w| !w.trim().is_empty()).ok_or("要指定工作区")?;
+        let ws = workspace
+            .filter(|w| !w.trim().is_empty())
+            .ok_or("要指定工作区")?;
         store::skill_delete_in(&app, &std::path::PathBuf::from(ws), "workspace", &name)?;
         return Ok(json!({ "ok": true, "archived": true }));
     }
@@ -860,7 +1069,9 @@ pub fn agent_tool_set(app: AppHandle, name: String, on: bool) -> Result<Value, S
         return Err(format!("没有这个工具：{name}"));
     }
     store::tools_off_set(&app, &name, !on)?;
-    Ok(json!({ "ok": true, "note": "下个新会话生效（工具定义在请求最前面，中途改会让整个前缀缓存作废）" }))
+    Ok(
+        json!({ "ok": true, "note": "下个新会话生效（工具定义在请求最前面，中途改会让整个前缀缓存作废）" }),
+    )
 }
 
 /// 全局指导文件（AGENTS.md）：人格 / 口吻 / 通用规矩 —— "一直在场"的东西写这儿，不写技能
@@ -878,9 +1089,16 @@ pub fn agent_guidance_get(app: AppHandle, workspace: Option<String>) -> Value {
 }
 
 #[tauri::command]
-pub fn agent_guidance_set(app: AppHandle, text: String, workspace: bool, path: Option<String>) -> Result<Value, String> {
+pub fn agent_guidance_set(
+    app: AppHandle,
+    text: String,
+    workspace: bool,
+    path: Option<String>,
+) -> Result<Value, String> {
     if workspace {
-        let ws = path.filter(|p| !p.trim().is_empty()).ok_or("要指定工作区")?;
+        let ws = path
+            .filter(|p| !p.trim().is_empty())
+            .ok_or("要指定工作区")?;
         let ws = std::path::PathBuf::from(ws);
         std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
         let p = ws.join("AGENTS.md");
@@ -902,7 +1120,11 @@ pub fn agent_skills_workspace(workspace: String) -> Vec<store::SkillInfo> {
 
 /// 全局技能 → 工作区专属（先归档备份，再从全局移除）
 #[tauri::command]
-pub fn agent_skill_convert(app: AppHandle, name: String, workspace: String) -> Result<Value, String> {
+pub fn agent_skill_convert(
+    app: AppHandle,
+    name: String,
+    workspace: String,
+) -> Result<Value, String> {
     let r = store::skill_convert_to_workspace(&app, &name, &workspace)?;
     Ok(json!({ "ok": true, "detail": r }))
 }
@@ -913,7 +1135,12 @@ pub fn agent_skill_archive(app: AppHandle) -> Vec<store::ArchiveInfo> {
 }
 
 #[tauri::command]
-pub fn agent_skill_archive_restore(app: AppHandle, name: String, scope: Option<String>, workspace: Option<String>) -> Result<Value, String> {
+pub fn agent_skill_archive_restore(
+    app: AppHandle,
+    name: String,
+    scope: Option<String>,
+    workspace: Option<String>,
+) -> Result<Value, String> {
     let scope = scope.unwrap_or_else(|| "global".into());
     let r = store::archive_restore(&app, &name, &scope, workspace.as_deref().unwrap_or(""))?;
     Ok(json!({ "ok": true, "path": r }))
@@ -930,7 +1157,9 @@ pub fn agent_skill_archive_delete(app: AppHandle, name: String) -> Result<Value,
 /// 技能则回到"索引里一行、正文按需读"。迁移是**保行为**的：正文照样每轮都在，只是换了载体。
 #[tauri::command]
 pub fn agent_migrate_always_skills(app: AppHandle) -> Value {
-    let Some(p) = store::skills_always_path_pub(&app) else { return json!({ "migrated": 0 }) };
+    let Some(p) = store::skills_always_path_pub(&app) else {
+        return json!({ "migrated": 0 });
+    };
     let slugs = store::skills_always(&app);
     if slugs.is_empty() {
         return json!({ "migrated": 0 });
@@ -938,7 +1167,9 @@ pub fn agent_migrate_always_skills(app: AppHandle) -> Value {
     let list = store::skills_list(&app);
     let mut body = String::new();
     for s in list.iter().filter(|s| slugs.contains(&s.slug)) {
-        let Ok(text) = std::fs::read_to_string(&s.path) else { continue };
+        let Ok(text) = std::fs::read_to_string(&s.path) else {
+            continue;
+        };
         let (_, b) = store::parse_frontmatter(&text);
         if b.trim().is_empty() {
             continue;
@@ -969,7 +1200,9 @@ pub fn agent_migrate_always_skills(app: AppHandle) -> Value {
 /// 会话内称呼那一行（第一轮由模型从"用户自称 / 身份技能"里总结出来；没定下来就返回空串，
 /// 免得凭空编出真实姓名）。
 fn names_line(app: &AppHandle, session_id: &str) -> String {
-    let Some(m) = store::session_meta_of(app, session_id) else { return String::new() };
+    let Some(m) = store::session_meta_of(app, session_id) else {
+        return String::new();
+    };
     let u = m.user_name.trim();
     let a = m.agent_name.trim();
     if u.is_empty() && a.is_empty() {
@@ -993,7 +1226,9 @@ fn system_prompt(app: &AppHandle, workspace: &std::path::Path) -> String {
     // ② 全局指导（个人约定，跟项目无关）
     let g = store::read_global_guidance(app);
     if !g.trim().is_empty() {
-        p.push_str("\n全局指导（AGENTS.md，用户自己的持久约定：人格 / 口吻 / 通用规矩，优先遵守）：\n");
+        p.push_str(
+            "\n全局指导（AGENTS.md，用户自己的持久约定：人格 / 口吻 / 通用规矩，优先遵守）：\n",
+        );
         p.push_str(g.trim());
         p.push('\n');
     }
@@ -1009,8 +1244,11 @@ fn system_prompt(app: &AppHandle, workspace: &std::path::Path) -> String {
          · 自动：危险动作也会直接执行，做完必须汇报清楚。\n\n",
     );
     /* ⑤ 以下都是**跟着工作区变**的东西，放最后 ——
-       "先稳后变"是有意的：前缀缓存从第 0 个 token 开始比，换工作区时前面那段照样命中。 */
-    p.push_str(&format!("工作区（相对路径都相对它）：{}\n", workspace.to_string_lossy()));
+    "先稳后变"是有意的：前缀缓存从第 0 个 token 开始比，换工作区时前面那段照样命中。 */
+    p.push_str(&format!(
+        "工作区（相对路径都相对它）：{}\n",
+        workspace.to_string_lossy()
+    ));
     p.push_str(&store::skills_index_workspace(workspace));
     p.push('\n');
     let w = store::read_workspace_guidance(workspace);
@@ -1068,11 +1306,22 @@ fn tools_frozen(app: &AppHandle, session_id: &str) -> Vec<String> {
         }
     }
     let off = store::tools_off(app);
-    let names: Vec<String> = tools::catalog()
+    let mut names: Vec<String> = tools::catalog()
         .iter()
         .filter(|t| !off.contains(&t.name.to_string()))
         .map(|t| t.name.to_string())
         .collect();
+    // MCP 工具也属于这次会话的骨架。以前这里只存了内置工具名，
+    // 统计面板按冻结清单过滤时永远看不到 MCP 工具，而真实请求又全塞进去，
+    // 两边口径对不上。第一次请求时把当前 MCP 清单一起冻结，之后新会话才更新。
+    let (mcp_schemas, _) = mcp::all_tool_schemas_cached(app);
+    for s in &mcp_schemas {
+        if let Some(n) = s["function"]["name"].as_str() {
+            if !names.iter().any(|x| x == n) {
+                names.push(n.to_string());
+            }
+        }
+    }
     if let Some(mut m) = store::session_meta_of(app, session_id) {
         m.tools = names.clone();
         let _ = store::session_update_meta(app, &m);
@@ -1086,7 +1335,10 @@ fn tools_schema_frozen(app: &AppHandle, session_id: &str) -> Vec<Value> {
     let all = tools::schema_json(&tools::catalog(), true);
     let mut builtin: Vec<Value> = Vec::new();
     for n in &names {
-        if let Some(v) = all.iter().find(|v| v["function"]["name"].as_str() == Some(n.as_str())) {
+        if let Some(v) = all
+            .iter()
+            .find(|v| v["function"]["name"].as_str() == Some(n.as_str()))
+        {
             builtin.push(v.clone());
         }
     }
@@ -1118,7 +1370,11 @@ fn trim_for_request(messages: Vec<Value>, budget: usize, tools_tokens: usize) ->
     // 第 0 条是系统提示，可能第 1 条是摘要 —— 这两个都不动
     let head = if messages.len() > 1
         && messages[1].get("role").and_then(|r| r.as_str()) == Some("user")
-        && messages[1].get("content").and_then(|c| c.as_str()).map(|c| c.starts_with("<对话摘要>")).unwrap_or(false)
+        && messages[1]
+            .get("content")
+            .and_then(|c| c.as_str())
+            .map(|c| c.starts_with("<对话摘要>"))
+            .unwrap_or(false)
     {
         2
     } else {
@@ -1143,7 +1399,9 @@ fn trim_for_request(messages: Vec<Value>, budget: usize, tools_tokens: usize) ->
             break; // 再切就只剩系统提示了，别切
         }
         cut = next;
-        cur = messages[head..].to_vec();
+        // 注意：这里必须从 cut 开始，而不是从 head 开始。否则 cut 只在循环里前进，
+        // 返回的 cur 却始终是完整历史 —— 裁剪看起来跑了，实际一条都没删。
+        cur = messages[cut..].to_vec();
         cur.insert(0, messages[0].clone());
         if head == 2 {
             cur.insert(1, messages[1].clone());
@@ -1160,31 +1418,89 @@ fn tool_msg(id: &str, text: &str) -> Value {
 /// 为什么这件事关系到钱：命中率 ≈ 1 − Δ/P，Δ 就是"上一轮之后新加的 token"，
 /// 而 Δ 的大头正是工具结果（波形、日志、目录列表、网页正文）。结果原样灌进历史，
 /// 一轮就能把命中率从 98% 压到 80% 以下 —— 省它比省任何东西都值。
-/// 全量不丢：需要细节就让模型用工具把原文写进工作区文件，再按需分批读。
-const TOOL_RESULT_CHARS: usize = 4_000;
+/// 全量不丢：需要细节就让模型用 output_read 读回。
+///
+/// 按 token 而不是字符计预算：中文一个字约 1 token，按字符封顶会让中文输出
+/// 比英文大一倍，命中率也就跟着掉。260 token 对 16K 左右的前缀约等于 1.6% 的 Δ，
+/// 是 98.5% 目标的边界值；头部给 60%，尾部给 40%。
+const TOOL_RESULT_TOKENS: usize = 260;
+
+/// 有些工具的结果本身就是"按需读的一段正文"，给它们单独的预算：
+/// output_read 也封顶（它按 offset/limit 分段读，不能把整份日志灌回来）；
+/// skill_read 要留足正文，否则模型只读到半条规则。
+fn tool_result_budget(tool: &str) -> Option<usize> {
+    match tool {
+        // output_read 也封顶：它是"按需读一段"，不是把整份日志灌回上下文。
+        // 默认 limit 已收到 1200 字；大文件继续保持 offset 往后读。
+        "output_read" => Some(600),
+        "skill_read" => Some(1_600),
+        _ => Some(TOOL_RESULT_TOKENS),
+    }
+}
+
+/// 按和 llm::estimate_tokens 相同的口径，取开头不超过 budget token 的字符
+fn take_head_tokens(text: &str, budget: usize) -> String {
+    let mut ascii = 0usize;
+    let mut wide = 0usize;
+    let mut end = 0usize;
+    for (i, c) in text.char_indices() {
+        let a = ascii + usize::from(c.is_ascii());
+        let w = wide + usize::from(!c.is_ascii());
+        if a.div_ceil(4) + w > budget {
+            break;
+        }
+        ascii = a;
+        wide = w;
+        end = i + c.len_utf8();
+    }
+    text[..end].to_string()
+}
+
+/// 取结尾不超过 budget token 的字符
+fn take_tail_tokens(text: &str, budget: usize) -> String {
+    let mut ascii = 0usize;
+    let mut wide = 0usize;
+    let mut start = text.len();
+    for (i, c) in text.char_indices().rev() {
+        let a = ascii + usize::from(c.is_ascii());
+        let w = wide + usize::from(!c.is_ascii());
+        if a.div_ceil(4) + w > budget {
+            break;
+        }
+        ascii = a;
+        wide = w;
+        start = i;
+    }
+    text[start..].to_string()
+}
 
 /// 超长的工具结果：只把**头尾**放进上下文，全文落盘（opencode 也是这么干的：
 /// 截断 + 给路径 + 文件留 7 天），模型要看全量用 output_read 读。
-/// 内联上限从 8K 字收到 4K 字：Δ 小一半，命中率就上去了，信息又没丢。
 fn cap_tool_result(app: &AppHandle, tool: &str, text: &str) -> String {
-    let n = text.chars().count();
-    if n <= TOOL_RESULT_CHARS {
+    let Some(budget) = tool_result_budget(tool) else {
+        return text.to_string();
+    };
+    let total = llm::estimate_tokens(text);
+    if total <= budget {
         return text.to_string();
     }
     let saved = store::tool_output_write(app, tool, text).ok();
-    let head_n = TOOL_RESULT_CHARS * 6 / 10;
-    let tail_n = TOOL_RESULT_CHARS - head_n;
-    let head: String = text.chars().take(head_n).collect();
-    let tail: String = text.chars().skip(n - tail_n).collect();
+    let head_budget = budget * 6 / 10;
+    let tail_budget = budget - head_budget;
+    let head = take_head_tokens(text, head_budget);
+    let tail = take_tail_tokens(text, tail_budget);
     let where_ = match &saved {
-        Some(p) => format!("全文已存到 {p}（可用 output_read 读；{} 天后自动清理）", store::TOOL_OUTPUT_KEEP_DAYS),
+        Some(p) => format!(
+            "全文已存到 {p}（可用 output_read 读；{} 天后自动清理）",
+            store::TOOL_OUTPUT_KEEP_DAYS
+        ),
         None => "全文没能落盘".to_string(),
     };
     format!(
-        "{head}\n…（中间省略 {} 字，共 {} 字；{where_}。\n\
+        "{head}\n…（中间省略约 {} tokens，共约 {} tokens；{where_}。\n\
          别整段重贴回对话 —— 那会让上下文和花费一起涨）…\n{tail}",
-        n - TOOL_RESULT_CHARS,
-        n
+        total.saturating_sub(budget),
+        total
     )
 }
 
@@ -1214,7 +1530,9 @@ fn events_to_messages(
         .iter()
         .any(|e| matches!(e, Event::Assistant { reasoning, .. } if !reasoning.trim().is_empty()));
 
-    let mut out = vec![json!({ "role": "system", "content": system_prompt_frozen(app, session_id, workspace) })];
+    let mut out = vec![
+        json!({ "role": "system", "content": system_prompt_frozen(app, session_id, workspace) }),
+    ];
 
     // 压缩是"追加一条 summary + 跳过它覆盖的那段"，原文还在文件里（可以用 history_search 回查）。
     let skip = store::summary_upto(events).min(events.len());
@@ -1238,7 +1556,9 @@ fn events_to_messages(
                 out.push(json!({ "role": "user", "content": text }));
                 i += 1;
             }
-            Event::Assistant { text, reasoning, .. } => {
+            Event::Assistant {
+                text, reasoning, ..
+            } => {
                 pend_text.push_str(text);
                 pend_reason.push_str(reasoning);
                 i += 1;
@@ -1272,7 +1592,11 @@ fn events_to_messages(
                 let mut answered: Vec<String> = Vec::new();
                 while i < events.len() {
                     if let Event::ToolResult { id, text, ok, .. } = &events[i] {
-                        let body = if *ok { text.clone() } else { format!("[工具失败] {text}") };
+                        let body = if *ok {
+                            text.clone()
+                        } else {
+                            format!("[工具失败] {text}")
+                        };
                         out.push(tool_msg(id, &body));
                         answered.push(id.clone());
                         i += 1;
@@ -1311,17 +1635,26 @@ fn event_brief(e: &Event) -> String {
     }
 }
 
-fn compact_if_needed(app: &AppHandle, provider: &Provider, key: &str, session_id: &str) -> Option<String> {
+fn compact_if_needed(
+    app: &AppHandle,
+    provider: &Provider,
+    key: &str,
+    session_id: &str,
+) -> Option<String> {
     let events = store::session_read(app, session_id);
     let ws = workspace_of(app, session_id);
     let messages = events_to_messages(app, session_id, &events, &ws);
-    let budget = provider.context_window.saturating_sub(provider.reserve_output) as usize;
+    let budget = provider
+        .context_window
+        .saturating_sub(provider.reserve_output) as usize;
     if budget == 0 {
         return None;
     }
     // 优先信 provider 上一次报的 prompt_tokens（比本地估算准得多），估算只当兜底
     let estimate = llm::estimate_messages_tokens(&messages) as u64;
-    let reported = store::session_meta_of(app, session_id).map(|m| m.last_tokens).unwrap_or(0);
+    let reported = store::session_meta_of(app, session_id)
+        .map(|m| m.last_tokens)
+        .unwrap_or(0);
     let used = estimate.max(reported) as usize;
     // 留 20% 余量给这轮新增的东西
     if used * 10 < budget * 8 {
@@ -1351,13 +1684,19 @@ fn compact_if_needed(app: &AppHandle, provider: &Provider, key: &str, session_id
              大头是系统提示 + 工具定义，压历史救不了，换个上下文更大的模型最省事。"
         );
         // 诊断结论只弹一次 toast（不进对话、不落盘），别把对话刷满系统消息
-        let already = store::session_meta_of(app, session_id).map(|m| m.warned_overhead).unwrap_or(true);
+        let already = store::session_meta_of(app, session_id)
+            .map(|m| m.warned_overhead)
+            .unwrap_or(true);
         if !already {
             if let Some(mut m) = store::session_meta_of(app, session_id) {
                 m.warned_overhead = true;
                 let _ = store::session_update_meta(app, &m);
             }
-            emit(app, "agent://toast", json!({ "text": note.replace('\n', " ") }));
+            emit(
+                app,
+                "agent://toast",
+                json!({ "text": note.replace('\n', " ") }),
+            );
         }
         return None;
     }
@@ -1381,7 +1720,9 @@ fn compact_if_needed(app: &AppHandle, provider: &Provider, key: &str, session_id
         keep_from += 1;
     }
     if keep_from == 0 {
-        return Some(format!("上下文估算 {used} tokens 超预算 {budget}，历史也凑不够一段可压的（这一轮先照常跑）"));
+        return Some(format!(
+            "上下文估算 {used} tokens 超预算 {budget}，历史也凑不够一段可压的（这一轮先照常跑）"
+        ));
     }
     let dropped: Vec<&Event> = events[..keep_from].iter().collect();
     // 摘要请求也得塞得下：只取要丢掉那段的**后半截**（越近越重要），并留出预算
@@ -1437,17 +1778,23 @@ fn compact_if_needed(app: &AppHandle, provider: &Provider, key: &str, session_id
             Err(e) => last_err = e,
         }
     }
-    match if summary_text.is_empty() { Err(last_err) } else { Ok(summary_text) } {
-        Ok(summary) => {
-            match store::session_mark_summary(app, session_id, keep_from, &summary) {
-                Ok(()) => {
-                    emit(app, "agent://note", json!({ "session": session_id,
-                        "text": format!("已压缩上下文：前 {} 条收成摘要（{} -> 预算 {} tokens）", keep_from, used, budget) }));
-                    Some(format!("已压缩：{} 条 -> 摘要", keep_from))
-                }
-                Err(e) => Some(format!("压缩后重写会话失败：{e}")),
+    match if summary_text.is_empty() {
+        Err(last_err)
+    } else {
+        Ok(summary_text)
+    } {
+        Ok(summary) => match store::session_mark_summary(app, session_id, keep_from, &summary) {
+            Ok(()) => {
+                emit(
+                    app,
+                    "agent://note",
+                    json!({ "session": session_id,
+                        "text": format!("已压缩上下文：前 {} 条收成摘要（{} -> 预算 {} tokens）", keep_from, used, budget) }),
+                );
+                Some(format!("已压缩：{} 条 -> 摘要", keep_from))
             }
-        }
+            Err(e) => Some(format!("压缩后重写会话失败：{e}")),
+        },
         Err(e) => {
             // 摘要失败也要能继续：照样标记一段"已被丢弃"，但原文还在文件里（可回查）
             let marker = format!("（这段内容的自动摘要没生成成功：{e}。原文还在会话文件里，可以用 history_search 回查）");
@@ -1460,29 +1807,62 @@ fn compact_if_needed(app: &AppHandle, provider: &Provider, key: &str, session_id
 // ── 跑一轮 ──────────────────────────────────────────────────────────
 
 /// host 工具：让前端去做，再把结果要回来
-fn host_call(app: &AppHandle, st: &AgentState, tool: &str, args: &Value, timeout_ms: u64) -> Result<String, String> {
+fn host_call(
+    app: &AppHandle,
+    st: &AgentState,
+    session: &str,
+    tool: &str,
+    args: &Value,
+    timeout_ms: u64,
+) -> Result<String, String> {
+    // 示波器 / 流程 / 逻辑分析仪都是同一个前端页面，多个会话同时操作会互相覆盖。
+    // 这里给 host 工具加一个进程内的串行门：不同会话排队，但不会丢结果。
+    let _gate = st.host_gate.lock().map_err(|_| "host gate mutex".to_string())?;
     let id = st.host_seq.fetch_add(1, Ordering::Relaxed) + 1;
     let (tx, rx) = std::sync::mpsc::channel();
-    st.host_waiters.lock().map_err(|_| "host mutex".to_string())?.insert(id, tx);
-    emit(app, "agent://host_call", json!({ "id": id, "tool": tool, "args": args }));
+    st.host_waiters
+        .lock()
+        .map_err(|_| "host mutex".to_string())?
+        .insert(id, (session.to_string(), tx));
+    emit(
+        app,
+        "agent://host_call",
+        json!({ "id": id, "session": session, "tool": tool, "args": args }),
+    );
     let result = rx.recv_timeout(Duration::from_millis(timeout_ms));
     if let Ok(mut map) = st.host_waiters.lock() {
         map.remove(&id);
     }
     match result {
         Ok(r) => r,
-        Err(_) => Err(format!("前端没在 {}ms 内回这个工具的结果（{tool}）", timeout_ms)),
+        Err(_) => Err(format!(
+            "前端没在 {}ms 内回这个工具的结果（{tool}）",
+            timeout_ms
+        )),
     }
 }
 
 /// perm=ask：把"要不要执行 xxx"推给前端，等用户点
-fn ask_user(app: &AppHandle, st: &AgentState, session: &str, tool: &str, args: &Value) -> Result<bool, String> {
+fn ask_user(
+    app: &AppHandle,
+    st: &AgentState,
+    session: &str,
+    tool: &str,
+    args: &Value,
+) -> Result<bool, String> {
     let id = st.approve_seq.fetch_add(1, Ordering::Relaxed) + 1;
     let (tx, rx) = std::sync::mpsc::channel();
-    st.approve_waiters.lock().map_err(|_| "mutex".to_string())?.insert(id, tx);
-    emit(app, "agent://approval", json!({
-        "id": id, "session": session, "tool": tool, "args": args
-    }));
+    st.approve_waiters
+        .lock()
+        .map_err(|_| "mutex".to_string())?
+        .insert(id, (session.to_string(), tx));
+    emit(
+        app,
+        "agent://approval",
+        json!({
+            "id": id, "session": session, "tool": tool, "args": args
+        }),
+    );
     let r = rx.recv_timeout(Duration::from_secs(300));
     if let Ok(mut m) = st.approve_waiters.lock() {
         m.remove(&id);
@@ -1495,13 +1875,24 @@ fn ask_user(app: &AppHandle, st: &AgentState, session: &str, tool: &str, args: &
 
 /// 把"运行中补进来的话"落成正式的 user 事件（每一轮开始前调一次）。
 /// 不打断正在进行的流式输出，只在"轮次边界"并入 —— 和 codex 的插入方式一致。
-fn drain_pending(app: &AppHandle, st: &AgentState, session_id: &str) -> Result<usize, String> {
+fn drain_pending(
+    app: &AppHandle,
+    pending: &Mutex<Vec<String>>,
+    session_id: &str,
+) -> Result<usize, String> {
     let items: Vec<String> = {
-        let mut g = st.pending.lock().map_err(|_| "pending mutex".to_string())?;
+        let mut g = pending.lock().map_err(|_| "pending mutex".to_string())?;
         std::mem::take(&mut *g)
     };
     for text in items.iter() {
-        store::session_append(app, session_id, &Event::User { text: text.clone(), ts: 0 })?;
+        store::session_append(
+            app,
+            session_id,
+            &Event::User {
+                text: text.clone(),
+                ts: 0,
+            },
+        )?;
         emit(
             app,
             "agent://user",
@@ -1513,7 +1904,9 @@ fn drain_pending(app: &AppHandle, st: &AgentState, session_id: &str) -> Result<u
 
 /// 第一轮聊完，把"新会话"改成一句像样的标题
 fn maybe_auto_title(app: &AppHandle, session_id: &str, provider: &Provider, key: &str) {
-    let Some(meta) = store::session_meta_of(app, session_id) else { return };
+    let Some(meta) = store::session_meta_of(app, session_id) else {
+        return;
+    };
     let looks_new = meta.title.trim().is_empty() || meta.title == "新会话";
     if !looks_new || meta.turns > 1 {
         return;
@@ -1546,11 +1939,6 @@ fn maybe_auto_title(app: &AppHandle, session_id: &str, provider: &Provider, key:
     ];
     // 起名字这步要小心：GLM 这类"先想再答"的模型，max_tokens 给小了会**只输出思考、正文为空**，
     // 所以先给 512，还是空就再加到 2048 重试一次。
-    let clean = |t: String| {
-        t.trim()
-            .trim_matches(|c: char| c == '"' || c == '\'' || c == '「' || c == '」' || c == '。' || c == '\n' || c == ' ')
-            .to_string()
-    };
     let mut title = String::new();
     let mut user_name = String::new();
     let mut agent_name = String::new();
@@ -1560,16 +1948,12 @@ fn maybe_auto_title(app: &AppHandle, session_id: &str, provider: &Provider, key:
         let stop = AtomicBool::new(false);
         match llm::chat(&tiny, key, &msgs, &[], &stop, &mut llm::NullSink) {
             Ok(o) => {
-                // 三行：标题 / 用户称呼 / agent 称呼（模型只给一行也能用，后两个走默认）
-                let mut lines = o.content.lines().map(|s| clean(s.to_string())).filter(|s| !s.is_empty());
-                let t = lines.next().unwrap_or_default();
-                let u = lines.next().unwrap_or_default();
-                let a = lines.next().unwrap_or_default();
-                let cut = |s: String, n: usize| s.chars().take(n).collect::<String>();
-                if !t.is_empty() && t.chars().count() <= 24 {
+                // 三行：标题 / 用户称呼 / agent 称呼。模型可能不按格式来（实测首轮
+                // 就调工具时会回一段 <tool_call> XML），所以先做形状校验，坏的回退。
+                if let Some((t, u, a)) = parse_title_reply(&o.content) {
                     title = t;
-                    user_name = cut(u, 16);
-                    agent_name = cut(a, 16);
+                    user_name = u;
+                    agent_name = a;
                     break;
                 }
             }
@@ -1598,6 +1982,60 @@ fn maybe_auto_title(app: &AppHandle, session_id: &str, provider: &Provider, key:
     }
 }
 
+/// 标题/称呼行去引号、句号和首尾空白
+fn clean_title_line(s: &str) -> String {
+    s.trim()
+        .trim_matches(|c: char| {
+            c == '"' || c == '\'' || c == '「' || c == '」' || c == '。' || c == '\n' || c == ' '
+        })
+        .trim()
+        .to_string()
+}
+
+/// 一行能不能当标题/称呼：拒绝工具调用 XML、JSON、Markdown 尖括号等
+fn title_line_is_plain(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let low = s.to_ascii_lowercase();
+    if low.contains("tool_call")
+        || low.contains("arguments")
+        || low.contains("\"name\"")
+        || s.contains('<')
+        || s.contains('>')
+        || s.contains('{')
+        || s.contains('}')
+        || s.contains('\u{0}')
+    {
+        return false;
+    }
+    // 只有标点/空白的行不是标题
+    s.chars().any(|c| c.is_alphanumeric() || !c.is_ascii())
+}
+
+/// 解析自动起标题的三行回复。任一关键行形状不对就整体返回 None，
+/// 让调用方用首句兜底，绝不把工具调用片段写进 meta。
+fn parse_title_reply(content: &str) -> Option<(String, String, String)> {
+    let mut lines = content
+        .lines()
+        .map(clean_title_line)
+        .filter(|s| !s.is_empty());
+    let title = lines.next()?;
+    if title.chars().count() > 24 || !title_line_is_plain(&title) {
+        return None;
+    }
+    let raw_user = lines.next().unwrap_or_default();
+    let raw_agent = lines.next().unwrap_or_default();
+    let pick_name = |s: String| {
+        if title_line_is_plain(&s) && s.chars().count() <= 16 {
+            s
+        } else {
+            String::new()
+        }
+    };
+    Some((title, pick_name(raw_user), pick_name(raw_agent)))
+}
+
 enum SinkMsg {
     Delta(String),
     /// 思考内容（推理模型才有）：前端拿它显示"思考过程"块
@@ -1614,14 +2052,23 @@ struct BatchedSink {
 
 impl BatchedSink {
     fn new(tx: Sender<SinkMsg>) -> Self {
-        Self { tx, buf: String::new(), last: std::time::Instant::now(), kind: "content" }
+        Self {
+            tx,
+            buf: String::new(),
+            last: std::time::Instant::now(),
+            kind: "content",
+        }
     }
     fn flush(&mut self) {
         if self.buf.is_empty() {
             return;
         }
         let text = std::mem::take(&mut self.buf);
-        let msg = if self.kind == "reason" { SinkMsg::Reasoning(text) } else { SinkMsg::Delta(text) };
+        let msg = if self.kind == "reason" {
+            SinkMsg::Reasoning(text)
+        } else {
+            SinkMsg::Delta(text)
+        };
         let _ = self.tx.send(msg);
         self.last = std::time::Instant::now();
     }
@@ -1653,13 +2100,17 @@ fn run_turn(
     provider: Provider,
     key: String,
     text: String,
-    stop: Arc<AtomicBool>,
+    handle: Arc<RunHandle>,
 ) {
     let st = app.state::<Arc<AgentState>>().inner().clone();
-    STOPPED.store(false, Ordering::Relaxed); // 新一轮开始：清掉上一轮的停止标志
+    let stop = handle.stop.clone();
     let ws = workspace_of(&app, &session_id);
     let _ = std::fs::create_dir_all(&ws);
-    emit(&app, "agent://state", json!({ "running": true, "session": session_id }));
+    emit(
+        &app,
+        "agent://state",
+        json!({ "running": true, "session": session_id }),
+    );
 
     let (perm, allow) = match store::session_meta_of(&app, &session_id) {
         Some(m) => (m.perm, m.allow),
@@ -1668,21 +2119,41 @@ fn run_turn(
     // goal / 称呼这类"会话状态"走注记（见 Event::State），不再进系统提示
     let _ = append_state_note(&app, &session_id);
     let result: Result<(), String> = (|| {
-        store::session_append(&app, &session_id, &Event::User { text: text.clone(), ts: 0 })?;
+        store::session_append(
+            &app,
+            &session_id,
+            &Event::User {
+                text: text.clone(),
+                ts: 0,
+            },
+        )?;
         if let Some(meta) = store::session_touch(&app, &session_id) {
             emit(&app, "agent://session", json!(meta));
         }
         if let Some(note) = compact_if_needed(&app, &provider, &key, &session_id) {
             // 也写进会话文件：不然 done 时按文件重画，这条提示就没了
-            let _ = store::session_append(&app, &session_id, &Event::Note { text: note.clone(), ts: 0 });
-            emit(&app, "agent://note", json!({ "session": session_id, "text": note }));
+            let _ = store::session_append(
+                &app,
+                &session_id,
+                &Event::Note {
+                    text: note.clone(),
+                    ts: 0,
+                },
+            );
+            emit(
+                &app,
+                "agent://note",
+                json!({ "session": session_id, "text": note }),
+            );
         }
-        let mut tools_schema = tools::schema_json(&tools::catalog(), true);
         // MCP 的工具是动态的，但**不能每轮都去 spawn 一遍问 tools/list**：
         // 一是慢（npx 握手好几秒），二是 tools 在 prompt 前缀里，清单一变前缀缓存就整段失效。
         // all_tool_schemas_cached 按"配置指纹 + 10 分钟"复用，并把顺序排死。
         // 顺手把本会话工作区告诉 MCP 层：filesystem 这类 server 会把它当成可访问目录加进去
         mcp::set_extra_roots(vec![ws.to_string_lossy().to_string()]);
+        // 真实请求必须和统计面板用同一份冻结骨架：否则设置页关掉的工具、
+        // 会话中途新增/变化的 MCP 工具都会混进来，前缀缓存和上下文账本都失真。
+        let tools_schema = tools_schema_frozen(&app, &session_id);
         let (mcp_schemas, mcp_refreshed) = mcp::all_tool_schemas_cached(&app);
         if mcp_refreshed && !mcp_schemas.is_empty() {
             emit(
@@ -1691,31 +2162,42 @@ fn run_turn(
                 json!({ "text": format!("MCP 工具清单已刷新并缓存（{} 个）\n", mcp_schemas.len()) }),
             );
         }
-        if !mcp_schemas.is_empty() {
-            tools_schema.extend(mcp_schemas);
-        }
         // 截断续写的次数（跨轮累计，别每轮清零 —— 不然就变成"无限续写"了）
         let mut trunc_continues = 0usize;
         for round in 0..MAX_ROUNDS {
             if stop.load(Ordering::Relaxed) {
-                store::session_append(&app, &session_id, &Event::Note { text: "用户停止".into(), ts: 0 })?;
+                store::session_append(
+                    &app,
+                    &session_id,
+                    &Event::Note {
+                        text: "用户停止".into(),
+                        ts: 0,
+                    },
+                )?;
                 return Ok(());
             }
             // 运行中用户补进来的话：在这个轮次边界并进去，下一轮模型就能看到
-            drain_pending(&app, &st, &session_id)?;
+            drain_pending(&app, &handle.pending, &session_id)?;
             let events = store::session_read(&app, &session_id);
-            let budget_now = provider.context_window.saturating_sub(provider.reserve_output) as usize;
+            let budget_now = provider
+                .context_window
+                .saturating_sub(provider.reserve_output) as usize;
             // 摘要之外的再裁一道（只影响这次请求）。口径要和 provider 对齐：
             // 工具定义也在 prompt 里，估算时得一起算，否则阈值永远踩不准
-            let tools_est = llm::estimate_tokens(&serde_json::to_string(&tools_schema).unwrap_or_default()) / 4;
+            let tools_est =
+                llm::estimate_tokens(&serde_json::to_string(&tools_schema).unwrap_or_default()) / 4;
             let messages = trim_for_request(
                 events_to_messages(&app, &session_id, &events, &ws),
                 budget_now.max(1),
                 tools_est,
             );
-            emit(&app, "agent://round", json!({ "session": session_id, "round": round + 1,
+            emit(
+                &app,
+                "agent://round",
+                json!({ "session": session_id, "round": round + 1,
                 "messages": messages.len(),
-                "tokens": llm::estimate_messages_tokens(&messages) }));
+                "tokens": llm::estimate_messages_tokens(&messages) }),
+            );
 
             let (tx, rx) = std::sync::mpsc::channel::<SinkMsg>();
             let app2 = app.clone();
@@ -1723,8 +2205,14 @@ fn run_turn(
             let pump = std::thread::spawn(move || {
                 while let Ok(msg) = rx.recv() {
                     match msg {
-                        SinkMsg::Delta(t) => emit(&app2, "agent://delta", json!({ "session": sid, "text": t })),
-                        SinkMsg::Reasoning(t) => emit(&app2, "agent://reason", json!({ "session": sid, "text": t })),
+                        SinkMsg::Delta(t) => {
+                            emit(&app2, "agent://delta", json!({ "session": sid, "text": t }))
+                        }
+                        SinkMsg::Reasoning(t) => emit(
+                            &app2,
+                            "agent://reason",
+                            json!({ "session": sid, "text": t }),
+                        ),
                     }
                 }
             });
@@ -1738,14 +2226,25 @@ fn run_turn(
 
             // 有思考也要落盘：带工具调用的那一轮，下一轮必须把 reasoning_content 带回去
             if !out.content.trim().is_empty() || !out.reasoning.trim().is_empty() {
-                store::session_append(&app, &session_id, &Event::Assistant {
-                    text: out.content.clone(), reasoning: out.reasoning.clone(), ts: 0,
-                    model: provider.model.clone() })?;
+                store::session_append(
+                    &app,
+                    &session_id,
+                    &Event::Assistant {
+                        text: out.content.clone(),
+                        reasoning: out.reasoning.clone(),
+                        ts: 0,
+                        model: provider.model.clone(),
+                    },
+                )?;
             }
-            emit(&app, "agent://usage", json!({ "session": session_id,
+            emit(
+                &app,
+                "agent://usage",
+                json!({ "session": session_id,
                 "prompt": out.usage.prompt_tokens, "completion": out.usage.completion_tokens,
                 "total": out.usage.total_tokens,
-                "cacheHit": out.usage.cache_hit_tokens, "cacheMiss": out.usage.cache_miss_tokens }));
+                "cacheHit": out.usage.cache_hit_tokens, "cacheMiss": out.usage.cache_miss_tokens }),
+            );
             if out.usage.prompt_tokens > 0 || out.usage.completion_tokens > 0 {
                 if let Some(mut meta) = store::session_meta_of(&app, &session_id) {
                     meta.last_tokens = out.usage.prompt_tokens;
@@ -1775,36 +2274,54 @@ fn run_turn(
                 let toks = if out.usage.completion_tokens > 0 {
                     out.usage.completion_tokens
                 } else {
-                    (llm::estimate_tokens(&out.content) + llm::estimate_tokens(&out.reasoning)) as u64
+                    (llm::estimate_tokens(&out.content) + llm::estimate_tokens(&out.reasoning))
+                        as u64
                 };
                 record_speed(&app, &provider.id, toks, out.gen_ms);
             }
 
             if out.stopped {
-                store::session_append(&app, &session_id, &Event::Note { text: "用户停止（模型流已断）".into(), ts: 0 })?;
+                store::session_append(
+                    &app,
+                    &session_id,
+                    &Event::Note {
+                        text: "用户停止（模型流已断）".into(),
+                        ts: 0,
+                    },
+                )?;
                 return Ok(());
             }
             // 被 max_tokens 截断：正文可能一个字都没吐（思考就把额度吃光了）——
             // 直接结束的话，用户看到的是"它停在那儿、什么都没说"，还以为是 bug。
             // 和 codex / opencode 一样：自动接着把它说完（续写最多 MAX_TRUNC_CONTINUE 次）。
-            if matches!(out.finish.as_str(), "length" | "max_tokens" | "max_output_tokens")
-                && trunc_continues < MAX_TRUNC_CONTINUE
-                && st.pending.lock().map(|p| p.is_empty()).unwrap_or(true)
+            if matches!(
+                out.finish.as_str(),
+                "length" | "max_tokens" | "max_output_tokens"
+            ) && trunc_continues < MAX_TRUNC_CONTINUE
+                && handle.pending.lock().map(|p| p.is_empty()).unwrap_or(true)
             {
                 trunc_continues += 1;
-                store::session_append(&app, &session_id, &Event::Note {
-                    text: format!(
+                store::session_append(
+                    &app,
+                    &session_id,
+                    &Event::Note {
+                        text: format!(
                         "模型输出撞到 max_tokens 上限被截断（finish={}），自动续写第 {} / {} 次",
                         out.finish, trunc_continues, MAX_TRUNC_CONTINUE
                     ),
-                    ts: 0,
-                })?;
-                emit(&app, "agent://note", json!({ "session": session_id, "text": "输出被截断，自动续写…" }));
+                        ts: 0,
+                    },
+                )?;
+                emit(
+                    &app,
+                    "agent://note",
+                    json!({ "session": session_id, "text": "输出被截断，自动续写…" }),
+                );
                 continue;
             }
             if out.tool_calls.is_empty() {
                 // 跑着的时候用户又补了话：别收尾，带着新要求继续
-                if !st.pending.lock().map(|p| p.is_empty()).unwrap_or(true) {
+                if !handle.pending.lock().map(|p| p.is_empty()).unwrap_or(true) {
                     continue;
                 }
                 // 什么产出都没有（正文空、思考空、也没工具调用）：说清楚，别静默结束
@@ -1824,10 +2341,22 @@ fn run_turn(
             // 执行工具（逐个，串行 —— 设备类操作没必要并行，还容易打架）
             for call in out.tool_calls.iter() {
                 let args = call.args();
-                store::session_append(&app, &session_id, &Event::ToolCall {
-                    id: call.id.clone(), name: call.name.clone(), args: args.clone(), ts: 0 })?;
-                emit(&app, "agent://tool_call", json!({ "session": session_id, "round": round + 1,
-                    "id": call.id, "name": call.name, "args": args }));
+                store::session_append(
+                    &app,
+                    &session_id,
+                    &Event::ToolCall {
+                        id: call.id.clone(),
+                        name: call.name.clone(),
+                        args: args.clone(),
+                        ts: 0,
+                    },
+                )?;
+                emit(
+                    &app,
+                    "agent://tool_call",
+                    json!({ "session": session_id, "round": round + 1,
+                    "id": call.id, "name": call.name, "args": args }),
+                );
                 if stop.load(Ordering::Relaxed) {
                     return Ok(());
                 }
@@ -1839,37 +2368,80 @@ fn run_turn(
                     perm: &perm,
                     approve: &|tool: &str, a: &Value| ask_user(&app, &st, &session_id, tool, a),
                     allowed: &|tool: &str| allow.iter().any(|x| x == tool),
-                    host: &|tool: &str, a: &Value, t: u64| host_call(&app, &st, tool, a, t),
+                    host: &|tool: &str, a: &Value, t: u64| {
+                        host_call(&app, &st, &session_id, tool, a, t)
+                    },
                     log: &|s: &str| emit(&app, "agent://log", json!({ "text": s })),
                 };
+                // 工具里的长循环通过 thread-local 看到"本会话"的停止标志，
+                // 不会因为另一个会话点停止而提前退出。
+                CURRENT_STOP.with(|slot| *slot.borrow_mut() = Some(stop.clone()));
                 let (ok, text) = match tools::execute(&ctx, &call.name, &args) {
                     Ok(t) => (true, t),
                     Err(e) => (false, e),
                 };
+                CURRENT_STOP.with(|slot| *slot.borrow_mut() = None);
                 let text = cap_tool_result(&app, &call.name, &text);
-                store::session_append(&app, &session_id, &Event::ToolResult {
-                    id: call.id.clone(), name: call.name.clone(), ok, text: text.clone(), ts: 0 })?;
-                emit(&app, "agent://tool_result", json!({ "session": session_id,
-                    "id": call.id, "name": call.name, "args": args, "ok": ok, "text": text }));
+                store::session_append(
+                    &app,
+                    &session_id,
+                    &Event::ToolResult {
+                        id: call.id.clone(),
+                        name: call.name.clone(),
+                        ok,
+                        text: text.clone(),
+                        ts: 0,
+                    },
+                )?;
+                emit(
+                    &app,
+                    "agent://tool_result",
+                    json!({ "session": session_id,
+                    "id": call.id, "name": call.name, "args": args, "ok": ok, "text": text }),
+                );
             }
         }
-        store::session_append(&app, &session_id, &Event::Note {
-            text: format!("已经连续跑了 {MAX_ROUNDS} 轮工具，先停下；需要继续就说一声"), ts: 0 })?;
+        store::session_append(
+            &app,
+            &session_id,
+            &Event::Note {
+                text: format!("已经连续跑了 {MAX_ROUNDS} 轮工具，先停下；需要继续就说一声"),
+                ts: 0,
+            },
+        )?;
         Ok(())
     })();
 
     if let Err(e) = result {
-        let _ = store::session_append(&app, &session_id, &Event::Note { text: format!("出错: {e}"), ts: 0 });
-        emit(&app, "agent://error", json!({ "session": session_id, "text": e }));
+        let _ = store::session_append(
+            &app,
+            &session_id,
+            &Event::Note {
+                text: format!("出错: {e}"),
+                ts: 0,
+            },
+        );
+        emit(
+            &app,
+            "agent://error",
+            json!({ "session": session_id, "text": e }),
+        );
     }
-    if let Ok(mut g) = st.run.lock() {
-        // 只清自己占的那个槽（理论上只会是自己，多一层保险）
-        let mine = g.as_ref().map(|f| Arc::ptr_eq(f, &stop)).unwrap_or(false);
+    if let Ok(mut g) = st.runs.lock() {
+        // 只清自己占的那个会话槽；不要把其它会话的运行态一起清掉。
+        let mine = g
+            .get(&session_id)
+            .map(|h| Arc::ptr_eq(h, &handle))
+            .unwrap_or(false);
         if mine {
-            *g = None;
+            g.remove(&session_id);
         }
     }
-    emit(&app, "agent://state", json!({ "running": false, "session": session_id }));
+    emit(
+        &app,
+        "agent://state",
+        json!({ "running": false, "session": session_id }),
+    );
     emit(&app, "agent://done", json!({ "session": session_id }));
     // 起会话名**放在最后、另开线程**：它还要问一次模型，不能让用户在这儿干等
     {
@@ -1883,22 +2455,32 @@ fn run_turn(
 
 /// 发一条消息给 agent（后台跑，立刻返回）
 #[tauri::command]
-pub fn agent_send(app: AppHandle, session_id: String, text: String, provider_id: Option<String>) -> Result<Value, String> {
+pub fn agent_send(
+    app: AppHandle,
+    session_id: String,
+    text: String,
+    provider_id: Option<String>,
+) -> Result<Value, String> {
     let st = app.state::<Arc<AgentState>>().inner().clone();
     if text.trim().is_empty() {
         return Err("内容是空的".into());
     }
     let meta = store::session_meta_of(&app, &session_id).ok_or("找不到这个会话")?;
-    let want = provider_id.filter(|s| !s.trim().is_empty()).or(Some(meta.provider_id.clone()));
+    let want = provider_id
+        .filter(|s| !s.trim().is_empty())
+        .or(Some(meta.provider_id.clone()));
     // **同步占坑**：这里必须锁着判断+占位一气呵成。
     // 之前是"先起线程、线程里再占"，两条消息同时进来会双双通过检查。
     // 正在跑的时候**不再拒绝**：排进 pending，等这一轮的下一个边界并进对话（边跑边改方向）。
-    let stop = Arc::new(AtomicBool::new(false));
+    let handle = Arc::new(RunHandle::new());
     {
-        let mut g = st.run.lock().map_err(|_| "run mutex".to_string())?;
-        if g.is_some() {
+        let mut g = st.runs.lock().map_err(|_| "run mutex".to_string())?;
+        if let Some(cur) = g.get(&session_id).cloned() {
             drop(g);
-            let mut pend = st.pending.lock().map_err(|_| "pending mutex".to_string())?;
+            let mut pend = cur
+                .pending
+                .lock()
+                .map_err(|_| "pending mutex".to_string())?;
             if pend.len() >= 8 {
                 return Err("补充的消息排太多了（8 条），等这一轮跑完再发".into());
             }
@@ -1911,80 +2493,121 @@ pub fn agent_send(app: AppHandle, session_id: String, text: String, provider_id:
             );
             return Ok(json!({ "ok": true, "queued": true }));
         }
-        *g = Some(stop.clone());
+        g.insert(session_id.clone(), handle.clone());
     }
     // 占坑成功后再解析 provider/密钥：失败要把坑还回去
     let (provider, key) = match resolve_provider(&app, want.as_deref()) {
         Ok(v) => v,
         Err(e) => {
-            if let Ok(mut g) = st.run.lock() {
-                *g = None;
+            if let Ok(mut g) = st.runs.lock() {
+                g.remove(&session_id);
             }
             return Err(e);
         }
     };
     let app2 = app.clone();
-    std::thread::spawn(move || run_turn(app2, session_id, provider, key, text, stop));
+    std::thread::spawn(move || run_turn(app2, session_id, provider, key, text, handle));
     Ok(json!({ "ok": true }))
 }
 
-/// 前端可以用它确认"到底在不在跑"（事件丢了的兜底）
+/// 前端可以用它确认"指定会话到底在不在跑"（事件丢了的兜底）。
+/// `session` 为空时只返回全局状态，不改变任何会话的运行态。
 #[tauri::command]
-pub async fn agent_running(app: AppHandle) -> Value {
+pub async fn agent_running(app: AppHandle, session: Option<String>) -> Value {
     let st = app.state::<Arc<AgentState>>().inner().clone();
+    let running = st.running(session.as_deref());
     json!({
-        "running": st.running(),
-        "link": link_snapshot(&app),
-        // 工具层看的就是这个标志（排查"停止没反应"时很有用）
+        "running": running,
+        "sessions": st.running_sessions(),
+        "link": link_snapshot(&app, session.as_deref()),
         "stopRequested": stop_requested(),
     })
 }
 
+/// 停止指定会话（不传 session 时兼容旧行为：停止所有会话）。
 #[tauri::command]
-pub fn agent_stop(app: AppHandle) -> Result<Value, String> {
+pub fn agent_stop(app: AppHandle, session: Option<String>) -> Result<Value, String> {
     let st = app.state::<Arc<AgentState>>().inner().clone();
-    if let Ok(g) = st.run.lock() {
-        if let Some(flag) = g.as_ref() {
-            flag.store(true, Ordering::Relaxed);
+    let targets: Vec<(String, Arc<RunHandle>)> = if let Some(sid) = session.as_deref() {
+        st.runs
+            .lock()
+            .map_err(|_| "run mutex".to_string())?
+            .get(sid)
+            .map(|h| vec![(sid.to_string(), h.clone())])
+            .unwrap_or_default()
+    } else {
+        st.runs
+            .lock()
+            .map_err(|_| "run mutex".to_string())?
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    };
+    for (_sid, h) in &targets {
+        h.stop.store(true, Ordering::Relaxed);
+        if let Ok(mut p) = h.pending.lock() {
+            p.clear();
         }
     }
-    STOPPED.store(true, Ordering::Relaxed); // 工具层里的长循环也靠它提前退出
-    // 光置标志是不够的：如果这一轮正卡在"等你点允许/拒绝"上，它要等到 5 分钟超时才醒，
-    // 用户看到的"停止"就等于没反应（实测：点停止 40 秒后仍在跑）。
-    // 所以这里把等待中的审批直接判成"拒绝"、把前端 host 调用也判成失败，让这一轮立刻往下走。
-    let approvals: Vec<(u64, Sender<bool>)> = st
-        .approve_waiters
-        .lock()
-        .map_err(|_| "approve mutex".to_string())?
-        .drain()
-        .collect();
+    // 兼容旧调用：没有指定会话时才动全局 STOPPED（UI 上的升级/烧录等非 agent 操作仍用它）。
+    if session.is_none() {
+        STOPPED.store(true, Ordering::Relaxed);
+    }
+    let want: std::collections::HashSet<String> = targets.into_iter().map(|(s, _)| s).collect();
+    let approvals: Vec<(u64, Sender<bool>)> = {
+        let mut g = st
+            .approve_waiters
+            .lock()
+            .map_err(|_| "approve mutex".to_string())?;
+        let ids: Vec<u64> = g
+            .iter()
+            .filter(|(_, (sid, _))| session.is_none() || want.contains(sid))
+            .map(|(id, _)| *id)
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| g.remove(&id).map(|(_, tx)| (id, tx)))
+            .collect()
+    };
     let n = approvals.len();
     for (_id, tx) in approvals {
         let _ = tx.send(false);
     }
-    let hosts: Vec<(u64, Sender<Result<String, String>>)> = st
-        .host_waiters
-        .lock()
-        .map_err(|_| "host mutex".to_string())?
-        .drain()
-        .collect();
-    for (_id, tx) in hosts {
+    let hosts: Vec<Sender<Result<String, String>>> = {
+        let mut g = st
+            .host_waiters
+            .lock()
+            .map_err(|_| "host mutex".to_string())?;
+        let ids: Vec<u64> = g
+            .iter()
+            .filter(|(_, (sid, _))| session.is_none() || want.contains(sid))
+            .map(|(id, _)| *id)
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| g.remove(&id).map(|(_, tx)| tx))
+            .collect()
+    };
+    for tx in hosts {
         let _ = tx.send(Err("用户停止了这一轮".into()));
-    }
-    // 排队里还没并进去的也一起丢掉：用户按了停止，就是不想再继续了
-    if let Ok(mut p) = st.pending.lock() {
-        p.clear();
     }
     Ok(json!({ "ok": true, "approvalsResolved": n }))
 }
 
 /// 前端把 host 工具的结果送回来
 #[tauri::command]
-pub fn agent_host_result(app: AppHandle, id: u64, ok: bool, result: String) -> Result<Value, String> {
+pub fn agent_host_result(
+    app: AppHandle,
+    id: u64,
+    ok: bool,
+    result: String,
+) -> Result<Value, String> {
     let st = app.state::<Arc<AgentState>>().inner().clone();
-    let tx = st.host_waiters.lock().map_err(|_| "host mutex".to_string())?.remove(&id);
+    let tx = st
+        .host_waiters
+        .lock()
+        .map_err(|_| "host mutex".to_string())?
+        .remove(&id);
     match tx {
-        Some(tx) => {
+        Some((_sid, tx)) => {
             let _ = tx.send(if ok { Ok(result) } else { Err(result) });
             Ok(json!({ "ok": true }))
         }
@@ -1994,7 +2617,12 @@ pub fn agent_host_result(app: AppHandle, id: u64, ok: bool, result: String) -> R
 
 /// 把文本页的内容写进当前会话的工作区（前端"存到工作区"用）
 #[tauri::command]
-pub fn agent_workspace_write(app: AppHandle, session_id: String, path: String, content: String) -> Result<String, String> {
+pub fn agent_workspace_write(
+    app: AppHandle,
+    session_id: String,
+    path: String,
+    content: String,
+) -> Result<String, String> {
     let ws = workspace_of(&app, &session_id);
     std::fs::create_dir_all(&ws).map_err(|e| format!("建工作区失败: {e}"))?;
     let target = store::resolve_in_workspace(&ws, &path)?;
@@ -2007,7 +2635,11 @@ pub fn agent_workspace_write(app: AppHandle, session_id: String, path: String, c
 
 /// 读工作区里的文件（文本页"打开工作区文件"用）
 #[tauri::command]
-pub fn agent_workspace_read(app: AppHandle, session_id: String, path: String) -> Result<String, String> {
+pub fn agent_workspace_read(
+    app: AppHandle,
+    session_id: String,
+    path: String,
+) -> Result<String, String> {
     let ws = workspace_of(&app, &session_id);
     let target = store::resolve_in_workspace(&ws, &path)?;
     std::fs::read_to_string(&target).map_err(|e| format!("读失败: {e}"))
@@ -2015,16 +2647,19 @@ pub fn agent_workspace_read(app: AppHandle, session_id: String, path: String) ->
 
 // ── 内置浏览器 ──────────────────────────────────────────────────────
 
+const UI_BROWSER_KEY: &str = "__ui__";
+
 #[tauri::command]
 pub fn browser_fetch(app: AppHandle, url: String) -> Result<browser::Page, String> {
     let page = browser::fetch(&url)?;
     let st = app.state::<Arc<AgentState>>().inner().clone();
     if let Ok(mut g) = st.page.lock() {
-        if let Some(old) = g.replace(page.clone()) {
+        if let Some(old) = g.insert(UI_BROWSER_KEY.to_string(), page.clone()) {
             if let Ok(mut h) = st.history.lock() {
-                h.push(old);
-                if h.len() > 30 {
-                    h.remove(0);
+                let history = h.entry(UI_BROWSER_KEY.to_string()).or_default();
+                history.push(old);
+                if history.len() > 30 {
+                    history.remove(0);
                 }
             }
         }
@@ -2035,10 +2670,15 @@ pub fn browser_fetch(app: AppHandle, url: String) -> Result<browser::Page, Strin
 #[tauri::command]
 pub fn browser_back(app: AppHandle) -> Result<Option<browser::Page>, String> {
     let st = app.state::<Arc<AgentState>>().inner().clone();
-    let prev = st.history.lock().map_err(|_| "mutex".to_string())?.pop();
+    let prev = st
+        .history
+        .lock()
+        .map_err(|_| "mutex".to_string())?
+        .get_mut(UI_BROWSER_KEY)
+        .and_then(|h| h.pop());
     if let Some(p) = &prev {
         if let Ok(mut g) = st.page.lock() {
-            *g = Some(p.clone());
+            g.insert(UI_BROWSER_KEY.to_string(), p.clone());
         }
     }
     Ok(prev)
@@ -2047,7 +2687,10 @@ pub fn browser_back(app: AppHandle) -> Result<Option<browser::Page>, String> {
 #[tauri::command]
 pub fn browser_current(app: AppHandle) -> Option<browser::Page> {
     let st = app.state::<Arc<AgentState>>().inner().clone();
-    st.page.lock().ok().and_then(|g| g.clone())
+    let g = st.page.lock().ok()?;
+    g.get(UI_BROWSER_KEY)
+        .cloned()
+        .or_else(|| g.values().next().cloned())
 }
 
 #[tauri::command]
@@ -2193,7 +2836,8 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
     // 三层分项：内置指令 / 技能索引 / 指导文件（都从同一份系统提示文本里量，口径一致）
     let builtin_tok = est(&builtin::text());
     let index_tok = est(&store::skills_index_for(&app, &ws));
-    let guidance_tok = est(&store::read_global_guidance(&app)) + est(&store::read_workspace_guidance(&ws));
+    let guidance_tok =
+        est(&store::read_global_guidance(&app)) + est(&store::read_workspace_guidance(&ws));
     // 工具定义：按本会话冻结的清单算（和实际发出去的一致）
     let schema = tools_schema_frozen(&app, &session_id);
     let tools_tok = est(&serde_json::to_string(&schema).unwrap_or_default());
@@ -2256,4 +2900,144 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
         "kind": prov.as_ref().map(|p| p.kind.clone()).unwrap_or_default(),
         "events": events.len(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(role: &str, content: &str) -> Value {
+        json!({ "role": role, "content": content })
+    }
+
+    #[test]
+    fn trim_for_request_really_drops_old_rounds() {
+        let mut messages = vec![msg("system", "stable system prompt")];
+        for i in 0..12 {
+            messages.push(msg("user", &format!("question {i} {}", "x".repeat(400))));
+            messages.push(msg("assistant", &format!("answer {i} {}", "y".repeat(400))));
+        }
+        let kept = trim_for_request(messages.clone(), 1_200, 100);
+        assert!(kept.len() < messages.len(), "裁剪必须真的删掉旧轮次");
+        assert_eq!(kept[0]["role"], "system", "系统提示不能被裁");
+        assert!(kept.len() >= 3, "至少留最后两轮");
+        assert_ne!(
+            kept[1]["content"], messages[1]["content"],
+            "保留区不能还是从第一条历史开始"
+        );
+    }
+
+    #[test]
+    fn trim_for_request_keeps_summary_and_tool_pairs_valid() {
+        let mut messages = vec![
+            msg("system", "stable system prompt"),
+            msg("user", "<对话摘要>\n早期内容\n</对话摘要>"),
+            msg("user", &format!("old question {}", "x".repeat(500))),
+            json!({
+                "role": "assistant", "content": null,
+                "tool_calls": [{"id": "c1", "type": "function",
+                    "function": {"name": "workspace_list", "arguments": "{}"}}]
+            }),
+            json!({ "role": "tool", "tool_call_id": "c1", "content": "old result" }),
+            msg("assistant", "old answer"),
+        ];
+        for i in 0..10 {
+            messages.push(msg("user", &format!("new {i} {}", "z".repeat(500))));
+            messages.push(msg("assistant", &format!("reply {i} {}", "w".repeat(500))));
+        }
+        let kept = trim_for_request(messages, 1_000, 0);
+        assert_eq!(kept[0]["role"], "system");
+        assert!(
+            kept[1]["content"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("<对话摘要>"),
+            "摘要要保留在系统提示后面"
+        );
+        for (i, m) in kept.iter().enumerate() {
+            if m["role"] == "tool" {
+                assert!(
+                    i > 0
+                        && kept[i - 1]["role"] == "assistant"
+                        && kept[i - 1].get("tool_calls").is_some(),
+                    "tool 结果不能和它的 tool_call 拆开"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn trim_for_request_keeps_short_history_intact() {
+        let messages = vec![
+            msg("system", "sys"),
+            msg("user", "hi"),
+            msg("assistant", "hello"),
+        ];
+        let kept = trim_for_request(messages.clone(), 10_000, 0);
+        assert_eq!(kept.len(), messages.len());
+    }
+
+    #[test]
+    fn title_reply_accepts_plain_three_lines() {
+        let got = parse_title_reply("RTSP 推流排查\n用户\n小卡").unwrap();
+        assert_eq!(got, ("RTSP 推流排查".into(), "用户".into(), "小卡".into()));
+        let only_title = parse_title_reply("串口调试").unwrap();
+        assert_eq!(
+            only_title,
+            ("串口调试".into(), String::new(), String::new())
+        );
+    }
+
+    #[test]
+    fn title_reply_rejects_tool_call_markup() {
+        let bad = "<tool_call>\n{\"name\":\"workspace_write\",\"arguments\":{\"path\":\"x\"}}\n</tool_call>";
+        assert!(parse_title_reply(bad).is_none(), "工具调用片段不能当标题");
+        assert!(parse_title_reply("<tool_call>\n用户\nAgent").is_none());
+        // 名字行坏了只丢名字，标题仍然可用
+        let got = parse_title_reply("正常标题\n{\"name\":\"x\"}\nAgent").unwrap();
+        assert_eq!(got.0, "正常标题");
+        assert!(got.1.is_empty());
+        assert_eq!(got.2, "Agent");
+    }
+
+    #[test]
+    fn token_slicers_stay_under_budget_and_respect_utf8() {
+        let ascii = "a".repeat(10_000);
+        let head = take_head_tokens(&ascii, 50);
+        let tail = take_tail_tokens(&ascii, 50);
+        assert!(llm::estimate_tokens(&head) <= 50);
+        assert!(llm::estimate_tokens(&tail) <= 50);
+        assert!(head.len() > 0 && tail.len() > 0);
+
+        let chinese = "中文测试".repeat(1000);
+        let h = take_head_tokens(&chinese, 50);
+        let t = take_tail_tokens(&chinese, 50);
+        assert!(llm::estimate_tokens(&h) <= 50);
+        assert!(llm::estimate_tokens(&t) <= 50);
+        assert!(h.is_char_boundary(h.len()) && t.is_char_boundary(0));
+    }
+
+    #[test]
+    fn agent_state_isolates_links_and_runs_per_session() {
+        let st = AgentState::default();
+        let a = st.link_for("session-a").unwrap();
+        let b = st.link_for("session-b").unwrap();
+        assert!(!Arc::ptr_eq(&a, &b), "两个会话必须拿到不同的链路对象");
+        a.lock().unwrap().label = "A".into();
+        assert_eq!(b.lock().unwrap().label, "", "A 的链路状态不能污染 B");
+
+        st.runs
+            .lock()
+            .unwrap()
+            .insert("session-a".into(), Arc::new(RunHandle::new()));
+        assert!(st.running(Some("session-a")));
+        assert!(!st.running(Some("session-b")));
+        assert_eq!(st.running_sessions(), vec!["session-a".to_string()]);
+
+        let a = RunHandle::new();
+        let b = RunHandle::new();
+        a.pending.lock().unwrap().push("only-a".into());
+        assert_eq!(a.pending.lock().unwrap().len(), 1);
+        assert!(b.pending.lock().unwrap().is_empty(), "补充消息不能串到另一个会话");
+    }
 }

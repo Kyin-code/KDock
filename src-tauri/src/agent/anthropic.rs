@@ -64,16 +64,19 @@ pub fn to_anthropic_messages(messages: &[Value]) -> (String, Vec<Value>) {
                 .and_then(|c| c.as_array())
                 .map(|a| {
                     !a.is_empty()
-                        && a.iter().all(|b| {
-                            b.get("type").and_then(|t| t.as_str()) == Some("tool_result")
-                        })
+                        && a.iter()
+                            .all(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))
                 })
                 .unwrap_or(false)
     };
     for m in messages {
         match m.get("role").and_then(|r| r.as_str()).unwrap_or("") {
             "system" => {
-                let t = m.get("content").and_then(|c| c.as_str()).unwrap_or("").trim();
+                let t = m
+                    .get("content")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .trim();
                 if !t.is_empty() {
                     if !system.is_empty() {
                         system.push_str("\n\n");
@@ -163,11 +166,35 @@ mod tests {
         })];
         let body = request_body(&provider, &messages, &tools, false);
 
-        assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral", "system 没打缓存点");
-        assert_eq!(body["tools"][0]["cache_control"]["type"], "ephemeral", "tools 没打缓存点");
+        assert_eq!(
+            body["system"][0]["cache_control"]["type"], "ephemeral",
+            "system 没打缓存点"
+        );
+        assert_eq!(
+            body["tools"][0]["cache_control"]["type"], "ephemeral",
+            "tools 没打缓存点"
+        );
         let msgs = body["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 3, "system 应该被抽到顶层了");
-        assert_eq!(msgs[1]["content"][0]["cache_control"]["type"], "ephemeral", "历史尾巴没打缓存点");
+        assert_eq!(
+            msgs[1]["content"][0]["cache_control"]["type"], "ephemeral",
+            "历史尾巴没打缓存点"
+        );
+    }
+
+    #[test]
+    fn usage_counts_cache_creation_and_read_as_input() {
+        let u = usage_from(&json!({
+            "input_tokens": 120,
+            "output_tokens": 30,
+            "cache_read_input_tokens": 8000,
+            "cache_creation_input_tokens": 500
+        }));
+        assert_eq!(u.prompt_tokens, 8620, "input_tokens 不包含缓存读写");
+        assert_eq!(u.cache_hit_tokens, 8000);
+        assert_eq!(u.cache_miss_tokens, 620);
+        assert_eq!(u.cache_hit_tokens + u.cache_miss_tokens, u.prompt_tokens);
+        assert_eq!(u.completion_tokens, 30);
     }
 }
 
@@ -220,7 +247,9 @@ pub fn request_body(
 
 /// 给一条消息的最后一个内容块打缓存点（content 是字符串时先包成 block 数组）。
 fn mark_cache_tail(msg: &mut Value) {
-    let Some(obj) = msg.as_object_mut() else { return };
+    let Some(obj) = msg.as_object_mut() else {
+        return;
+    };
     match obj.get_mut("content") {
         Some(Value::String(s)) => {
             let text = std::mem::take(s);
@@ -240,16 +269,22 @@ fn mark_cache_tail(msg: &mut Value) {
 
 fn usage_from(u: &Value) -> Usage {
     let num = |k: &str| u.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
-    let prompt = num("input_tokens");
+    // Anthropic 的 input_tokens **不包含**缓存读/写部分：
+    //   total input = input_tokens + cache_read_input_tokens + cache_creation_input_tokens
+    // 之前把 input_tokens 当 prompt、再减掉 hit/created，会把命中率算成 100%
+    // 或者把输入总量算小一半。
+    let fresh = num("input_tokens");
     let completion = num("output_tokens");
     let hit = num("cache_read_input_tokens");
     let created = num("cache_creation_input_tokens");
+    let prompt = fresh + hit + created;
     Usage {
         prompt_tokens: prompt,
         completion_tokens: completion,
         total_tokens: prompt + completion,
         cache_hit_tokens: hit,
-        cache_miss_tokens: prompt.saturating_sub(hit).saturating_sub(created),
+        // 没命中缓存 = 全新输入 + 为建立缓存付出的写入
+        cache_miss_tokens: fresh + created,
     }
 }
 
@@ -271,7 +306,11 @@ pub fn chat_once(
         .set("anthropic-version", "2023-06-01")
         .set(
             "Accept",
-            if stream { "text/event-stream" } else { "application/json" },
+            if stream {
+                "text/event-stream"
+            } else {
+                "application/json"
+            },
         )
         .timeout(Duration::from_secs(300));
     let resp = req.send_string(&payload).map_err(|e| {
@@ -284,7 +323,10 @@ pub fn chat_once(
                 if code == 400 || code == 422 {
                     let path = std::env::temp_dir().join("kdock-agent-last-request.json");
                     if std::fs::write(&path, &payload).is_ok() {
-                        hint = format!("\n（发出去的请求已存到 {}，可以打开对着看）", path.display());
+                        hint = format!(
+                            "\n（发出去的请求已存到 {}，可以打开对着看）",
+                            path.display()
+                        );
                     }
                 }
                 (
@@ -322,12 +364,24 @@ fn parse_plain(text: &str) -> Result<ChatOut, String> {
                     .reasoning
                     .push_str(b.get("thinking").and_then(|t| t.as_str()).unwrap_or("")),
                 "tool_use" => {
-                    let id = b.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                    let name = b.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let id = b
+                        .get("id")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let name = b
+                        .get("name")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let args = b.get("input").cloned().unwrap_or_else(|| json!({}));
                     if !name.is_empty() {
                         out.tool_calls.push(ToolCall {
-                            id: if id.is_empty() { format!("call_{i}") } else { id },
+                            id: if id.is_empty() {
+                                format!("call_{i}")
+                            } else {
+                                id
+                            },
                             name,
                             raw_args: args.to_string(),
                         });
@@ -362,7 +416,9 @@ fn read_sse(
             break;
         }
         line.clear();
-        let n = br.read_line(&mut line).map_err(|e| format!("读流失败: {e}"))?;
+        let n = br
+            .read_line(&mut line)
+            .map_err(|e| format!("读流失败: {e}"))?;
         if n == 0 {
             break;
         }
@@ -393,18 +449,37 @@ fn read_sse(
             }
             "content_block_start" => {
                 let idx = ev.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
-                let cb = ev.get("content_block").cloned().unwrap_or_else(|| json!({}));
+                let cb = ev
+                    .get("content_block")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
                 match cb.get("type").and_then(|t| t.as_str()).unwrap_or("") {
                     "tool_use" => {
-                        let id = cb.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                        let name = cb.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                        let id = cb
+                            .get("id")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let name = cb
+                            .get("name")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string();
                         let start_args = cb.get("input").cloned().unwrap_or_else(|| json!({}));
                         tool_slot.insert(idx, out.tool_calls.len());
                         out.tool_calls.push(ToolCall {
-                            id: if id.is_empty() { format!("call_{idx}") } else { id },
+                            id: if id.is_empty() {
+                                format!("call_{idx}")
+                            } else {
+                                id
+                            },
                             name,
                             // input 可能先到一部分（空对象），后面的 input_json_delta 再补
-                            raw_args: if start_args.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+                            raw_args: if start_args
+                                .as_object()
+                                .map(|o| o.is_empty())
+                                .unwrap_or(true)
+                            {
                                 String::new()
                             } else {
                                 start_args.to_string()

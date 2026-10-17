@@ -976,6 +976,7 @@ pub fn skill_set_enabled(app: &AppHandle, slug: &str, on: bool) -> Result<String
 // 不动系统提示里那句通用角色描述（优先级由注入段自己声明）。
 //
 // 存成一串 slug 的 JSON 数组，**写之前排序去重**：系统提示是要吃前缀缓存的，顺序一变前缀就废。
+#[allow(dead_code)]
 pub const SKILLS_ALWAYS_LIMIT: usize = 16 * 1024;
 
 fn skills_always_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
@@ -1000,6 +1001,7 @@ fn skills_always_read(path: &std::path::Path) -> Vec<String> {
     out
 }
 
+#[allow(dead_code)]
 fn skills_always_write_to(path: &std::path::Path, slugs: &[String]) -> Result<(), String> {
     let mut v: Vec<String> = slugs.to_vec();
     v.sort();
@@ -1482,23 +1484,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
-    }
-
-    /// 造一个真文件，返回跟 skills_list 同形状的 SkillInfo
-    fn mk_skill(dir: &std::path::Path, slug: &str, body: &str, enabled: bool) -> SkillInfo {
-        let d = dir.join(slug);
-        std::fs::create_dir_all(&d).unwrap();
-        let p = d.join("SKILL.md");
-        std::fs::write(&p, format!("---\nname: {slug}\ndescription: 描述不该进正文\n---\n\n{body}\n")).unwrap();
-        SkillInfo {
-            slug: slug.into(),
-            name: slug.into(),
-            description: "描述不该进正文".into(),
-            path: p.to_string_lossy().to_string(),
-            size: std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0),
-            enabled,
-            scope: "global".into(),
-        }
     }
 
     #[test]

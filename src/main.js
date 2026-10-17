@@ -6167,6 +6167,7 @@ let agStreamText = "";
 let agThinkNode = null;           // 正在流式写入的"思考过程"块
 let agReasonText = "";
 let agRunning = false;
+const agRunSessions = new Set();
 let agSkills = [];
 let agAlways = { slugs: [], bytes: 0, limit: 16384 };   // 常驻技能：正文每轮注入系统提示的那些
 const agIsAlways = (slug) => (agAlways.slugs || []).includes(slug);
@@ -6642,6 +6643,9 @@ function agSetMeta(m, why) {
   window.__agMeta = (window.__agMeta || []).concat([why + ":" + (m && m.id ? String(m.id).slice(-6) : "null")]);
   if (window.__agMeta.length > 50) window.__agMeta.shift();
   agMeta = m;
+  agRunning = !!(m && agRunSessions.has(m.id));
+  if (agEl("ag-stop")) agEl("ag-stop").hidden = !agRunning;
+  agSetSendDisabled(agRunning);
 }
 let agOpenWs = {};          // 哪些工作区是展开的
 let agSessShown = {};       // 每个工作区先渲染多少个会话（会话多了别一次铺满 DOM）
@@ -6822,7 +6826,7 @@ function agRenderInfo() {
   const outTok = (agMeta && agMeta.total_completion) || 0;
   const hit = (agMeta && agMeta.total_cache_hit) || 0;
   const miss = (agMeta && agMeta.total_cache_miss) || 0;
-  const hitRate = hit + miss > 0 ? Math.round((hit / (hit + miss)) * 100) : 0;
+  const hitRate = hit + miss > 0 ? Math.round((hit / (hit + miss)) * 1000) / 10 : 0;
   const model = (prov && prov.model) || (agMeta && agMeta.model) || "";
   const cost = agCostOf(model, hit, miss, outTok);
   const ws = (agMeta && agMeta.workspace) || (agCfg && agCfg.workspace) || "";
@@ -7077,7 +7081,7 @@ async function agSlash(text) {
       return true;
     }
     case "stop":
-      await invoke("agent_stop").catch(() => {});
+      await invoke("agent_stop", { session: agMeta ? agMeta.id : null }).catch(() => {});
       note("已请求停止这一轮。");
       return true;
     case "model": {
@@ -7183,6 +7187,7 @@ async function agSend() {
   agStreamText = "";
   agStreamNode = null;
   agRunning = true;
+  if (agMeta) agRunSessions.add(agMeta.id);
   agState("思考中…", "ok");
   agSetSendDisabled(true);
   agUpdateHeader();
@@ -7317,7 +7322,7 @@ async function bindAgent() {
     agEl("ag-stop").onclick = async () => {
       // 后端除了置停止标志，还会把"等你点允许"的审批直接判成拒绝 —— 否则这一轮要等到
       // 5 分钟审批超时才动，用户看到的就是"点了停止没反应"
-      await invoke("agent_stop").catch(() => {});
+      await invoke("agent_stop", { session: agMeta ? agMeta.id : null }).catch(() => {});
       agState("正在停止…", "err");
       const acts = document.querySelector("#ag-chat .agapprove .acts");
       if (acts) acts.innerHTML = '<span class="hint">已停止</span>';
@@ -8924,8 +8929,10 @@ const agWriteWorkspace = (path0, text) =>
 /** 后端才是"在不在跑"的唯一事实来源：切页/重连后同步一次 */
 async function agSyncRunning() {
   try {
-    const c = await invoke("agent_config_get");
-    agRunning = !!c.running;
+    const c = await invoke("agent_running", { session: agMeta ? agMeta.id : null });
+    agRunSessions.clear();
+    for (const sid of c.sessions || []) agRunSessions.add(sid);
+    agRunning = !!(agMeta && agRunSessions.has(agMeta.id));
     agState(agRunning ? en("思考中…") : en("空闲"), agRunning ? "ok" : "");
     if (agEl("ag-stop")) agEl("ag-stop").hidden = !agRunning;
     agSetSendDisabled(agRunning);
@@ -9162,7 +9169,14 @@ function agOn(name, fn) {
 async function bindAgentEvents() {
   if (!agEl("ag-chat")) return;
   await agOn("agent://state", (ev) => {
-    agRunning = !!(ev.payload && ev.payload.running);
+    const p = ev.payload || {};
+    if (p.session) {
+      if (p.running) agRunSessions.add(p.session);
+      else agRunSessions.delete(p.session);
+    }
+    const mine = !!(agMeta && p.session === agMeta.id);
+    if (!mine) return;
+    agRunning = !!p.running;
     if (agRunning) {
       agState("思考中…", "ok");
       agThinkEnsure();          // 先摆一个"思考中…"；模型真吐思考就往上长
@@ -9310,14 +9324,19 @@ async function bindAgentEvents() {
     if (!agWatching()) agUnreadBump();
   });
   await agOn("agent://browser", (ev) => {
-    agRenderPage(ev.payload);     // agent 打开网页时，右侧「浏览器」跟着显示
+    const p = ev.payload || {};
+    agRenderPage(p.page || p);     // agent 打开网页时，右侧「浏览器」跟着显示
   });
   await agOn("agent://done", async () => {
-    agRunning = false;
-    agState("空闲");
-    agThinkSettle();
+    const sid = ev.payload && ev.payload.session;
+    if (sid) agRunSessions.delete(sid);
+    if (agMeta && sid === agMeta.id) {
+      agRunning = false;
+      agState("空闲");
+      agThinkSettle();
+    }
     if (!agWatching()) agUnreadBump();         // 没在看这一页 → 挂个"有未读"角标
-    agSetSendDisabled(false);
+    if (agMeta && sid === agMeta.id) agSetSendDisabled(false);
     if (agStreamNode) agStreamNode.classList.remove("streaming");
     agStreamNode = null;
     agFlushStream();

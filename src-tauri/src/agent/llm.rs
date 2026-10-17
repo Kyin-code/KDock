@@ -46,10 +46,9 @@ fn usage_from(u: &Value) -> Usage {
     // DeepSeek 直接给 hit/miss；OpenAI 系给 prompt_tokens_details.cached_tokens
     let mut hit = num(u.get("prompt_cache_hit_tokens"));
     if hit == 0 {
-        hit = num(
-            u.get("prompt_tokens_details")
-                .and_then(|d| d.get("cached_tokens")),
-        );
+        hit = num(u
+            .get("prompt_tokens_details")
+            .and_then(|d| d.get("cached_tokens")));
     }
     let mut miss = num(u.get("prompt_cache_miss_tokens"));
     if miss == 0 && prompt > 0 {
@@ -95,7 +94,11 @@ pub fn estimate_tokens(text: &str) -> usize {
     let mut ascii = 0usize;
     let mut wide = 0usize;
     for c in text.chars() {
-        if c.is_ascii() { ascii += 1 } else { wide += 1 }
+        if c.is_ascii() {
+            ascii += 1
+        } else {
+            wide += 1
+        }
     }
     ascii.div_ceil(4) + wide
 }
@@ -262,7 +265,10 @@ pub fn chat(
     let mut last_err;
     loop {
         attempt += 1;
-        let mut counted = Counting { inner: sink, emitted: false };
+        let mut counted = Counting {
+            inner: sink,
+            emitted: false,
+        };
         match chat_once(provider, api_key, messages, tools, stop, &mut counted) {
             Ok(out) => return Ok(out),
             Err((msg, retryable)) => {
@@ -271,7 +277,11 @@ pub fn chat(
                     return Err(last_err);
                 }
                 // 1.5s / 4s 退避
-                std::thread::sleep(std::time::Duration::from_millis(if attempt == 1 { 1500 } else { 4000 }));
+                std::thread::sleep(std::time::Duration::from_millis(if attempt == 1 {
+                    1500
+                } else {
+                    4000
+                }));
             }
         }
     }
@@ -322,7 +332,14 @@ fn chat_once_openai(
 
     let mut req = ureq::post(&url)
         .set("Content-Type", "application/json")
-        .set("Accept", if stream { "text/event-stream" } else { "application/json" })
+        .set(
+            "Accept",
+            if stream {
+                "text/event-stream"
+            } else {
+                "application/json"
+            },
+        )
         .timeout(Duration::from_secs(300));
     if !api_key.trim().is_empty() {
         req = req.set("Authorization", &auth_header(api_key));
@@ -355,17 +372,27 @@ fn describe_http_error(url: &str, err: ureq::Error, payload: &str) -> (String, b
             if code == 400 || code == 422 {
                 let path = std::env::temp_dir().join("kdock-agent-last-request.json");
                 if std::fs::write(&path, payload).is_ok() {
-                    hint = format!("\n（发出去的请求已存到 {}，可以打开对着看）", path.display());
+                    hint = format!(
+                        "\n（发出去的请求已存到 {}，可以打开对着看）",
+                        path.display()
+                    );
                 }
             }
-            (format!("模型返回 HTTP {}：{}{}", code, brief.trim(), hint), retryable)
+            (
+                format!("模型返回 HTTP {}：{}{}", code, brief.trim(), hint),
+                retryable,
+            )
         }
         // 连接断/超时这类一律重试
         other => (format!("连 {} 失败: {}", url, other), true),
     }
 }
 
-fn read_sse(reader: Box<dyn Read + Send + Sync + 'static>, stop: &AtomicBool, sink: &mut dyn ChatSink) -> Result<ChatOut, String> {
+fn read_sse(
+    reader: Box<dyn Read + Send + Sync + 'static>,
+    stop: &AtomicBool,
+    sink: &mut dyn ChatSink,
+) -> Result<ChatOut, String> {
     let mut out = ChatOut::default();
     // 出字速度的两个时间点：第一个增量 / 最后一个增量。
     // 只在这两个点之间算速度 —— 工具调用、排队、空闲都不计入（用户要的就是这个口径）。
@@ -390,13 +417,15 @@ fn read_sse(reader: Box<dyn Read + Send + Sync + 'static>, stop: &AtomicBool, si
             break;
         }
         line.clear();
-        let n = br.read_line(&mut line).map_err(|e| format!("读流失败: {e}"))?;
+        let n = br
+            .read_line(&mut line)
+            .map_err(|e| format!("读流失败: {e}"))?;
         if n == 0 {
             break;
         }
         let trimmed = line.trim();
         let Some(payload) = trimmed.strip_prefix("data:") else {
-            continue;   // 注释行/空行/event: 行都跳过
+            continue; // 注释行/空行/event: 行都跳过
         };
         let payload = payload.trim();
         if payload.is_empty() {
@@ -405,14 +434,20 @@ fn read_sse(reader: Box<dyn Read + Send + Sync + 'static>, stop: &AtomicBool, si
         if payload == "[DONE]" {
             break;
         }
-        let Ok(chunk) = serde_json::from_str::<Value>(payload) else { continue };
+        let Ok(chunk) = serde_json::from_str::<Value>(payload) else {
+            continue;
+        };
         if let Some(err) = chunk.get("error") {
             return Err(format!("模型报错: {err}"));
         }
         if let Some(u) = chunk.get("usage").filter(|u| !u.is_null()) {
             out.usage = usage_from(u);
         }
-        let Some(choice) = chunk.get("choices").and_then(|c| c.as_array()).and_then(|a| a.first()) else {
+        let Some(choice) = chunk
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+        else {
             continue;
         };
         if let Some(f) = choice.get("finish_reason").and_then(|v| v.as_str()) {
@@ -420,7 +455,9 @@ fn read_sse(reader: Box<dyn Read + Send + Sync + 'static>, stop: &AtomicBool, si
                 out.finish = f.to_string();
             }
         }
-        let Some(delta) = choice.get("delta") else { continue };
+        let Some(delta) = choice.get("delta") else {
+            continue;
+        };
         if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
             if !text.is_empty() {
                 out.content.push_str(text);
@@ -437,17 +474,24 @@ fn read_sse(reader: Box<dyn Read + Send + Sync + 'static>, stop: &AtomicBool, si
         }
         if let Some(calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
             for call in calls {
-                let idx = call.get("index").and_then(|v| v.as_u64()).unwrap_or(slots.len() as u64) as usize;
+                let idx = call
+                    .get("index")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(slots.len() as u64) as usize;
                 while slots.len() <= idx {
                     slots.push((String::new(), String::new(), String::new()));
                 }
                 let slot = &mut slots[idx];
                 if let Some(id) = call.get("id").and_then(|v| v.as_str()) {
-                    if !id.is_empty() { slot.0 = id.to_string(); }
+                    if !id.is_empty() {
+                        slot.0 = id.to_string();
+                    }
                 }
                 if let Some(f) = call.get("function") {
                     if let Some(name) = f.get("name").and_then(|v| v.as_str()) {
-                        if !name.is_empty() { slot.1 = name.to_string(); }
+                        if !name.is_empty() {
+                            slot.1 = name.to_string();
+                        }
                     }
                     if let Some(args) = f.get("arguments").and_then(|v| v.as_str()) {
                         slot.2.push_str(args);
@@ -461,9 +505,17 @@ fn read_sse(reader: Box<dyn Read + Send + Sync + 'static>, stop: &AtomicBool, si
             continue;
         }
         out.tool_calls.push(ToolCall {
-            id: if id.is_empty() { format!("call_{i}") } else { id },
+            id: if id.is_empty() {
+                format!("call_{i}")
+            } else {
+                id
+            },
             name,
-            raw_args: if args.trim().is_empty() { "{}".into() } else { args },
+            raw_args: if args.trim().is_empty() {
+                "{}".into()
+            } else {
+                args
+            },
         });
     }
     // 记下出字耗时：首字→末字（不含工具调用/等待），以及首字延迟
@@ -484,17 +536,42 @@ fn parse_plain(text: &str) -> Result<ChatOut, String> {
         .and_then(|c| c.as_array())
         .and_then(|a| a.first())
         .and_then(|c| c.get("message"))
-        .ok_or_else(|| format!("响应里没有 message: {}", text.chars().take(300).collect::<String>()))?;
+        .ok_or_else(|| {
+            format!(
+                "响应里没有 message: {}",
+                text.chars().take(300).collect::<String>()
+            )
+        })?;
     let mut out = ChatOut::default();
-    out.content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+    out.content = msg
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
     if let Some(calls) = msg.get("tool_calls").and_then(|c| c.as_array()) {
         for (i, call) in calls.iter().enumerate() {
-            let id = call.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let id = call
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let f = call.get("function").cloned().unwrap_or(json!({}));
             out.tool_calls.push(ToolCall {
-                id: if id.is_empty() { format!("call_{i}") } else { id },
-                name: f.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                raw_args: f.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}").to_string(),
+                id: if id.is_empty() {
+                    format!("call_{i}")
+                } else {
+                    id
+                },
+                name: f
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                raw_args: f
+                    .get("arguments")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("{}")
+                    .to_string(),
             });
         }
     }
@@ -502,4 +579,37 @@ fn parse_plain(text: &str) -> Result<ChatOut, String> {
         out.usage = usage_from(u);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deepseek_usage_keeps_reported_hit_and_miss() {
+        let u = usage_from(&json!({
+            "prompt_tokens": 1000,
+            "completion_tokens": 20,
+            "total_tokens": 1020,
+            "prompt_cache_hit_tokens": 900,
+            "prompt_cache_miss_tokens": 100
+        }));
+        assert_eq!(u.prompt_tokens, 1000);
+        assert_eq!(u.cache_hit_tokens, 900);
+        assert_eq!(u.cache_miss_tokens, 100);
+        assert_eq!(u.cache_hit_tokens + u.cache_miss_tokens, u.prompt_tokens);
+    }
+
+    #[test]
+    fn openai_cached_tokens_are_used_as_hit() {
+        let u = usage_from(&json!({
+            "prompt_tokens": 800,
+            "completion_tokens": 10,
+            "total_tokens": 810,
+            "prompt_tokens_details": { "cached_tokens": 640 }
+        }));
+        assert_eq!(u.cache_hit_tokens, 640);
+        assert_eq!(u.cache_miss_tokens, 160);
+        assert_eq!(u.cache_hit_tokens + u.cache_miss_tokens, u.prompt_tokens);
+    }
 }

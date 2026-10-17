@@ -19,6 +19,7 @@ pub enum Kind {
     Glob,     // 用通配串扫盘（如 F:\ENV\OpenOCD-*\bin\openocd.exe）
     Inf,      // pnputil /enum-drivers 里有没有这个 .inf
     Reg,      // 注册表值（路径, 值名）
+    #[allow(dead_code)]
     Manual,   // 只能人工确认（例如某个需要登录/授权下载的工具）
 }
 

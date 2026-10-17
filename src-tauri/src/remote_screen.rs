@@ -878,7 +878,9 @@ pub fn rs_snapshot(id: u32, save_to: Option<String>) -> Result<Value, String> {
     let Some(f) = frame else {
         return Err(format!("{label}：等了 10 秒还没收到画面（服务端没推帧？检查对端 VNC 是不是在共享桌面）"));
     };
-    let preview = ascii_preview(&f.rgb, f.w, f.h, 72, 22);
+    // 48x14 足够看版面，又能在工具结果的 token 预算内放下（72x22 会被截断，
+    // agent 往往再花一轮 output_read，反而更贵）。
+    let preview = ascii_preview(&f.rgb, f.w, f.h, 48, 14);
     let img = image::RgbImage::from_raw(f.w, f.h, f.rgb).ok_or("帧数据不完整")?;
     let path = save_to.unwrap_or_else(|| format!("shot_{}.png", now_ms()));
     let bytes = {
