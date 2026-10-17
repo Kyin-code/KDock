@@ -2291,7 +2291,7 @@ fn run_turn(
                     let peak = provider
                         .pricing
                         .as_ref()
-                        .map(|_| pricing::is_peak_at(&app, request_started_ms))
+                        .map(|p| p.peak_enabled && pricing::is_peak_at(&app, request_started_ms))
                         .unwrap_or(false);
                     let mut cost = 0.0;
                     let mut currency = "CNY".to_string();

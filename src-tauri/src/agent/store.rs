@@ -60,6 +60,9 @@ fn default_kind() -> String { "openai".into() }
 pub struct ModelPricing {
     #[serde(default)]
     pub currency: String,
+    /// 用户显式启用后才按峰谷切换；关闭时统一走谷价字段。
+    #[serde(default = "default_true")]
+    pub peak_enabled: bool,
     #[serde(default)]
     pub peak_hit: f64,
     #[serde(default)]

@@ -272,6 +272,7 @@ mod tests {
     fn cost_uses_the_selected_peak_window() {
         let p = store::ModelPricing {
             currency: "USD".into(),
+            peak_enabled: true,
             peak_hit: 0.006,
             peak_miss: 0.30,
             peak_out: 1.20,

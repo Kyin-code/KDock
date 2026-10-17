@@ -6982,16 +6982,19 @@ function agUpdateHeader() {
 /* ── Agent 信息面板（参考 opencode 的状态栏）：上下文占用 / 工作区 git / token / 缓存命中 / 花费 ── */
 const AG_PRICE_FLASH = {
   currency: "USD",
+  peak_enabled: false,
   peak_hit: 0.006, peak_miss: 0.30, peak_out: 1.20,
   offpeak_hit: 0.003, offpeak_miss: 0.15, offpeak_out: 0.60,
 };
 const AG_PRICE_V4_PRO = {
   currency: "USD",
+  peak_enabled: false,
   peak_hit: 0.044, peak_miss: 1.32, peak_out: 3.96,
   offpeak_hit: 0.022, offpeak_miss: 0.66, offpeak_out: 1.98,
 };
 const AG_PRICE_FIXED = {
   currency: "CNY",
+  peak_enabled: false,
   peak_hit: 0.5, peak_miss: 2, peak_out: 8,
   offpeak_hit: 0.5, offpeak_miss: 2, offpeak_out: 8,
 };
@@ -7006,6 +7009,7 @@ const agEffectivePricing = (prov) => {
   const saved = prov && prov.pricing;
   if (saved && Object.keys(saved).length) return {
     currency: String(saved.currency || "CNY").toUpperCase(),
+    peak_enabled: !!saved.peak_enabled,
     peak_hit: Number(saved.peak_hit) || 0,
     peak_miss: Number(saved.peak_miss) || 0,
     peak_out: Number(saved.peak_out) || 0,
@@ -7015,9 +7019,6 @@ const agEffectivePricing = (prov) => {
   };
   return agPriceFallback(prov && prov.model);
 };
-const agHasPeakPricing = (p) => !!p && (
-  p.peak_hit !== p.offpeak_hit || p.peak_miss !== p.offpeak_miss || p.peak_out !== p.offpeak_out
-);
 const agMoney = (y, currency) => {
   const sym = String(currency || "CNY").toUpperCase() === "USD" ? "$" : "¥";
   const n = Number(y) || 0;
@@ -7079,7 +7080,8 @@ function agRecentCost(prov) {
       const rp = providers.find((x) => x.id === row.provider) || prov;
       if (!rp) continue;
       const price = agEffectivePricing(rp);
-      const peak = typeof row.peak === "boolean" ? row.peak : !!(agPricingStatus && agPricingStatus.peak);
+      const peak = price.peak_enabled &&
+        (typeof row.peak === "boolean" ? row.peak : !!(agPricingStatus && agPricingStatus.peak));
       const hit = Number(row.hit) || 0, miss = Number(row.miss) || 0, out = Number(row.out) || 0;
       cost = peak
         ? (hit / 1e6) * price.peak_hit + (miss / 1e6) * price.peak_miss + (out / 1e6) * price.peak_out
@@ -7108,7 +7110,7 @@ function agSessionCost(prov) {
   let approx = false;
   if ((missingPrompt > 0 || missingCompletion > 0) && prov) {
     const price = agEffectivePricing(prov);
-    const peak = !!(agPricingStatus && agPricingStatus.peak);
+    const peak = price.peak_enabled && !!(agPricingStatus && agPricingStatus.peak);
     const hit = Number(agMeta.total_cache_hit) || 0;
     const miss = Number(agMeta.total_cache_miss) || 0;
     const hitRatio = hit + miss > 0 ? hit / (hit + miss) : 0;
@@ -7146,6 +7148,10 @@ function agRenderInfo() {
   const pricing = agEffectivePricing(prov);
   const sessionCost = agSessionCost(prov);
   const costText = agCostText(sessionCost.totals, sessionCost.approx);
+  const showRateColor = pricing.peak_enabled && !!agPricingStatus && !!costText;
+  const costHtml = !costText ? "—" : showRateColor
+    ? `<span class="costpill ${agPricingStatus.peak ? "peak" : "offpeak"}" title="${en("北京时间")} ${AG_PEAK_WINDOWS}；${en("周末与法定节假日为谷价")}">${costText}</span>`
+    : costText;
   const ws = (agMeta && agMeta.workspace) || (agCfg && agCfg.workspace) || "";
   const wsShort = ws ? ws.replace(/[\\/]+$/, "").split(/[\\/]/).pop() : en("（默认）");
 
@@ -7178,12 +7184,8 @@ function agRenderInfo() {
       if (!sp || !(sp.last > 0)) return row("出字速度", "—");
       return row("出字速度", `${fmtTps(sp.last)} ${en("最近")} · ${fmtTps(sp.avg)} ${en("平均")}`, "ok");
     })() +
-    row("花费", costText || "—", "") +
-    (agBalance ? row("余额", agEscape(agBalance), "") : "") +
-    (agHasPeakPricing(pricing) && agPricingStatus
-      ? `<div class="pricebar ${agPricingStatus.peak ? "peak" : "offpeak"}" title="${en("北京时间")} ${AG_PEAK_WINDOWS}；${en("周末与法定节假日为谷价")}">` +
-        `${agPricingStatus.peak ? en("当前峰价") : en("当前谷价")}</div>`
-      : "");
+    row("花费", costHtml, "") +
+    (agBalance ? row("余额", agEscape(agBalance), "") : "");
   // 上面那两个按钮是每次重画都新建的，绑一次就行
 }
 
@@ -7789,6 +7791,7 @@ async function bindAgent() {
       agEl("ag-p-model").value = p.model;
       agEl("ag-p-ctx").value = p.ctx;
       agFillPricingForm(agPriceFallback(p.model));
+      if (agEl("ag-p-peak-enabled")) agEl("ag-p-peak-enabled").checked = /deepseek/i.test(p.model);
       if (agEl("ag-p-kind")) agEl("ag-p-kind").value = p.kind || "openai";
       if (agEl("ag-preset-note")) agEl("ag-preset-note").textContent = p.note;
       agEl("ag-p-key").focus();
@@ -7876,6 +7879,7 @@ async function agLoadConfig() {
   if (agCfg.providers.length && !agNewProfile && !agOnNewTab()) {
     agFillProvider(agCfg.activeId || (sel && sel.value) || agCfg.providers[0].id);
   }
+  if (agMeta) agRenderInfo();
 }
 
 let agNewProfile = false;
@@ -7975,6 +7979,7 @@ function agPricingFromForm() {
   const fallback = agPriceFallback(agEl("ag-p-model") ? agEl("ag-p-model").value : "");
   return {
     currency: agEl("ag-p-price-cur") ? agEl("ag-p-price-cur").value : fallback.currency,
+    peak_enabled: !!(agEl("ag-p-peak-enabled") && agEl("ag-p-peak-enabled").checked),
     peak_hit: agFormNum("ag-p-peak-hit", fallback.peak_hit),
     peak_miss: agFormNum("ag-p-peak-miss", fallback.peak_miss),
     peak_out: agFormNum("ag-p-peak-out", fallback.peak_out),
@@ -7987,6 +7992,7 @@ function agPricingFromForm() {
 function agFillPricingForm(pricing) {
   const p = pricing || AG_PRICE_FIXED;
   if (agEl("ag-p-price-cur")) agEl("ag-p-price-cur").value = String(p.currency || "CNY").toUpperCase();
+  if (agEl("ag-p-peak-enabled")) agEl("ag-p-peak-enabled").checked = !!p.peak_enabled;
   agEl("ag-p-peak-hit").value = p.peak_hit;
   agEl("ag-p-peak-miss").value = p.peak_miss;
   agEl("ag-p-peak-out").value = p.peak_out;
@@ -10221,6 +10227,7 @@ const EN = {
   // ============ Agent 信息 / 工作区 / 会话 ============
   "出字速度": "Throughput", "最近": "last", "平均": "avg",
   "价格": "Pricing", "峰价": "Peak", "谷价": "Off-peak",
+  "启用峰谷计费": "Enable peak/off-peak billing",
   "美元 / 百万 token": "USD / 1M tokens", "人民币 / 百万 token": "CNY / 1M tokens",
   "缓存命中": "Cache hit", "缓存未命中": "Cache miss", "输出": "Output",
   "当前峰价": "Peak rate now", "当前谷价": "Off-peak rate now",
