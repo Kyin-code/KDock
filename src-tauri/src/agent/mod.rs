@@ -2317,7 +2317,7 @@ fn run_turn(
                             *meta.cost_total.entry(currency.clone()).or_insert(0.0) += cost;
                         }
                     }
-                    meta.model_fingerprint = fp.id.clone();
+                    meta.model_fingerprint = fp.name.clone();
                     meta.fingerprint_model = fp.model.clone();
                     meta.fingerprint_system = fp.system.clone();
                     meta.fingerprint_provider = provider.id.clone();
@@ -2341,7 +2341,7 @@ fn run_turn(
                         "peak": peak,
                         "cost": cost,
                         "currency": currency,
-                        "fingerprint": fp.id.clone(),
+                        "fingerprint": fp.name.clone(),
                         "response_model": out.response_model.clone(),
                         "system_fingerprint": out.system_fingerprint.clone(),
                     }));

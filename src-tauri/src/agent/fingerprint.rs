@@ -1,25 +1,47 @@
-//! 轻量模型指纹：用实际响应里能拿到的稳定元数据生成短 ID。
+//! 模型指纹 -> 实际模型名。
 //!
-//! 它不是模型权重哈希，也不是不可伪造证明；用途是发现“配的模型和响应模型不一致”、
-//! 网关换后端、system_fingerprint 变化等异常。
-
-use sha2::{Digest, Sha256};
+//! 这些映射来自公开的接口指纹记录，不是模型权重哈希。未知指纹统一显示 `unknown`，
+//! 避免把“deepseek-flash”这类通用别名误当成具体版本。
 
 use super::store::Provider;
 
+/// 已知 `system_fingerprint` 对应关系。
+/// e72d3c7f...：2026-10-17 的 DeepSeek V4.1 Flash 1017 更新。
+/// aeb56401...：更新前的 DeepSeek V4.1 Flash。
+const KNOWN_FINGERPRINTS: &[(&str, &str)] = &[
+    (
+        "e72d3c7f663d3e1383b00b3884cb4501",
+        "DeepSeek-V4.1-Flash-1017",
+    ),
+    (
+        "aeb56401ca74e127821c4f9126dcb669",
+        "DeepSeek-V4.1-Flash",
+    ),
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fingerprint {
-    pub id: String,
+    /// 给用户看的真实模型名，无法识别时为 unknown。
+    pub name: String,
+    /// 响应里声明的模型（通常还是通用别名）。
     pub model: String,
+    /// 原始 system_fingerprint。
     pub system: String,
-    pub source: String,
 }
 
-fn endpoint_host(endpoint: &str) -> String {
-    url::Url::parse(endpoint.trim())
-        .ok()
-        .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
-        .unwrap_or_default()
+fn known(system: &str) -> Option<&'static str> {
+    let key = system.trim().to_ascii_lowercase();
+    KNOWN_FINGERPRINTS
+        .iter()
+        .find(|(fp, _)| *fp == key)
+        .map(|(_, name)| *name)
+}
+
+fn generic_alias(model: &str) -> bool {
+    matches!(
+        model.trim().to_ascii_lowercase().as_str(),
+        "deepseek-flash" | "deepseek-chat" | "deepseek-reasoner"
+    )
 }
 
 pub fn compute(provider: &Provider, response_model: &str, system_fingerprint: &str) -> Fingerprint {
@@ -30,32 +52,25 @@ pub fn compute(provider: &Provider, response_model: &str, system_fingerprint: &s
         observed.to_string()
     };
     let system = system_fingerprint.trim().to_string();
-    let protocol = provider.kind.trim().to_ascii_lowercase();
-    let canonical = format!(
-        "v1\n{protocol}\n{}\n{model}\n{system}",
-        endpoint_host(&provider.endpoint)
-    );
-    let digest = Sha256::digest(canonical.as_bytes());
-    let hex = format!("{digest:x}");
-    let source = if observed.is_empty() {
-        "configured"
-    } else if system.is_empty() {
-        "model"
+    let name = if let Some(name) = known(&system) {
+        name.to_string()
+    } else if !system.is_empty() {
+        "unknown".to_string()
+    } else if !model.is_empty() && !generic_alias(&model) {
+        model.clone()
     } else {
-        "model+system"
+        "unknown".to_string()
     };
     Fingerprint {
-        id: format!("fp-{}", &hex[..8]),
+        name,
         model,
         system,
-        source: source.to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::store::Provider;
 
     fn provider(model: &str) -> Provider {
         serde_json::from_value(serde_json::json!({
@@ -65,24 +80,37 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_is_stable_and_changes_with_observed_metadata() {
+    fn maps_known_deepseek_fingerprints_to_model_names() {
         let p = provider("deepseek-flash");
-        let a = compute(&p, "deepseek-flash", "fp_backend_1");
-        let b = compute(&p, "deepseek-flash", "fp_backend_1");
-        let c = compute(&p, "deepseek-flash", "fp_backend_2");
-        let d = compute(&p, "deepseek-v4-pro", "fp_backend_1");
-        assert_eq!(a, b);
-        assert_ne!(a.id, c.id, "system_fingerprint 变化应该反映到指纹");
-        assert_ne!(a.id, d.id, "实际模型变化应该反映到指纹");
-        assert_eq!(a.id.len(), 11);
-        assert!(a.id.starts_with("fp-"));
+        let current = compute(
+            &p,
+            "deepseek-flash",
+            "e72d3c7f663d3e1383b00b3884cb4501",
+        );
+        let previous = compute(
+            &p,
+            "deepseek-flash",
+            "aeb56401ca74e127821c4f9126dcb669",
+        );
+        assert_eq!(current.name, "DeepSeek-V4.1-Flash-1017");
+        assert_eq!(previous.name, "DeepSeek-V4.1-Flash");
     }
 
     #[test]
-    fn missing_response_model_falls_back_to_configured_model() {
+    fn unknown_fingerprint_is_explicit() {
         let p = provider("deepseek-flash");
-        let f = compute(&p, "", "");
-        assert_eq!(f.model, "deepseek-flash");
-        assert_eq!(f.source, "configured");
+        let f = compute(&p, "deepseek-flash", "ffffffffffffffffffffffffffffffff");
+        assert_eq!(f.name, "unknown");
+        assert_eq!(f.system, "ffffffffffffffffffffffffffffffff");
+    }
+
+    #[test]
+    fn generic_alias_without_fingerprint_is_unknown() {
+        let p = provider("deepseek-flash");
+        assert_eq!(compute(&p, "deepseek-flash", "").name, "unknown");
+        assert_eq!(
+            compute(&p, "gpt-4o-2024-08-06", "").name,
+            "gpt-4o-2024-08-06"
+        );
     }
 }
