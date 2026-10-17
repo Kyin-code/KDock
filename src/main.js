@@ -7026,10 +7026,11 @@ const agMoney = (y, currency) => {
   if (n < 1) return sym + n.toFixed(3);
   return sym + n.toFixed(2);
 };
-const agCostText = (totals) => {
+const agCostText = (totals, approx) => {
   const rows = Object.entries(totals || {}).filter(([, v]) => Number(v) > 0);
   if (!rows.length) return "";
-  return rows.map(([cur, v]) => agMoney(v, cur)).join(" / ");
+  const text = rows.map(([cur, v]) => agMoney(v, cur)).join(" / ");
+  return approx ? "≈" + text : text;
 };
 const agK = (n) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "K" : String(n || 0));
 
@@ -7092,6 +7093,41 @@ function agRecentCost(prov) {
   return totals;
 }
 
+/** 精确账本覆盖不到的旧 token 只补一次当前价估算，避免升级后花费突然变小。 */
+function agSessionCost(prov) {
+  const stored = { ...((agMeta && agMeta.cost_total) || {}) };
+  const coveredPrompt = Number(agMeta && agMeta.cost_prompt_tokens) || 0;
+  const coveredCompletion = Number(agMeta && agMeta.cost_completion_tokens) || 0;
+  const totalPrompt = Number(agMeta && agMeta.total_prompt) || 0;
+  const totalCompletion = Number(agMeta && agMeta.total_completion) || 0;
+  const missingPrompt = Math.max(0, totalPrompt - coveredPrompt);
+  const missingCompletion = Math.max(0, totalCompletion - coveredCompletion);
+  if (!Object.keys(stored).length) {
+    return { totals: agRecentCost(prov), approx: missingPrompt > 0 || missingCompletion > 0 };
+  }
+  let approx = false;
+  if ((missingPrompt > 0 || missingCompletion > 0) && prov) {
+    const price = agEffectivePricing(prov);
+    const peak = !!(agPricingStatus && agPricingStatus.peak);
+    const hit = Number(agMeta.total_cache_hit) || 0;
+    const miss = Number(agMeta.total_cache_miss) || 0;
+    const hitRatio = hit + miss > 0 ? hit / (hit + miss) : 0;
+    const missingHit = missingPrompt * hitRatio;
+    const missingMiss = missingPrompt - missingHit;
+    const cost = peak
+      ? (missingHit / 1e6) * price.peak_hit + (missingMiss / 1e6) * price.peak_miss +
+        (missingCompletion / 1e6) * price.peak_out
+      : (missingHit / 1e6) * price.offpeak_hit + (missingMiss / 1e6) * price.offpeak_miss +
+        (missingCompletion / 1e6) * price.offpeak_out;
+    if (cost > 0) {
+      const cur = String(price.currency || "CNY").toUpperCase();
+      stored[cur] = (stored[cur] || 0) + cost;
+      approx = true;
+    }
+  }
+  return { totals: stored, approx };
+}
+
 /** 把信息面板重画一遍（同步，用缓存的 git 快照） */
 function agRenderInfo() {
   const box = agEl("ag-info");
@@ -7108,8 +7144,8 @@ function agRenderInfo() {
   const miss = (agMeta && agMeta.total_cache_miss) || 0;
   const hitRate = hit + miss > 0 ? Math.round((hit / (hit + miss)) * 1000) / 10 : 0;
   const pricing = agEffectivePricing(prov);
-  const storedCost = (agMeta && agMeta.cost_total) || {};
-  const costText = agCostText(Object.keys(storedCost).length ? storedCost : agRecentCost(prov));
+  const sessionCost = agSessionCost(prov);
+  const costText = agCostText(sessionCost.totals, sessionCost.approx);
   const ws = (agMeta && agMeta.workspace) || (agCfg && agCfg.workspace) || "";
   const wsShort = ws ? ws.replace(/[\\/]+$/, "").split(/[\\/]/).pop() : en("（默认）");
 

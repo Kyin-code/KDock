@@ -2255,6 +2255,8 @@ fn run_turn(
                 }
             });
             let mut sink = BatchedSink::new(tx.clone());
+            // 计费按请求发起时刻归属峰/谷时段；同一任务跨过边界时，各轮各算各的。
+            let request_started_ms = now_ms();
             let out = llm::chat(&provider, &key, &messages, &tools_schema, &stop, &mut sink);
             sink.flush();
             drop(sink);
@@ -2289,7 +2291,7 @@ fn run_turn(
                     let peak = provider
                         .pricing
                         .as_ref()
-                        .map(|_| pricing::is_peak_at(&app, usage_ts))
+                        .map(|_| pricing::is_peak_at(&app, request_started_ms))
                         .unwrap_or(false);
                     let mut cost = 0.0;
                     let mut currency = "CNY".to_string();
@@ -2303,6 +2305,8 @@ fn run_turn(
                         if !price.currency.trim().is_empty() {
                             currency = price.currency.trim().to_ascii_uppercase();
                         }
+                        meta.cost_prompt_tokens += out.usage.prompt_tokens;
+                        meta.cost_completion_tokens += out.usage.completion_tokens;
                         if cost.is_finite() && cost > 0.0 {
                             *meta.cost_total.entry(currency.clone()).or_insert(0.0) += cost;
                         }
@@ -2316,6 +2320,7 @@ fn run_turn(
                     // 逐轮留档：界面能画出"命中率/Δ 的走势"，排障时能一眼看出是哪一轮掉的
                     meta.usage_recent.push(json!({
                         "ts": usage_ts,
+                        "request_ts": request_started_ms,
                         "prompt": out.usage.prompt_tokens,
                         "hit": out.usage.cache_hit_tokens,
                         "miss": out.usage.cache_miss_tokens,

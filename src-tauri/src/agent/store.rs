@@ -422,6 +422,11 @@ pub struct SessionMeta {
     /// 本会话累计花费，按币种分开（请求发生时按当时的峰/谷价记账）。
     #[serde(default)]
     pub cost_total: std::collections::BTreeMap<String, f64>,
+    /// 已经被 `cost_total` 覆盖的 token 数。用来识别升级前没有计费记账的旧 token。
+    #[serde(default)]
+    pub cost_prompt_tokens: u64,
+    #[serde(default)]
+    pub cost_completion_tokens: u64,
     /// 已经提示过"大头是系统提示+工具定义"了（同一个会话只弹一次 toast）
     #[serde(default)]
     pub warned_overhead: bool,
@@ -575,6 +580,8 @@ pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<Sess
         total_cache_hit: 0,
         total_cache_miss: 0,
         cost_total: std::collections::BTreeMap::new(),
+        cost_prompt_tokens: 0,
+        cost_completion_tokens: 0,
         warned_overhead: false,
         system_prompt: String::new(),
         tools: Vec::new(),
