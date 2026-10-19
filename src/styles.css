@@ -442,7 +442,7 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
   display: grid; grid-template-columns: var(--plb) minmax(0, 1fr); gap: var(--pgap);
   align-items: center; margin-bottom: 6px;
 }
-.parampane .field > label { text-align: right; font-size: 12.5px; }
+.parampane .field > label { text-align: left; font-size: 12.5px; }
 .parampane input[type="text"], .parampane input[type="number"], .parampane input:not([type]),
 .parampane select, .parampane .btn, .parampane .btn.small, .parampane input.dirinput { height: var(--pctl-h); }
 .parampane .dirinput { font-size: 12.5px; }
@@ -1637,7 +1637,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 
 /* 上下文帮助 */
 .helpbox { width: min(980px, 94vw); height: min(760px, 90vh); }
-.helpnav { gap: 3px; }
+.helpnav { gap: 3px; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
 .helpnav .helpnav-page {
   margin: 9px 8px 3px; font-size: 10.5px; letter-spacing: .75px;
   color: hsl(var(--muted-foreground)); text-transform: uppercase;
@@ -1657,6 +1657,8 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .helpcontent h2 { margin: 0 0 8px; font-size: 19px; letter-spacing: -0.2px; }
 .helpcontent h3 { margin: 20px 0 6px; font-size: 13px; }
 .helpcontent p { margin: 0 0 10px; color: hsl(var(--muted-foreground)); font-size: 12.5px; line-height: 1.75; }
+.helpcontent ul { margin: 4px 0 12px; padding-left: 1.35rem; color: hsl(var(--muted-foreground)); font-size: 12.5px; line-height: 1.75; }
+.helpcontent li { margin: 2px 0; }
 .helpcontent code {
   padding: 1px 5px; border-radius: 4px; background: hsl(var(--accent));
   font: 11.5px/1.5 Consolas, "Cascadia Mono", monospace;
@@ -3080,9 +3082,24 @@ html[data-tab="usb"] .params {
 .usbrow .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usbrow .id { flex: 0 0 auto; font-family: Consolas, "Cascadia Mono", monospace; font-size: 11px; color: hsl(var(--muted-foreground)); }
 .usbport { padding-left: 14px; }
-.usbrow .tag { flex: 0 0 auto; font-size: 10px; line-height: 1.5; padding: 0 6px; border-radius: 999px; }
-.usbrow .tag.bad { background: hsl(var(--destructive) / 0.16); color: hsl(var(--destructive)); }
-.usbrow .tag.com { background: hsl(var(--primary) / 0.16); color: hsl(var(--primary)); }
+.usbrow .tag {
+  --tag-color: hsl(var(--primary));
+  flex: 0 0 auto; font-size: 10px; line-height: 1.5; padding: 0 6px; border-radius: 999px;
+  color: var(--tag-color);
+  background: hsl(var(--primary) / 0.16);
+  background: color-mix(in srgb, var(--tag-color) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tag-color) 25%, transparent);
+}
+.usbrow .tag.com { --tag-color: hsl(var(--primary)); }
+.usbrow .tag.hub { --tag-color: hsl(var(--warning)); }
+.usbrow .tag.bt { --tag-color: color-mix(in srgb, hsl(var(--primary)) 50%, hsl(var(--success)) 50%); }
+.usbrow .tag.hid { --tag-color: hsl(var(--muted-foreground)); }
+.usbrow .tag.storage, .usbrow .tag.net { --tag-color: hsl(var(--success)); }
+.usbrow .tag.audio, .usbrow .tag.cam { --tag-color: color-mix(in srgb, hsl(var(--primary)) 55%, hsl(var(--success)) 45%); }
+.usbrow .tag.debug, .usbrow .tag.bad { --tag-color: hsl(var(--destructive)); }
+.usbrow .tag.composite { --tag-color: color-mix(in srgb, hsl(var(--primary)) 65%, hsl(var(--muted-foreground)) 35%); }
+.usbrow .tag.host { --tag-color: color-mix(in srgb, hsl(var(--primary)) 60%, hsl(var(--warning)) 40%); }
+.usbrow .tag.bad { background: hsl(var(--destructive) / 0.16); }
 .usbrow.usbcom .nm { font-family: Consolas, "Cascadia Mono", monospace; font-weight: 600; }
 .usbrow.problem .nm { color: hsl(var(--destructive)); }
 
@@ -3133,8 +3150,9 @@ html[data-tab="usb"] .params {
 
 /* 抓包表共用的序号栏：固定在左侧、右对齐，复制时不带它 */
 .trrow .no {
-  text-align: right; user-select: none; color: hsl(var(--muted-foreground) / 0.7);
-  font-variant-numeric: tabular-nums;
+  align-self: stretch; text-align: right; user-select: none; color: hsl(var(--muted-foreground) / 0.7);
+  font-variant-numeric: tabular-nums; padding: 0 8px;
+  background: var(--surface-2); border-right: 1px solid var(--surface-line-soft);
 }
 
 /* USBPcap 抓包表：序号 / 时间 / 设备(全部设备时才显示) / 端点 / 方向 / 状态 / 数据 / ASCII·setup */

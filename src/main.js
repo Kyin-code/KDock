@@ -5199,6 +5199,31 @@ function usbRenderSummary() {
   usbMsg(text);
 }
 
+/** 设备类型标签：COM / Hub / 蓝牙 / HID / 存储 / 网络 / 调试器 … */
+function usbKindTags(d, coms) {
+  const out = [];
+  const add = (cls, text) => {
+    if (text && !out.some((x) => x.cls === cls && x.text === text)) out.push({ cls, text });
+  };
+  if (coms && coms.length) add("com", coms.join("/"));
+  const cls = String(d.class || "").toLowerCase();
+  const service = String(d.service || "").toLowerCase();
+  const name = String(d.name || "").toLowerCase();
+  const inst = String(d.instance || "").toLowerCase();
+  const all = name + " " + inst;
+  if (all.includes("hub") || inst.includes("root_hub")) add("hub", T("Hub"));
+  if (cls.includes("bluetooth") || name.includes("bluetooth")) add("bt", "BT");
+  else if (cls.includes("hid") || name.includes("input device")) add("hid", "HID");
+  else if (cls.includes("usbstor") || name.includes("mass storage")) add("storage", T("存储"));
+  else if (cls.includes("net") || name.includes("ethernet") || name.includes("wi-fi")) add("net", T("网络"));
+  else if (cls.includes("audio")) add("audio", T("音频"));
+  else if (cls.includes("image") || name.includes("camera")) add("cam", T("相机"));
+  else if (cls.includes("printer")) add("prn", T("打印机"));
+  if (name.includes("j-link") || name.includes("st-link") || name.includes("cmsis-dap") || name.includes("debug probe")) add("debug", T("调试器"));
+  if (name.includes("host controller")) add("host", "HOST");
+  if (service === "usbccgp" || name.includes("composite device")) add("composite", T("复合"));
+  return out;
+}
 /** 右侧设备管理器：串口 / Hub 端口树 / SetupAPI 设备列表 */
 function usbRenderList() {
   const box = $("usb-list");
@@ -5271,11 +5296,11 @@ function usbRenderList() {
     id.textContent = (d.vid || "----") + ":" + (d.pid || "----");
     row.append(nm, id);
     const coms = comMap.get((d.vid || "") + ":" + (d.pid || ""));
-    if (coms && coms.length) {
-      const ctag = document.createElement("span");
-      ctag.className = "tag com";
-      ctag.textContent = coms.join("/");
-      row.appendChild(ctag);
+    for (const tagInfo of usbKindTags(d, coms)) {
+      const tag = document.createElement("span");
+      tag.className = "tag " + tagInfo.cls;
+      tag.textContent = tagInfo.text;
+      row.appendChild(tag);
     }
     if (bad) {
       const tag = document.createElement("span");
@@ -6671,7 +6696,7 @@ const HELP_PAGE_LABEL = {
   link: "传输", cmds: "命令表", agent: "Agent", kb: "知识库",
   upgrade: "固件升级", flash: "烧录", files: "文件管理", adb: "安卓 ADB",
   env: "环境配置", chart: "实时图表", seq: "中控编排", scope: "示波器",
-  capture: "屏幕共享", logic: "逻辑分析仪", batch: "批量文本",
+  capture: "屏幕共享", logic: "逻辑分析仪", usb: "监听", batch: "批量文本",
   calc: "计算器", datacalc: "数据计算", debug: "调试",
 };
 const HELP_PAGE_ROOT = {
@@ -6679,7 +6704,7 @@ const HELP_PAGE_ROOT = {
   kb: "help-kb-chat", upgrade: "help-upgrade-start", flash: "help-flash-programmer",
   files: "help-files-start", adb: "help-adb-device", env: "help-env-first",
   chart: "help-chart-main", seq: "help-seq-links", scope: "help-scope-connect",
-  capture: "help-capture-source", logic: "help-logic-source",
+  capture: "help-capture-source", logic: "help-logic-source", usb: "help-usb-local",
   batch: "help-batch-main", calc: "help-calc-history", datacalc: "help-datacalc-main",
   debug: "help-debug-gdb",
 };
@@ -6687,8 +6712,8 @@ const HELP_PAGE_ROOT = {
 const HELP_GROUPS = [
   { title: "概览", items: [
     { id: "help-work", title: "Work with KDock",
-      zh: "把目标说出来，KDock 会和你一起推进。页面、设备与会话都可以直接开始。",
-      en: "Tell KDock what you want to get done. Pages, devices and sessions are ready when you are." },
+      zh: "把目标说出来，KDock 会和你一起推进。页面、设备与会话都可以直接开始。\n### 建议流程\n- 传输 / 监听：先在右栏选连接方式或抓包设备，再开始收发。\n- Agent：描述目标，Agent 会读取工作区、调用工具并汇报结果。\n- 设备页：升级、烧录、文件管理都先确认目标连接，再执行操作。\n- 工具页：计算器、数据计算、批量文本和逻辑分析仪都可以独立使用。\n### 帮助\n- 按 F1 打开当前页面帮助。\n- 右上角 ? 也会打开对应页面的说明。",
+      en: "Tell KDock what you want to get done. Pages, devices and sessions are ready when you are.\n### Suggested flow\n- Transfer / Monitor: choose a link or capture target in the right panel, then start.\n- Agent: describe the goal; it reads the workspace, uses tools and reports back.\n- Device pages: confirm the target connection before upgrade, flashing or file operations.\n- Tool pages: calculator, data tools, batch text and logic analyzer work independently.\n### Help\n- Press F1 for help on the current page.\n- The ? button in the title bar opens the same page-aware help." },
     { id: "help-shortcuts", title: "快捷键",
       zh: "F1 打开当前页帮助；Ctrl+, 打开设置；Ctrl+L 清空传输日志。",
       en: "F1 opens help for the current page; Ctrl+, opens Settings; Ctrl+L clears the transfer log." },
@@ -6805,7 +6830,26 @@ const HELP_GROUPS = [
       zh: "显示当前组件的安装输出。",
       en: "Installer output for the current component." },
   ]},
-  { title: "其它页面", items: [
+  { title: "监听", items: [
+    { id: "help-usb-local", title: "本机 USB 抓包",
+      zh: "在「监听 → 本机」选择设备节点，然后点开始抓包。KDock 会调用 USBPcap 被动记录该设备的 IN/OUT 传输。\n### 常用操作\n- 开始抓包：会弹一次 UAC；抓包驱动需要管理员权限。\n- 停止抓包：已经收到的数据会保留。\n- 只看控制传输：只显示 ctl，适合看枚举、RNDIS 握手和厂商控制请求。\n- 完整数据：关闭时每行最多 128 字节；打开后显示并保存完整 HEX/ASCII。\n### 注意\n- 设备下拉显示地址、VID:PID、COM 和名称；默认自动选 COM 对应的节点。\n- 选「全部设备」会混入鼠标、键盘、Hub 等其它设备的流量。",
+      en: "In Monitor → Local, pick a device node and start capture. KDock passively records that device's IN/OUT transfers through USBPcap.\n### Common actions\n- Start capture: one UAC prompt is raised because the capture driver needs administrator rights.\n- Stop capture: records already received are kept.\n- Control only: show ctl transfers only; useful for enumeration, RNDIS handshakes and vendor control requests.\n- Full data: when off, each row shows at most 128 bytes; when on, full HEX/ASCII is displayed and saved.\n### Notes\n- The device list shows address, VID:PID, COM and name; the COM device is selected by default.\n- All devices also includes mouse, keyboard, hubs and other traffic." },
+    { id: "help-usb-columns", title: "怎么看一行数据",
+      zh: "### 列含义\n- 序号：从 1 递增，清空后重新计数。\n- 时间：USBPcap 捕获到的本地时间，精确到毫秒。\n- EPn：端点号；原始端点地址（例如 0x82）可在悬停提示里看到。\n- IN/OUT：OUT 是主机发往设备，IN 是设备返回主机。\n- ✓/✕：✓ 表示 status=0；✕ 时悬停可看错误码。\n- HEX/ASCII：载荷原始字节及可打印字符。\n- 控制传输右侧会显示 setup 字段。\n### 技巧\n- 只看控制传输，先判断设备枚举是否成功。\n- 大包先关完整数据看流量，再打开完整数据核对内容。",
+      en: "### Meaning\n- No.: starts at 1 and resets after Clear.\n- Time: local capture time in milliseconds.\n- EPn: endpoint number; hover to see the raw endpoint address (for example 0x82).\n- IN/OUT: OUT goes from host to device; IN comes back from the device.\n- ✓/✕: ✓ means status 0; hover over ✕ to see the error code.\n- HEX/ASCII: raw payload bytes and printable characters.\n- Control transfers show their setup fields on the right.\n### Tips\n- Use Control only to check whether enumeration succeeded.\n- For large packets, turn Full data off while scanning and on when inspecting the payload." },
+    { id: "help-usb-manager", title: "设备管理器",
+      zh: "右侧列出串口、Hub 端口树和 SetupAPI 设备。\n- COM：串口设备带 COM 标签；蓝牙、HID、Hub、存储、网络、调试器等也会显示类型标签。\n- 管理员读取：读取 Hub 端口和描述符需要 UAC；主程序不会因此提权。\n- 重新扫描：重新枚举当前设备。\n- 点击设备或端口会高亮，方便和抓包目标对照。",
+      en: "The right panel lists serial ports, the hub port tree and SetupAPI devices.\n- COM: serial devices get a COM tag; Bluetooth, HID, hubs, storage, network and debug probes also get type tags.\n- Read as admin: reading hub ports and descriptors raises UAC; the main app stays unelevated.\n- Rescan: enumerate the current devices again.\n- Clicking a device or port highlights it so you can compare it with the capture target." },
+    { id: "help-usb-network", title: "网络抓包",
+      zh: "「监听 → 网络」使用 tshark。\n- 选择网卡后开始抓包。\n- 表格显示时间、源、目的、协议、长度和信息。\n- 与本机 USB 共用自动滚动、清空和保存。\n- 需要先安装 tshark / Npcap，可在环境配置里一键安装。",
+      en: "Monitor → Network uses tshark.\n- Pick an interface and start capture.\n- The table shows time, source, destination, protocol, length and info.\n- Auto-scroll, Clear and Save are shared with local USB capture.\n- Install tshark / Npcap first; Environment setup has a one-click installer." },
+    { id: "help-usb-save", title: "清空与保存",
+      zh: "「清空」只清当前来源的记录；「保存…」把当前来源的记录导出为文本。完整数据打开时导出完整 HEX/ASCII，关闭时按每行限制截断。",
+      en: "Clear removes records from the active source only; Save exports the active source as text. With Full data on, the export contains complete HEX/ASCII; with it off, each row is truncated to the display limit." },
+    { id: "help-usb-trouble", title: "抓不到数据怎么办",
+      zh: "- 确认 USBPcap 已安装，并且安装后重启过。\n- 确认选中的确实是对应设备节点；重新插拔后地址会变化。\n- 换一个设备或端口测试，确认设备本身有流量。\n- 查看 %TEMP% 下的 kdock-usbpcap-*.err；常见原因是根 Hub 被另一个抓包进程占用。\n- 选「全部设备」流量会很大，分析时优先选具体设备。",
+      en: "- Make sure USBPcap is installed and the machine has been rebooted since installation.\n- Make sure the selected node really is the target; addresses change after replugging.\n- Test another device or port to confirm traffic exists.\n- Check kdock-usbpcap-*.err under %TEMP%; a common cause is another capture process holding the root hub.\n- All devices produces a lot of traffic; select a specific device for analysis." },
+  ]},  { title: "其它页面", items: [
     { id: "help-chart-main", title: "图表",
       zh: "把串口数据画成实时曲线；在下方选择通道。",
       en: "Plot serial data live; choose channels below." },
@@ -6895,6 +6939,7 @@ const HELP_HEADING_MAP = {
   scope: { "连接": "help-scope-connect", "机器状态": "help-scope-status", "通道": "help-scope-channels", "自动测量": "help-scope-measure", "时基 / 触发": "help-scope-timebase", "SCPI": "help-scope-scpi" },
   capture: { "来源": "help-capture-source", "画面": "help-capture-view" },
   logic: { "数据来源": "help-logic-source", "解码器": "help-logic-decoder", "测量": "help-logic-measure" },
+  usb: { "本机 USB": "help-usb-local", "网络": "help-usb-network", "设备管理器": "help-usb-manager" },
   calc: { "历史记录": "help-calc-history", "各进制一览": "help-calc-bases" },
   datacalc: { "串口常用换算": "help-datacalc-main", "说明": "help-datacalc-help" },
   debug: { "GDB Server": "help-debug-server", "固件 / 运行控制": "help-debug-firmware", "GDB": "help-debug-gdb" },
@@ -7029,9 +7074,28 @@ function showHelpItem(id) {
   body.innerHTML = "";
   const h = document.createElement("h2");
   h.textContent = helpTitle(it);
-  const p = document.createElement("p");
-  p.textContent = helpText(it);
-  body.append(h, p);
+  body.appendChild(h);
+  let ul = null;
+  for (const raw of helpText(it).split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith("### ")) {
+      ul = null;
+      const h3 = document.createElement("h3");
+      h3.textContent = line.slice(4);
+      body.appendChild(h3);
+    } else if (line.startsWith("- ")) {
+      if (!ul) { ul = document.createElement("ul"); body.appendChild(ul); }
+      const li = document.createElement("li");
+      li.textContent = line.slice(2);
+      ul.appendChild(li);
+    } else {
+      ul = null;
+      const p = document.createElement("p");
+      p.textContent = line;
+      body.appendChild(p);
+    }
+  }
   const content = body.closest(".helpcontent");
   if (content) content.scrollTop = 0;
 }
@@ -12596,6 +12660,7 @@ const EN = {
   "没有串口": "No serial port",
   "还没有数据": "No data yet",
   "串口读取失败：": "Serial read failed: ",
+  "存储": "Storage", "音频": "Audio", "相机": "Camera", "打印机": "Printer", "复合": "Composite",
   "设备管理器": "Device manager",
   "管理员读取": "Read as admin",
   "警告 {n}": "Warnings: {n}",
