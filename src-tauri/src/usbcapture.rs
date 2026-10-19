@@ -400,40 +400,6 @@ fn reader_loop(app: tauri::AppHandle, file: PathBuf, stopfile: PathBuf, stop: Ar
     let _ = app.emit("usb://cap-end", json!({}));
 }
 
-/// 打开一个已有的 pcap，分批推给前端
-#[tauri::command]
-pub async fn usbpcap_open(app: tauri::AppHandle, path: String) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        use tauri::Emitter;
-        let mut f = std::fs::File::open(&path).map_err(|e| format!("打开失败：{e}"))?;
-        let mut parser = Parser::new();
-        let mut buf = [0u8; 65536];
-        let mut batch: Vec<Value> = Vec::new();
-        let mut total = 0usize;
-        loop {
-            match f.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    batch.extend(parser.feed(&buf[..n]));
-                    total += batch.len();
-                    if batch.len() >= 500 {
-                        let _ = app.emit("usb://cap", json!({ "records": batch }));
-                        batch = Vec::new();
-                    }
-                }
-                Err(e) => return Err(format!("读取失败：{e}")),
-            }
-        }
-        if !batch.is_empty() {
-            let _ = app.emit("usb://cap", json!({ "records": batch }));
-        }
-        let _ = app.emit("usb://cap-end", json!({}));
-        Ok(json!({ "records": total }))
-    })
-    .await
-    .map_err(|e| format!("后台任务失败：{e}"))?
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

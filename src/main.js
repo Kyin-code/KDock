@@ -5296,7 +5296,6 @@ function usbRenderAll() {
 }
 /* ────────── USBPcap 抓包：解析 pcap 里的 USB 传输 ────────── */
 let usbCapInit = false;
-let usbCapLoading = false;
 let usbCapRunning = false;
 let usbCapStopTimer = null;
 let usbCapDevices = [];
@@ -5404,7 +5403,6 @@ function usbCapAddMany(list) {
   if (!list || !list.length) return;
   for (const r of list) usbCapRecords.push(r);
   if (usbCapRecords.length > USB_CAP_MAX) usbCapRecords.splice(0, usbCapRecords.length - USB_CAP_MAX);
-  if (usbCapLoading) return;   // 打开历史 pcap 时批量载入，结束一次性重绘
   const box = $("usb-trace");
   if (!box) return;
   const onlyCtl = $("usb-ctl-only") && $("usb-ctl-only").checked;
@@ -5450,28 +5448,6 @@ async function usbCapInfo() {
     if ($("usb-cap-start")) $("usb-cap-start").disabled = false;
   } catch (e) {
     usbCapState("bad", String(e && e.message ? e.message : e));
-  }
-}
-
-async function usbCapOpen() {
-  if (usbCapRunning) return toast(T("请先停止抓包"));
-  const p = await dlgOpen({
-    title: T("打开 pcap"),
-    multiple: false, directory: false,
-    filters: [{ name: "pcap", extensions: ["pcap", "pcapng"] }],
-  });
-  const path = typeof p === "string" ? p : (p && p.path);
-  if (!path) return;
-  usbCapClear();
-  usbCapLoading = true;
-  usbCapState("off", T("正在载入抓包数据…"));
-  try {
-    const r = await invoke("usbpcap_open", { path });
-    toast(T("已载入 {n} 条").replace("{n}", (r && r.records) || usbCapRecords.length));
-  } catch (e) {
-    usbCapLoading = false;
-    usbCapState("bad", String(e));
-    toast(String(e));
   }
 }
 
@@ -5670,13 +5646,7 @@ function usbOnShow() {
   }, 3000);
 }
 
-// 便于自测 / 排障：看当前的热插拔状态表，并手动触发一次重绘
-window.__usbCapLoadPath = async (path) => {
-  usbCapClear();
-  usbCapLoading = true;
-  try { return await invoke("usbpcap_open", { path }); }
-  finally { usbCapLoading = false; }
-};
+// 便于自测 / 排障：手动触发一次设备管理器与概要重绘
 window.__usbRender = () => usbRenderAll();
 window.__usbRefresh = () => usbRefresh();
 window.__usbTimer = () => usbAutoTimer;
@@ -5687,7 +5657,6 @@ function bindUsb() {
   if ($("usb-elev2")) $("usb-elev2").onclick = () => usbElevate();
   if ($("usb-cap-start")) $("usb-cap-start").onclick = () => usbCapStart();
   if ($("usb-cap-stop")) $("usb-cap-stop").onclick = () => usbCapStop();
-  if ($("usb-cap-open")) $("usb-cap-open").onclick = () => usbCapOpen();
   if ($("usb-ctl-only")) $("usb-ctl-only").onchange = () => usbCapRedraw();
   if ($("usb-trace-clear")) $("usb-trace-clear").onclick = () => (monMode === "net" ? netClear() : usbCapClear());
   if ($("usb-trace-save")) $("usb-trace-save").onclick = () => (monMode === "net" ? netSave() : usbCapSave());
@@ -5702,16 +5671,13 @@ function bindUsb() {
   listen("usb://cap-end", (ev) => {
     if (usbCapStopTimer) clearTimeout(usbCapStopTimer);
     usbCapStopTimer = null;
-    const wasLoading = usbCapLoading;
-    usbCapLoading = false;
     usbCapRunning = false;
-    if (wasLoading) usbCapRedraw();
     const err = ev.payload && ev.payload.error;
     if (err) {
       usbCapState("bad", String(err));
       toast(String(err));
     } else {
-      usbCapState("off", (wasLoading ? T("已载入 {n} 条") : T("已停止 · {n} 条")).replace("{n}", usbCapRecords.length));
+      usbCapState("off", T("已停止 · {n} 条").replace("{n}", usbCapRecords.length));
     }
   });
   listen("net://cap", (ev) => {
@@ -12535,18 +12501,12 @@ const EN = {
   "小驱动可以内置：把安装包丢进": "Small drivers can be bundled: drop the installer into ",
   "drivers\\<组件id>\\": "drivers\\<item id>\\",
   "检测中…": "Detecting…",
-  "正在载入抓包数据…": "Loading capture data…",
-  "载入超时（看 %TEMP% 下 kdock-usbpcap-*.log）": "Load timeout (check kdock-usbpcap-*.log in %TEMP%)",
   "全部设备": "All devices",
   "地址": "Addr",
   "只抓这个设备节点（USB 地址来自 Hub 端口信息）": "Capture only this device node (USB address from hub port info)",
-  "打开 pcap": "Open pcap",
-  "打开 pcap…": "Open pcap…",
-  "已载入 {n} 条": "Loaded {n} records",
   "抓包中 · 实时": "Capturing · live",
   "正在启动抓包…": "Starting capture…",
   "正在停止…": "Stopping…",
-  "请先停止抓包": "Stop the current capture first",
   "停止超时（看 %TEMP% 下 kdock-usbpcap-*.err）": "Stop timed out (check kdock-usbpcap-*.err in %TEMP%)",
   "已停止 · {n} 条": "Stopped · {n} records",
   "监听": "Monitor",
