@@ -5268,7 +5268,7 @@ function usbRenderInfo() {
   const ports = hubs.reduce((n, h) => n + ((h.ports || []).length), 0);
   const added = [...usbState.values()].filter((v) => v.state === "added").length;
   const gone = [...usbState.values()].filter((v) => v.state === "removed").length;
-  usbMsg(T("USB 设备 {n} · 端口设备 {m}").replace("{n}", devs.length).replace("{m}", ports)
+  usbMsg(T("USB 设备 {n} · 端口设备 {m} · 串口 {s}").replace("{n}", devs.length).replace("{m}", ports).replace("{s}", ((usbData.serial || []).length))
     + (added ? T(" · 新插入 {n}").replace("{n}", added) : "")
     + (gone ? T(" · 已拔出 {n}").replace("{n}", gone) : ""));
   const box = $("usb-info");
@@ -5309,6 +5309,25 @@ function usbRenderList() {
   const box = $("usb-list");
   if (!box) return;
   box.textContent = "";
+  const serials = (usbData && usbData.serial) || [];
+  if (serials.length) {
+    const sh = document.createElement("div");
+    sh.className = "usbhub";
+    sh.textContent = T("串口（COM）");
+    box.appendChild(sh);
+    for (const sp of serials) {
+      const row = document.createElement("div");
+      const sel = usbSel && usbSel.kind === "com" && usbSel.key === sp.port;
+      row.className = "usbrow usbcom" + (sel ? " sel" : "");
+      row.title = sp.product || sp.port;
+      const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = sp.port;
+      const id = document.createElement("span"); id.className = "id";
+      id.textContent = sp.vid ? sp.vid + ":" + sp.pid : T("非 USB");
+      row.append(nm, id);
+      row.onclick = () => { usbSel = { kind: "com", key: sp.port }; usbRenderList(); usbRenderDetail(); };
+      box.appendChild(row);
+    }
+  }
   const hubs = (usbData && usbData.hubs) || [];
   if (hubs.length) {
     for (const h of hubs) {
@@ -5339,6 +5358,12 @@ function usbRenderList() {
   head2.className = "usbhub";
   head2.textContent = T("所有 USB 设备（SetupAPI）");
   box.appendChild(head2);
+  const comMap = new Map();
+  for (const sp of ((usbData && usbData.serial) || [])) {
+    if (!sp.vid || !sp.pid) continue;
+    const k = sp.vid + ":" + sp.pid;
+    comMap.set(k, (comMap.get(k) || []).concat([sp.port]));
+  }
   const devRow = (d, st) => {
     const row = document.createElement("div");
     const sel = usbSel && usbSel.kind === "dev" && usbSel.key === d.instance;
@@ -5349,6 +5374,13 @@ function usbRenderList() {
     const id = document.createElement("span"); id.className = "id";
     id.textContent = (d.vid || "----") + ":" + (d.pid || "----");
     row.append(nm, id);
+    const coms = comMap.get((d.vid || "") + ":" + (d.pid || ""));
+    if (coms && coms.length) {
+      const ctag = document.createElement("span");
+      ctag.className = "tag com";
+      ctag.textContent = coms.join("/");
+      row.appendChild(ctag);
+    }
     if (st === "added" || st === "removed") {
       const tag = document.createElement("span");
       tag.className = "tag " + (st === "added" ? "new" : "gone");
@@ -5462,6 +5494,32 @@ function usbRenderDetail() {
       p2.textContent = T("这个端口没读到配置描述符（设备可能需要先被驱动认领，或读取被拒绝）。");
       box.appendChild(p2);
     }
+    return;
+  }
+  if (usbSel.kind === "com") {
+    const sp = (usbData.serial || []).find((x) => x.port === usbSel.key);
+    if (!sp) { usbSel = null; usbRenderDetail(); return; }
+    usbDetailHeader(box, sp.port, sp.type === "usb" ? "USB" : sp.type === "bluetooth" ? "Bluetooth" : sp.type === "pci" ? "PCI" : "");
+    const g = document.createElement("div"); g.className = "usbkv";
+    const kv = (k, v) => {
+      const a = document.createElement("span"); a.className = "k"; a.textContent = k;
+      const b = document.createElement("span"); b.className = "v"; b.textContent = v || "—";
+      g.append(a, b);
+    };
+    kv(T("端口"), sp.port);
+    kv(T("类型"), sp.type);
+    if (sp.vid) kv("VID:PID", sp.vid + ":" + sp.pid);
+    kv(T("序列号"), sp.serial || "—");
+    kv(T("厂商"), sp.manufacturer || "—");
+    kv(T("产品"), sp.product || "—");
+    const dev = (usbData.devices || []).find((d) => sp.vid && d.instance.toUpperCase().includes("VID_" + sp.vid) && d.instance.toUpperCase().includes("PID_" + sp.pid));
+    if (dev) {
+      kv(T("驱动服务"), dev.service || "—");
+      kv(T("位置"), dev.location || "—");
+      kv(T("设备实例"), dev.instance);
+      if (dev.problem) kv(T("问题码"), dev.problem + " · " + usbProblemText(dev.problem));
+    }
+    box.appendChild(g);
     return;
   }
   const d = ((usbData.devices || []).find((x) => x.instance === usbSel.key)) || (usbState.get(usbSel.key) || {}).dev;
@@ -12327,6 +12385,11 @@ const EN = {
   "小驱动可以内置：把安装包丢进": "Small drivers can be bundled: drop the installer into ",
   "drivers\\<组件id>\\": "drivers\\<item id>\\",
   "检测中…": "Detecting…",
+  "串口（COM）": "Serial ports (COM)",
+  "USB 设备 {n} · 端口设备 {m} · 串口 {s}": "USB devices {n} · port devices {m} · serial {s}",
+  "非 USB": "not USB",
+  "序列号": "Serial number",
+  "产品": "Product",
   "设备未配置": "Not configured",
   "无法启动": "Cannot start",
   "已停用": "Disabled",

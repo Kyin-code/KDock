@@ -120,6 +120,33 @@ fn list_devices() -> Vec<Value> {
     out
 }
 
+/// 系统里的串口（COM），带 USB VID/PID / 序列号 / 厂商 / 产品名
+fn serial_ports() -> Vec<Value> {
+    match serialport::available_ports() {
+        Ok(list) => list
+            .into_iter()
+            .map(|p| {
+                let mut v = json!({ "port": p.port_name, "type": "unknown" });
+                match p.port_type {
+                    serialport::SerialPortType::UsbPort(info) => {
+                        v["type"] = json!("usb");
+                        v["vid"] = json!(format!("{:04X}", info.vid));
+                        v["pid"] = json!(format!("{:04X}", info.pid));
+                        v["serial"] = json!(info.serial_number);
+                        v["manufacturer"] = json!(info.manufacturer);
+                        v["product"] = json!(info.product);
+                    }
+                    serialport::SerialPortType::PciPort => v["type"] = json!("pci"),
+                    serialport::SerialPortType::BluetoothPort => v["type"] = json!("bluetooth"),
+                    serialport::SerialPortType::Unknown => {}
+                }
+                v
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 unsafe fn hub_interface_paths() -> Vec<(String, String)> {
     // (instance_id, device_interface_path)
     let mut out = Vec::new();
@@ -381,6 +408,7 @@ pub fn usb_snapshot() -> Value {
     }
     json!({
         "devices": devices,
+        "serial": serial_ports(),
         "hubs": hubs,
         "warnings": warnings,
         "admin": !hubs.is_empty(),

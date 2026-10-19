@@ -3096,6 +3096,8 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
 .usbrow .tag.new { background: hsl(var(--success) / 0.2); color: hsl(var(--success)); }
 .usbrow .tag.gone { background: hsl(var(--destructive) / 0.18); color: hsl(var(--destructive)); }
 .usbrow .tag.bad { background: hsl(var(--destructive) / 0.16); color: hsl(var(--destructive)); }
+.usbrow .tag.com { background: hsl(var(--primary) / 0.16); color: hsl(var(--primary)); }
+.usbrow.usbcom .nm { font-family: Consolas, "Cascadia Mono", monospace; font-weight: 600; }
 .usbrow.problem .nm { color: hsl(var(--destructive)); }
 .usbgonehead { color: hsl(var(--destructive)); }
 .usblog-add { color: hsl(var(--success)); }
