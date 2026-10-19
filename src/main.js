@@ -5705,8 +5705,10 @@ async function usbCapStart() {
 }
 
 async function usbCapStop() {
+  // 停止后要把整份 pcap 读进来（几万条）：先关掉逐条渲染，等 cap-end 一次性重绘
+  usbCapLoading = true;
+  usbCapState("off", T("正在载入抓包数据…"));
   try { await invoke("usbpcap_stop"); } catch (_) {}
-  usbCapState("off", T("未抓包"));
   usbTraceMark(T("—— 已停止抓包 ——"));
 }
 
