@@ -339,8 +339,10 @@ unsafe fn read_hub(inst: &str, path: &str, depth: u32, budget: &mut u32) -> Resu
             d.idVendor, d.idProduct, d.bcdUSB, d.bcdDevice,
             d.bDeviceClass, d.bDeviceSubClass, d.bDeviceProtocol, d.bNumConfigurations,
         );
+        let addr = ci.DeviceAddress; // packed：先按值取出来
         let mut entry = json!({
             "port": port,
+            "addr": addr,
             "speed": speed_name(ci.Speed),
             "vid": format!("{:04X}", vid),
             "pid": format!("{:04X}", pid),

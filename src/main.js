@@ -5542,6 +5542,7 @@ function usbRenderDetail() {
 
 function usbRenderAll() {
   usbRenderList();
+  usbCapFillTargets();
   usbRenderDetail();
   usbRenderInfo();
 }
@@ -5557,6 +5558,39 @@ function usbCapState(kind, text) {
   if (!n) return;
   n.textContent = text || "";
   n.style.color = kind === "on" ? "hsl(var(--success))" : kind === "bad" ? "hsl(var(--destructive))" : "";
+}
+
+function usbCapTargets() {
+  const out = [];
+  for (const h of ((usbData && usbData.hubs) || [])) {
+    for (const p of (h.ports || [])) {
+      if (!p.addr) continue;
+      const dev = ((usbData.devices || []).find((d) => d.vid === p.vid && d.pid === p.pid));
+      const sp = ((usbData.serial || []).find((x) => x.vid === p.vid && x.pid === p.pid));
+      out.push({ addr: p.addr, vid: p.vid, pid: p.pid, name: dev ? dev.name : "", com: sp ? sp.port : "" });
+    }
+  }
+  return out;
+}
+
+/** 设备下拉：默认选 COM 对应的那个 USB 节点 */
+function usbCapFillTargets() {
+  const sel = $("usb-cap-target");
+  if (!sel) return;
+  const cur = sel.value;
+  sel.textContent = "";
+  const all = document.createElement("option");
+  all.value = ""; all.textContent = T("全部设备"); sel.appendChild(all);
+  for (const t of usbCapTargets()) {
+    const o = document.createElement("option");
+    o.value = String(t.addr);
+    o.textContent = T("地址") + " " + t.addr + " · " + t.vid + ":" + t.pid
+      + (t.com ? " · " + t.com : "") + (t.name ? " · " + t.name : "");
+    sel.appendChild(o);
+  }
+  const com = [...sel.options].find((o) => /COM\d+/.test(o.textContent));
+  if (cur && [...sel.options].some((o) => o.value === cur)) sel.value = cur;
+  else if (com) sel.value = com.value;
 }
 
 function usbTraceMark(text) {
@@ -5695,7 +5729,8 @@ async function usbCapStart() {
   const dev = $("usb-cap-dev") && $("usb-cap-dev").value;
   if (!dev) return toast(T("没有可抓包的根 Hub"));
   try {
-    await invoke("usbpcap_start", { device: dev });
+    const target = $("usb-cap-target") && $("usb-cap-target").value;
+    await invoke("usbpcap_start", { device: dev, devices: target || null });
     usbCapState("on", T("抓包中") + " · " + dev + T("（停止后载入数据）"));
     usbTraceMark(T("—— 开始抓包 ") + dev + " ——");
   } catch (e) {
@@ -12730,6 +12765,9 @@ const EN = {
   "小驱动可以内置：把安装包丢进": "Small drivers can be bundled: drop the installer into ",
   "drivers\\<组件id>\\": "drivers\\<item id>\\",
   "检测中…": "Detecting…",
+  "全部设备": "All devices",
+  "地址": "Addr",
+  "只抓这个设备节点（USB 地址来自 Hub 端口信息）": "Capture only this device node (USB address from hub port info)",
   "打开 pcap": "Open pcap",
   "打开 pcap…": "Open pcap…",
   "已载入 {n} 条": "Loaded {n} records",

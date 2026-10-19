@@ -229,7 +229,7 @@ pub async fn usbpcap_info() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn usbpcap_start(app: tauri::AppHandle, device: String) -> Result<Value, String> {
+pub async fn usbpcap_start(app: tauri::AppHandle, device: String, devices: Option<String>) -> Result<Value, String> {
     let _ = usbpcap_stop();
     let cmd = find_cmd().ok_or_else(|| "没装 USBPcap —— 到「环境配置」里装一下".to_string())?;
     let stamp = std::time::SystemTime::now()
@@ -241,6 +241,8 @@ pub async fn usbpcap_start(app: tauri::AppHandle, device: String) -> Result<Valu
     let _ = std::fs::remove_file(&pcap);
     let _ = std::fs::remove_file(&stopfile);
 
+    let filter = devices.unwrap_or_default().trim().to_string();
+    let pick = if filter.is_empty() { "-A".to_string() } else { format!("--devices {filter}") };
     let pipe_name = format!("kdock-usbpcap-{stamp}");
     let pipe_wide = w(&format!("\\\\.\\pipe\\{pipe_name}"));
     let ph = unsafe {
@@ -264,7 +266,7 @@ pub async fn usbpcap_start(app: tauri::AppHandle, device: String) -> Result<Valu
          $stopPath = '{}'\n\
          $psi = New-Object System.Diagnostics.ProcessStartInfo\n\
          $psi.FileName = '{}'\n\
-         $psi.Arguments = '-d {} -A -o -'\n\
+         $psi.Arguments = '-d {} {} -o -'\n\
          $psi.UseShellExecute = $false\n\
          $psi.RedirectStandardOutput = $true\n\
          $psi.CreateNoWindow = $true\n\
@@ -288,6 +290,7 @@ pub async fn usbpcap_start(app: tauri::AppHandle, device: String) -> Result<Valu
         stopfile.display(),
         cmd.display(),
         device,
+        pick,
         pipe_name
     );
     std::fs::write(&ps1, script).map_err(|e| format!("写提权脚本失败：{e}"))?;
