@@ -5147,7 +5147,11 @@ let usbBusy = false;
 let usbSel = null;          // { kind: "port" | "dev", key }
 let usbPrevMap = null;
 let usbAutoTimer = null;
-const usbLogLines = [];
+/** instance -> { dev, state: "present" | "added" | "removed", at } */
+const usbState = new Map();
+const USB_ADDED_MS = 20000;   // 新插入高亮保留 20 秒
+const USB_GONE_MS = 90000;    // 已拔出（红色）保留 90 秒
+const usbLogLines = [];       // { text, kind: "" | "add" | "del" }
 
 function usbMsg(t, bad) {
   const n = $("usb-sum");
@@ -5156,11 +5160,47 @@ function usbMsg(t, bad) {
   n.style.color = bad ? "hsl(var(--destructive))" : "";
 }
 
-function usbLogPush(line) {
-  usbLogLines.push(line);
-  if (usbLogLines.length > 300) usbLogLines.shift();
+function usbRenderLog() {
   const box = $("usb-log");
-  if (box) { box.textContent = usbLogLines.join("\n"); box.scrollTop = box.scrollHeight; }
+  if (!box) return;
+  box.textContent = "";
+  for (const x of usbLogLines) {
+    const sp = document.createElement("span");
+    sp.className = x.kind === "add" ? "usblog-add" : x.kind === "del" ? "usblog-del" : "";
+    sp.textContent = x.text + "\n";
+    box.appendChild(sp);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+function usbLogPush(line, kind) {
+  usbLogLines.push({ text: line, kind: kind || "" });
+  if (usbLogLines.length > 300) usbLogLines.shift();
+  usbRenderLog();
+}
+
+/** Windows 设备问题码（CM_PROB_*）的常见几项 */
+const USB_PROBLEM = { 1: "设备未配置", 10: "无法启动", 22: "已停用", 24: "设备未安装", 28: "没有驱动", 31: "驱动加载失败", 43: "驱动故障" };
+const usbProblemText = (c) => (c ? (USB_PROBLEM[c] ? T(USB_PROBLEM[c]) : T("问题码") + " " + c) : "");
+
+/** 维护"新插入 / 已拔出"状态（带 TTL），渲染时按状态上色 */
+function usbTrack(d, now, baseline) {
+  const present = new Set();
+  for (const x of ((d && d.devices) || [])) {
+    present.add(x.instance);
+    const cur = usbState.get(x.instance);
+    if (!cur || cur.state === "removed") {
+      usbState.set(x.instance, { dev: x, state: baseline ? "present" : "added", at: now });
+    } else {
+      cur.dev = x;
+      if (cur.state === "added" && now - cur.at > USB_ADDED_MS) cur.state = "present";
+    }
+  }
+  for (const [k, v] of usbState) {
+    if (present.has(k)) continue;
+    if (v.state !== "removed") { v.state = "removed"; v.at = now; }
+    else if (now - v.at > USB_GONE_MS) usbState.delete(k);
+  }
 }
 
 /** 热插拔 = 两次快照的 instance id 差集 */
@@ -5171,11 +5211,11 @@ function usbDiff(d) {
     const t = new Date().toLocaleTimeString();
     for (const [k, v] of map) {
       if (usbPrevMap.has(k)) continue;
-      usbLogPush(`[${t}] + ${v.name || "USB"}  ${v.vid || "----"}:${v.pid || "----"}  ${v.location || ""}`);
+      usbLogPush(`[${t}] + ${v.name || "USB"}  ${v.vid || "----"}:${v.pid || "----"}  ${v.location || ""}`, "add");
     }
     for (const [k, v] of usbPrevMap) {
       if (map.has(k)) continue;
-      usbLogPush(`[${t}] − ${v.name || "USB"}  ${v.vid || "----"}:${v.pid || "----"}  ${v.location || ""}`);
+      usbLogPush(`[${t}] − ${v.name || "USB"}  ${v.vid || "----"}:${v.pid || "----"}  ${v.location || ""}`, "del");
     }
   }
   usbPrevMap = map;
@@ -5186,6 +5226,7 @@ async function usbRefresh() {
   usbBusy = true;
   try {
     const d = await invoke("usb_diag");
+    usbTrack(d, Date.now(), usbPrevMap === null);
     usbDiff(d);
     usbData = d;
     usbRenderAll();
@@ -5200,6 +5241,7 @@ async function usbElevate() {
   usbMsg(T("等待 UAC 授权…"));
   try {
     const d = await invoke("usb_diag_elevated");
+    usbTrack(d, Date.now(), usbPrevMap === null);
     usbDiff(d);
     usbData = d;
     usbRenderAll();
@@ -5224,7 +5266,11 @@ function usbRenderInfo() {
   const devs = usbData.devices || [];
   const hubs = usbData.hubs || [];
   const ports = hubs.reduce((n, h) => n + ((h.ports || []).length), 0);
-  usbMsg(T("USB 设备 {n} · 端口设备 {m}").replace("{n}", devs.length).replace("{m}", ports));
+  const added = [...usbState.values()].filter((v) => v.state === "added").length;
+  const gone = [...usbState.values()].filter((v) => v.state === "removed").length;
+  usbMsg(T("USB 设备 {n} · 端口设备 {m}").replace("{n}", devs.length).replace("{m}", ports)
+    + (added ? T(" · 新插入 {n}").replace("{n}", added) : "")
+    + (gone ? T(" · 已拔出 {n}").replace("{n}", gone) : ""));
   const box = $("usb-info");
   if (box) {
     box.textContent = "";
@@ -5293,16 +5339,41 @@ function usbRenderList() {
   head2.className = "usbhub";
   head2.textContent = T("所有 USB 设备（SetupAPI）");
   box.appendChild(head2);
-  for (const d of ((usbData && usbData.devices) || [])) {
+  const devRow = (d, st) => {
     const row = document.createElement("div");
-    row.className = "usbrow" + (usbSel && usbSel.kind === "dev" && usbSel.key === d.instance ? " sel" : "");
+    const sel = usbSel && usbSel.kind === "dev" && usbSel.key === d.instance;
+    const bad = d.problem && st !== "removed";
+    row.className = "usbrow" + (sel ? " sel" : "") + (st ? " " + st : "") + (bad ? " problem" : "");
     row.title = d.instance;
     const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = d.name || d.instance;
     const id = document.createElement("span"); id.className = "id";
     id.textContent = (d.vid || "----") + ":" + (d.pid || "----");
     row.append(nm, id);
+    if (st === "added" || st === "removed") {
+      const tag = document.createElement("span");
+      tag.className = "tag " + (st === "added" ? "new" : "gone");
+      tag.textContent = st === "added" ? T("新插入") : T("已拔出");
+      row.appendChild(tag);
+    } else if (bad) {
+      const tag = document.createElement("span");
+      tag.className = "tag bad";
+      tag.textContent = usbProblemText(d.problem);
+      row.appendChild(tag);
+    }
     row.onclick = () => { usbSel = { kind: "dev", key: d.instance }; usbRenderList(); usbRenderDetail(); };
     box.appendChild(row);
+  };
+  for (const d of ((usbData && usbData.devices) || [])) {
+    const st = (usbState.get(d.instance) || {}).state;
+    devRow(d, st === "added" ? "added" : st === "removed" ? "removed" : "");
+  }
+  const goneRows = [...usbState.values()].filter((v) => v.state === "removed").sort((a, b) => b.at - a.at);
+  if (goneRows.length) {
+    const gh = document.createElement("div");
+    gh.className = "usbhub usbgonehead";
+    gh.textContent = T("已拔出（{n}）").replace("{n}", goneRows.length);
+    box.appendChild(gh);
+    for (const v of goneRows) devRow(v.dev, "removed");
   }
 }
 
@@ -5393,7 +5464,7 @@ function usbRenderDetail() {
     }
     return;
   }
-  const d = ((usbData.devices || []).find((x) => x.instance === usbSel.key));
+  const d = ((usbData.devices || []).find((x) => x.instance === usbSel.key)) || (usbState.get(usbSel.key) || {}).dev;
   if (!d) { usbSel = null; usbRenderDetail(); return; }
   usbDetailHeader(box, d.name || d.instance, (d.vid || "----") + ":" + (d.pid || "----"));
   const grid = document.createElement("div"); grid.className = "usbkv";
@@ -5407,6 +5478,7 @@ function usbRenderDetail() {
   kv(T("驱动服务"), d.service || "—");
   kv(T("厂商"), d.manufacturer || "—");
   kv(T("位置"), d.location || "—");
+  if (d.problem) kv(T("问题码"), d.problem + " · " + usbProblemText(d.problem));
   box.appendChild(grid);
 }
 
@@ -5426,6 +5498,12 @@ function usbOnShow() {
     usbRefresh();
   }, 3000);
 }
+
+// 便于自测 / 排障：看当前的热插拔状态表，并手动触发一次重绘
+window.__usbState = usbState;
+window.__usbRender = () => usbRenderAll();
+window.__usbRefresh = () => usbRefresh();
+window.__usbTimer = () => usbAutoTimer;
 
 function bindUsb() {
   if ($("usb-refresh")) $("usb-refresh").onclick = () => usbRefresh();
@@ -12249,6 +12327,19 @@ const EN = {
   "小驱动可以内置：把安装包丢进": "Small drivers can be bundled: drop the installer into ",
   "drivers\\<组件id>\\": "drivers\\<item id>\\",
   "检测中…": "Detecting…",
+  "设备未配置": "Not configured",
+  "无法启动": "Cannot start",
+  "已停用": "Disabled",
+  "设备未安装": "Not installed",
+  "没有驱动": "No driver",
+  "驱动加载失败": "Driver failed to load",
+  "驱动故障": "Driver failure",
+  "问题码": "Problem code",
+  "新插入": "new",
+  "已拔出": "removed",
+  "已拔出（{n}）": "Removed ({n})",
+  " · 新插入 {n}": " · new {n}",
+  " · 已拔出 {n}": " · removed {n}",
   "设备列表不需要权限；端口拓扑、设备描述符、配置/接口/端点要打开 Hub 句柄，Windows 要求管理员 —— 点上面按钮会弹一次 UAC，子进程读完就退出，主程序不提权。": "The device list needs no privileges; port topology and descriptors require opening the hub handle, which Windows only allows to administrators — the button above raises one UAC prompt, a child process reads once and exits, and the main app stays unelevated.",
   "这是 Bus Hound 的「设备视图」那一半：谁挂在哪个端口、VID/PID、速度、接口和端点、绑定到哪个驱动。传输级抓包（每一笔 IN/OUT 的 payload）需要 USBPcap 这类过滤驱动，本页不装驱动。": "This is the \"device view\" half of Bus Hound: what sits on which port, VID/PID, speed, interfaces and endpoints, which driver it binds to. Transfer-level capture (the payload of every IN/OUT) needs a filter driver such as USBPcap; this page installs no driver.",
   "刷新": "Refresh",

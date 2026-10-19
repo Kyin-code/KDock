@@ -98,6 +98,11 @@ fn list_devices() -> Vec<Value> {
             let service = reg_string(h, &info, SPDRP_SERVICE).unwrap_or_default();
             let location = reg_string(h, &info, SPDRP_LOCATION_INFORMATION).unwrap_or_default();
             let manufacturer = reg_string(h, &info, SPDRP_MFG).unwrap_or_default();
+            // 问题码：22=已停用、28=没有驱动、10=无法启动、43=驱动故障…
+            let mut node_status = 0u32;
+            let mut problem = 0u32;
+            let cr = CM_Get_DevNode_Status(&mut node_status, &mut problem, info.DevInst, 0);
+            let problem = if cr == 0 { problem } else { 0 };
             out.push(json!({
                 "instance": id,
                 "name": name,
@@ -107,6 +112,7 @@ fn list_devices() -> Vec<Value> {
                 "service": service,
                 "location": location,
                 "manufacturer": manufacturer,
+                "problem": problem,
             }));
         }
         SetupDiDestroyDeviceInfoList(h);

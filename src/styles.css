@@ -3086,3 +3086,17 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   .usbgrid { grid-template-columns: minmax(0, 1fr); }
   .usbdetail { max-height: 42vh; }
 }
+
+/* USB 热插拔标记：绿 = 新插入，红 = 已拔出 */
+.usbrow.added { background: hsl(var(--success) / 0.14); box-shadow: inset 0 0 0 1px hsl(var(--success) / 0.35); }
+.usbrow.added .nm { color: hsl(var(--success)); }
+.usbrow.removed { background: hsl(var(--destructive) / 0.10); }
+.usbrow.removed .nm { color: hsl(var(--destructive)); text-decoration: line-through; }
+.usbrow .tag { flex: 0 0 auto; font-size: 10px; line-height: 1.5; padding: 0 6px; border-radius: 999px; }
+.usbrow .tag.new { background: hsl(var(--success) / 0.2); color: hsl(var(--success)); }
+.usbrow .tag.gone { background: hsl(var(--destructive) / 0.18); color: hsl(var(--destructive)); }
+.usbrow .tag.bad { background: hsl(var(--destructive) / 0.16); color: hsl(var(--destructive)); }
+.usbrow.problem .nm { color: hsl(var(--destructive)); }
+.usbgonehead { color: hsl(var(--destructive)); }
+.usblog-add { color: hsl(var(--success)); }
+.usblog-del { color: hsl(var(--destructive)); }
