@@ -2233,6 +2233,7 @@ dependencies = [
  "ureq",
  "url",
  "webpki-roots 1.0.9",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

@@ -49,4 +49,12 @@ des = "0.9.0"
 # 只有 Windows 才有的：开机自启、屏幕捕获（DXGI）
 [target.'cfg(windows)'.dependencies]
 tauri-plugin-autostart = "2"
+# USB 诊断页：SetupAPI（枚举设备）+ Hub IOCTL（端口 / 设备描述符）。不装驱动。
+windows-sys = { version = "0.60", features = [
+  "Win32_Foundation",
+  "Win32_Devices_Usb",
+  "Win32_Devices_DeviceAndDriverInstallation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+] }
 

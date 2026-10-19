@@ -17,6 +17,7 @@ mod scope;
 mod shell;
 mod storage;
 mod transport;
+pub mod usb;
 mod upgrade;
 mod webview2;
 
@@ -3517,6 +3518,8 @@ pub fn run() {
             file_write_text,
             env_setup::env_scan,
             logic::logic_devices,
+            usb::usb_diag,
+            usb::usb_diag_elevated,
             logic::logic_capture,
             env_setup::env_install,
             storage::command_table_get,

@@ -1384,6 +1384,7 @@ const WORK_OF = {
   debug: "debug",
   agent: "agent",
   env: "env",
+  usb: "usb",
   kb: "kb",
   adb: "adb",
 };
@@ -1432,6 +1433,7 @@ function showPane(tab) {
   if (tab === "datacalc") initCalc();          // 折叠区块的初始化在 initCalc 里（只有一次）
   if (tab === "logic") initLogic();
   if (tab === "env") envRefresh();
+  if (tab === "usb") usbOnShow();
   if (tab === "scope") { scSetView(scView); scResizePlot(); }
   kbSyncSoon();                                 // 知识库页：进来就贴、离开就收（详见 kbSync）
   if (LANG === "en") langWalk();   // 这一页里"切过来才渲染"的文字（提示语/空态）再扫一遍
@@ -5133,6 +5135,304 @@ function bindQuickSend() {
   qsRender();
   if ($("qs-edit")) $("qs-edit").onclick = () => qsOpenEditor();
   if ($("qs-filter")) $("qs-filter").oninput = () => qsRender();
+}
+
+/* ══════════ USB 诊断：设备树 / 描述符 / 热插拔（免驱，不装过滤驱动） ══════════
+   SetupAPI 列设备（普通权限即可）；Hub IOCTL 读端口拓扑 + 设备/配置/接口/端点描述符
+   （Windows 要求管理员 —— 点「以管理员读取端口」会拉起自己（--usb-dump）读一次再返回）。 */
+/** 这个模块沿用 T() 的写法；en 在文件后面才定义，所以这里包一层惰性调用 */
+const T = (s) => en(s);
+let usbData = null;
+let usbBusy = false;
+let usbSel = null;          // { kind: "port" | "dev", key }
+let usbPrevMap = null;
+let usbAutoTimer = null;
+const usbLogLines = [];
+
+function usbMsg(t, bad) {
+  const n = $("usb-sum");
+  if (!n) return;
+  n.textContent = t || "";
+  n.style.color = bad ? "hsl(var(--destructive))" : "";
+}
+
+function usbLogPush(line) {
+  usbLogLines.push(line);
+  if (usbLogLines.length > 300) usbLogLines.shift();
+  const box = $("usb-log");
+  if (box) { box.textContent = usbLogLines.join("\n"); box.scrollTop = box.scrollHeight; }
+}
+
+/** 热插拔 = 两次快照的 instance id 差集 */
+function usbDiff(d) {
+  const map = new Map();
+  for (const x of ((d && d.devices) || [])) map.set(x.instance, x);
+  if (usbPrevMap) {
+    const t = new Date().toLocaleTimeString();
+    for (const [k, v] of map) {
+      if (usbPrevMap.has(k)) continue;
+      usbLogPush(`[${t}] + ${v.name || "USB"}  ${v.vid || "----"}:${v.pid || "----"}  ${v.location || ""}`);
+    }
+    for (const [k, v] of usbPrevMap) {
+      if (map.has(k)) continue;
+      usbLogPush(`[${t}] − ${v.name || "USB"}  ${v.vid || "----"}:${v.pid || "----"}  ${v.location || ""}`);
+    }
+  }
+  usbPrevMap = map;
+}
+
+async function usbRefresh() {
+  if (usbBusy) return;
+  usbBusy = true;
+  try {
+    const d = await invoke("usb_diag");
+    usbDiff(d);
+    usbData = d;
+    usbRenderAll();
+  } catch (e) {
+    usbMsg(String(e && e.message ? e.message : e), true);
+  } finally { usbBusy = false; }
+}
+
+async function usbElevate() {
+  if (usbBusy) return;
+  usbBusy = true;
+  usbMsg(T("等待 UAC 授权…"));
+  try {
+    const d = await invoke("usb_diag_elevated");
+    usbDiff(d);
+    usbData = d;
+    usbRenderAll();
+    toast(T("已读到端口 / 描述符"));
+  } catch (e) {
+    const m = String(e && e.message ? e.message : e);
+    usbMsg(m, true);
+    toast(m);
+  } finally { usbBusy = false; }
+}
+
+function usbKv(box, k, v) {
+  const d = document.createElement("div");
+  const a = document.createElement("span"); a.className = "k"; a.textContent = k;
+  const b = document.createElement("span"); b.className = "v"; b.textContent = v == null ? "—" : String(v);
+  d.className = "usbkv-row"; d.style.display = "contents";
+  d.append(a, b); box.appendChild(d);
+}
+
+function usbRenderInfo() {
+  if (!usbData) return;
+  const devs = usbData.devices || [];
+  const hubs = usbData.hubs || [];
+  const ports = hubs.reduce((n, h) => n + ((h.ports || []).length), 0);
+  usbMsg(T("USB 设备 {n} · 端口设备 {m}").replace("{n}", devs.length).replace("{m}", ports));
+  const box = $("usb-info");
+  if (box) {
+    box.textContent = "";
+    const grid = document.createElement("div"); grid.className = "usbkv";
+    const kv = (k, v, cls) => {
+      const a = document.createElement("span"); a.className = "k"; a.textContent = k;
+      const b = document.createElement("span"); b.className = "v" + (cls ? " " + cls : ""); b.textContent = v;
+      grid.append(a, b);
+    };
+    kv(T("USB 设备"), String(devs.length));
+    kv(T("Hub 数"), String(hubs.length));
+    kv(T("端口上的设备"), String(ports));
+    kv(T("读取权限"), usbData.admin ? T("端口 / 描述符可读") : T("只读设备列表"), usbData.admin ? "" : "err");
+    box.appendChild(grid);
+  }
+  const warns = $("usb-warns");
+  if (warns) {
+    warns.textContent = "";
+    const list = usbData.warnings || [];
+    if (!list.length) {
+      const d = document.createElement("div"); d.className = "row";
+      const v = document.createElement("span"); v.className = "v"; v.textContent = T("无");
+      d.appendChild(v); warns.appendChild(d);
+    } else {
+      for (const w of list) {
+        const d = document.createElement("div"); d.className = "row";
+        const v = document.createElement("span"); v.className = "v"; v.textContent = w;
+        d.appendChild(v); warns.appendChild(d);
+      }
+    }
+    if ($("usb-warn-n")) $("usb-warn-n").textContent = list.length ? String(list.length) : "";
+  }
+}
+
+function usbRenderList() {
+  const box = $("usb-list");
+  if (!box) return;
+  box.textContent = "";
+  const hubs = (usbData && usbData.hubs) || [];
+  if (hubs.length) {
+    for (const h of hubs) {
+      const head = document.createElement("div");
+      head.className = "usbhub";
+      head.textContent = T("Hub") + " · " + (h.instance || "");
+      box.appendChild(head);
+      for (const p of (h.ports || [])) {
+        const key = (h.instance || "") + "#" + p.port;
+        const row = document.createElement("div");
+        row.className = "usbrow usbport" + (usbSel && usbSel.kind === "port" && usbSel.key === key ? " sel" : "");
+        row.title = T("端口 {n} · {s}").replace("{n}", p.port).replace("{s}", p.speed);
+        const nm = document.createElement("span"); nm.className = "nm";
+        nm.textContent = "Port " + p.port + (p.isHub ? " · " + T("Hub") : "");
+        const id = document.createElement("span"); id.className = "id";
+        id.textContent = p.vid + ":" + p.pid;
+        row.append(nm, id);
+        row.onclick = () => { usbSel = { kind: "port", key }; usbRenderList(); usbRenderDetail(); };
+        box.appendChild(row);
+      }
+    }
+  } else {
+    const d = document.createElement("p"); d.className = "hint";
+    d.textContent = T("端口拓扑要管理员权限：点上面的「以管理员读取端口」。");
+    box.appendChild(d);
+  }
+  const head2 = document.createElement("div");
+  head2.className = "usbhub";
+  head2.textContent = T("所有 USB 设备（SetupAPI）");
+  box.appendChild(head2);
+  for (const d of ((usbData && usbData.devices) || [])) {
+    const row = document.createElement("div");
+    row.className = "usbrow" + (usbSel && usbSel.kind === "dev" && usbSel.key === d.instance ? " sel" : "");
+    row.title = d.instance;
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = d.name || d.instance;
+    const id = document.createElement("span"); id.className = "id";
+    id.textContent = (d.vid || "----") + ":" + (d.pid || "----");
+    row.append(nm, id);
+    row.onclick = () => { usbSel = { kind: "dev", key: d.instance }; usbRenderList(); usbRenderDetail(); };
+    box.appendChild(row);
+  }
+}
+
+function usbDetailHeader(box, title, sub) {
+  const t = document.createElement("div");
+  t.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:8px;";
+  const a = document.createElement("b"); a.textContent = title;
+  const b = document.createElement("span"); b.className = "lb"; b.textContent = sub || "";
+  t.append(a, b);
+  box.appendChild(t);
+}
+
+function usbRenderDetail() {
+  const box = $("usb-detail");
+  if (!box) return;
+  box.textContent = "";
+  if (!usbData || !usbSel) {
+    const p = document.createElement("p"); p.className = "hint";
+    p.textContent = T("点左边一个设备看描述符");
+    box.appendChild(p);
+    return;
+  }
+  if (usbSel.kind === "port") {
+    let hit = null;
+    for (const h of (usbData.hubs || [])) {
+      for (const p of (h.ports || [])) {
+        if ((h.instance || "") + "#" + p.port === usbSel.key) hit = { hub: h, p };
+      }
+    }
+    if (!hit) { usbSel = null; usbRenderDetail(); return; }
+    const p = hit.p;
+    usbDetailHeader(box, T("端口设备"), "VID " + p.vid + " : PID " + p.pid);
+    const grid = document.createElement("div"); grid.className = "usbkv";
+    const kv = (k, v) => {
+      const a = document.createElement("span"); a.className = "k"; a.textContent = k;
+      const b = document.createElement("span"); b.className = "v"; b.textContent = v;
+      grid.append(a, b);
+    };
+    kv(T("端口"), String(p.port));
+    kv(T("速度"), p.speed);
+    kv("VID:PID", p.vid + ":" + p.pid);
+    kv("bcdUSB", p.bcdUSB);
+    kv("bcdDevice", p.bcdDevice);
+    kv(T("设备类"), p.class + " / " + p.subClass + " / " + p.protocol);
+    kv(T("配置数"), String(p.numConfigs));
+    box.appendChild(grid);
+    if (p.config) {
+      const c = p.config;
+      const h2 = document.createElement("div"); h2.className = "usbif";
+      const t2 = document.createElement("div"); t2.className = "t";
+      t2.textContent = T("配置描述符");
+      h2.appendChild(t2);
+      const g2 = document.createElement("div"); g2.className = "usbkv";
+      const kv2 = (k, v) => {
+        const a = document.createElement("span"); a.className = "k"; a.textContent = k;
+        const b = document.createElement("span"); b.className = "v"; b.textContent = v;
+        g2.append(a, b);
+      };
+      kv2(T("接口数"), String(c.numInterfaces));
+      kv2(T("自供电"), c.selfPowered ? T("是") : T("否"));
+      kv2(T("最大电流"), c.maxPowerMa + " mA");
+      h2.appendChild(g2);
+      for (const it of (c.interfaces || [])) {
+        const d = document.createElement("div"); d.className = "usbif";
+        const t3 = document.createElement("div"); t3.className = "t";
+        t3.textContent = T("接口 {n}").replace("{n}", it.number) + (it.alt ? " (alt " + it.alt + ")" : "") + " · class 0x" + Number(it.class).toString(16).toUpperCase();
+        d.appendChild(t3);
+        const eps = document.createElement("div"); eps.className = "usbep";
+        const hdr = document.createElement("span"); hdr.style.fontWeight = "600"; hdr.textContent = "EP";
+        const hdr2 = document.createElement("span"); hdr2.style.fontWeight = "600"; hdr2.textContent = T("方向");
+        const hdr3 = document.createElement("span"); hdr3.style.fontWeight = "600"; hdr3.textContent = T("类型");
+        const hdr4 = document.createElement("span"); hdr4.style.fontWeight = "600"; hdr4.textContent = T("包大小");
+        const hdr5 = document.createElement("span"); hdr5.style.fontWeight = "600"; hdr5.textContent = T("间隔");
+        eps.append(hdr, hdr2, hdr3, hdr4, hdr5);
+        for (const e of (it.endpoints || [])) {
+          for (const v of [e.address, e.dir, e.type, String(e.maxPacket), String(e.interval)]) {
+            const s = document.createElement("span"); s.textContent = v; eps.appendChild(s);
+          }
+        }
+        d.appendChild(eps);
+        h2.appendChild(d);
+      }
+      box.appendChild(h2);
+    } else {
+      const p2 = document.createElement("p"); p2.className = "hint";
+      p2.textContent = T("这个端口没读到配置描述符（设备可能需要先被驱动认领，或读取被拒绝）。");
+      box.appendChild(p2);
+    }
+    return;
+  }
+  const d = ((usbData.devices || []).find((x) => x.instance === usbSel.key));
+  if (!d) { usbSel = null; usbRenderDetail(); return; }
+  usbDetailHeader(box, d.name || d.instance, (d.vid || "----") + ":" + (d.pid || "----"));
+  const grid = document.createElement("div"); grid.className = "usbkv";
+  const kv = (k, v) => {
+    const a = document.createElement("span"); a.className = "k"; a.textContent = k;
+    const b = document.createElement("span"); b.className = "v"; b.textContent = v || "—";
+    grid.append(a, b);
+  };
+  kv(T("设备实例"), d.instance);
+  kv(T("设备类"), d.class || "—");
+  kv(T("驱动服务"), d.service || "—");
+  kv(T("厂商"), d.manufacturer || "—");
+  kv(T("位置"), d.location || "—");
+  box.appendChild(grid);
+}
+
+function usbRenderAll() {
+  usbRenderList();
+  usbRenderDetail();
+  usbRenderInfo();
+}
+
+function usbOnShow() {
+  if (!usbData) usbRefresh();
+  if (usbAutoTimer) clearInterval(usbAutoTimer);
+  usbAutoTimer = setInterval(() => {
+    if (document.documentElement.dataset.tab !== "usb") return;
+    const auto = $("usb-auto");
+    if (auto && !auto.checked) return;
+    usbRefresh();
+  }, 3000);
+}
+
+function bindUsb() {
+  if ($("usb-refresh")) $("usb-refresh").onclick = () => usbRefresh();
+  if ($("usb-rescan2")) $("usb-rescan2").onclick = () => usbRefresh();
+  if ($("usb-elev")) $("usb-elev").onclick = () => usbElevate();
+  if ($("usb-elev2")) $("usb-elev2").onclick = () => usbElevate();
+  if ($("usb-clear-log")) $("usb-clear-log").onclick = () => { usbLogLines.length = 0; if ($("usb-log")) $("usb-log").textContent = ""; };
 }
 
 /* ══════════ 环境配置：驱动 / 工具链 的检测与一键安装 ══════════
@@ -11949,6 +12249,52 @@ const EN = {
   "小驱动可以内置：把安装包丢进": "Small drivers can be bundled: drop the installer into ",
   "drivers\\<组件id>\\": "drivers\\<item id>\\",
   "检测中…": "Detecting…",
+  "设备列表不需要权限；端口拓扑、设备描述符、配置/接口/端点要打开 Hub 句柄，Windows 要求管理员 —— 点上面按钮会弹一次 UAC，子进程读完就退出，主程序不提权。": "The device list needs no privileges; port topology and descriptors require opening the hub handle, which Windows only allows to administrators — the button above raises one UAC prompt, a child process reads once and exits, and the main app stays unelevated.",
+  "这是 Bus Hound 的「设备视图」那一半：谁挂在哪个端口、VID/PID、速度、接口和端点、绑定到哪个驱动。传输级抓包（每一笔 IN/OUT 的 payload）需要 USBPcap 这类过滤驱动，本页不装驱动。": "This is the \"device view\" half of Bus Hound: what sits on which port, VID/PID, speed, interfaces and endpoints, which driver it binds to. Transfer-level capture (the payload of every IN/OUT) needs a filter driver such as USBPcap; this page installs no driver.",
+  "刷新": "Refresh",
+  "USB 设备": "USB devices",
+  "端口 / 描述符可读": "Ports / descriptors readable",
+  "只读设备列表": "Device list only",
+  "USB 诊断": "USB",
+  "USB 设备树 / 描述符 / 端口（免驱，不装过滤驱动）": "USB device tree / descriptors / ports (driver-free)",
+  "每 3 秒重扫一次，热插拔会记到下面的日志": "Rescan every 3 s; hot-plug events land in the log below",
+  "端口拓扑 / 设备描述符需要管理员权限（弹一次 UAC）": "Port topology / descriptors need admin (one UAC prompt)",
+  "以管理员读取端口": "Read ports as admin",
+  "点左边一个设备看描述符": "Pick a device on the left to see its descriptors",
+  "热插拔": "Hot-plug",
+  "以管理员读取端口 / 描述符": "Read ports / descriptors as admin",
+  "设备列表不需要权限；<b>端口拓扑、设备描述符、配置/接口/端点</b>要打开 Hub 句柄，Windows 要求管理员 —— 点上面按钮会弹一次 UAC，子进程读完就退出，主程序不提权。": "The device list needs no privileges; port topology and descriptors require opening the hub handle, which Windows only allows to administrators — the button above raises one UAC prompt, a child process reads once and exits, the main app stays unelevated.",
+  "说明": "Notes",
+  "这是 Bus Hound 的「设备视图」那一半：谁挂在哪个端口、VID/PID、速度、接口和端点、绑定到哪个驱动。<b>传输级抓包</b>（每一笔 IN/OUT 的 payload）需要 USBPcap 这类过滤驱动，本页不装驱动。": "This is the \"device view\" half of Bus Hound: what sits on which port, VID/PID, speed, interfaces and endpoints, which driver it binds to. Transfer-level capture (payload of every IN/OUT) needs a filter driver such as USBPcap; this page installs no driver.",
+  "警告": "Warnings",
+  "等待 UAC 授权…": "Waiting for UAC…",
+  "已读到端口 / 描述符": "Ports / descriptors loaded",
+  "读取权限": "Access",
+  "管理员（端口 / 描述符可读）": "Administrator (ports / descriptors readable)",
+  "普通（只读设备列表）": "Standard (device list only)",
+  "端口拓扑要管理员权限：点上面的「以管理员读取端口」。": "Port topology needs administrator rights: click \"Read ports as admin\" above.",
+  "所有 USB 设备（SetupAPI）": "All USB devices (SetupAPI)",
+  "端口设备": "Port device",
+  "设备类": "Class",
+  "配置数": "Configurations",
+  "配置描述符": "Configuration descriptor",
+  "接口数": "Interfaces",
+  "自供电": "Self-powered",
+  "最大电流": "Max power",
+  "接口 {n}": "Interface {n}",
+  "方向": "Dir",
+  "类型": "Type",
+  "包大小": "Max packet",
+  "间隔": "Interval",
+  "这个端口没读到配置描述符（设备可能需要先被驱动认领，或读取被拒绝）。": "No configuration descriptor for this port (the device may need a driver bound first, or the read was refused).",
+  "设备实例": "Instance",
+  "驱动服务": "Driver service",
+  "厂商": "Manufacturer",
+  "位置": "Location",
+  "USB 设备 {n} · 端口设备 {m}": "USB devices {n} · port devices {m}",
+  "端口 {n} · {s}": "Port {n} · {s}",
+  "Hub 数": "Hubs",
+  "端口上的设备": "Devices on ports",
   "网络": "Network",
   "蓝牙": "Bluetooth",
   "Silicon Labs CP210x 串口驱动": "Silicon Labs CP210x serial driver",
@@ -12308,7 +12654,7 @@ const TB_PAGES = [["link", "传输"], ["cmds", "命令表"], ["upgrade", "固件
   ["agent", "Agent"],
   ["files", "文件管理"], ["adb", "安卓 ADB"], ["chart", "实时图表"], ["seq", "中控编排"], ["scope", "示波器"],
   ["capture", "屏幕共享"], ["logic", "逻辑分析仪"],
-  ["batch", "批量文本"], ["calc", "计算器"], ["datacalc", "数据计算"], ["env", "环境配置"],
+  ["batch", "批量文本"], ["calc", "计算器"], ["datacalc", "数据计算"], ["env", "环境配置"], ["usb", "USB 诊断"],
   ["kb", "知识库"], ["debug", "调试"]];
 const TB_THEME_NAME = { dark: "暗色", light: "亮色", auto: "跟随系统" };
 function tbCmd(action) { return invoke("win_ctl", { action }).catch((e) => toast("窗口操作失败: " + e)); }
@@ -12601,6 +12947,7 @@ async function main() {
   bindKb();
   bindDebug();
   bindEnv();                    // 环境配置：驱动 / 工具链
+  bindUsb();                    // USB 诊断
   setTimeout(envFirstRunCheck, 900);       // 首次运行检查：缺必需驱动才提示一次（不挡启动）
   listen("debug://gdb", (ev) => { if (window.__dbgOnGdb) window.__dbgOnGdb(String(ev.payload || "")); });
   listen("debug://server", (ev) => { dbgPrint("[server] " + String(ev.payload || "") + "\n"); });

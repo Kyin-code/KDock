@@ -507,6 +507,7 @@
           <div class="navgroup">调试</div>
           <button class="navitem active" data-tab="link"><i>⇄</i><span>传输</span></button>
           <button class="navitem" data-tab="cmds"><i>⌘</i><span>命令表</span></button>
+          <button class="navitem" data-tab="usb" title="USB 设备树 / 描述符 / 端口（免驱，不装过滤驱动）"><i>⎔</i><span>USB 诊断</span></button>
         </div>
         <div class="navsec">
           <div class="navgroup">AI</div>
@@ -657,6 +658,28 @@
           </div>
           <div class="outfoot"></div>
           </div>
+        </div>
+
+        <!-- USB 诊断：免驱设备树 + 描述符 + 热插拔日志 -->
+        <div class="workpane usbpane" data-work="usb" hidden>
+          <div class="trow">
+            <span class="lb">USB 诊断</span>
+            <span id="usb-sum" class="lb"></span>
+            <span class="grow"></span>
+            <label class="chk" title="每 3 秒重扫一次，热插拔会记到下面的日志"><input type="checkbox" id="usb-auto" checked /> 自动刷新</label>
+            <button id="usb-refresh" class="btn small">刷新</button>
+            <button id="usb-elev" class="btn small primary" title="端口拓扑 / 设备描述符需要管理员权限（弹一次 UAC）">以管理员读取端口</button>
+          </div>
+          <div class="usbgrid grow">
+            <div id="usb-list" class="usblist"></div>
+            <div id="usb-detail" class="usbdetail"><p class="hint">点左边一个设备看描述符</p></div>
+          </div>
+          <div class="trow">
+            <span class="lb">热插拔</span>
+            <span class="grow"></span>
+            <button id="usb-clear-log" class="btn tiny">清空</button>
+          </div>
+          <pre id="usb-log" class="envlog usblog"></pre>
         </div>
 
         <!-- 环境配置：驱动 / 工具链 一键检测与安装 -->
@@ -1551,6 +1574,21 @@
               <button id="dbg-reset" class="btn small danger" title="monitor reset halt（openocd 语法；J-Link 用 monitor reset）">复位</button>
             </div>
           </div>
+
+        <!-- USB 诊断参数 -->
+        <div class="parampane" data-param="usb" hidden>
+          <div class="cardtitle">概览</div>
+          <div id="usb-info" class="aginfo dcinfo"></div>
+          <div class="btnrow">
+            <button id="usb-elev2" class="btn primary">以管理员读取端口 / 描述符</button>
+            <button id="usb-rescan2" class="btn">重新扫描</button>
+          </div>
+          <p class="hint">设备列表不需要权限；端口拓扑、设备描述符、配置/接口/端点要打开 Hub 句柄，Windows 要求管理员 —— 点上面按钮会弹一次 UAC，子进程读完就退出，主程序不提权。</p>
+          <div class="cardtitle">说明</div>
+          <p class="hint">这是 Bus Hound 的「设备视图」那一半：谁挂在哪个端口、VID/PID、速度、接口和端点、绑定到哪个驱动。传输级抓包（每一笔 IN/OUT 的 payload）需要 USBPcap 这类过滤驱动，本页不装驱动。</p>
+          <div class="cardtitle">警告<span class="grow"></span><span id="usb-warn-n" class="lb"></span></div>
+          <div id="usb-warns" class="aginfo dcinfo"></div>
+        </div>
 
         <!-- 环境配置参数 -->
         <div class="parampane" data-param="env" hidden>

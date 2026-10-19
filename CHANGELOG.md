@@ -18,6 +18,15 @@
 ## [未发布]
 
 ### 新增
+- **USB 诊断页**（左导航「调试」组）：免驱的 Bus Hound 式设备视图 ——
+  · 设备列表（SetupAPI）：友好名 / VID:PID / 设备类 / 驱动服务 / 位置 / 厂商，每 3 秒轮询并用差集记热插拔日志；
+  · Hub 端口拓扑 + 设备描述符 + 配置 / 接口 / 端点（地址、方向、控制/批量/中断/等时、wMaxPacketSize、bInterval），
+    并按端口给出 Low / Full / High / Super 速度；
+  · 不需要安装任何驱动；若某台机器上 Hub 句柄要管理员，页面给「以管理员读取端口」—— 拉起自己（--usb-dump）
+    弹一次 UAC，子进程读完就退出，主程序不提权；
+  · **不做**传输级抓包（每笔 IN/OUT 的 payload）—— 那需要 USBPcap 这类过滤驱动，页面里写明了边界。
+  实测：本机 4 个 Hub / 8 个端口设备 / 15 个 USB 设备；Saleae Logic（0925:3881）显示 High speed 与完整端点表；
+  布局矩阵扩到 288 组（18 页）0 问题。
 - **环境配置再扩充**（USB 转串口 / 探针 / 工具链 / 蓝牙）：新增 23 项 ——
   CP210x、PL2303、MCP2200/2221、Infineon-Cypress USB-Serial、WCH-Link、TI XDS110（纯驱动，官网入口 +
   内置安装包）；Python、Git、CMake、Ninja、Meson、LLVM、OpenSSL、QEMU、Renode、dtc、Wireshark、
