@@ -660,19 +660,33 @@
           </div>
         </div>
 
-        <!-- USB 诊断：免驱设备树 + 描述符 + 热插拔日志 -->
+        <!-- USB 诊断：原始数据抓取（串口 RX/TX）+ 设备树 + 热插拔日志 -->
         <div class="workpane usbpane" data-work="usb" hidden>
           <div class="trow">
-            <span class="lb">USB 诊断</span>
-            <span id="usb-sum" class="lb"></span>
+            <span class="lb">串口</span>
+            <select id="usb-com" class="tight" title="要抓原始数据的串口"></select>
+            <select id="usb-baud" class="tight" title="波特率">
+              <option>9600</option><option>19200</option><option>38400</option><option>57600</option>
+              <option selected>115200</option><option>230400</option><option>460800</option><option>921600</option>
+            </select>
+            <button id="usb-com-open" class="btn small primary">打开</button>
+            <button id="usb-com-close" class="btn small">关闭</button>
+            <span id="usb-com-state" class="lb"></span>
             <span class="grow"></span>
-            <label class="chk" title="每 3 秒重扫一次，热插拔会记到下面的日志"><input type="checkbox" id="usb-auto" checked /> 自动刷新</label>
-            <button id="usb-refresh" class="btn small">刷新</button>
-            <button id="usb-elev" class="btn small primary" title="端口拓扑 / 设备描述符需要管理员权限（弹一次 UAC）">以管理员读取端口</button>
+            <span id="usb-sum" class="lb"></span>
+            <label class="chk"><input type="checkbox" id="usb-autoscroll" checked /> 自动滚动</label>
+            <button id="usb-trace-clear" class="btn small">清空</button>
+            <button id="usb-trace-save" class="btn small">保存…</button>
+          </div>
+          <div class="trow">
+            <input id="usb-tx-input" class="usbtx" placeholder="发送内容（文本或 HEX，回车发送）" />
+            <select id="usb-tx-mode" class="tight"><option value="text">文本</option><option value="hex">HEX</option></select>
+            <button id="usb-tx-send" class="btn small">发送</button>
+            <span id="usb-tx-hint" class="lb"></span>
           </div>
           <div class="usbgrid grow">
             <div id="usb-list" class="usblist"></div>
-            <div id="usb-detail" class="usbdetail"><p class="hint">点左边一个设备看描述符</p></div>
+            <div id="usb-trace" class="usbtrace"></div>
           </div>
           <div class="trow">
             <span class="lb">热插拔</span>
@@ -1577,6 +1591,8 @@
 
         <!-- USB 诊断参数 -->
         <div class="parampane" data-param="usb" hidden>
+          <div class="cardtitle">设备详情</div>
+          <div id="usb-detail" class="usbdetail"><p class="hint">点左边一个设备看描述符</p></div>
           <div class="cardtitle">概览</div>
           <div id="usb-info" class="aginfo dcinfo"></div>
           <div class="btnrow">

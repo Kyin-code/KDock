@@ -390,6 +390,113 @@ unsafe fn read_hub(inst: &str, path: &str, depth: u32, budget: &mut u32) -> Resu
     Ok(json!({ "instance": inst, "ports": list }))
 }
 
+
+/* ────────────── 串口原始数据（诊断用）：独立打开一个 COM，RX/TX 逐段回传 ────────────── */
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Duration;
+
+struct Diag {
+    stop: Arc<AtomicBool>,
+    port: Arc<Mutex<Box<dyn serialport::SerialPort>>>,
+    name: String,
+}
+
+static DIAG: LazyLock<Mutex<Option<Diag>>> = LazyLock::new(|| Mutex::new(None));
+
+fn parse_hex(s: &str) -> Result<Vec<u8>, String> {
+    let mut clean = String::new();
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '0' && it.peek() == Some(&'x') { it.next(); continue; }
+        if c.is_ascii_hexdigit() { clean.push(c); }
+    }
+    if clean.len() % 2 != 0 { return Err("HEX 长度不是偶数".into()); }
+    (0..clean.len() / 2)
+        .map(|i| u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16).map_err(|e| e.to_string()))
+        .collect()
+}
+
+/// 打开一个串口做原始数据抓取（和传输页那条主连接互不影响）
+#[tauri::command]
+pub async fn serial_diag_open(app: tauri::AppHandle, port: String, baud: u32) -> Result<Value, String> {
+    let _ = serial_diag_close();
+    let sp = serialport::new(&port, baud)
+        .data_bits(serialport::DataBits::Eight)
+        .parity(serialport::Parity::None)
+        .stop_bits(serialport::StopBits::One)
+        .timeout(Duration::from_millis(50))
+        .open()
+        .map_err(|e| format!("打开 {port} 失败：{e}（被别的程序占用？）"))?;
+    let shared: Arc<Mutex<Box<dyn serialport::SerialPort>>> = Arc::new(Mutex::new(sp));
+    let stop = Arc::new(AtomicBool::new(false));
+    {
+        let app2 = app.clone();
+        let sh = shared.clone();
+        let st = stop.clone();
+        let name = port.clone();
+        std::thread::spawn(move || {
+            use tauri::Emitter;
+            let mut buf = [0u8; 8192];
+            loop {
+                if st.load(Ordering::Relaxed) {
+                    break;
+                }
+                let r = {
+                    let mut g = match sh.lock() {
+                        Ok(g) => g,
+                        Err(_) => break,
+                    };
+                    g.read(&mut buf)
+                };
+                match r {
+                    Ok(n) if n > 0 => {
+                        let _ = app2.emit(
+                            "usb://serial-rx",
+                            json!({ "port": name, "data": crate::base64_encode(&buf[..n]) }),
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+                    Err(e) => {
+                        let _ = app2.emit("usb://serial-err", json!({ "port": name, "msg": e.to_string() }));
+                        break;
+                    }
+                }
+            }
+        });
+    }
+    if let Ok(mut g) = DIAG.lock() {
+        *g = Some(Diag { stop, port: shared, name: port.clone() });
+    }
+    Ok(json!({ "port": port, "baud": baud }))
+}
+
+/// 关闭抓取用的串口
+#[tauri::command]
+pub fn serial_diag_close() -> Result<(), String> {
+    if let Ok(mut g) = DIAG.lock() {
+        if let Some(d) = g.take() {
+            d.stop.store(true, Ordering::Relaxed);
+            let _ = d.name;
+        }
+    }
+    Ok(())
+}
+
+/// 往抓取用的串口写数据（HEX 或文本）
+#[tauri::command]
+pub fn serial_diag_write(data: String, hex: bool) -> Result<usize, String> {
+    let bytes: Vec<u8> = if hex { parse_hex(&data)? } else { data.into_bytes() };
+    let g = DIAG.lock().map_err(|_| "状态锁失败".to_string())?;
+    let d = g.as_ref().ok_or_else(|| "没有打开的串口".to_string())?;
+    let mut p = d.port.lock().map_err(|_| "串口锁失败".to_string())?;
+    p.write_all(&bytes).map_err(|e| format!("发送失败：{e}"))?;
+    let _ = p.flush();
+    Ok(bytes.len())
+}
+
 /// 同步快照：设备列表 + Hub 树（Hub 部分需要管理员）
 pub fn usb_snapshot() -> Value {
     let devices = list_devices();

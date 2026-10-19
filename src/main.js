@@ -5541,9 +5541,160 @@ function usbRenderDetail() {
 }
 
 function usbRenderAll() {
+  usbComFill();
   usbRenderList();
   usbRenderDetail();
   usbRenderInfo();
+}
+
+/* ────────── 原始数据抓取（串口 RX/TX，逐段十六进制） ────────── */
+const usbTrace = [];          // { ts, dir, len, hex, asc }
+const USB_TRACE_MAX = 4000;
+
+function usbTraceStamp() {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return hh + ":" + mm + ":" + ss + "." + String(d.getMilliseconds()).padStart(3, "0");
+}
+
+function usbHexStr(u8, max) {
+  const n = Math.min(u8.length, max);
+  let s = "";
+  for (let i = 0; i < n; i++) s += (i ? " " : "") + u8[i].toString(16).padStart(2, "0");
+  if (u8.length > n) s += " … (+" + (u8.length - n) + ")";
+  return s;
+}
+
+function usbAsciiStr(u8, max) {
+  const n = Math.min(u8.length, max);
+  let s = "";
+  for (let i = 0; i < n; i++) s += (u8[i] >= 32 && u8[i] < 127) ? String.fromCharCode(u8[i]) : ".";
+  return s;
+}
+
+function usbTraceRow(rec) {
+  const row = document.createElement("div");
+  row.className = "trrow " + (rec.dir === "RX" ? "rx" : "tx");
+  const t = document.createElement("span"); t.className = "t"; t.textContent = rec.ts;
+  const d = document.createElement("span"); d.className = "d"; d.textContent = rec.dir;
+  const n = document.createElement("span"); n.className = "n"; n.textContent = String(rec.len);
+  const h = document.createElement("span"); h.className = "h"; h.textContent = rec.hex;
+  const a = document.createElement("span"); a.className = "a"; a.textContent = rec.asc;
+  row.append(t, d, n, h, a);
+  return row;
+}
+
+function usbTraceAdd(dir, u8) {
+  const rec = {
+    ts: usbTraceStamp(), dir, len: u8.length,
+    hex: usbHexStr(u8, 256), asc: usbAsciiStr(u8, 256),
+  };
+  usbTrace.push(rec);
+  const box = $("usb-trace");
+  if (!box) return;
+  if (usbTrace.length > USB_TRACE_MAX) {
+    usbTrace.shift();
+    if (box.firstChild) box.firstChild.remove();
+  }
+  box.appendChild(usbTraceRow(rec));
+  if ($("usb-autoscroll") && $("usb-autoscroll").checked) box.scrollTop = box.scrollHeight;
+}
+
+function usbTraceClear() {
+  usbTrace.length = 0;
+  const box = $("usb-trace");
+  if (box) box.textContent = "";
+}
+
+async function usbTraceSave() {
+  if (!usbTrace.length) return toast(T("还没有数据"));
+  const p = await dlgSave({
+    defaultPath: "usb-trace.txt",
+    filters: [{ name: T("文本"), extensions: ["txt"] }],
+  });
+  const path = typeof p === "string" ? p : (p && p.path);
+  if (!path) return;
+  let out = "KDock serial capture — " + new Date().toLocaleString() + "\n";
+  out += "# time         dir   len  data | ascii\n";
+  for (const r of usbTrace) {
+    out += r.ts + "  " + r.dir + "  " + String(r.len).padStart(5) + "  " + r.hex + "  |" + r.asc + "|\n";
+  }
+  try {
+    await invoke("file_write_text", { path, content: out });
+    toast(T("已保存：") + path);
+  } catch (e) { toast(String(e)); }
+}
+
+function usbComFill() {
+  const sel = $("usb-com");
+  if (!sel) return;
+  const cur = sel.value;
+  const list = (usbData && usbData.serial) || [];
+  sel.textContent = "";
+  for (const sp of list) {
+    const o = document.createElement("option");
+    o.value = sp.port;
+    o.textContent = sp.port + (sp.product ? " · " + sp.product : "");
+    sel.appendChild(o);
+  }
+  if (!list.length) {
+    const o = document.createElement("option"); o.textContent = T("没有串口"); sel.appendChild(o);
+  } else if (cur && [...sel.options].some((o) => o.value === cur)) {
+    sel.value = cur;
+  }
+}
+
+function usbComState(open, port, baud) {
+  const n = $("usb-com-state");
+  if (!n) return;
+  if (open) {
+    n.textContent = (port || "") + " · " + (baud || "") + " · " + T("抓取中");
+    n.style.color = "hsl(var(--success))";
+  } else {
+    n.textContent = T("未打开");
+    n.style.color = "";
+  }
+}
+
+async function usbComOpen() {
+  const port = $("usb-com") && $("usb-com").value;
+  const baud = Number($("usb-baud") && $("usb-baud").value) || 115200;
+  if (!port) return toast(T("先选一个串口"));
+  try {
+    await invoke("serial_diag_open", { port, baud });
+    usbComState(true, port, baud);
+  } catch (e) { usbComState(false); toast(String(e)); }
+}
+
+async function usbComClose() {
+  try { await invoke("serial_diag_close"); } catch (_) {}
+  usbComState(false);
+}
+
+function usbParseHex(s) {
+  const clean = String(s).replace(/0x/gi, "").replace(/[^0-9a-fA-F]/g, "");
+  const n = clean.length >> 1;
+  const u8 = new Uint8Array(n);
+  for (let i = 0; i < n; i++) u8[i] = parseInt(clean.substr(i * 2, 2), 16);
+  return u8;
+}
+
+async function usbComSend() {
+  const el = $("usb-tx-input");
+  if (!el || !el.value) return;
+  const hex = $("usb-tx-mode") && $("usb-tx-mode").value === "hex";
+  const data = el.value;
+  try {
+    await invoke("serial_diag_write", { data, hex });
+    usbTraceAdd("TX", hex ? usbParseHex(data) : new TextEncoder().encode(data));
+    el.value = "";
+    if ($("usb-tx-hint")) $("usb-tx-hint").textContent = "";
+  } catch (e) {
+    toast(String(e));
+    if ($("usb-tx-hint")) $("usb-tx-hint").textContent = String(e);
+  }
 }
 
 function usbOnShow() {
@@ -5568,7 +5719,24 @@ function bindUsb() {
   if ($("usb-rescan2")) $("usb-rescan2").onclick = () => usbRefresh();
   if ($("usb-elev")) $("usb-elev").onclick = () => usbElevate();
   if ($("usb-elev2")) $("usb-elev2").onclick = () => usbElevate();
-  if ($("usb-clear-log")) $("usb-clear-log").onclick = () => { usbLogLines.length = 0; if ($("usb-log")) $("usb-log").textContent = ""; };
+  if ($("usb-clear-log")) $("usb-clear-log").onclick = () => { usbLogLines.length = 0; usbRenderLog(); };
+  if ($("usb-com-open")) $("usb-com-open").onclick = () => usbComOpen();
+  if ($("usb-com-close")) $("usb-com-close").onclick = () => usbComClose();
+  if ($("usb-tx-send")) $("usb-tx-send").onclick = () => usbComSend();
+  if ($("usb-tx-input")) $("usb-tx-input").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); usbComSend(); } };
+  if ($("usb-trace-clear")) $("usb-trace-clear").onclick = () => usbTraceClear();
+  if ($("usb-trace-save")) $("usb-trace-save").onclick = () => usbTraceSave();
+  listen("usb://serial-rx", (ev) => {
+    const p = ev.payload || {};
+    if (!p.data) return;
+    const u8 = Uint8Array.from(atob(p.data), (c) => c.charCodeAt(0));
+    usbTraceAdd("RX", u8);
+  });
+  listen("usb://serial-err", (ev) => {
+    const p = ev.payload || {};
+    toast(T("串口读取失败：") + (p.msg || ""));
+    usbComState(false);
+  });
 }
 
 /* ══════════ 环境配置：驱动 / 工具链 的检测与一键安装 ══════════
@@ -12385,6 +12553,16 @@ const EN = {
   "小驱动可以内置：把安装包丢进": "Small drivers can be bundled: drop the installer into ",
   "drivers\\<组件id>\\": "drivers\\<item id>\\",
   "检测中…": "Detecting…",
+  "保存…": "Save…",
+  "要抓原始数据的串口": "Serial port to capture",
+  "发送内容（文本或 HEX，回车发送）": "Data to send (text or HEX; Enter to send)",
+  "抓取中": "capturing",
+  "未打开": "closed",
+  "先选一个串口": "Pick a serial port first",
+  "没有串口": "No serial port",
+  "还没有数据": "No data yet",
+  "串口读取失败：": "Serial read failed: ",
+  "设备详情": "Device details",
   "串口（COM）": "Serial ports (COM)",
   "USB 设备 {n} · 端口设备 {m} · 串口 {s}": "USB devices {n} · port devices {m} · serial {s}",
   "非 USB": "not USB",
