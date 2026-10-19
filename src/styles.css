@@ -265,6 +265,23 @@ html[data-fs="1"] .capbar { display: none; }
   pointer-events: none;
 }
 
+/* 已配对 / 可连接的无线调试设备 */
+.adbfound { display: flex; flex-direction: column; gap: 5px; margin: 2px 0 8px; }
+.adbfound-empty { padding: 6px 8px; color: hsl(var(--muted-foreground)); font-size: 11.5px; }
+.adbfound-row {
+  display: flex; align-items: center; gap: 7px; min-width: 0; padding: 6px 8px;
+  border: 1px solid hsl(var(--border) / 0.65); border-radius: 8px; background: var(--surface-2);
+}
+.adbfound-main { flex: 1 1 auto; min-width: 0; }
+.adbfound-name { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adbfound-addr { font-family: Consolas, "Cascadia Mono", monospace; font-size: 10.5px; color: hsl(var(--muted-foreground)); }
+.adbfound .tag {
+  flex: 0 0 auto; font-size: 10px; padding: 0 6px; border-radius: 999px;
+  background: hsl(var(--primary) / 0.14); color: hsl(var(--primary));
+}
+.adbfound .tag.ok { background: hsl(var(--success) / 0.14); color: hsl(var(--success)); }
+.adbfound .tag.warn { background: hsl(var(--warning) / 0.15); color: hsl(var(--warning)); }
+.adbfound .btn { flex: 0 0 auto; height: 24px; padding: 0 9px; font-size: 11px; }
 /* ── 安卓 ADB 页：上面投屏、下面 shell 日志 ── */
 .adbpane { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
 .adbpane .adblog { flex: 0 1 28vh; min-height: 80px; max-height: 30vh; overflow: auto; }
@@ -3126,6 +3143,11 @@ html[data-tab="usb"] .params {
   .usbpane #usb-local-bar > .lb:nth-child(2),
   .usbpane #usb-local-bar > label.chk,
   .usbpane #usb-cap-open { display: none; }
+  html[data-tab="usb"] .split {
+    grid-template-columns: var(--nav-w, 260px) 6px minmax(0, 1fr);
+    grid-template-rows: minmax(45vh, 1fr) auto;
+  }
+  html[data-tab="usb"] .split > #gutter-r { display: none; }
   html[data-tab="usb"] .split > .params { max-height: min(48vh, var(--param-max, 36vh)); }
   html[data-tab="usb"] .params .parampane[data-param="usb"] {
     display: flex; flex-direction: column; column-width: auto; flex: 1; min-height: 0;

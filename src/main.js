@@ -3041,6 +3041,122 @@ function adbSerial() {
   const s = $("adb-dev");
   return s && s.value ? s.value : "";
 }
+const ADB_PAIRED_KEY = "kdock_adb_paired";
+let adbMdnsLast = [];
+
+function adbPairedAll() {
+  try {
+    const a = JSON.parse(localStorage.getItem(ADB_PAIRED_KEY) || "[]");
+    return Array.isArray(a) ? a.filter((x) => x && x.host) : [];
+  } catch (_) { return []; }
+}
+function adbPairedSave(a) {
+  localStorage.setItem(ADB_PAIRED_KEY, JSON.stringify((a || []).slice(0, 20)));
+}
+function adbPairedRemember(o) {
+  const host = String(o.host || "").trim();
+  if (!host) return;
+  const guid = String(o.guid || "").trim();
+  const port = Number(o.port) || 0;
+  const a = adbPairedAll();
+  const idx = a.findIndex((x) => (guid && x.guid === guid) || (!guid && x.host === host && Number(x.port) === port));
+  const rec = { ...(idx >= 0 ? a[idx] : {}), ...o, host, guid, port, at: Date.now() };
+  if (idx >= 0) a[idx] = rec; else a.unshift(rec);
+  adbPairedSave(a);
+}
+function adbParseMdns(list) {
+  const out = [];
+  for (const raw of (list || [])) {
+    const m = /^(.+?)\s+_(adb(?:-tls-connect|-tls-pairing)?)\._tcp\.\s+([0-9.]+):(\d+)/.exec(String(raw).trim());
+    if (!m) continue;
+    out.push({ name: m[1].replace(/\s+\(\d+\)$/, ""), kind: m[2], host: m[3], port: Number(m[4]) });
+  }
+  return out;
+}
+function adbWirelessTag(row, tag) {
+  const x = document.createElement("span");
+  x.className = "tag " + tag.cls;
+  x.textContent = tag.text;
+  row.appendChild(x);
+}
+function renderAdbWireless(services) {
+  const box = $("adb-wl-found");
+  if (!box) return;
+  box.textContent = "";
+  const devSerials = new Set((adbDevs || []).filter((d) => d.state === "device").map((d) => d.serial));
+  const saved = adbPairedAll();
+  const rows = [];
+  const seen = new Set();
+  for (const svc of (services || [])) {
+    if (svc.kind !== "adb-tls-connect" && svc.kind !== "adb") continue;
+    const hit = saved.find((x) => x.guid && x.guid === svc.name) || saved.find((x) => x.host === svc.host && Number(x.port) === svc.port);
+    const target = svc.host + ":" + svc.port;
+    const live = (adbDevs || []).find((d) => d.serial === target);
+    rows.push({ ...svc, guid: svc.name, paired: !!hit, connected: devSerials.has(target), model: (hit && hit.model) || (live && live.model) || "", legacy: svc.kind === "adb" });
+    seen.add(svc.name + "|" + target);
+  }
+  for (const x of saved) {
+    const target = x.host + ":" + (Number(x.port) || 0);
+    if (!x.port || seen.has((x.guid || "") + "|" + target) || seen.has("|" + target)) continue;
+    rows.push({ name: x.guid || "saved", guid: x.guid || "", host: x.host, port: Number(x.port), paired: true, connected: devSerials.has(target), model: x.model || "", legacy: false, offline: true });
+  }
+  if ($("adb-paired-count")) $("adb-paired-count").textContent = rows.length ? rows.length + " " + T("台") : "";
+  if (!rows.length) {
+    const d = document.createElement("div");
+    d.className = "adbfound-empty";
+    d.textContent = T("还没发现无线调试设备。手机打开「无线调试」后点上面的「找设备」。");
+    box.appendChild(d);
+    return;
+  }
+  for (const r of rows) {
+    const row = document.createElement("div");
+    row.className = "adbfound-row";
+    const main = document.createElement("div"); main.className = "adbfound-main";
+    const nm = document.createElement("div"); nm.className = "adbfound-name";
+    nm.textContent = r.model || (r.legacy ? T("无线 ADB 设备") : T("无线调试设备"));
+    const ad = document.createElement("div"); ad.className = "adbfound-addr"; ad.textContent = r.host + ":" + r.port;
+    main.append(nm, ad); row.appendChild(main);
+    if (r.connected) adbWirelessTag(row, { cls: "ok", text: T("已连接") });
+    else if (r.paired) adbWirelessTag(row, { cls: "ok", text: T("已配对") });
+    else adbWirelessTag(row, { cls: "warn", text: T("直接连接") });
+    const btn = document.createElement("button");
+    btn.className = "btn small " + (r.connected ? "" : "primary");
+    btn.textContent = T(r.connected ? "断开" : "连接");
+    btn.onclick = async () => {
+      try {
+        if (r.connected) await invoke("adb_disconnect", { host: r.host, port: r.port });
+        else {
+          const got = await invoke("adb_connect", { host: r.host, port: r.port });
+          adbPairedRemember({ guid: r.guid, host: r.host, port: r.port, model: r.model });
+          if ($("adb-wl-host")) $("adb-wl-host").value = r.host;
+          if ($("adb-wl-port")) $("adb-wl-port").value = String(r.port);
+          pushSys("[ADB] " + T("已连接") + " " + r.host + ":" + r.port);
+          void got;
+        }
+        await adbRefreshDevices(true);
+        await adbMdnsScan(true);
+      } catch (e) {
+        const m = String(e);
+        if (/auth|unauthorized|pair/i.test(m)) {
+          toast(T("这台设备可能还没配对：只有第一次需要配对，配对后再点连接"));
+        } else toast(m);
+      }
+    };
+    row.appendChild(btn);
+    box.appendChild(row);
+  }
+}
+async function adbMdnsScan(silent) {
+  try {
+    const r = await invoke("adb_mdns");
+    adbMdnsLast = adbParseMdns(r.list || []);
+    renderAdbWireless(adbMdnsLast);
+    if (!silent) return r;
+  } catch (e) {
+    if (!silent) toast(String(e));
+  }
+  return null;
+}
 function adbPushFrame(f) {
   adbLatest = f;
   if (!adbApplying && adbImg) { adbApplying = true; adbApplyLatest(); }
@@ -3097,6 +3213,7 @@ async function adbRefreshDevices(silent) {
       const ok = list.filter((x) => x.state === "device").length;
       adbState(`${list.length} 台（${ok} 台可用）`, ok ? "ok" : "err");
     }
+    renderAdbWireless(adbMdnsLast);
     if (!silent) pushSys(`[ADB] 设备 ${list.length} 台：${list.map((x) => x.serial + "(" + x.state + ")").join(", ") || "无"}`);
   } catch (e) {
     adbDevs = [];
@@ -3138,7 +3255,8 @@ async function adbStopMirror(quiet) {
   if (had && !quiet) { adbState("投屏已停止"); pushSys("[ADB] 已停止投屏"); }
 }
 function adbOnShow() {
-  if (!adbReady) { adbReady = adbInit(); }
+  if (!adbReady) adbReady = adbInit();
+  else adbMdnsScan(true);
 }
 async function adbInit() {
   const st = await invoke("adb_status").catch((e) => ({ ok: false, path: "", version: String(e) }));
@@ -3152,6 +3270,7 @@ async function adbInit() {
   adbLog(st.scrcpy ? `scrcpy：${st.scrcpy}` : en("scrcpy：没找到（要丝滑投屏就到「环境配置」装一下）"));
   adbState("已找到 adb", "ok");
   await adbRefreshDevices(true);
+  await adbMdnsScan(true);
 }
 function bindAdb() {
   adbOnShow();
@@ -3171,16 +3290,14 @@ function bindAdb() {
   };
   if ($("adb-mdns")) $("adb-mdns").onclick = async () => {
     wlLog("$ adb mdns services");
-    try {
-      const r = await invoke("adb_mdns");
-      wlLog((r.raw || "").trim() || en("（没发现广播：设备上要打开「无线调试」，两边要在同一网段）"));
-      // 广播里带 IP:端口 的话，顺手填进上面的输入框，省得手抄
-      const m = /(\d+\.\d+\.\d+\.\d+):(\d+)/.exec(r.raw || "");
-      if (m && !$("adb-wl-host").value.trim()) {
-        $("adb-wl-host").value = m[1];
-        $("adb-wl-port").value = m[2];
-      }
-    } catch (e) { wlLog("失败：" + e); }
+    const r = await adbMdnsScan(false);
+    if (!r) { wlLog("扫描失败"); return; }
+    wlLog((r.raw || "").trim() || en("（没发现广播：设备上要打开「无线调试」，两边要在同一网段）"));
+    const first = adbMdnsLast.find((x) => x.kind === "adb-tls-connect") || adbMdnsLast.find((x) => x.kind === "adb");
+    if (first && !$("adb-wl-host").value.trim()) {
+      $("adb-wl-host").value = first.host;
+      $("adb-wl-port").value = String(first.port);
+    }
   };
   if ($("adb-pair")) $("adb-pair").onclick = async () => {
     const a = wlArgs();
@@ -3189,9 +3306,25 @@ function bindAdb() {
     wlLog(`$ adb pair ${a.host}:${a.port} ${code}`);
     try {
       const r = await invoke("adb_pair", { host: a.host, port: a.port, code });
-      wlLog(r.text || en("配对成功，接着点「连接」（端口通常和配对端口不同）"));
-      pushSys("[ADB] " + en("配对成功，接着点「连接」（端口通常和配对端口不同）"));
-    } catch (e) { wlLog(en("配对失败：") + e); toast(String(e)); }
+      const text = r.text || "";
+      const guid = (/\[guid=([^\]]+)\]/.exec(text) || [])[1] || "";
+      adbPairedRemember({ guid, host: a.host });
+      wlLog(text || en("配对成功"));
+      wlLog(en("已记录为已配对设备。只有第一次需要配对；现在到「已配对 / 可连接设备」里点「连接」。"));
+      pushSys("[ADB] " + en("配对成功，不需要再次配对；请在已配对设备列表里点连接"));
+      await adbMdnsScan(true);
+    } catch (e) {
+      const m = String(e);
+      if (/already|known|paired/i.test(m)) {
+        adbPairedRemember({ host: a.host });
+        wlLog(en("这台设备已经配对过，不需要再次配对；直接到「已配对 / 可连接设备」点连接。"));
+        toast(en("已配对过，直接点连接"));
+        await adbMdnsScan(true);
+      } else {
+        wlLog(en("配对失败：") + m);
+        toast(m);
+      }
+    }
   };
   if ($("adb-connect")) $("adb-connect").onclick = async () => {
     const a = wlArgs();
@@ -3200,7 +3333,9 @@ function bindAdb() {
     try {
       const r = await invoke("adb_connect", { host: a.host, port: a.port });
       wlLog(r.text || "已连接");
+      adbPairedRemember({ host: a.host, port: a.port || 5555 });
       await adbRefreshDevices(true);
+      await adbMdnsScan(true);
     } catch (e) { wlLog(en("连接失败：") + e); toast(String(e)); }
   };
   if ($("adb-disconnect")) $("adb-disconnect").onclick = async () => {
@@ -12911,6 +13046,20 @@ const EN = {
   "关 scrcpy": "Close scrcpy", "执行": "Run", "推送": "Push", "截图存盘": "Save screenshot…",
   "选择 APK": "Choose APK", "覆盖安装": "Reinstall (overwrite)", "安装": "Install", "卸载": "Uninstall",
   "卸载包名": "Package name", "列表": "List", "常用命令": "Common commands", "当前设备": "Current device",
+  "已配对 / 可连接设备": "Paired / connectable devices",
+  "已配对": "Paired", "直接连接": "Direct connect", "台": "device(s)",
+  "无线调试设备": "Wireless debugging device", "无线 ADB 设备": "Wireless ADB device",
+  "还没发现无线调试设备。手机打开「无线调试」后点上面的「找设备」。": "No wireless debugging device found yet. Turn on Wireless debugging on the phone, then click Find devices above.",
+  "已经配对过的设备会显示在上面，直接点「连接」即可，不需要再次配对。地址变了也没关系，以这里扫描到的为准。": "Devices that are already paired appear above. Just click Connect — do not pair them again. If the address changed, use the one discovered here.",
+  "这台设备可能还没配对：只有第一次需要配对，配对后再点连接": "This device may not be paired yet: pairing is needed only the first time; after pairing, click Connect.",
+  "已记录为已配对设备。只有第一次需要配对；现在到「已配对 / 可连接设备」里点「连接」。": "Remembered as a paired device. Pairing is only needed the first time; now click Connect under Paired / connectable devices.",
+  "配对成功，不需要再次配对；请在已配对设备列表里点连接": "Paired successfully. Do not pair again; click Connect in the paired-device list.",
+  "这台设备已经配对过，不需要再次配对；直接到「已配对 / 可连接设备」点连接。": "This device is already paired. Do not pair again; click Connect under Paired / connectable devices.",
+  "已配对过，直接点连接": "Already paired — just click Connect",
+  "首次配对 / 手动连接（只做一次）": "First-time pairing / manual connect (once only)",
+  "首次配对码": "First-time pairing code",
+  "scrcpy 投屏（外置）": "scrcpy mirror (external)",
+  "内置投屏是「抓屏轮询」（约 3~10 fps），直接嵌在 KDock 里；scrcpy 使用自己的 SDL 窗口（性能更好，所以作为外置窗口运行）。": "The built-in mirror uses screencap polling (~3-10 fps) and is embedded in KDock. scrcpy uses its own SDL window (better performance), so it runs as an external window.",
   "传文件": "File transfer", "本机 → 设备": "PC → device", "写到设备": "Write to device",
   "设备上的路径": "Path on device", "安装包": "Package", "返回": "Back", "主屏": "Home",
   "多任务": "Recents", "电源键": "Power", "安装并保存": "Install & save",

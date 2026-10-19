@@ -1381,7 +1381,7 @@
             <span id="adb-mir-state" class="lb"></span>
             <button id="adb-mir" class="btn small primary" title="内置投屏：抓屏轮询，画面可直接点（反向控制）">投屏</button>
             <button id="adb-mir-stop" class="btn small">停止投屏</button>
-            <button id="adb-scrcpy" class="btn small" title="用 scrcpy 投屏（独立窗口，更丝滑；需要先装 scrcpy）">scrcpy 投屏</button>
+            <button id="adb-scrcpy" class="btn small" title="用 scrcpy 投屏（独立窗口，更丝滑；需要先装 scrcpy）">scrcpy 投屏（外置）</button>
             <button id="adb-scrcpy-stop" class="btn small">关 scrcpy</button>
           </div>
           <div id="adb-view" class="capview fit grown" tabindex="0">
@@ -2396,24 +2396,30 @@
             <span class="grow"></span>
             <button id="adb-mdns" class="btn small" title="列出局域网里正在广播的无线调试设备（adb mdns services）">找设备</button>
           </div>
-          <div class="field">
-            <label for="adb-wl-host">地址</label>
-            <div class="inline">
-              <input id="adb-wl-host" class="grow" placeholder="192.168.1.37 或 192.168.1.37:37000" />
-              <input id="adb-wl-port" type="number" class="num" placeholder="端口" />
+          <div class="cardtitle">已配对 / 可连接设备<span class="grow"></span><span id="adb-paired-count" class="lb"></span></div>
+          <div id="adb-wl-found" class="adbfound"></div>
+          <p class="hint">已经配对过的设备会显示在上面，直接点「连接」即可，不需要再次配对。地址变了也没关系，以这里扫描到的为准。</p>
+          <details class="adv" id="adb-pair-manual">
+            <summary>首次配对 / 手动连接（只做一次）</summary>
+            <div class="field">
+              <label for="adb-wl-host">地址</label>
+              <div class="inline">
+                <input id="adb-wl-host" class="grow" placeholder="192.168.1.37 或 192.168.1.37:37000" />
+                <input id="adb-wl-port" type="number" class="num" placeholder="端口" />
+              </div>
             </div>
-          </div>
-          <div class="field">
-            <label for="adb-wl-code">配对码</label>
-            <div class="inline">
-              <input id="adb-wl-code" class="grow" placeholder="手机「使用配对码配对设备」里那 6 位" />
-              <button id="adb-pair" class="btn small" title="adb pair（只用一次；配对成功后再点「连接」）">配对</button>
+            <div class="field">
+              <label for="adb-wl-code">首次配对码</label>
+              <div class="inline">
+                <input id="adb-wl-code" class="grow" placeholder="手机「使用配对码配对设备」里那 6 位" />
+                <button id="adb-pair" class="btn small" title="adb pair（只用一次；已配对设备不要重复配对）">配对</button>
+              </div>
             </div>
-          </div>
-          <div class="btnrow">
-            <button id="adb-connect" class="btn primary" title="adb connect：连到无线调试页面上显示的那个端口">连接</button>
-            <button id="adb-disconnect" class="btn" title="adb disconnect">断开</button>
-          </div>
+            <div class="btnrow">
+              <button id="adb-connect" class="btn primary" title="adb connect：连到无线调试页面上显示的那个端口">连接</button>
+              <button id="adb-disconnect" class="btn" title="adb disconnect">断开</button>
+            </div>
+          </details>
           <pre id="adb-wl-log" class="dbgout adblog" hidden></pre>
 
           <div class="cardtitle">投屏</div>
@@ -2428,7 +2434,7 @@
             </select>
           </div>
           <div class="trow"><label class="chk" title="打开后：画面里点一下 = 点手机；拖动 = 滑动；上面那行还能直接发按键和文字"><input type="checkbox" id="adb-ctl" checked /> 反向控制（点画面 = 点手机）</label></div>
-          <p class="hint">内置投屏是「抓屏轮询」（约 3~10 fps，够看状态）；要丝滑就用上面的 <b>scrcpy 投屏</b>（独立窗口）。</p>
+          <p class="hint">内置投屏是「抓屏轮询」（约 3~10 fps），直接嵌在 KDock 里；scrcpy 使用自己的 SDL 窗口（性能更好，所以作为外置窗口运行）。</p>
           <div class="trow">
             <button id="adb-key-back" class="btn small" title="KEYCODE_BACK(4)">返回</button>
             <button id="adb-key-home" class="btn small" title="KEYCODE_HOME(3)">主屏</button>
