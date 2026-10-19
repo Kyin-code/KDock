@@ -34,7 +34,6 @@ fn find_cmd() -> Option<PathBuf> {
 /// USB 根 Hub 数量（USBPcap 每个根 Hub 一个 \\.\USBPcapN 控制设备）
 fn root_hub_count() -> usize {
     use windows_sys::Win32::Devices::DeviceAndDriverInstallation::*;
-    use windows_sys::Win32::Foundation::*;
     let mut n = 0usize;
     unsafe {
         let h = SetupDiGetClassDevsW(std::ptr::null(), w("USB").as_ptr(), std::ptr::null_mut(), DIGCF_PRESENT | DIGCF_ALLCLASSES);
@@ -201,34 +200,6 @@ fn decode_packet(d: &[u8], ts: u64) -> Option<Value> {
     Some(v)
 }
 
-/// 提权子进程：跑 USBPcapCMD，直到 stop 文件出现
-pub fn run_helper(device: &str, pcap: &str, stopfile: &str) {
-    let cmd = match find_cmd() {
-        Some(c) => c,
-        None => return,
-    };
-    let mut child = match std::process::Command::new(&cmd)
-        .args(["-d", device, "-A", "-s", "65535", "-o", pcap])
-        .creation_flags(0x0800_0000)
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    loop {
-        std::thread::sleep(Duration::from_millis(200));
-        if std::path::Path::new(stopfile).exists() {
-            let _ = child.kill();
-            let _ = child.wait();
-            break;
-        }
-        if let Ok(Some(_)) = child.try_wait() {
-            break;
-        }
-    }
-    let _ = std::fs::remove_file(stopfile);
-}
-
 #[tauri::command]
 pub async fn usbpcap_info() -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(|| {
@@ -250,7 +221,6 @@ pub async fn usbpcap_info() -> Result<Value, String> {
 pub async fn usbpcap_start(app: tauri::AppHandle, device: String) -> Result<Value, String> {
     let _ = usbpcap_stop();
     let cmd = find_cmd().ok_or_else(|| "没装 USBPcap —— 到「环境配置」里装一下".to_string())?;
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
@@ -260,12 +230,19 @@ pub async fn usbpcap_start(app: tauri::AppHandle, device: String) -> Result<Valu
     let _ = std::fs::remove_file(&pcap);
     let _ = std::fs::remove_file(&stopfile);
 
+    let ps1 = std::env::temp_dir().join(format!("kdock-usbpcap-{stamp}.ps1"));
+    let script = format!(
+        "$p = Start-Process -FilePath '{}' -ArgumentList '-d','{}','-A','-o','{}' -PassThru -WindowStyle Hidden -RedirectStandardOutput '{}.out' -RedirectStandardError '{}.err'\n\
+         while (-not (Test-Path -LiteralPath '{}')) {{ Start-Sleep -Milliseconds 200 }}\n\
+         if (-not $p.HasExited) {{ Stop-Process -Id $p.Id -Force }}\n\
+         Remove-Item -LiteralPath '{}' -ErrorAction SilentlyContinue\n",
+        cmd.display(), device, pcap.display(), pcap.display(), pcap.display(),
+        stopfile.display(), stopfile.display()
+    );
+    std::fs::write(&ps1, script).map_err(|e| format!("写提权脚本失败：{e}"))?;
     let ps = format!(
-        "Start-Process -FilePath '{}' -ArgumentList '--usbpcap-run','{}','{}','{}' -Verb RunAs -WindowStyle Hidden",
-        exe.display(),
-        device,
-        pcap.display(),
-        stopfile.display()
+        "Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{}' -Verb RunAs -WindowStyle Hidden",
+        ps1.display()
     );
     let st = std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps])

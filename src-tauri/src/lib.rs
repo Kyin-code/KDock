@@ -19,7 +19,6 @@ mod shell;
 mod storage;
 mod transport;
 pub mod usb;
-pub use usbcapture::run_helper as usbcapture_run_helper;
 pub mod usbcapture;
 mod upgrade;
 mod webview2;
