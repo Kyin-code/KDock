@@ -1456,6 +1456,7 @@
             <span id="la-dev-chans" class="ladevchans"></span>
             <button id="la-dev-start" class="btn small primary">采集</button>
             <span id="la-dev-state" class="lb"></span>
+            <span id="la-dev-bw" class="lb" title="DSLogic 的采样率是所有已启用通道共享的"></span>
           </div>
           <div class="trow laviewbar">
             <span class="lb">视图</span>
@@ -2556,6 +2557,14 @@
           <div class="cardtitle">解码结果<span class="grow"></span><span id="la-dec-count" class="lb"></span></div>
           <div id="la-dec-results" class="ladecresults"></div>
           <p class="hint">缩小时波形上的标签会自动避让；完整结果始终在这里。</p>
+
+          <div class="cardtitle">DSView 解码</div>
+          <div class="btnrow">
+            <select id="la-dsv-dec" class="tight" title="DSView 自带解码器"></select>
+            <input id="la-dsv-params" placeholder="rxtx=D0,baudrate=115200" />
+            <button id="la-dsv-run" class="btn small">解码</button>
+          </div>
+          <pre id="la-dsv-out" class="hint" style="max-height:180px;overflow:auto;white-space:pre-wrap"></pre>
 
           <div class="cardtitle">测量（当前视图窗口 · 选中的通道）</div>
           <div class="aginfo dcinfo">

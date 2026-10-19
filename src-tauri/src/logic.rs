@@ -56,6 +56,25 @@ fn find_cli() -> Option<PathBuf> {
     env_setup::find_tool("sigrok-cli.exe", EXE_EXTRA)
 }
 
+/// DSView 引擎（夜间版 sigrok-cli + DSView 解码器）单独放一份，
+/// 不碰 24M 那台设备用的老 sigrok-cli。
+fn find_dsview_cli() -> Option<PathBuf> {
+    let p = Path::new(&env_setup::env_dir())
+        .join("dsview")
+        .join("sigrok")
+        .join("sigrok-cli.exe");
+    p.is_file().then_some(p)
+}
+
+fn cli_for(device: &str) -> Option<PathBuf> {
+    if device.starts_with("dreamsourcelab-dslogic") {
+        if let Some(p) = find_dsview_cli() {
+            return Some(p);
+        }
+    }
+    find_cli()
+}
+
 fn no_window(c: &mut Command) {
     #[cfg(windows)]
     {
@@ -150,6 +169,18 @@ fn devices_blocking() -> Result<Value, String> {
     })?;
     let (scan, scan_err) = run_both(&cli, &["--scan"])?;
     let mut devs = parse_devices(&scan);
+    // DSLogic 只在夜间版 sigrok 里；用独立的 DSView 引擎再扫一遍，老设备列表不受影响。
+    if let Some(dcli) = find_dsview_cli() {
+        if dcli != cli {
+            if let Ok((scan2, _)) = run_both(&dcli, &["--scan"]) {
+                for d in parse_devices(&scan2) {
+                    if !devs.iter().any(|x| x["id"] == d["id"]) {
+                        devs.push(d);
+                    }
+                }
+            }
+        }
+    }
     let mut warnings: Vec<String> = scan_err
         .lines()
         .filter(|l| l.trim().starts_with("sr:"))
@@ -160,12 +191,13 @@ fn devices_blocking() -> Result<Value, String> {
         if id.is_empty() {
             continue;
         }
-        let mut show = run_both(&cli, &["-d", &id, "--show"]).map(|(o, _)| o).unwrap_or_default();
+        let c = cli_for(&id).unwrap_or_else(|| cli.clone());
+        let mut show = run_both(&c, &["-d", &id, "--show"]).map(|(o, _)| o).unwrap_or_default();
         let mut rates = parse_rates(&show);
         if rates.is_empty() {
             // 刚插上 / 刚启动时设备可能还没稳定，等一下再问一次
             std::thread::sleep(std::time::Duration::from_millis(400));
-            show = run_both(&cli, &["-d", &id, "--show"]).map(|(o, _)| o).unwrap_or_default();
+            show = run_both(&c, &["-d", &id, "--show"]).map(|(o, _)| o).unwrap_or_default();
             rates = parse_rates(&show);
         }
         if let Some(n) = parse_total_channels(&show) {
@@ -185,7 +217,7 @@ fn devices_blocking() -> Result<Value, String> {
 }
 
 fn capture_blocking(device: &str, rate: u64, samples: u64, channels: &[String]) -> Result<Value, String> {
-    let cli = find_cli().ok_or_else(|| {
+    let cli = cli_for(device).ok_or_else(|| {
         "没找到 sigrok-cli.exe —— 去「环境配置」页装 sigrok-cli，或者把它的目录加进 PATH。".to_string()
     })?;
     if device.trim().is_empty() {
@@ -322,4 +354,126 @@ pub async fn logic_capture(
     tauri::async_runtime::spawn_blocking(move || capture_blocking(&device, rate, samples, &channels))
         .await
         .map_err(|e| format!("后台任务失败：{e}"))?
+}
+
+// ── DSView 解码：直接跑 DSView 自带的 Python 解码器 ───────────────────────
+// 解码器来自 DSView 安装目录，安装时只做注册元数据适配（idn / 3 元组 / matched），
+// 协议状态机保持 DSView 原样。
+
+fn dsview_decoders_blocking() -> Vec<Value> {
+    let root = Path::new(&env_setup::env_dir())
+        .join("dsview")
+        .join("sigrok")
+        .join("share")
+        .join("libsigrokdecode")
+        .join("decoders");
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(&root) else { return out };
+    for e in rd.flatten() {
+        let pd = e.path().join("pd.py");
+        let Ok(text) = std::fs::read_to_string(&pd) else { continue };
+        let grab = |key: &str| {
+            text.lines()
+                .find_map(|l| {
+                    let l = l.trim();
+                    let rest = l.strip_prefix(key)?.trim_start();
+                    let rest = rest.strip_prefix('=')?.trim();
+                    let v = rest.trim_matches(|c| c == '\'' || c == '"');
+                    (!v.is_empty()).then(|| v.to_string())
+                })
+        };
+        let (Some(id), Some(name)) = (grab("id"), grab("name")) else { continue };
+        out.push(json!({
+            "id": id,
+            "name": name,
+            "desc": grab("desc").unwrap_or_default(),
+            "dir": e.file_name().to_string_lossy(),
+        }));
+    }
+    out.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+    out
+}
+
+#[tauri::command]
+pub async fn dsview_decoders() -> Vec<Value> {
+    tauri::async_runtime::spawn_blocking(dsview_decoders_blocking)
+        .await
+        .unwrap_or_default()
+}
+
+fn vcd_from_samples(path: &Path, rate: u64, channels: &[String], samples: &[u8], bps: usize) -> Result<(), String> {
+    use std::fmt::Write as _;
+    if rate == 0 || bps == 0 || channels.is_empty() {
+        return Err("采样率 / 通道 / 位宽不合法".into());
+    }
+    let n = (samples.len() / bps).min(2_000_000);
+    let ids = ["!", "\"", "#", "$", "%", "&", "'", "(", ")", "*", "+", ",", "-", ".", "/", ":"];
+    let mut s = String::with_capacity(n / 4 + 4096);
+    s.push_str("$timescale 1ns $end\n$scope module logic $end\n");
+    for (i, ch) in channels.iter().enumerate() {
+        let _ = writeln!(s, "$var wire 1 {} {} $end", ids[i.min(ids.len() - 1)], ch);
+    }
+    s.push_str("$upscope $end\n$enddefinitions $end\n$dumpvars\n");
+    let bit = |i: usize, c: usize| -> u8 {
+        let byte = samples[i * bps + c / 8];
+        (byte >> (c % 8)) & 1
+    };
+    for c in 0..channels.len() {
+        let _ = writeln!(s, "{}{}", bit(0, c), ids[c.min(ids.len() - 1)]);
+    }
+    let mut prev: Vec<u8> = (0..channels.len()).map(|c| bit(0, c)).collect();
+    for i in 1..n {
+        for c in 0..channels.len() {
+            let v = bit(i, c);
+            if v != prev[c] {
+                let t = (i as u128 * 1_000_000_000u128 / rate as u128) as u64;
+                let _ = writeln!(s, "#{t}\n{}{}", v, ids[c.min(ids.len() - 1)]);
+                prev[c] = v;
+            }
+        }
+    }
+    let _ = writeln!(s, "#{}", (n as u128 * 1_000_000_000u128 / rate as u128) as u64);
+    std::fs::write(path, s).map_err(|e| e.to_string())
+}
+
+/// 用 DSView 解码器解一段原始采样（最多 2M 点）。params 是 CLI 形式的
+/// `rxtx=D0,baudrate=115200`，原样交给 DSView 解码器。
+#[tauri::command]
+pub async fn dsview_decode(
+    rate: u64,
+    channels: Vec<String>,
+    samples: Vec<u8>,
+    bps: usize,
+    decoder: String,
+    params: String,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cli = find_dsview_cli().ok_or_else(|| "先装「DSView 解码引擎」".to_string())?;
+        let tmp = std::env::temp_dir().join(format!("kdock_dsview_{}.vcd", std::process::id()));
+        vcd_from_samples(&tmp, rate, &channels, &samples, bps)?;
+        let mut spec = decoder.clone();
+        if !params.trim().is_empty() {
+            spec.push(':');
+            spec.push_str(params.trim());
+        }
+        let (out, err) = run_both(
+            &cli,
+            &[
+                "-i", &tmp.to_string_lossy(), "-I", "vcd",
+                "-P", &spec, "-A", &decoder, "--protocol-decoder-samplenum",
+            ],
+        )?;
+        let mut items = Vec::new();
+        for line in out.lines() {
+            let Some((range, rest)) = line.split_once(' ') else { continue };
+            let Some((a, b)) = range.split_once('-') else { continue };
+            let (Ok(start), Ok(end)) = (a.trim().parse::<u64>(), b.trim().parse::<u64>()) else { continue };
+            let text = rest.split_once(": ").map(|(_, t)| t).unwrap_or(rest).trim();
+            items.push(json!({ "start": start, "end": end, "text": text }));
+        }
+        let _ = std::fs::remove_file(&tmp);
+        Ok(json!({ "decoder": decoder, "items": items, "log": err.lines().take(6).collect::<Vec<_>>().join("\n") }))
+    })
+    .await
+    .map_err(|e| format!("后台任务失败：{e}"))?
 }

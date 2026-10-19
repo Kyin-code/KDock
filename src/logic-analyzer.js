@@ -271,24 +271,42 @@ async function laDevRefresh(quiet) {
   }
 }
 
+const laDevIsDs = (dev) => /dslogic/i.test(`${dev && dev.name} ${dev && dev.id}`);
+
+/** DSLogic 的 400M 是"共带宽"：采样率 × 已启用通道数 不能超过它。 */
+function laDevFillRates(dev) {
+  const rateSel = $id("la-dev-rate");
+  if (!rateSel) return;
+  const n = Math.max(1, laDevSelChans().length || ((dev && dev.channels) || []).length || 1);
+  const reported = ((dev && dev.rates) || []).slice();
+  const rates = reported.filter((r) => !laDevIsDs(dev) || r * n <= 400e6);
+  const prev = rateSel.value;
+  rateSel.textContent = "";
+  for (const r of rates) {
+    const o = el("option");
+    o.value = String(r); o.textContent = fmtHz(r);
+    rateSel.appendChild(o);
+  }
+  if (rates.length) {
+    if (rates.some((r) => String(r) === prev)) rateSel.value = prev;
+    else rateSel.value = String(rates.includes(1e6) ? 1e6 : rates[0]);
+  }
+  const hint = $id("la-dev-bw");
+  if (hint) {
+    hint.textContent = laDevIsDs(dev)
+      ? T("共带宽 400 MHz · {n} 通道 → 每通道 ≤ {r}").replace("{n}", n).replace("{r}", fmtHz(400e6 / n))
+      : "";
+  }
+}
+
 /** 选中设备后填采样率列表 + 通道勾选框 */
 function laDevPick() {
   const sel = $id("la-dev");
   const dev = laDevs.find((d) => d.id === (sel && sel.value)) || laDevs[0];
   const rateSel = $id("la-dev-rate");
   if (rateSel) {
-    rateSel.textContent = "";
-    const reported = (dev && dev.rates) || [];
-    // 设备偶尔没报（刚插上 / --show 超时）时给一份常见档位，保证还能采
-    const rates = reported.length ? reported : [20000, 100000, 1000000, 4000000, 8000000, 12000000, 24000000];
-    for (const r of rates) {
-      const o = el("option");
-      o.value = String(r); o.textContent = fmtHz(r);
-      rateSel.appendChild(o);
-    }
-    if (rates.length) {
-      rateSel.value = String(rates.includes(1000000) ? 1000000 : rates[Math.floor(rates.length / 2)]);
-    }
+    if (dev && !((dev.rates) || []).length) dev.rates = [20000, 100000, 1000000, 4000000, 8000000, 12000000, 24000000];
+    laDevFillRates(dev);
   }
   const box = $id("la-dev-chans");
   if (box) {
@@ -297,6 +315,7 @@ function laDevPick() {
       const lab = el("label");
       const inp = document.createElement("input");
       inp.type = "checkbox"; inp.value = c; inp.checked = true;
+      inp.onchange = () => laDevFillRates(dev);
       lab.appendChild(inp);
       lab.appendChild(document.createTextNode(c));
       box.appendChild(lab);
@@ -1195,6 +1214,44 @@ export function initLogic() {
     LA.dec.push(normalizeDec(d, LA.chans.length || 1).dec || d);
     renderAll();
     msg(T("已加解码器：") + (DECODERS[kind] ? DECODERS[kind].name : kind));
+  });
+  // DSView 自带解码器：只在用户点「解码」时调用，不拖慢首屏
+  const dsvSel = $id("la-dsv-dec");
+  if (dsvSel) {
+    invoke("dsview_decoders").then((list) => {
+      dsvSel.textContent = "";
+      for (const d of list || []) {
+        const o = document.createElement("option");
+        o.value = d.id; o.textContent = d.name || d.id;
+        o.title = d.desc || "";
+        dsvSel.appendChild(o);
+      }
+      if ([...dsvSel.options].some((o) => o.value === "dsv0_uart")) dsvSel.value = "dsv0_uart";
+    }).catch(() => {});
+  }
+  btn("la-dsv-run", async () => {
+    const out = $id("la-dsv-out");
+    const sel = $id("la-dsv-dec");
+    if (!LA.n || !sel || !sel.value) { if (out) out.textContent = T("先载入一段数据"); return; }
+    if (out) out.textContent = T("解码中…");
+    const n = Math.min(LA.n, 200000);
+    const chn = LA.chans.length;
+    const bps = chn > 8 ? 2 : 1;
+    const buf = new Uint8Array(n * bps);
+    for (let i = 0; i < n; i++) {
+      for (let c = 0; c < chn; c++) if (LA.chans[c].bits[i]) buf[i * bps + (c >> 3)] |= 1 << (c & 7);
+    }
+    try {
+      const r = await invoke("dsview_decode", {
+        rate: LA.rate, channels: LA.chans.map((c) => c.name), samples: Array.from(buf), bps,
+        decoder: sel.value, params: ($id("la-dsv-params") && $id("la-dsv-params").value) || "",
+      });
+      const lines = (r.items || []).slice(0, 300).map((it) =>
+        `${(it.start / LA.rate * 1e6).toFixed(2)}–${(it.end / LA.rate * 1e6).toFixed(2)} µs  ${it.text}`);
+      if (out) out.textContent = lines.length ? lines.join("\n") : T("没有解出内容");
+    } catch (e) {
+      if (out) out.textContent = String(e && e.message ? e.message : e);
+    }
   });
   window.addEventListener("resize", () => { if (!$id("la-canvas").closest("[hidden]")) renderAll(); });
   /* 有效 DPR 变了（换个缩放的显示器、改软件的"放大"）但不一定伴随 resize：

@@ -82,6 +82,9 @@ pub enum Plan {
     /// 生成 INF + 自签名目录 → pnputil 安装。厂商安装包要登录/直链被墙时的通用做法，
     /// 也是 OpenOCD / pyOCD / probe-rs 在 Windows 上认探针所需要的。
     WinUsb { hwids: &'static [&'static str], label: &'static str },
+    /// DSView 解码引擎：夜间版 sigrok-cli + DSView 自带的 Python 解码器
+    /// （只改注册元数据和 matched 适配，解码状态机原样保留）。
+    DsView,
     /// 没有可靠的自动下载地址：只给官网，让用户自己装（不猜 URL）
     Manual,
 }
@@ -310,6 +313,44 @@ pub static ITEMS: &[Item] = &[
             base: "https://github.com/DreamSourceLab/DSView/raw/886b847c21c606df3138ce7ad8f8e8c363ee758b/DSView/res",
             files: DSLOGIC_FW,
         },
+    },
+    Item {
+        id: "dslogic_driver",
+        name: "DSLogic 逻辑分析仪驱动",
+        kind_cn: "USB 驱动",
+        desc: "梦源 DSLogic 系列（VID 2A0E）的 WinUSB 绑定，sigrok / KDock 采集走它。插着分析仪时一键安装，会弹一次 UAC。",
+        url: "https://sigrok.org/wiki/DreamSourceLab_DSLogic",
+        required: false,
+        min_version: None,
+        size_mb: 0.1,
+        rules: &[
+            inf("kdock_dslogic.inf"),
+            device("DSLogic"),
+            device("VID_2A0E&PID_0020"),
+        ],
+        plan: Plan::WinUsb {
+            label: "DreamSourceLab DSLogic",
+            hwids: &[
+                "USB\\VID_2A0E&PID_0020",
+                "USB\\VID_2A0E&PID_0001",
+                "USB\\VID_2A0E&PID_0003",
+                "USB\\VID_2A0E&PID_0021",
+                "USB\\VID_2A0E&PID_0029",
+                "USB\\VID_2A0E&PID_002A",
+            ],
+        },
+    },
+    Item {
+        id: "dsview_engine",
+        name: "DSView 解码引擎",
+        kind_cn: "逻辑分析仪",
+        desc: "夜间版 sigrok-cli + DSView 自带解码器。只在 DSLogic 设备上使用，24M 那台继续走原来的 sigrok 路径。",
+        url: "https://github.com/DreamSourceLab/DSView",
+        required: false,
+        min_version: None,
+        size_mb: 40.0,
+        rules: &[exe("sigrok-cli.exe", "%ENVDIR%\\dsview\\sigrok", "--version", "")],
+        plan: Plan::DsView,
     },
     Item {
         id: "usbpcap",
@@ -1532,6 +1573,81 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
                 format!("（模拟）会生成 {}，把 {} 绑定到 WinUSB（需要 UAC）", inf.display(), hwids.join("、"))
             } else {
                 run_elevated_script(&app, it.id, &script)?
+            }
+        }
+        Plan::DsView => {
+            let root = Path::new(&target).join("dsview");
+            let sigrok = root.join("sigrok");
+            if dry {
+                format!("（模拟）会装夜间版 sigrok-cli 到 {}，并从 DSView 安装目录复制/适配解码器", sigrok.display())
+            } else {
+                std::fs::create_dir_all(&sigrok).map_err(|e| e.to_string())?;
+                let setup = download(
+                    &app,
+                    it.id,
+                    "https://sigrok.org/download/binary/sigrok-cli/sigrok-cli-NIGHTLY-x86_64-release-installer.exe",
+                    "sigrok-cli-nightly.exe",
+                )?;
+                emit(&app, it.id, "install", 55, "安装夜间版 sigrok-cli…");
+                run_powershell(
+                    &app,
+                    it.id,
+                    &format!(
+                        "Start-Process -FilePath '{}' -ArgumentList '/S','/D={}' -Wait",
+                        setup.display(),
+                        sigrok.display()
+                    ),
+                    false,
+                )?;
+                // DSView 的解码器跟着 DSView 安装包走；优先本机已装的 DSView。
+                let dec_src = [
+                    "D:/DSview1.3.0/DSView/decoders",
+                    "D:/DSview/DSView/decoders",
+                    "C:/Program Files/DSView/decoders",
+                    "C:/Program Files/DSView/DSView/decoders",
+                    "C:/Program Files (x86)/DSView/decoders",
+                ]
+                .iter()
+                .map(Path::new)
+                .find(|p| p.is_dir())
+                .ok_or_else(|| "没找到 DSView 的解码器目录，先安装 DSView（https://github.com/DreamSourceLab/DSView）".to_string())?;
+                let dst = sigrok.join("share").join("libsigrokdecode").join("decoders");
+                let script = root.join("prepare-decoders.py");
+                std::fs::write(&script, include_str!("../../tools/dsview/prepare-decoders.py"))
+                    .map_err(|e| e.to_string())?;
+                emit(&app, it.id, "install", 75, "复制并适配 DSView 解码器…");
+                let out = run_out(
+                    "py.exe",
+                    &["-3", &script.to_string_lossy(), &dec_src.to_string_lossy(), &dst.to_string_lossy()],
+                )
+                .or_else(|| {
+                    run_out(
+                        "python.exe",
+                        &["-3", &script.to_string_lossy(), &dec_src.to_string_lossy(), &dst.to_string_lossy()],
+                    )
+                })
+                .ok_or_else(|| "需要 Python 3 来适配 DSView 解码器（环境配置里装 Python）".to_string())?;
+                // FX2 固件 + FPGA 位流：先找 DSView 安装目录里的 res，没有再按官方仓库下载。
+                let fw_dir = sigrok.join("share").join("sigrok-firmware");
+                std::fs::create_dir_all(&fw_dir).map_err(|e| e.to_string())?;
+                let res = dec_src.parent().map(|p| p.join("res"));
+                for (src, dst_name) in [
+                    ("DSLogicPlus.fw", "dreamsourcelab-dslogic-plus-fx2.fw"),
+                    ("DSLogicPlus.bin", "dreamsourcelab-dslogic-plus-fpga.fw"),
+                ] {
+                    let local = res.as_ref().map(|r| r.join(src));
+                    let target_file = fw_dir.join(dst_name);
+                    if let Some(p) = local.filter(|p| p.is_file()) {
+                        std::fs::copy(&p, &target_file).map_err(|e| e.to_string())?;
+                    } else {
+                        let url = format!(
+                            "https://github.com/DreamSourceLab/DSView/raw/886b847c21c606df3138ce7ad8f8e8c363ee758b/DSView/res/{src}"
+                        );
+                        let f = download(&app, it.id, &url, dst_name)?;
+                        std::fs::copy(&f, &target_file).map_err(|e| e.to_string())?;
+                    }
+                }
+                format!("{}\n解码器：{} → {}\n固件：{}", out.trim(), dec_src.display(), dst.display(), fw_dir.display())
             }
         }
     };

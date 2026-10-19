@@ -3681,6 +3681,8 @@ pub fn run() {
             file_write_text,
             env_setup::env_scan,
             logic::logic_devices,
+            logic::dsview_decoders,
+            logic::dsview_decode,
             net_interfaces,
             usb::cmsis_probe_detail,
             usb::usb_diag,
