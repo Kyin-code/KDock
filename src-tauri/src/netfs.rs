@@ -23,6 +23,7 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
+use kdock_core::net::connect_tcp_from;
 
 
 const IO_TIMEOUT: Duration = Duration::from_secs(20);
@@ -155,6 +156,7 @@ struct Ftp {
     data_tls: bool,
     /// 控制连接对端的 IP —— PASV 应答里给的地址经常是内网地址甚至 0.0.0.0，用对端 IP 更稳。
     peer: IpAddr,
+    local_addr: Option<String>,
     label: String,
     mlsd: bool,
 }
@@ -226,13 +228,27 @@ impl Ftp {
         }
     }
 
-    fn open(cfg: TlsCfg, host: &str, port: u16, user: &str, pass: &str, data_tls: bool) -> Result<Ftp, String> {
+    fn open(
+        cfg: TlsCfg,
+        host: &str,
+        port: u16,
+        user: &str,
+        pass: &str,
+        data_tls: bool,
+        local_addr: Option<String>,
+    ) -> Result<Ftp, String> {
         let addr = (host, port)
             .to_socket_addrs()
             .map_err(|e| format!("解析地址失败（{host}:{port}）: {e}"))?
             .next()
             .ok_or_else(|| format!("解析不到地址：{host}:{port}"))?;
-        let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| format!("连不上 {host}:{port} → {e}"))?;
+        let tcp = connect_tcp_from(
+            local_addr.as_deref().unwrap_or(""),
+            host,
+            port,
+            Duration::from_secs(8),
+        )
+        .map_err(|e| format!("连不上 {host}:{port} → {e}"))?;
         tcp.set_read_timeout(Some(IO_TIMEOUT)).ok();
         tcp.set_write_timeout(Some(IO_TIMEOUT)).ok();
         tcp.set_nodelay(true).ok();
@@ -248,6 +264,7 @@ impl Ftp {
             host: host.to_string(),
             data_tls,
             peer,
+            local_addr,
             label: format!("FTP {host}:{port}"),
             mlsd: false,
         };
@@ -300,8 +317,13 @@ impl Ftp {
                     .map(|s| s.trim().chars().take_while(|c| c.is_ascii_digit()).collect::<String>())
                     .and_then(|s| s.parse::<u16>().ok())
                     .ok_or_else(|| format!("看不懂 EPSV 应答：{}", t.trim()))?;
-                TcpStream::connect_timeout(&SocketAddr::new(self.peer, p), Duration::from_secs(8))
-                    .map_err(|e| format!("数据连接失败（{}:{p}）: {e}", self.peer))?
+                connect_tcp_from(
+                    self.local_addr.as_deref().unwrap_or(""),
+                    &self.peer.to_string(),
+                    p,
+                    Duration::from_secs(8),
+                )
+                .map_err(|e| format!("数据连接失败（{}:{p}）: {e}", self.peer))?
             }
             Err(_) => {
                 let t = self.must("PASV", &[227])?;
@@ -315,8 +337,13 @@ impl Ftp {
                     return Err(format!("看不懂 PASV 应答：{}", t.trim()));
                 }
                 let port = nums[4] * 256 + nums[5];
-                TcpStream::connect_timeout(&SocketAddr::new(self.peer, port), Duration::from_secs(8))
-                    .map_err(|e| format!("数据连接失败（{}:{port}）: {e}", self.peer))?
+                connect_tcp_from(
+                    self.local_addr.as_deref().unwrap_or(""),
+                    &self.peer.to_string(),
+                    port,
+                    Duration::from_secs(8),
+                )
+                .map_err(|e| format!("数据连接失败（{}:{port}）: {e}", self.peer))?
             }
         };
         sock.set_read_timeout(Some(IO_TIMEOUT)).ok();
@@ -588,8 +615,20 @@ fn tftp_opt_blksize() -> u16 {
 }
 
 /// RRQ：取文件。返回字节数。
+#[allow(dead_code)]
 pub fn tftp_recv(host: &str, port: u16, remote: &str, sink: &mut dyn Write) -> Result<u64, String> {
-    let sock = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("建 UDP 失败: {e}"))?;
+    tftp_recv_from("", host, port, remote, sink)
+}
+
+pub fn tftp_recv_from(
+    local_host: &str,
+    host: &str,
+    port: u16,
+    remote: &str,
+    sink: &mut dyn Write,
+) -> Result<u64, String> {
+    let local = if local_host.trim().is_empty() { "0.0.0.0" } else { local_host.trim() };
+    let sock = UdpSocket::bind((local, 0)).map_err(|e| format!("建 UDP 失败（{local}）: {e}"))?;
     sock.set_read_timeout(Some(Duration::from_secs(3))).ok();
     let server: SocketAddr = (host, port)
         .to_socket_addrs()
@@ -699,8 +738,20 @@ fn send_ack(sock: &UdpSocket, peer: SocketAddr, block: u16) -> Result<(), String
 }
 
 /// WRQ：送文件。
+#[allow(dead_code)]
 pub fn tftp_send(host: &str, port: u16, remote: &str, data: &[u8]) -> Result<u64, String> {
-    let sock = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("建 UDP 失败: {e}"))?;
+    tftp_send_from("", host, port, remote, data)
+}
+
+pub fn tftp_send_from(
+    local_host: &str,
+    host: &str,
+    port: u16,
+    remote: &str,
+    data: &[u8],
+) -> Result<u64, String> {
+    let local = if local_host.trim().is_empty() { "0.0.0.0" } else { local_host.trim() };
+    let sock = UdpSocket::bind((local, 0)).map_err(|e| format!("建 UDP 失败（{local}）: {e}"))?;
     sock.set_read_timeout(Some(Duration::from_secs(3))).ok();
     let server: SocketAddr = (host, port)
         .to_socket_addrs()
@@ -832,6 +883,7 @@ pub fn netfs_open(
     user: Option<String>,
     password: Option<String>,
     insecure: Option<bool>,
+    local_addr: Option<String>,
 ) -> Result<Value, String> {
     let host = host.trim().to_string();
     if host.is_empty() {
@@ -863,7 +915,7 @@ pub fn netfs_open(
     // FTP（不加密）时 data_tls 没意义；FTPS 两个模式都加密数据
     let tls = TlsCfg { explicit, implicit, insecure };
     let data_tls = explicit || implicit;
-    let me = Ftp::open(tls, &host, port, &user, &pass, data_tls)?;
+    let me = Ftp::open(tls, &host, port, &user, &pass, data_tls, local_addr)?;
     let label = me.label.clone();
     let id = NETFS_SEQ.fetch_add(1, Ordering::Relaxed);
     let mlsd = me.mlsd;
@@ -916,13 +968,13 @@ pub fn session_get(
     id: u32,
     path: &str,
     save_to: &str,
-    tftp: Option<(&str, u16)>,
+    tftp: Option<(&str, u16, &str)>,
     mut on_progress: impl FnMut(u64),
 ) -> Result<u64, String> {
     let tmp = format!("{save_to}.part");
     let mut f = std::fs::File::create(&tmp).map_err(|e| format!("建文件 {} 失败: {e}", tmp))?;
-    let bytes = if let Some((h, p)) = tftp {
-        let n = tftp_recv(h, p, path.trim_start_matches('/'), &mut f)?;
+    let bytes = if let Some((h, p, local)) = tftp {
+        let n = tftp_recv_from(local, h, p, path.trim_start_matches('/'), &mut f)?;
         on_progress(n);
         n
     } else {
@@ -940,11 +992,11 @@ pub fn session_put(
     id: u32,
     path: &str,
     data: &[u8],
-    tftp: Option<(&str, u16)>,
+    tftp: Option<(&str, u16, &str)>,
     mut on_progress: impl FnMut(u64),
 ) -> Result<u64, String> {
-    let n = if let Some((h, p)) = tftp {
-        tftp_send(h, p, path.trim_start_matches('/'), data)?
+    let n = if let Some((h, p, local)) = tftp {
+        tftp_send_from(local, h, p, path.trim_start_matches('/'), data)?
     } else {
         let mut g = NETFS.lock().expect("netfs mutex");
         let s = g.get_mut(&id).ok_or_else(|| format!("会话 {id} 不存在"))?;
@@ -962,8 +1014,10 @@ pub async fn netfs_get(
     save_to: String,
     tftp_host: Option<String>,
     tftp_port: Option<u16>,
+    tftp_local: Option<String>,
 ) -> Result<Value, String> {
-    let tftp = tftp_host.as_deref().map(|h| (h, tftp_port.unwrap_or(69)));
+    let local = tftp_local.as_deref().unwrap_or("");
+    let tftp = tftp_host.as_deref().map(|h| (h, tftp_port.unwrap_or(69), local));
     let bytes = session_get(id, &path, &save_to, tftp, |done| progress(&app, id, &path, done))?;
     // crc32 回显：跟串口/服务通道那两条路一样，方便用户对拍
     let data = std::fs::read(&save_to).map_err(|e| e.to_string())?;
@@ -979,8 +1033,10 @@ pub async fn netfs_put(
     data: Vec<u8>,
     tftp_host: Option<String>,
     tftp_port: Option<u16>,
+    tftp_local: Option<String>,
 ) -> Result<Value, String> {
-    let tftp = tftp_host.as_deref().map(|h| (h, tftp_port.unwrap_or(69)));
+    let local = tftp_local.as_deref().unwrap_or("");
+    let tftp = tftp_host.as_deref().map(|h| (h, tftp_port.unwrap_or(69), local));
     let n = session_put(id, &path, &data, tftp, |done| progress(&app, id, &path, done))?;
     Ok(json!({ "bytes": n, "crc32": crc32fast::hash(&data) }))
 }
@@ -1391,7 +1447,7 @@ mod tests {
     #[test]
     fn ftp_client_round_trips_against_a_real_socket() {
         let srv = fake_ftp();
-        let v = netfs_open("ftp".into(), "127.0.0.1".into(), Some(srv.port), Some("u".into()), Some("p".into()), None)
+        let v = netfs_open("ftp".into(), "127.0.0.1".into(), Some(srv.port), Some("u".into()), Some("p".into()), None, None)
             .expect("登录");
         let id = v["id"].as_u64().expect("id") as u32;
         assert!(v["note"].as_str().unwrap().contains("MLSD"), "服务器说支持 MLSD，客户端就该用 MLSD");

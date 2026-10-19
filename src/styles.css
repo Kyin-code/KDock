@@ -3057,6 +3057,11 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
 .envcard .kacts { display: flex; align-items: center; gap: 6px; margin-top: auto; }
 .envbar { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
 .envbar > div { height: 100%; width: 0%; background: hsl(var(--primary)); transition: width .2s ease; }
+/* 烧录页首开要把"正在干活"讲清楚：进度条在 flex 行里必须显式占宽，否则会被压成 0 */
+#fl-boot { gap: 10px; padding: 2px 0 6px; }
+#fl-boot .lb:first-child { flex: 0 1 auto; min-width: 8em; }
+#fl-boot .envbar { flex: 1 1 200px; min-width: 140px; height: 8px; }
+#fl-boot #fl-boot-pct { flex: 0 0 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
 .envlog {
   margin: 0; padding: 7px 9px; min-height: 92px; max-height: 240px; overflow: auto;
   background: var(--surface-0); border: 1px solid var(--surface-line); border-radius: 9px;

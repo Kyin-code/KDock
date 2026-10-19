@@ -12,6 +12,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
 use crate::transport::Conn;
+use kdock_core::net::UdpEndpoint;
 
 // ---------------------------------------------------------------- 升级包(.fw)
 pub const FW_MAGIC: u32 = 0x5746_594B; // "KYFW"
@@ -449,6 +450,8 @@ impl Svc {
         if let Conn::Tcp(s) = &io {
             let _ = s.set_read_timeout(Some(Duration::from_secs(6)));
             let _ = s.set_write_timeout(Some(Duration::from_secs(6)));
+        } else if let Some(u) = io.udp() {
+            let _ = u.set_read_timeout(Duration::from_secs(6));
         }
         Svc { io, seq: 3 }
     }
@@ -480,6 +483,8 @@ impl Svc {
     fn set_read_timeout(&mut self, secs: u64) {
         if let Conn::Tcp(s) = &self.io {
             let _ = s.set_read_timeout(Some(Duration::from_secs(secs)));
+        } else if let Some(u) = self.io.udp() {
+            let _ = u.set_read_timeout(Duration::from_secs(secs));
         }
     }
 
@@ -522,6 +527,30 @@ impl Svc {
         out.extend_from_slice(&SVC_REQ_MAGIC);
         out.extend_from_slice(&(frame.len() as u16).to_be_bytes());
         out.extend_from_slice(&frame);
+        if let Some(udp) = self.io.udp() {
+            let udp = udp.clone();
+            udp.send(&out).map_err(|e| format!("UDP 发送失败: {e}"))?;
+            let mut buf = vec![0u8; 4096];
+            let (n, _) = udp.recv(&mut buf).map_err(|e| format!("UDP 收响应失败: {e}"))?;
+            if n < 6 || buf[0..4] != SVC_RSP_MAGIC {
+                return Err("UDP 响应头不对".into());
+            }
+            let len = u16::from_be_bytes([buf[4], buf[5]]) as usize;
+            if len + 6 > n || len < 7 {
+                return Err(format!("UDP 响应长度不对: {len}"));
+            }
+            let body = &buf[6..6 + len];
+            let plen = u16::from_be_bytes([body[2], body[3]]) as usize;
+            if plen + 7 != len || crc8(&body[0..6 + plen]) != body[6 + plen] {
+                return Err("UDP 响应 CRC/长度不对".into());
+            }
+            let rseq = u16::from_be_bytes([body[4], body[5]]);
+            if rseq != seq {
+                return Err(format!("UDP 响应序列号不匹配: {rseq} != {seq}"));
+            }
+            let status = u16::from_be_bytes([body[6], body[7]]);
+            return Ok((status, body[8..6 + plen].to_vec()));
+        }
         Svc::write_conn(&mut self.io, &out)?;
         // 最多容忍几条"不是这次的"响应(桥漏下来的上一条/重复帧)
         for _ in 0..4 {
@@ -1359,6 +1388,21 @@ pub fn net_upgrade_conn(
 pub fn net_upgrade(ctx: &mut Ctx, host: &str, port: u16, name: &str, data: &[u8]) -> Result<(), String> {
     let s = Svc::connect(host, port)?;
     net_upgrade_conn(ctx, s, host, port, name, data)
+}
+
+pub fn net_upgrade_udp(
+    ctx: &mut Ctx,
+    local_addr: Option<&str>,
+    host: &str,
+    port: u16,
+    name: &str,
+    data: &[u8],
+) -> Result<(), String> {
+    let local = local_addr.filter(|s| !s.trim().is_empty()).unwrap_or("0.0.0.0");
+    let ep = UdpEndpoint::bind_host(local, 0).map_err(|e| format!("UDP 绑定失败: {e}"))?;
+    ep.set_remote(host, port).map_err(|e| format!("UDP 设置远端失败: {e}"))?;
+    let svc = Svc::from_conn(Conn::Udp(ep));
+    net_upgrade_conn(ctx, svc, host, port, name, data)
 }
 
 // ---------------------------------------------------------------- 串口(app 在线升级)

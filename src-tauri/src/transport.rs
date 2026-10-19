@@ -16,7 +16,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serialport::SerialPort;
 
-use kdock_core::net::{connect_tcp, NetError, TcpServer, UdpEndpoint};
+use kdock_core::net::{connect_tcp_from, NetError, TcpServer, UdpEndpoint};
 use kdock_core::SerialConfig;
 
 /// 读超时。所有实现都用它，好让 reader 线程周期性检查停止开关。
@@ -44,6 +44,8 @@ pub enum Endpoint {
     TcpClient {
         host: String,
         port: u16,
+        #[serde(default)]
+        local_addr: Option<String>,
     },
     TcpServer {
         #[serde(default)]
@@ -52,6 +54,8 @@ pub enum Endpoint {
     },
     Udp {
         local_port: u16,
+        #[serde(default)]
+        local_addr: Option<String>,
         #[serde(default)]
         remote_host: String,
         #[serde(default)]
@@ -87,20 +91,32 @@ impl Endpoint {
     pub fn label(&self) -> String {
         match self {
             Endpoint::Serial { port, config } => format!("{port} @ {}", config.summary()),
-            Endpoint::TcpClient { host, port } => format!("TCP {host}:{port}"),
+            Endpoint::TcpClient {
+                host,
+                port,
+                local_addr,
+            } => match local_addr.as_deref().filter(|s| !s.is_empty()) {
+                Some(local) => format!("TCP {host}:{port} @ {local}"),
+                None => format!("TCP {host}:{port}"),
+            },
             Endpoint::TcpServer { host, port } => {
                 let h = host.clone().unwrap_or_else(|| "0.0.0.0".into());
                 format!("TCP 监听 {h}:{port}")
             }
             Endpoint::Udp {
                 local_port,
+                local_addr,
                 remote_host,
                 remote_port,
             } => {
+                let local = local_addr
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("0.0.0.0");
                 if remote_host.is_empty() || *remote_port == 0 {
-                    format!("UDP 本地 {local_port}")
+                    format!("UDP 本地 {local}:{local_port}")
                 } else {
-                    format!("UDP {local_port} <-> {remote_host}:{remote_port}")
+                    format!("UDP {local}:{local_port} <-> {remote_host}:{remote_port}")
                 }
             }
             Endpoint::Ssh { host, port, user, .. } => {
@@ -641,18 +657,29 @@ pub fn open_endpoint(endpoint: &Endpoint) -> Result<Conn, String> {
                 .map_err(|e| format!("打开 {port} 失败: {e}"))?;
             Ok(Conn::Serial(p))
         }
-        Endpoint::TcpClient { host, port } => {
-            let s = connect_tcp(host, *port, Duration::from_secs(5)).map_err(|e| e.to_string())?;
+        Endpoint::TcpClient {
+            host,
+            port,
+            local_addr,
+        } => {
+            let local = local_addr.as_deref().unwrap_or("");
+            let s = connect_tcp_from(local, host, *port, Duration::from_secs(5))
+                .map_err(|e| e.to_string())?;
             s.set_read_timeout(Some(POLL_TIMEOUT))
                 .map_err(|e| format!("设置读超时失败: {e}"))?;
             Ok(Conn::Tcp(s))
         }
         Endpoint::Udp {
             local_port,
+            local_addr,
             remote_host,
             remote_port,
         } => {
-            let ep = UdpEndpoint::bind(*local_port).map_err(|e| e.to_string())?;
+            let local = local_addr
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("0.0.0.0");
+            let ep = UdpEndpoint::bind_host(local, *local_port).map_err(|e| e.to_string())?;
             if !remote_host.is_empty() && *remote_port != 0 {
                 ep.set_remote(remote_host, *remote_port)
                     .map_err(|e| e.to_string())?;
@@ -755,12 +782,14 @@ mod tests {
     fn udp_conn_survives_idle_polls_then_round_trips() {
         let mut a = open_endpoint(&Endpoint::Udp {
             local_port: 0,
+            local_addr: None,
             remote_host: String::new(),
             remote_port: 0,
         })
         .expect("open a");
         let mut b = open_endpoint(&Endpoint::Udp {
             local_port: 0,
+            local_addr: None,
             remote_host: String::new(),
             remote_port: 0,
         })

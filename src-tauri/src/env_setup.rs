@@ -78,6 +78,10 @@ pub enum Plan {
     /// 走 Windows 可选组件（DISM Add-Capability）：OpenSSH 这类系统自带组件的正道
     /// service 非空 = 装完把服务设成自动并启动；post = 装完要补跑的命令
     Capability { cap: &'static str, service: &'static str, post: &'static [&'static str] },
+    /// 把调试器接口绑定到 Windows 自带的 WinUSB 驱动：
+    /// 生成 INF + 自签名目录 → pnputil 安装。厂商安装包要登录/直链被墙时的通用做法，
+    /// 也是 OpenOCD / pyOCD / probe-rs 在 Windows 上认探针所需要的。
+    WinUsb { hwids: &'static [&'static str], label: &'static str },
     /// 没有可靠的自动下载地址：只给官网，让用户自己装（不猜 URL）
     Manual,
 }
@@ -344,13 +348,32 @@ pub static ITEMS: &[Item] = &[
         id: "stlink",
         name: "ST-Link USB 驱动",
         kind_cn: "USB 驱动",
-        desc: "ST-Link / ST-Link V2-1 调试器的 WinUSB 驱动（OpenOCD 走它）。用 ST 官方 CUBE 或驱动包安装。",
+        desc: "ST-Link / V2-1 / V3 调试器的 WinUSB 驱动，OpenOCD、pyOCD、probe-rs 都靠它认探针。一键安装会弹一次 UAC。",
         url: "https://www.st.com/en/development-tools/stsw-link009.html",
         required: false,
         min_version: None,
         size_mb: 1.0,
-        rules: &[inf("stlink_dbg_winusb.inf"), inf("stlink_bridge_winusb.inf")],
-        plan: Plan::Manual,
+        rules: &[
+            inf("stlink_dbg_winusb.inf"),
+            inf("stlink_bridge_winusb.inf"),
+            device("STM32 STLink"),
+            device("ST-Link"),
+            device("VID_0483&PID_3748"),
+        ],
+        plan: Plan::WinUsb {
+            label: "ST-Link Debug",
+            hwids: &[
+                "USB\\VID_0483&PID_3748",
+                "USB\\VID_0483&PID_3744",
+                "USB\\VID_0483&PID_374B&MI_00",
+                "USB\\VID_0483&PID_374E&MI_00",
+                "USB\\VID_0483&PID_374F&MI_00",
+                "USB\\VID_0483&PID_3752&MI_00",
+                "USB\\VID_0483&PID_3753&MI_00",
+                "USB\\VID_0483&PID_3754&MI_00",
+                "USB\\VID_0483&PID_3757&MI_00",
+            ],
+        },
     },
     Item {
         id: "zadig",
@@ -552,13 +575,41 @@ pub static ITEMS: &[Item] = &[
         id: "wchlink",
         name: "WCH-Link / WCH-LinkE 驱动",
         kind_cn: "调试器",
-        desc: "沁恒 RISC-V / Cortex-M 调试器（WCH-Link、WCH-LinkE）。用 WCH-LinkUtility 或 MounRiver 时会装。",
+        desc: "沁恒 WCH-Link / WCH-LinkE 的 CMSIS-DAP 调试接口。只绑定 MI_00，串口（MI_01）保持系统自带驱动可用。",
         url: "https://www.wch.cn/downloads/WCH-LinkUtility_ZIP.html",
         required: false,
         min_version: None,
         size_mb: 5.0,
-        rules: &[inf("wchlink.inf"), inf("wchlinke.inf")],
-        plan: Plan::Manual,
+        rules: &[
+            inf("wchlink.inf"),
+            inf("wchlinke.inf"),
+            device("WCH CMSIS-DAP"),
+        ],
+        plan: Plan::WinUsb {
+            label: "WCH CMSIS-DAP",
+            hwids: &[
+                "USB\\VID_1A86&PID_8012&MI_00",
+                "USB\\VID_1A86&PID_8010&MI_00",
+            ],
+        },
+    },
+    Item {
+        id: "wlink",
+        name: "wlink（WCH-Link 命令行烧录）",
+        kind_cn: "调试器",
+        desc: "沁恒 CH32V / CH57x / CH58x / CH59x 的命令行烧录器，支持 hex / elf / bin，比厂商 GUI 更适合自动化和批量烧录。",
+        url: "https://github.com/ch32-rs/wlink/releases",
+        required: false,
+        min_version: None,
+        size_mb: 1.0,
+        rules: &[
+            exe("wlink.exe", "%ENVDIR%\\wlink;%ENVDIR%;C:\\wlink;D:\\wlink", "--version", ""),
+            glob("%ENVDIR%\\wlink\\wlink.exe", "--version", ""),
+        ],
+        plan: Plan::Zip {
+            url: "https://github.com/ch32-rs/wlink/releases/download/v0.1.2/wlink-v0.1.2-win-x64.zip",
+            strip: 1,
+        },
     },
     Item {
         id: "xds110",
@@ -1469,15 +1520,138 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
             if dry { format!("（模拟）下载到 {}，会执行：{}", f.display(), cmd) }
             else { run_powershell(&app, it.id, &cmd, elevated)? }
         }
+        Plan::WinUsb { hwids, label } => {
+            let dir = Path::new(&target).join(it.id);
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            let inf = dir.join(format!("kdock_{}.inf", it.id));
+            let script = dir.join("install-winusb.ps1");
+            std::fs::write(&inf, winusb_inf_text(it.id, label, hwids)).map_err(|e| e.to_string())?;
+            std::fs::write(&script, WINUSB_INSTALL_PS).map_err(|e| e.to_string())?;
+            emit(&app, it.id, "install", 30, "生成 WinUSB 驱动包…");
+            if dry {
+                format!("（模拟）会生成 {}，把 {} 绑定到 WinUSB（需要 UAC）", inf.display(), hwids.join("、"))
+            } else {
+                run_elevated_script(&app, it.id, &script)?
+            }
+        }
     };
     if let Ok(mut g) = SCAN_CACHE.lock() { *g = None; }   // 装完让下次扫描重新跑
     emit(&app, it.id, "done", 100, "完成");
     Ok(log)
 }
 
+/// WinUSB 驱动包：只引用 Windows 自带的 winusb.inf，不携带第三方 .sys。
+/// 因此自签名目录 + 本机受信任证书就足够，不依赖厂商安装包和联网下载。
+fn winusb_inf_text(id: &str, label: &str, hwids: &[&str]) -> String {
+    let mut t = format!(
+        "[Version]\r\n\
+         Signature=\"$Windows NT$\"\r\n\
+         Class=USBDevice\r\n\
+         ClassGuid={{88BAE032-5A81-49f0-BC3D-A4FF138216D6}}\r\n\
+         Provider=%ProviderName%\r\n\
+         CatalogFile=kdock_{id}.cat\r\n\
+         DriverVer=10/20/2026,1.0.0.0\r\n\r\n\
+         [Manufacturer]\r\n\
+         %ProviderName%=KdockDevices,NTamd64\r\n\r\n\
+         [KdockDevices.NTamd64]\r\n"
+    );
+    for h in hwids {
+        t.push_str(&format!("%DeviceDesc%=WinUSB_Install, {h}\r\n"));
+    }
+    t.push_str(
+        "\r\n[WinUSB_Install]\r\n\
+         Include=winusb.inf\r\n\
+         Needs=WINUSB.NT\r\n\r\n\
+         [WinUSB_Install.Services]\r\n\
+         Include=winusb.inf\r\n\
+         Needs=WINUSB.NT.Services\r\n\r\n\
+         [WinUSB_Install.HW]\r\n\
+         AddReg=WinUSB_AddReg\r\n\r\n\
+         [WinUSB_AddReg]\r\n\
+         HKR,,DeviceInterfaceGUIDs,0x10000,\"{8C3B9E11-6D77-4B0A-9D4E-5F2A1C7E9B31}\"\r\n\r\n\
+         [Strings]\r\n\
+         ProviderName=\"KDock\"\r\n",
+    );
+    t.push_str(&format!("DeviceDesc=\"{label} (WinUSB)\"\r\n"));
+    t
+}
+
+/// 提权跑一个 .ps1。用 -File 而不是把脚本内容塞进 -Command，路径里有空格/中文也不会散架。
+fn run_elevated_script(app: &tauri::AppHandle, id: &str, script: &Path) -> Result<String, String> {
+    emit(app, id, "install", 55, "等待 UAC 授权…");
+    let path = script.to_string_lossy().replace('\'', "''");
+    let ps = format!(
+        "$p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru \
+         -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','\"{path}\"'; \
+         Write-Output ('elevated-exit=' + $p.ExitCode)"
+    );
+    let out = run_out("powershell.exe", &["-NoProfile", "-Command", &ps])
+        .ok_or_else(|| "没能启动提权进程（UAC 被拒绝？）".to_string())?;
+    let tail: String = out.chars().rev().take(6000).collect::<String>().chars().rev().collect();
+    if !tail.contains("elevated-exit=0") || tail.contains("Catalog signature: Invalid") {
+        return Err(format!("驱动安装失败（需要确认 UAC）：\n{tail}"));
+    }
+    emit(app, id, "install", 95, "驱动已安装，正在重新枚举设备…");
+    Ok(tail)
+}
+
+const WINUSB_INSTALL_PS: &str = r#"$ErrorActionPreference = 'Stop'
+$inf = Get-ChildItem -LiteralPath $PSScriptRoot -Filter 'kdock_*.inf' | Select-Object -First 1
+if (-not $inf) { Write-Output 'no-inf'; exit 2 }
+$cat = [IO.Path]::ChangeExtension($inf.FullName, '.cat')
+$cer = Join-Path $PSScriptRoot 'kdock-winusb.cer'
+$cert = Get-ChildItem Cert:\LocalMachine\My |
+    Where-Object { $_.Subject -eq 'CN=KDock WinUSB Driver' } |
+    Sort-Object NotAfter -Descending | Select-Object -First 1
+if (-not $cert) {
+    $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=KDock WinUSB Driver' `
+        -CertStoreLocation Cert:\LocalMachine\My -HashAlgorithm SHA256 `
+        -KeyExportPolicy Exportable -NotAfter (Get-Date).AddYears(10)
+}
+Export-Certificate -Cert $cert -FilePath $cer -Force | Out-Null
+Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+if (Test-Path -LiteralPath $cat) { Remove-Item -LiteralPath $cat -Force }
+New-FileCatalog -Path $PSScriptRoot -CatalogFilePath $cat -CatalogVersion 2 | Out-Null
+$sig = Set-AuthenticodeSignature -FilePath $cat -Certificate $cert -HashAlgorithm SHA256
+Write-Output ("Catalog signature: " + $sig.Status)
+& pnputil.exe /add-driver $inf.FullName /install
+Write-Output ("pnputil=" + $LASTEXITCODE)
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& pnputil.exe /scan-devices
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn winusb_inf_binds_each_probe_interface() {
+        let t = winusb_inf_text(
+            "wchlink",
+            "WCH CMSIS-DAP",
+            &["USB\\VID_1A86&PID_8012&MI_00", "USB\\VID_1A86&PID_8010&MI_00"],
+        );
+        assert!(t.contains("CatalogFile=kdock_wchlink.cat"));
+        assert!(t.contains("%DeviceDesc%=WinUSB_Install, USB\\VID_1A86&PID_8012&MI_00"));
+        assert!(t.contains("%DeviceDesc%=WinUSB_Install, USB\\VID_1A86&PID_8010&MI_00"));
+        assert!(t.contains("Include=winusb.inf"));
+        assert!(t.contains("Needs=WINUSB.NT.Services"));
+        // 复合设备的父节点不能绑：绑了会把同设备的串口一起吞掉
+        assert!(!t.contains("%DeviceDesc%=WinUSB_Install, USB\\VID_1A86&PID_8012\r\n"));
+    }
+
+    #[test]
+    fn stlink_plan_is_one_click_and_covers_common_pids() {
+        let it = ITEMS.iter().find(|x| x.id == "stlink").expect("stlink item");
+        match it.plan {
+            Plan::WinUsb { hwids, .. } => {
+                assert!(hwids.iter().any(|h| h.contains("PID_3748")));
+                assert!(hwids.iter().any(|h| h.contains("PID_374B&MI_00")));
+            }
+            _ => panic!("ST-Link should install through WinUSB without a vendor download"),
+        }
+    }
 
     #[test]
     #[ignore = "requires a connected Infineon DAS JDS TriBoard"]

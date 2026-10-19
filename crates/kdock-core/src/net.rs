@@ -9,6 +9,8 @@ use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSoc
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use socket2::{Domain, Protocol, Socket, Type};
+
 /// 网络层错误。所有分支都带可读消息，不会 panic。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetError {
@@ -154,6 +156,57 @@ pub fn connect_tcp(host: &str, port: u16, timeout: Duration) -> Result<TcpStream
     })
 }
 
+/// 从指定本机网卡地址发起 TCP 连接。`local_host` 为空时按系统路由选择。
+pub fn connect_tcp_from(
+    local_host: &str,
+    host: &str,
+    port: u16,
+    timeout: Duration,
+) -> Result<TcpStream, NetError> {
+    if local_host.trim().is_empty() {
+        return connect_tcp(host, port, timeout);
+    }
+    let local_ip = local_host
+        .trim()
+        .parse::<IpAddr>()
+        .map_err(|e| NetError::BadAddress {
+            text: local_host.to_string(),
+            msg: e.to_string(),
+        })?;
+    // 本机选的是 IPv4 就只连 IPv4，选 IPv6 就只连 IPv6：
+    // 双栈主机名（比如 localhost）解析出的第一个地址未必同族，bind 会直接报 family 不支持。
+    let remote = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| NetError::BadAddress {
+            text: format!("{host}:{port}"),
+            msg: e.to_string(),
+        })?
+        .find(|a| a.is_ipv4() == local_ip.is_ipv4())
+        .ok_or_else(|| NetError::BadAddress {
+            text: format!("{host}:{port}"),
+            msg: format!("没有与本机地址 {local_ip} 同族的地址"),
+        })?;
+    let local = SocketAddr::new(local_ip, 0);
+    let domain = if local.is_ipv4() {
+        Domain::IPV4
+    } else {
+        Domain::IPV6
+    };
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))
+        .map_err(|e| NetError::from_io(&e, "创建 TCP socket 失败"))?;
+    socket.bind(&local.into()).map_err(|e| NetError::Bind {
+        addr: local.to_string(),
+        msg: e.to_string(),
+    })?;
+    socket
+        .connect_timeout(&remote.into(), timeout)
+        .map_err(|e| NetError::Connect {
+            addr: remote.to_string(),
+            msg: format!("经本机 {local} 连接失败: {e}"),
+        })?;
+    Ok(socket.into())
+}
+
 /// UDP 端点。内部用 `Arc` 共享 socket，因此 `clone()` 得到的是同一个端点，
 /// 可以同时给读线程和写端用。
 #[derive(Clone)]
@@ -255,5 +308,28 @@ impl UdpEndpoint {
             *remote = Some(from);
         }
         Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tcp_client_can_bind_to_a_selected_local_address() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let accept = std::thread::spawn(move || listener.accept().expect("accept"));
+        let client = connect_tcp_from("127.0.0.1", "127.0.0.1", port, Duration::from_secs(2))
+            .expect("connect from local address");
+        let (server, _) = accept.join().expect("accept thread");
+        assert_eq!(client.local_addr().unwrap().ip().to_string(), "127.0.0.1");
+        drop(server);
+    }
+
+    #[test]
+    fn udp_can_bind_to_a_selected_local_address() {
+        let ep = UdpEndpoint::bind_host("127.0.0.1", 0).expect("bind udp");
+        assert_eq!(ep.local_addr().ip().to_string(), "127.0.0.1");
     }
 }

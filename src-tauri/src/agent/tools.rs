@@ -51,7 +51,8 @@ pub fn catalog() -> Vec<ToolDef> {
             "baud":{"type":"integer","description":"波特率，默认 115200"},
             "host":{"type":"string","description":"TCP/UDP 目标 IP"},
             "remote_port":{"type":"integer","description":"TCP/UDP 目标端口"},
-            "local_port":{"type":"integer","description":"UDP 本地端口"}
+            "local_port":{"type":"integer","description":"UDP 本地端口"},
+            "local_addr":{"type":"string","description":"本机网卡地址；多网卡时指定源地址，留空按系统路由"}
         },"required":["mode"]}),
         false,
     );
@@ -121,6 +122,7 @@ pub fn catalog() -> Vec<ToolDef> {
             "host":{"type":"string","description":"tcp_client=远端 IP；tcp_server=本机监听地址（不填 0.0.0.0，表示所有网卡）"},
             "remote_port":{"type":"integer","description":"tcp_client 的远端端口 / udp 的远端端口"},
             "local_port":{"type":"integer","description":"tcp_server 要监听的端口 / udp 的本地端口"},
+            "local_addr":{"type":"string","description":"本机网卡地址；多网卡时指定源地址，留空按系统路由"},
             "remote_host":{"type":"string","description":"udp 的远端 IP"}
         },"required":["mode"]}), false);
     push(
@@ -2011,6 +2013,9 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
                     ep["host"] = json!(sarg("host").ok_or("mode=tcp_client 需要 host（远端 IP）")?);
                     ep["port"] =
                         json!(uarg("remote_port").ok_or("mode=tcp_client 需要 remote_port")?);
+                    if let Some(local) = sarg("local_addr") {
+                        ep["local_addr"] = json!(local);
+                    }
                 }
                 "tcp_server" => {
                     ep["host"] = json!(sarg("host").unwrap_or_else(|| "0.0.0.0".into()));
@@ -2019,6 +2024,9 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
                 }
                 "udp" => {
                     ep["local_port"] = json!(uarg("local_port").unwrap_or(0));
+                    if let Some(local) = sarg("local_addr") {
+                        ep["local_addr"] = json!(local);
+                    }
                     ep["remote_host"] = json!(sarg("remote_host").unwrap_or_default());
                     ep["remote_port"] = json!(uarg("remote_port").unwrap_or(0));
                 }
@@ -2306,9 +2314,11 @@ fn ssh_or_link(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         "tcp" => crate::transport::Endpoint::TcpClient {
             host: arg_str(args, "host").ok_or("TCP 链路要给 host")?,
             port: arg_u64(args, "remote_port", 6666) as u16,
+            local_addr: arg_str(args, "local_addr"),
         },
         "udp" => crate::transport::Endpoint::Udp {
             local_port: arg_u64(args, "local_port", 0) as u16,
+            local_addr: arg_str(args, "local_addr"),
             remote_host: arg_str(args, "host").unwrap_or_default(),
             remote_port: arg_u64(args, "remote_port", 0) as u16,
         },

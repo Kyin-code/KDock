@@ -1323,6 +1323,11 @@
             <span id="fl-dev-src" class="lb"></span>
             <button id="fl-dev-reload" class="btn small">↻ 刷新</button>
           </div>
+          <div id="fl-boot" class="trow" hidden>
+            <span class="lb" id="fl-boot-text">准备器件库…</span>
+            <div class="envbar small"><div id="fl-boot-bar"></div></div>
+            <span class="lb" id="fl-boot-pct">0%</span>
+          </div>
           <div id="fl-dev-list" class="devgrid scrollable"></div>
           <div class="vsplit" id="fl-log-grip" title="拖动调整日志高度"></div>
           <div class="framebox logbox" id="fl-logbox">
@@ -1668,13 +1673,16 @@
           <div data-mode="tcp_client" hidden>
             <div class="field"><label for="tcp-client-host">目标 IP</label><input id="tcp-client-host" title="目标 IP" value="192.168.1.100" /></div>
             <div class="field"><label for="tcp-client-port">端口</label><input id="tcp-client-port" type="number" value="6666" /></div>
+            <div class="field"><label for="tcp-client-iface">网卡</label><select id="tcp-client-iface" class="net-iface"></select></div>
           </div>
           <div data-mode="tcp_server" hidden>
             <div class="field"><label for="tcp-server-host">监听地址</label><input id="tcp-server-host" value="0.0.0.0" /></div>
             <div class="field"><label for="tcp-server-port">端口</label><input id="tcp-server-port" type="number" value="9000" /></div>
+            <div class="field"><label for="tcp-server-iface">网卡</label><select id="tcp-server-iface" class="net-iface"></select></div>
           </div>
           <div data-mode="udp" hidden>
             <div class="field"><label for="udp-local-port">本地端口</label><input id="udp-local-port" type="number" value="9001" /></div>
+            <div class="field"><label for="udp-iface">网卡</label><select id="udp-iface" class="net-iface"></select></div>
             <div class="field"><label for="udp-remote-host">远端 IP</label><input id="udp-remote-host" value="127.0.0.1" /></div>
             <div class="field"><label for="udp-remote-port">远端端口</label><input id="udp-remote-port" type="number" value="9001" /></div>
           </div>
@@ -1725,6 +1733,7 @@
             <select id="upg-mode">
               <option value="serial">串口</option>
               <option value="tcp_client">TCP Client</option>
+              <option value="udp">UDP</option>
             </select>
           </div>
           <div data-upgm="serial">
@@ -1737,9 +1746,10 @@
             </div>
             <div class="field"><label for="upg-baud">波特率</label><select id="upg-baud"></select></div>
           </div>
-          <div data-upgm="tcp_client" hidden>
+          <div data-upgm="tcp_client udp" hidden>
             <div class="field"><label for="upg-host">目标 IP</label><input id="upg-host" value="192.168.1.100" /></div>
             <div class="field"><label for="upg-port">端口</label><input id="upg-port" type="number" value="6666" /></div>
+            <div class="field"><label for="upg-iface">网卡</label><select id="upg-iface" class="net-iface"></select></div>
           </div>
           <div class="btnrow">
             <button id="upg-open" class="btn primary">连接</button>
@@ -1816,6 +1826,7 @@
             <p class="hint" data-flm="ftp ftps ftps_implicit">FTP 的列表优先用 <code>MLSD</code>（带大小/时间），老服务器退回 <code>LIST</code>；传输一律二进制（TYPE I）。</p>
             <p class="hint" data-flm="tftp">TFTP 没有目录/列表这一说：直接填要取或送的文件路径（相对根目录即可），端口默认 69。</p>
           </div>
+          <div class="field" data-flm="tcp_client ftp ftps ftps_implicit tftp"><label for="fl-iface">网卡</label><select id="fl-iface" class="net-iface"></select></div>
           <div class="btnrow">
             <button id="fl-open" class="btn primary">连接</button>
             <button id="fl-close" class="btn">断开</button>
@@ -2175,6 +2186,31 @@
                 <button id="fl-browse-stm32" class="btn icon" title="选 STM32_Programmer_CLI.exe">…</button>
               </div>
             </div>
+            <div class="field">
+              <label for="fl-tool-pyocd">pyOCD</label>
+              <div class="inline">
+                <input id="fl-tool-pyocd" placeholder="pyocd.exe 路径（CMSIS-DAP / WCH-Link / ST-Link）" />
+                <button id="fl-browse-pyocd" class="btn icon" title="选 pyocd.exe">…</button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="fl-tool-wch">WCH-Link</label>
+              <div class="inline">
+                <input id="fl-tool-wch" placeholder="wlink.exe 路径（RISC-V）" />
+                <button id="fl-browse-wch" class="btn icon" title="选 wlink.exe">…</button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="fl-tool-aurix">AURIX Flasher</label>
+              <div class="inline">
+                <input id="fl-tool-aurix" placeholder="AURIXFlasher.exe 路径" />
+                <button id="fl-browse-aurix" class="btn icon" title="选 AURIXFlasher.exe">…</button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="fl-extra">附加参数</label>
+              <input id="fl-extra" placeholder="可选，追加到工具命令末尾" />
+            </div>
             <div class="btnrow">
               <button id="fl-tool-detect" class="btn small">自动检测</button>
               <button id="fl-tool-clear" class="btn small">清空重填</button>
@@ -2187,8 +2223,17 @@
             <select id="fl-tool">
               <option value="openocd">OpenOCD</option>
               <option value="jlink">J-Link Commander</option>
-              <option value="stm32cli">STM32_Programmer_CLI</option>
+              <option value="pyocd">pyOCD（DAPLink / CMSIS-DAP / ST-Link）</option>
+              <option value="stm32cli">STM32CubeProgrammer（ST-Link）</option>
+              <option value="netudp">网络设备（UDP 服务，.fw）</option>
+              <option value="wchlink">WCH-Link（RISC-V / wlink）</option>
+              <option value="aurix">Infineon AURIX Flasher</option>
             </select>
+          </div>
+          <div id="fl-netudp-row" hidden>
+            <div class="field"><label for="fl-netudp-host">目标 IP</label><input id="fl-netudp-host" value="192.168.1.100" /></div>
+            <div class="field"><label for="fl-netudp-port">端口</label><input id="fl-netudp-port" type="number" value="6666" /></div>
+            <div class="field"><label for="fl-netudp-iface">网卡</label><select id="fl-netudp-iface" class="net-iface"></select></div>
           </div>
           <div class="field">
             <label for="fl-adapter">适配器</label>
@@ -2208,7 +2253,12 @@
           <div class="field"><label for="fl-speed">速度</label><input id="fl-speed" type="number" value="4000" class="num" /> kHz</div>
           <div class="field">
             <label for="fl-target">目标芯片</label>
-            <input id="fl-target" value="stm32f4x" />
+            <input id="fl-target" value="stm32f4x" list="fl-pyocd-targets" />
+            <datalist id="fl-pyocd-targets"></datalist>
+          </div>
+          <div class="field">
+            <label for="fl-probe">探针 UID</label>
+            <input id="fl-probe" placeholder="多探针时填 pyOCD 的唯一 ID（可空）" />
           </div>
           <div class="field">
             <label>器件库</label>

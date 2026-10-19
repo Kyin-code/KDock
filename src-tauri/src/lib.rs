@@ -335,7 +335,14 @@ fn flash_run(app: AppHandle, exe: String, args: Vec<String>) -> Result<(), Strin
 /// 本机没找到 JLinkDevices.xml，就用 **openocd 自带的 scripts**（target/interface/board 三类 cfg），
 /// 这也正是我们烧录用的一套。返回 [{name, desc, group}]，前端做 J-Flash 那种搜索选择。
 #[tauri::command]
-fn flash_scripts(kind: String, scripts_dir: Option<String>) -> Result<Vec<serde_json::Value>, String> {
+async fn flash_scripts(kind: String, scripts_dir: Option<String>) -> Result<Vec<serde_json::Value>, String> {
+    // 扫盘 + 读上百个 .cfg，放到阻塞线程池，别让首开烧录页卡住 webview
+    tauri::async_runtime::spawn_blocking(move || flash_scripts_blocking(kind, scripts_dir))
+        .await
+        .map_err(|e| format!("器件库扫描线程失败：{e}"))?
+}
+
+fn flash_scripts_blocking(kind: String, scripts_dir: Option<String>) -> Result<Vec<serde_json::Value>, String> {
     let mut roots: Vec<std::path::PathBuf> = Vec::new();
     if let Some(d) = scripts_dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
         roots.push(std::path::PathBuf::from(d));
@@ -1094,7 +1101,14 @@ fn parse_jlink_db(txt: &str) -> Vec<serde_json::Value> {
 /// J-Link 器件库。优先让本机 JLink.exe 导出（DLL 内置库，型号最全），失败再退回 JLinkDevices.xml。
 /// 返回 { source, path, count, devices:[{name,vendor,core,alias}] }。
 #[tauri::command]
-fn flash_jlink_devices(path: Option<String>, exe: Option<String>) -> Result<serde_json::Value, String> {
+async fn flash_jlink_devices(path: Option<String>, exe: Option<String>) -> Result<serde_json::Value, String> {
+    // 这里可能会真的起 JLink.exe 导器件库（几秒），同样不能占用主线程
+    tauri::async_runtime::spawn_blocking(move || flash_jlink_devices_blocking(path, exe))
+        .await
+        .map_err(|e| format!("J-Link 器件库线程失败：{e}"))?
+}
+
+fn flash_jlink_devices_blocking(path: Option<String>, exe: Option<String>) -> Result<serde_json::Value, String> {
     let exe = exe.map(|e| e.trim().to_string()).filter(|e| !e.is_empty()).map(std::path::PathBuf::from);
     let mut errs: Vec<String> = Vec::new();
     let explicit = path.as_deref().map(str::trim).filter(|p| !p.is_empty());
@@ -1161,7 +1175,14 @@ fn flash_jlink_devices(path: Option<String>, exe: Option<String>) -> Result<serd
 /// 找烧录工具：优先用前端传来的手动路径(overrides)，否则 PATH，再否则扫常见安装目录。
 /// 返回每个工具的 exe / 是否找到 / 来源(manual|path|scan) / 版本(尽量取)；openocd 还会给出 scripts 目录。
 #[tauri::command]
-fn flash_tools(overrides: Option<serde_json::Value>) -> serde_json::Value {
+async fn flash_tools(overrides: Option<serde_json::Value>) -> serde_json::Value {
+    // 会跑 openocd --version / JLink -? / 扫多个安装目录
+    tauri::async_runtime::spawn_blocking(move || flash_tools_blocking(overrides))
+        .await
+        .unwrap_or_else(|e| serde_json::json!({ "error": format!("烧录器检测线程失败：{e}") }))
+}
+
+fn flash_tools_blocking(overrides: Option<serde_json::Value>) -> serde_json::Value {
     let ov = |k: &str| {
         overrides
             .as_ref()
@@ -1185,11 +1206,6 @@ fn flash_tools(overrides: Option<serde_json::Value>) -> serde_json::Value {
         if let Some(p) = scan_for(&openocd_roots, "openocd", "bin/openocd.exe") { ocd = Some(p); ocd_src = "scan"; }
     }
     let ocd_exe = ocd.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-    let ocd_ver = ocd
-        .as_ref()
-        .and_then(|p| run_capture(p, &["--version"], 4000))
-        .and_then(|t| t.lines().find(|l| l.to_lowercase().contains("open on-chip")).map(|l| l.trim().to_string()))
-        .unwrap_or_default();
     // scripts：手动给的优先，否则从 exe 推 ./../share/openocd/scripts
     let mut scripts = ov("openocd_scripts").map(std::path::PathBuf::from).filter(|p| p.is_dir());
     if scripts.is_none() {
@@ -1229,11 +1245,66 @@ fn flash_tools(overrides: Option<serde_json::Value>) -> serde_json::Value {
             if c.is_file() { st = Some(c); st_src = "scan"; break; }
         }
     }
-    let st_ver = st
-        .as_ref()
-        .and_then(|p| run_capture(p, &["--version"], 6000))
-        .and_then(|t| t.lines().find(|l| l.to_lowercase().contains("version")).map(|l| l.trim().to_string()))
-        .unwrap_or_default();
+    // ---- pyOCD：CMSIS-DAP / DAPLink / WCH-Link / ST-Link 的统一烧录入口 ----
+    let mut py = ov("pyocd").map(std::path::PathBuf::from).filter(|p| p.is_file());
+    let mut py_src = if py.is_some() { "manual" } else { "" };
+    if py.is_none() {
+        py = env_setup::find_tool(
+            "pyocd.exe",
+            "%USERPROFILE%\\AppData\\Roaming\\Python\\Python39\\Scripts;%APPDATA%\\Python\\Python39\\Scripts",
+        );
+        if py.is_some() {
+            py_src = "scan";
+        }
+    }
+    // ---- WCH：优先 wlink（命令行，RISC-V / CH32 全系），退回厂商 GUI ----
+    let wch = ov("wchlink")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_file())
+        .or_else(|| env_setup::find_tool("wlink.exe", "%ENVDIR%\\wlink;%ENVDIR%;C:\\wlink;D:\\wlink"))
+        .or_else(|| env_setup::find_tool("WCH-LinkUtility.exe", "%ENVDIR%\\wchlink;C:\\WCH-LinkUtility;C:\\Program Files\\WCH;C:\\Program Files (x86)\\WCH"));
+    let aurix = ov("aurix")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_file())
+        .or_else(|| env_setup::find_tool("AURIXFlasher.exe", "%ENVDIR%\\aurix;C:\\Program Files\\Infineon;C:\\Infineon;C:\\Program Files (x86)\\Infineon"));
+    // 版本探测并行跑：pyOCD 是 Python 启动（1s+）、STM32 CLI 也不快。串行时要等它们一个个来，
+    // 首开烧录页就卡在 18%。这里最慢的一个决定总耗时。
+    let (ocd_ver, st_ver, py_ver, wch_ver) = std::thread::scope(|s| {
+        let o = ocd.clone();
+        let t_ocd = s.spawn(move || {
+            o.as_ref()
+                .and_then(|p| run_capture(p, &["--version"], 3000))
+                .and_then(|t| t.lines().find(|l| l.to_lowercase().contains("open on-chip")).map(|l| l.trim().to_string()))
+                .unwrap_or_default()
+        });
+        let stc = st.clone();
+        let t_st = s.spawn(move || {
+            stc.as_ref()
+                .and_then(|p| run_capture(p, &["--version"], 4000))
+                .and_then(|t| t.lines().find(|l| l.to_lowercase().contains("version")).map(|l| l.trim().to_string()))
+                .unwrap_or_default()
+        });
+        let pyc = py.clone();
+        let t_py = s.spawn(move || {
+            pyc.as_ref()
+                .and_then(|p| run_capture(p, &["--version"], 3000))
+                .map(|v| v.trim().to_string())
+                .unwrap_or_default()
+        });
+        let wc = wch.clone();
+        let t_wch = s.spawn(move || {
+            wc.as_ref()
+                .and_then(|p| run_capture(p, &["--version"], 3000))
+                .map(|v| v.trim().to_string())
+                .unwrap_or_default()
+        });
+        (
+            t_ocd.join().unwrap_or_default(),
+            t_st.join().unwrap_or_default(),
+            t_py.join().unwrap_or_default(),
+            t_wch.join().unwrap_or_default(),
+        )
+    });
     serde_json::json!({
         "openocd": { "exe": ocd_exe, "found": !ocd_exe.is_empty(), "from": ocd_src, "version": ocd_ver,
                      "scripts": scripts.map(|p| p.to_string_lossy().to_string()).unwrap_or_default() },
@@ -1241,7 +1312,38 @@ fn flash_tools(overrides: Option<serde_json::Value>) -> serde_json::Value {
                    "found": jl.is_some(), "from": jl_src, "version": jl_ver },
         "stm32cli": { "exe": st.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
                       "found": st.is_some(), "from": st_src, "version": st_ver },
+        "pyocd": { "exe": py.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+                   "found": py.is_some(), "from": py_src, "version": py_ver },
+        "wchlink": { "exe": wch.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+                     "found": wch.is_some(), "from": if wch.is_some() { "scan" } else { "" }, "version": wch_ver },
+        "aurix": { "exe": aurix.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+                   "found": aurix.is_some(), "from": if aurix.is_some() { "scan" } else { "" }, "version": "" },
     })
+}
+
+/// pyOCD 支持的芯片名（`pyocd flash -t <name>`）。前端把它挂成目标芯片输入的候选项，
+/// 免得上游 OpenOCD 的 `stm32f4x` 被直接喂给 pyOCD。
+#[tauri::command]
+async fn pyocd_targets(exe: Option<String>) -> Vec<serde_json::Value> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let exe = exe
+            .map(|e| e.trim().to_string())
+            .filter(|e| !e.is_empty())
+            .unwrap_or_else(|| "pyocd".to_string());
+        let Some(text) = run_capture(std::path::Path::new(&exe), &["list", "--targets", "--no-header"], 12000) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for line in text.lines() {
+            let mut it = line.split_whitespace();
+            let (Some(name), Some(vendor)) = (it.next(), it.next()) else { continue };
+            if name.eq_ignore_ascii_case("name") { continue; }
+            out.push(serde_json::json!({ "name": name, "vendor": vendor }));
+        }
+        out
+    })
+    .await
+    .unwrap_or_default()
 }
 /// 文件大小（选完固件给个"多大"的反馈用）。
 #[tauri::command]
@@ -2183,6 +2285,35 @@ pub(crate) fn local_ips() -> Vec<String> {
     out
 }
 
+#[tauri::command]
+fn net_interfaces() -> Vec<serde_json::Value> {
+    let script = "Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | \
+        Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.IPAddress -notlike '169.254.*' } | \
+        Select-Object InterfaceAlias,IPAddress,InterfaceIndex | ConvertTo-Json -Compress";
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let Ok(out) = cmd.output() else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text.trim()) else {
+        return Vec::new();
+    };
+    match v {
+        serde_json::Value::Array(a) => a,
+        serde_json::Value::Object(_) => vec![v],
+        _ => Vec::new(),
+    }
+}
+
 /// 主连接最近的收发记录（agent 的 `port_read` 读的就是用户在传输页看到的那一份）
 pub(crate) fn main_log_lines(app: &AppHandle, tail: usize) -> Vec<LogLine> {
     let state = app.state::<Arc<AppState>>();
@@ -2868,7 +2999,7 @@ fn start_upgrade(
             };
 
             match endpoint.clone() {
-                Endpoint::TcpClient { host, port } => {
+                Endpoint::TcpClient { host, port, .. } => {
                     if host.trim().is_empty() {
                         return Err("TCP Client 没填目标 IP".into());
                     }
@@ -2882,6 +3013,36 @@ fn start_upgrade(
                         other => {
                             drop(other);
                             upgrade::net_upgrade(&mut ctx, &host, port, &fw_name, &bytes)
+                        }
+                    };
+                    r
+                }
+                Endpoint::Udp {
+                    local_addr,
+                    remote_host,
+                    remote_port,
+                    ..
+                } => {
+                    if remote_host.trim().is_empty() || remote_port == 0 {
+                        return Err("UDP 升级要填目标 IP 和端口".into());
+                    }
+                    let conn = take_link(&st);
+                    let r = match conn {
+                        Some(c) if matches!(c, Conn::Udp(_)) => {
+                            upg_log(&app, "[升级] 复用已经连好的 UDP 连接\n");
+                            let svc = upgrade::Svc::from_conn(c);
+                            upgrade::net_upgrade_conn(&mut ctx, svc, &remote_host, remote_port, &fw_name, &bytes)
+                        }
+                        other => {
+                            drop(other);
+                            upgrade::net_upgrade_udp(
+                                &mut ctx,
+                                local_addr.as_deref(),
+                                &remote_host,
+                                remote_port,
+                                &fw_name,
+                                &bytes,
+                            )
                         }
                     };
                     r
@@ -3520,6 +3681,7 @@ pub fn run() {
             file_write_text,
             env_setup::env_scan,
             logic::logic_devices,
+            net_interfaces,
             usb::cmsis_probe_detail,
             usb::usb_diag,
             usb::usb_diag_elevated,
@@ -3565,6 +3727,7 @@ pub fn run() {
             win_move,
             win_resize,
             flash_tools,
+            pyocd_targets,
             capture_list,
             capture_start,
             capture_stop,

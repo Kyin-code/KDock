@@ -125,6 +125,7 @@ const LINE_ENDINGS = [["none", "无"], ["cr", "CR"], ["lf", "LF"], ["crlf", "CRL
 
 // ── 传输模式：只有参数区随模式切换，收发消息框是同一个 ──
 let mode = "serial";
+let NET_IFACES = [];
 let currentBaud = 115200;
 let rxPaused = false;
 let loopTimer = null;
@@ -271,10 +272,12 @@ function buildEndpoint() {
     return { mode: "serial", port, config: serialConfig() };
   }
   if (mode === "tcp_client") {
-    return { mode: "tcp_client", host: $("tcp-client-host").value.trim(), port: num($("tcp-client-port").value) };
+    return { mode: "tcp_client", host: $("tcp-client-host").value.trim(), port: num($("tcp-client-port").value),
+      local_addr: $("tcp-client-iface") ? $("tcp-client-iface").value || null : null };
   }
   if (mode === "tcp_server") {
-    return { mode: "tcp_server", host: $("tcp-server-host").value.trim(), port: num($("tcp-server-port").value) };
+    const picked = $("tcp-server-iface") ? $("tcp-server-iface").value : "";
+    return { mode: "tcp_server", host: picked || $("tcp-server-host").value.trim(), port: num($("tcp-server-port").value) };
   }
   if (mode === "ssh") {
     const host = $("ssh-host").value.trim();
@@ -287,6 +290,7 @@ function buildEndpoint() {
   }
   return {
     mode: "udp",
+    local_addr: $("udp-iface") ? $("udp-iface").value || null : null,
     local_port: num($("udp-local-port").value),
     remote_host: $("udp-remote-host").value.trim(),
     remote_port: num($("udp-remote-port").value),
@@ -314,15 +318,18 @@ function applyEndpointToUi(ep) {
     } else if (t === "tcp_client") {
       $("tcp-client-host").value = ep.host || "";
       $("tcp-client-port").value = ep.port ?? "";
+      if ($("tcp-client-iface")) $("tcp-client-iface").value = ep.local_addr || "";
     } else if (t === "tcp_server") {
       $("tcp-server-host").value = ep.host || "0.0.0.0";
       $("tcp-server-port").value = ep.port ?? "";
+      if ($("tcp-server-iface")) $("tcp-server-iface").value = ep.host || "";
     } else if (t === "ssh") {
       $("ssh-host").value = ep.host || "";
       $("ssh-port").value = ep.port ?? 22;
       $("ssh-user").value = ep.user || "";
     } else {
       $("udp-local-port").value = ep.local_port ?? "";
+      if ($("udp-iface")) $("udp-iface").value = ep.local_addr || "";
       $("udp-remote-host").value = ep.remote_host || "";
       $("udp-remote-port").value = ep.remote_port ?? "";
     }
@@ -664,6 +671,38 @@ async function refreshPorts() {
   }
 }
 
+/** 多网卡选择：所有 .net-iface 下拉共用同一份实际 IPv4 列表。 */
+let netIfacesAt = 0;
+async function refreshNetIfaces(force) {
+  if (!force && Date.now() - netIfacesAt < 10000) return;   // 切页时顺手刷新，10 秒内不重复跑
+  netIfacesAt = Date.now();
+  try {
+    NET_IFACES = (await invoke("net_interfaces")) || [];
+  } catch (_) {
+    NET_IFACES = [];
+  }
+  const list = NET_IFACES.slice().sort((a, b) =>
+    String(a.InterfaceAlias || "").localeCompare(String(b.InterfaceAlias || ""))
+    || String(a.IPAddress || "").localeCompare(String(b.IPAddress || "")));
+  document.querySelectorAll("select.net-iface").forEach((sel) => {
+    const prev = sel.value;
+    sel.innerHTML = "";
+    const auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = en("自动 / 全部网卡");
+    sel.appendChild(auto);
+    for (const it of list) {
+      const ip = String(it.IPAddress || "");
+      if (!ip) continue;
+      const o = document.createElement("option");
+      o.value = ip;
+      o.textContent = `${it.InterfaceAlias || "网卡"} — ${ip}`;
+      sel.appendChild(o);
+    }
+    if (Array.from(sel.options).some((o) => o.value === prev)) sel.value = prev;
+  });
+}
+
 /** 顶栏那个连接状态：文字 / 颜色 / 悬停提示一起更新。
  *  窄窗口（≤720px）它只剩一个点，全靠在 title 上挂全文。 */
 function chipSet(text, ok) {
@@ -847,14 +886,20 @@ function switchPaneMode(pfx, m) {
 }
 /** 传输页 -> 这个页：切到该标签时同步一次，让用户看到当前连接参数 */
 function syncPaneCtl(pfx) {
-  const m = $("mode").value === "tcp_client" ? "tcp_client" : "serial";
+  const cur = $("mode").value;
+  const m = ["serial", "tcp_client", "tcp_server", "udp"].includes(cur) ? cur : "serial";
   switchPaneMode(pfx, m);
   if (m === "serial") {
     if ($("ports").value) $(`${pfx}-ports`).value = $("ports").value;
     $(`${pfx}-baud`).value = $("baud").value;
-  } else {
+  } else if (m === "tcp_client") {
     $(`${pfx}-host`).value = $("tcp-client-host").value;
     $(`${pfx}-port`).value = $("tcp-client-port").value;
+    if ($(`${pfx}-iface`) && $("tcp-client-iface")) $(`${pfx}-iface`).value = $("tcp-client-iface").value;
+  } else if (m === "udp") {
+    $(`${pfx}-host`).value = $("udp-remote-host").value;
+    $(`${pfx}-port`).value = $("udp-remote-port").value;
+    if ($(`${pfx}-iface`) && $("udp-iface")) $(`${pfx}-iface`).value = $("udp-iface").value;
   }
 }
 function wirePaneLink(pfx) {
@@ -867,9 +912,15 @@ function wirePaneLink(pfx) {
     if (m === "serial") {
       if ($(`${pfx}-ports`).value) $("ports").value = $(`${pfx}-ports`).value;
       if ($(`${pfx}-baud`).value) { $("baud").value = $(`${pfx}-baud`).value; currentBaud = Number($(`${pfx}-baud`).value); }
+    } else if (m === "udp") {
+      $("udp-local-port").value = "0";
+      $("udp-remote-host").value = $(`${pfx}-host`).value.trim();
+      $("udp-remote-port").value = $(`${pfx}-port`).value;
+      if ($(`${pfx}-iface`) && $("udp-iface")) $("udp-iface").value = $(`${pfx}-iface`).value;
     } else {
       $("tcp-client-host").value = $(`${pfx}-host`).value.trim();
       $("tcp-client-port").value = $(`${pfx}-port`).value;
+      if ($(`${pfx}-iface`) && $("tcp-client-iface")) $("tcp-client-iface").value = $(`${pfx}-iface`).value;
     }
     await doOpen();
   };
@@ -1126,6 +1177,7 @@ async function flPull() {
         id: flNetId, path, saveTo: save,
         tftpHost: flNetProto() === "tftp" ? h : null,
         tftpPort: flNetPort(),
+        tftpLocal: $("fl-iface") ? $("fl-iface").value || null : null,
       });
     } else {
       r = await invoke("device_pull", { path, saveTo: save });
@@ -1177,6 +1229,7 @@ async function flOpenNet() {
       user: $("fl-net-user").value.trim(),
       password: $("fl-net-pass").value,
       insecure: !!($("fl-net-insecure") && $("fl-net-insecure").checked),
+      localAddr: $("fl-iface") ? $("fl-iface").value || null : null,
     });
     flNetId = Number(r.id) || 0;
     flState(`${r.label}  ${r.note || ""}`, "ok");
@@ -1261,6 +1314,7 @@ async function flConnect() {
   } else {
     $("tcp-client-host").value = $("fl-host").value.trim();
     $("tcp-client-port").value = $("fl-port").value;
+    if ($("fl-iface") && $("tcp-client-iface")) $("tcp-client-iface").value = $("fl-iface").value;
   }
   await doOpen();
 }
@@ -1359,6 +1413,7 @@ $("fl-send").onclick = async () => {
         id: flNetId, path, data: flSendFile.bytes,
         tftpHost: flNetProto() === "tftp" ? h : null,
         tftpPort: flNetPort(),
+        tftpLocal: $("fl-iface") ? $("fl-iface").value || null : null,
       });
       crc = r.crc32;
     } else {
@@ -1433,6 +1488,8 @@ function showPane(tab) {
   const pg = $("tb-page");
   if (pg) { const p = TB_PAGES.find((x) => x[0] === tab); pg.textContent = p ? en(p[1]) : tab; }
   if (tab === "chart") { chDirty = true; chartResize(); }
+  // 网卡可能在软件运行期间插拔（USB 网卡 / 切换 Wi-Fi），进这几个页面时顺手刷新一次
+  if (["link", "flow", "upgrade", "flash", "files"].includes(tab)) refreshNetIfaces();
   if (tab === "flash") { flashSync(); flashBootstrap(); }
   if (tab === "capture" && capRefresh) capRefresh();
   if (tab === "agent") agOnShow();
@@ -1881,10 +1938,49 @@ const FL_TOOLS = {
       return a;
     },
   },
+  pyocd: {
+    exe: "pyocd",
+    mk: (o) => {
+      const isBin = /\.bin$/i.test(o.file || "");
+      const target = (o.jlinkDev || o.target || "").trim();
+      if (!target) throw new Error("pyOCD 需要目标芯片型号（fl-target）");
+      const a = ["flash", "-t", target];
+      if (o.probe) a.push("-u", o.probe);
+      if (isBin) a.push("-a", o.addr || "0x08000000");
+      a.push(o.file);
+      return a;
+    },
+  },
+  netudp: {
+    exe: "UDP 服务通道",
+    mk: () => [],
+  },
+  wchlink: {
+    exe: "wlink.exe",
+    mk: (o) => {
+      // wlink 的全局参数要放在子命令前面；--chip 可省略（自动识别）
+      const chip = /^CH[0-9A-Z]+$/i.test(o.rawTarget || "") ? ["--chip", String(o.rawTarget).toUpperCase()] : [];
+      if (o.action === "erase") return [...chip, "erase"];
+      if (o.action === "reset") return [...chip, "reset"];
+      if (o.action !== "flash") throw new Error("wlink 只支持烧录 / 擦除 / 复位");
+      const a = [...chip, "flash"];
+      if (/\.bin$/i.test(o.file)) a.push("-a", o.addr || "0x08000000");
+      a.push(o.file);
+      return a;
+    },
+  },
+  aurix: {
+    exe: "AURIXFlasher.exe",
+    mk: (o) => {
+      const a = ["-hex", o.file];
+      if (o.target) a.push("-device", o.target);
+      return a;
+    },
+  },
 };
 
 // ---- 烧录工具路径：换电脑时可以在界面上指定，存 localStorage ----
-const FL_CFG_KEYS = ["openocd", "openocd_scripts", "jlink", "stm32cli"];
+const FL_CFG_KEYS = ["openocd", "openocd_scripts", "jlink", "stm32cli", "pyocd", "wchlink", "aurix", "extra"];
 let FL_CFG = {};
 function flCfgLoad() {
   try { FL_CFG = JSON.parse(localStorage.getItem("kdock_flash_tools") || "{}") || {}; } catch (_) { FL_CFG = {}; }
@@ -1893,6 +1989,10 @@ function flCfgLoad() {
   $("fl-tool-scripts").value = FL_CFG.openocd_scripts;
   $("fl-tool-jlink").value = FL_CFG.jlink;
   $("fl-tool-stm32").value = FL_CFG.stm32cli;
+  $("fl-tool-pyocd").value = FL_CFG.pyocd;
+  $("fl-tool-wch").value = FL_CFG.wchlink;
+  $("fl-tool-aurix").value = FL_CFG.aurix;
+  $("fl-extra").value = FL_CFG.extra;
 }
 function flCfgSave() {
   FL_CFG = {
@@ -1900,20 +2000,28 @@ function flCfgSave() {
     openocd_scripts: $("fl-tool-scripts").value.trim(),
     jlink: $("fl-tool-jlink").value.trim(),
     stm32cli: $("fl-tool-stm32").value.trim(),
+    pyocd: $("fl-tool-pyocd").value.trim(),
+    wchlink: $("fl-tool-wch").value.trim(),
+    aurix: $("fl-tool-aurix").value.trim(),
+    extra: $("fl-extra").value.trim(),
   };
   localStorage.setItem("kdock_flash_tools", JSON.stringify(FL_CFG));
 }
 /** 检测/校验烧录工具：结果回填到输入框，并把"找没找到/版本/来源"写到状态行 */
 async function flDetectTools(clearFirst) {
   if (clearFirst) {
-    for (const id of ["fl-tool-openocd", "fl-tool-scripts", "fl-tool-jlink", "fl-tool-stm32"]) $(id).value = "";
+    for (const id of ["fl-tool-openocd", "fl-tool-scripts", "fl-tool-jlink", "fl-tool-stm32", "fl-tool-pyocd", "fl-tool-wch", "fl-tool-aurix", "fl-extra"]) $(id).value = "";
   }
   flCfgSave();
   $("fl-tool-state").textContent = en("检测中…");
   try {
+    flBootSet(30, "检测烧录器…");
     const r = await invoke("flash_tools", { overrides: FL_CFG });
     const seg = [];
-    const map = [["openocd", "fl-tool-openocd"], ["jlink", "fl-tool-jlink"], ["stm32cli", "fl-tool-stm32"]];
+    const map = [
+      ["openocd", "fl-tool-openocd"], ["jlink", "fl-tool-jlink"], ["stm32cli", "fl-tool-stm32"],
+      ["pyocd", "fl-tool-pyocd"], ["wchlink", "fl-tool-wch"], ["aurix", "fl-tool-aurix"],
+    ];
     for (const pair of map) {
       const key = pair[0], id = pair[1];
       const t = r[key] || {};
@@ -1924,13 +2032,17 @@ async function flDetectTools(clearFirst) {
     const sc = (r.openocd || {}).scripts || "";
     if (sc) $("fl-tool-scripts").value = sc;
     seg.push("scripts" + (sc ? " ✓" : " ✗"));
+    flBootSet(40, "枚举探针…");
     try {
-      const ports = await invoke("list_ports");
+      // 串口枚举和 pyOCD 探针查询互不依赖：并行跑，别让 Python 启动时间叠加
+      const [ports, cmsis] = await Promise.all([
+        invoke("list_ports").catch(() => []),
+        invoke("cmsis_probe_detail").catch(() => null),
+      ]);
       const das = (ports || []).find((p) => /Infineon DAS JDS/i.test(`${p.friendly || ""} ${p.description || ""}`));
       seg.push(das ? `DAS ✓ ${das.port_name}` : "DAS ✗");
       const jlink = (ports || []).find((p) => /J-?Link/i.test(`${p.friendly || ""} ${p.description || ""}`));
       seg.push(jlink ? `J-Link probe ✓ ${jlink.port_name}` : "J-Link probe ✗");
-      const cmsis = await invoke("cmsis_probe_detail");
       seg.push(cmsis ? `CMSIS-DAP ✓ ${cmsis}` : "CMSIS-DAP ✗");
     } catch (_) {
       seg.push("DAS ✗");
@@ -1950,10 +2062,16 @@ function flashOpts(action) {
     iface: $("fl-iface").value,
     speed: Number($("fl-speed").value) || 4000,
     target: $("fl-target").value.trim() || "stm32f4x",
+    rawTarget: $("fl-target").value.trim(),
     jlinkDev: ($("fl-target").value.trim() || "STM32F407VG").toUpperCase(),
     file: $("fl-path").value.trim(),
     addr: $("fl-addr").value.trim(),
     action,
+    netHost: $("fl-netudp-host") ? $("fl-netudp-host").value.trim() : "",
+    netPort: $("fl-netudp-port") ? Number($("fl-netudp-port").value) || 6666 : 6666,
+    netIface: $("fl-netudp-iface") ? $("fl-netudp-iface").value || null : null,
+    probe: $("fl-probe") ? $("fl-probe").value.trim() : "",
+    extra: $("fl-extra") ? $("fl-extra").value.trim() : "",
   };
 }
 
@@ -1967,6 +2085,7 @@ const flBadge = (x) => (x.src === "jlink" ? "J-Link"
 
 async function flLoadDevs(quiet) {
   $("fl-dev-src").textContent = en("读取中…");
+  flBootSet(50, "扫描 OpenOCD 器件库…");
   const out = [];
   const srcTxt = [];
   // 1) openocd scripts（芯片 / 开发板 / 适配器）
@@ -1992,6 +2111,7 @@ async function flLoadDevs(quiet) {
   } catch (e) {
     if (!quiet) pushSys(`[烧录] openocd 器件库读取失败: ${e}`);
   }
+  flBootSet(68, "枚举 J-Link / CMSIS-DAP…");
   // 2) J-Link 的 JLinkDevices.xml
   try {
     const r = await invoke("flash_jlink_devices", { path: null, exe: FL_CFG.jlink || null });
@@ -2008,6 +2128,7 @@ async function flLoadDevs(quiet) {
   }
   FL_DEVS = out;
   FL_DEVS_SRC = srcTxt.join("  |  ");
+  flBootSet(88, "整理器件列表…");
   $("fl-dev-src").textContent = FL_DEVS_SRC;
   $("fl-dev-src").title = FL_DEVS_SRC;        // 窄窗会截断成省略号，悬停能看全
   if (!quiet) pushSys(`[烧录] ${FL_DEVS_SRC}`);
@@ -2024,6 +2145,7 @@ function flRenderDevs() {
     box.innerHTML = '<p class="hint">' + en("还没有器件库，点右上角「↻ 刷新」。") + '</p>';
     return;
   }
+  const frag = document.createDocumentFragment();
   let shown = 0;
   for (const x of FL_DEVS) {
     if (src === "jlink" ? x.src !== "jlink" : (src !== "all" && !(x.src === "openocd" && x.group === src))) continue;
@@ -2037,8 +2159,9 @@ function flRenderDevs() {
     const g = document.createElement("span"); g.className = "badge" + (x.src === "jlink" ? " jlink" : " openocd"); g.textContent = flBadge(x);
     b.appendChild(n); b.appendChild(d); b.appendChild(g);
     b.onclick = () => flPickDev(x);
-    box.appendChild(b);
+    frag.appendChild(b);
   }
+  box.appendChild(frag);   // 一次性挂载，避免 600 次重排
   if (!shown) box.innerHTML = '<p class="hint">没匹配的型号（换个来源或关键字试试）。</p>';
 }
 
@@ -2080,8 +2203,10 @@ async function flPickDev(x) {
 function flashSync() {
   const o = flashOpts("flash");
   const t = FL_TOOLS[o.tool];
+  if ($("fl-netudp-row")) $("fl-netudp-row").hidden = o.tool !== "netudp";
   let preview = "";
-  if (o.tool === "jlink") preview = `${t.exe} -CommanderScript <临时脚本>\n脚本内容:\n${t.script(o)}`;
+  if (o.tool === "netudp") preview = `UDP ${o.netHost}:${o.netPort} · ${o.file || "<选择 .fw 固件>"}`;
+  else if (o.tool === "jlink") preview = `${t.exe} -CommanderScript <临时脚本>\n脚本内容:\n${t.script(o)}`;
   else preview = `${t.exe} ${t.mk(o).join(" ") }`;
   $("fl-cmd").textContent = preview;
 }
@@ -2099,9 +2224,47 @@ function flashLog(text) {
   el.scrollTop = el.scrollHeight;
 }
 
+function flBootShow(text) {
+  const box = $("fl-boot");
+  if (!box) return;
+  box.hidden = false;
+  $("fl-boot-text").textContent = en(text);
+  $("fl-boot-bar").style.width = "5%";
+  if ($("fl-boot-pct")) $("fl-boot-pct").textContent = "5%";
+}
+function flBootSet(pct, text) {
+  const p = Math.max(0, Math.min(100, Math.round(pct)));
+  if ($("fl-boot-bar")) $("fl-boot-bar").style.width = `${p}%`;
+  if ($("fl-boot-pct")) $("fl-boot-pct").textContent = `${p}%`;
+  if ($("fl-boot-text") && text) $("fl-boot-text").textContent = en(text);
+}
+function flBootHide() {
+  const box = $("fl-boot");
+  if (box) box.hidden = true;
+}
+const flYield = () => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+
 async function flashAction(action) {
   const o = flashOpts(action);
   const t = FL_TOOLS[o.tool];
+  if (o.tool === "netudp") {
+    if (action !== "flash") return toast("UDP 网络设备只支持烧录");
+    if (!o.file) return toast("先选 .fw 固件");
+    if (!/\.fw$/i.test(o.file)) return toast("UDP 网络设备烧录只接受 .fw 包");
+    if (!o.netHost) return toast("填目标 IP");
+    $("mode").value = "udp";
+    switchMode("udp");
+    $("udp-local-port").value = "0";
+    $("udp-remote-host").value = o.netHost;
+    $("udp-remote-port").value = String(o.netPort);
+    if ($("udp-iface") && o.netIface) $("udp-iface").value = o.netIface;
+    await doOpen();
+    const buf = await readFile(o.file);
+    const name = o.file.replace(/^.*[\\/]/, "");
+    pushSys(`[烧录] UDP 服务通道 ${o.netHost}:${o.netPort}，发送 ${name}`);
+    await invoke("start_upgrade", { source: "local", url: "", name, data: Array.from(buf) });
+    return;
+  }
   if ((action === "flash" || action === "verify") && !o.file) return toast("先选固件文件");
   flashLog(`\n===== ${action} =====\n`);
   $("fl-log").classList.remove("err");
@@ -2114,8 +2277,12 @@ async function flashAction(action) {
     // 工具路径：界面上填了就用界面上的（换电脑时用），否则用默认/自动检测结果
     const exe = o.tool === "openocd" ? (FL_CFG.openocd || t.exe)
       : o.tool === "jlink" ? (FL_CFG.jlink || t.exe)
+      : o.tool === "pyocd" ? (FL_CFG.pyocd || t.exe)
+      : o.tool === "wchlink" ? (FL_CFG.wchlink || t.exe)
+      : o.tool === "aurix" ? (FL_CFG.aurix || t.exe)
       : (FL_CFG.stm32cli || t.exe);
     if (o.tool === "openocd" && FL_CFG.openocd_scripts) args = ["-s", FL_CFG.openocd_scripts, ...args];
+    if (o.extra) args = [...args, ...o.extra.split(/\s+/).filter(Boolean)];
     pushSys(`[烧录] ${o.tool} = ${exe}`);
     await invoke("flash_run", { exe, args });
   } catch (e) {
@@ -2126,14 +2293,15 @@ async function flashAction(action) {
 
 function bindFlash() {
   const on = () => flashSync();
-  ["fl-tool", "fl-iface", "fl-speed", "fl-target", "fl-path", "fl-addr"].forEach((id) => {
+  ["fl-tool", "fl-iface", "fl-speed", "fl-target", "fl-probe", "fl-path", "fl-addr", "fl-extra"].forEach((id) => {
     const el = $(id);
     if (el) { el.onchange = on; el.oninput = on; }
   });
+  if ($("fl-tool")) $("fl-tool").onchange = () => { flashSync(); };
   $("fl-fw").onclick = async () => {
     try {
-      const p = await dlgOpen({ title: "选择固件（.hex / .elf / .bin）", multiple: false, directory: false,
-        filters: [{ name: "固件", extensions: ["hex", "elf", "bin"] }, { name: "所有文件", extensions: ["*"] }] });
+      const p = await dlgOpen({ title: "选择固件（.hex / .elf / .bin / .fw）", multiple: false, directory: false,
+        filters: [{ name: "固件", extensions: ["hex", "elf", "bin", "fw"] }, { name: "所有文件", extensions: ["*"] }] });
       if (!p) return;
       const path0 = typeof p === "string" ? p : p.path;
       $("fl-path").value = path0;
@@ -2161,7 +2329,11 @@ function bindFlash() {
   };
   $("fl-dev-filter").oninput = flRenderDevs;
   $("fl-src").onchange = flRenderDevs;
-  $("fl-dev-reload").onclick = () => flLoadDevs(false);
+  $("fl-dev-reload").onclick = async () => {
+    flBootShow("刷新器件库…");
+    try { await flLoadDevs(false); }
+    finally { flBootHide(); }
+  };
   $("fl-log-clear").onclick = () => { $("fl-log").innerHTML = ""; flLogNo = 0; };
   $("fl-dev-goto").onclick = () => { $("fl-dev-filter").focus(); $("fl-dev-filter").select(); };
   // 烧录工具路径：浏览 / 自动检测 / 清空
@@ -2182,7 +2354,10 @@ function bindFlash() {
   browseTool("fl-browse-scripts", "fl-tool-scripts", true);
   browseTool("fl-browse-jlink", "fl-tool-jlink", false);
   browseTool("fl-browse-stm32", "fl-tool-stm32", false);
-  for (const id of ["fl-tool-openocd", "fl-tool-scripts", "fl-tool-jlink", "fl-tool-stm32"]) $(id).oninput = () => flCfgSave();
+  browseTool("fl-browse-pyocd", "fl-tool-pyocd", false);
+  browseTool("fl-browse-wch", "fl-tool-wch", false);
+  browseTool("fl-browse-aurix", "fl-tool-aurix", false);
+  for (const id of ["fl-tool-openocd", "fl-tool-scripts", "fl-tool-jlink", "fl-tool-stm32", "fl-tool-pyocd", "fl-tool-wch", "fl-tool-aurix", "fl-extra"]) $(id).oninput = () => flCfgSave();
   $("fl-tool-detect").onclick = () => flDetectTools(false);
   $("fl-tool-clear").onclick = () => flDetectTools(true);
   flashSync();
@@ -2196,7 +2371,46 @@ let flashBootstrapped = false;
 function flashBootstrap() {
   if (flashBootstrapped) return;
   flashBootstrapped = true;
-  flDetectTools(false).then(() => flLoadDevs(true));
+  (async () => {
+    flBootShow("准备烧录工具…");
+    await flYield();
+    flBootSet(18, "检测烧录器…");
+    await flDetectTools(false);
+    await flYield();
+    flBootSet(48, "扫描 openocd 器件库…");
+    await flYield();
+    await flLoadDevs(true);
+    flLoadPyocdTargets();            // 后台补 pyOCD 芯片名，不拖慢进度条
+    flBootSet(92, "整理器件列表…");
+    await flYield();
+    flBootSet(100, "器件库就绪");
+    await new Promise((r) => setTimeout(r, 250));
+    flBootHide();
+  })().catch((e) => {
+    flBootSet(100, "加载失败: " + e);
+    pushSys("[烧录] 器件库加载失败: " + e);
+    setTimeout(flBootHide, 1200);
+  });
+}
+
+let flPyocdLoaded = false;
+/** pyOCD 的芯片名和 OpenOCD 的 cfg 名不是一套，挂成 datalist 供目标芯片输入联想。 */
+async function flLoadPyocdTargets() {
+  if (flPyocdLoaded) return;
+  flPyocdLoaded = true;
+  try {
+    const list = await invoke("pyocd_targets", { exe: FL_CFG.pyocd || null });
+    const dl = $("fl-pyocd-targets");
+    if (!dl || !Array.isArray(list) || !list.length) return;
+    const frag = document.createDocumentFragment();
+    for (const t of list) {
+      const o = document.createElement("option");
+      o.value = t.name;
+      o.label = t.vendor || "pyOCD";
+      frag.appendChild(o);
+    }
+    dl.appendChild(frag);
+  } catch (_) { flPyocdLoaded = false; }
 }
 
 // ---------------- 示波器：SCPI（Rigol DS1000Z 那套） ----------------
@@ -4138,6 +4352,16 @@ function sqRenderCfgInner() {
     if (n.conn === "tcp" || n.conn === "udp") {
       field("目标 IP", txt(n.host, "192.168.1.100", (v) => (n.host = v)));
       field("端口", num(n.port || 0, (v) => (n.port = v)));
+      const nsel = document.createElement("select");
+      const a0 = document.createElement("option"); a0.value = ""; a0.textContent = "自动 / 全部网卡"; nsel.appendChild(a0);
+      for (const it of NET_IFACES) {
+        const ip = String(it.IPAddress || "");
+        if (!ip) continue;
+        const o = document.createElement("option"); o.value = ip; o.textContent = `${it.InterfaceAlias || "网卡"} — ${ip}`; nsel.appendChild(o);
+      }
+      nsel.value = n.localAddr || "";
+      nsel.onchange = () => { n.localAddr = nsel.value; sqSave(); sqRefreshNode(n.id); };
+      field("网卡", nsel);
       if (n.conn === "udp") field("本地端口", num(n.localPort || 0, (v) => (n.localPort = v)));
     }
     if (n.conn === "ssh") {
@@ -4437,11 +4661,11 @@ async function sqResolveConn(n) {
     return r.id;
   }
   if (n.conn === "tcp" || n.conn === "udp") {
-    const key = n.conn + ":" + String(n.host || "") + ":" + String(n.port || 0);
+    const key = n.conn + ":" + String(n.localAddr || "") + ":" + String(n.host || "") + ":" + String(n.port || 0);
     if (sqRunConns[key]) return sqRunConns[key];
     const ep = n.conn === "udp"
-      ? { mode: "udp", local_port: Number(n.localPort) || 0, remote_host: n.host, remote_port: Number(n.port) }
-      : { mode: "tcp_client", host: n.host, port: Number(n.port) };
+      ? { mode: "udp", local_addr: n.localAddr || null, local_port: Number(n.localPort) || 0, remote_host: n.host, remote_port: Number(n.port) }
+      : { mode: "tcp_client", local_addr: n.localAddr || null, host: n.host, port: Number(n.port) };
     const r = await invoke("extra_open", { endpoint: ep });
     sqRunConns[key] = r.id;
     sqLog("临时 " + n.conn.toUpperCase() + " 已连接 #" + r.id + " " + r.label);
@@ -13027,6 +13251,12 @@ const EN = {
   "沁恒 RISC-V / Cortex-M 调试器（WCH-Link、WCH-LinkE）。用 WCH-LinkUtility 或 MounRiver 时会装。": "WCH RISC-V / Cortex-M debug probes (WCH-Link, WCH-LinkE). Installed together with WCH-LinkUtility or MounRiver.",
   "TI XDS110 / XDS100 驱动": "TI XDS110 / XDS100 driver",
   "TI MSP430 / C2000 / Sitara 的 XDS110、XDS100 调试探针驱动（CCS 里带，也可以单独装）。": "Driver for TI XDS110 / XDS100 probes (MSP430 / C2000 / Sitara). Ships with CCS or can be installed separately.",
+  "自动 / 全部网卡": "Auto / all interfaces",
+  "网卡": "Interface",
+  "探针 UID": "Probe UID",
+  "网络设备（UDP 服务，.fw）": "Network device (UDP service, .fw)",
+  "pyOCD（CMSIS-DAP / WCH-Link / ST-Link）": "pyOCD (CMSIS-DAP / WCH-Link / ST-Link)",
+  "Infineon AURIX Flasher": "Infineon AURIX Flasher",
   "Python 3": "Python 3",
   "脚本与工具依赖：pyOCD、esptool、pyserial、intelhex 这些都要它。装完记得勾 Add to PATH（winget 默认会加）。": "Needed for pyOCD, esptool, pyserial, intelhex and other scripting tools. Keep \"Add to PATH\" checked (winget does by default).",
   "Git（含 Git LFS 可用）": "Git (Git LFS available)",
@@ -14030,6 +14260,7 @@ async function main() {
   syncUpgCtl();
   switchUpgSource("local");
   await refreshPorts();
+  await refreshNetIfaces();
   await refreshStats();
   // 这两个都是纯展示用的轮询：窗口收进托盘/最小化时没人看，就别一直去问后端
   // （周期本身不动，免得切回来时数字更新变慢；恢复可见时立刻补一次）
