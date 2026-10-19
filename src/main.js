@@ -5550,6 +5550,8 @@ function usbRenderAll() {
 /* ────────── USBPcap 抓包：解析 pcap 里的 USB 传输 ────────── */
 let usbCapInit = false;
 let usbCapLoading = false;
+let usbCapRunning = false;
+let usbCapStopTimer = null;
 let usbCapDevices = [];
 const usbCapRecords = [];     // 原始记录（保存用）
 const USB_CAP_MAX = 50000;
@@ -5651,14 +5653,20 @@ function usbCapRow(r) {
   return row;
 }
 
-function usbCapAdd(r) {
-  usbCapRecords.push(r);
+function usbCapAddMany(list) {
+  if (!list || !list.length) return;
+  for (const r of list) usbCapRecords.push(r);
   if (usbCapRecords.length > USB_CAP_MAX) usbCapRecords.splice(0, usbCapRecords.length - USB_CAP_MAX);
-  if (usbCapLoading) return;   // 批量载入时不逐条画，结束一次性重绘
+  if (usbCapLoading) return;   // 打开历史 pcap 时批量载入，结束一次性重绘
   const box = $("usb-trace");
   if (!box) return;
-  if ($("usb-ctl-only") && $("usb-ctl-only").checked && r.xfer !== "ctl") return;
-  box.appendChild(usbCapRow(r));
+  const onlyCtl = $("usb-ctl-only") && $("usb-ctl-only").checked;
+  const frag = document.createDocumentFragment();
+  for (const r of list) {
+    if (onlyCtl && r.xfer !== "ctl") continue;
+    frag.appendChild(usbCapRow(r));
+  }
+  box.appendChild(frag);
   // DOM 只保留最近 2000 行（记录本身保留，用于保存 / 过滤重绘）
   while (box.children.length > 2000) box.firstChild.remove();
   if ($("usb-autoscroll") && $("usb-autoscroll").checked) box.scrollTop = box.scrollHeight;
@@ -5699,6 +5707,7 @@ async function usbCapInfo() {
 }
 
 async function usbCapOpen() {
+  if (usbCapRunning) return toast(T("请先停止抓包"));
   const p = await dlgOpen({
     title: T("打开 pcap"),
     multiple: false, directory: false,
@@ -5708,38 +5717,49 @@ async function usbCapOpen() {
   if (!path) return;
   usbCapClear();
   usbCapLoading = true;
+  usbCapState("off", T("正在载入抓包数据…"));
   try {
     const r = await invoke("usbpcap_open", { path });
     toast(T("已载入 {n} 条").replace("{n}", (r && r.records) || usbCapRecords.length));
-  } catch (e) { toast(String(e)); }
-  finally { usbCapLoading = false; }
+  } catch (e) {
+    usbCapLoading = false;
+    usbCapState("bad", String(e));
+    toast(String(e));
+  }
 }
 
 async function usbCapStart() {
   const dev = usbCapDevices[0];
   if (!dev) return toast(T("没有可抓包的根 Hub"));
+  if (usbCapRunning) return;
+  usbCapState("off", T("正在启动抓包…"));
   try {
     const target = $("usb-cap-target") && $("usb-cap-target").value;
     await invoke("usbpcap_start", { device: dev, devices: target || null });
-    usbCapState("on", T("抓包中") + " · " + dev + T("（停止后载入数据）"));
+    usbCapRunning = true;
+    usbCapState("on", T("抓包中 · 实时"));
     usbTraceMark(T("—— 开始抓包 ") + dev + " ——");
   } catch (e) {
+    usbCapRunning = false;
     usbCapState("bad", String(e && e.message ? e.message : e));
     toast(String(e && e.message ? e.message : e));
   }
 }
 
 async function usbCapStop() {
-  // 停止后要把整份 pcap 读进来（几万条）：先关掉逐条渲染，等 cap-end 一次性重绘
-  usbCapLoading = true;
-  usbCapState("off", T("正在载入抓包数据…"));
-  const guard = setTimeout(() => {
-    if (!usbCapLoading) return;
-    usbCapLoading = false;
-    usbCapState("bad", T("载入超时（看 %TEMP% 下 kdock-usbpcap-*.log）"));
-  }, 30000);
-  try { await invoke("usbpcap_stop"); } catch (_) {}
-  setTimeout(() => clearTimeout(guard), 2000);
+  if (!usbCapRunning) return;
+  usbCapRunning = false;
+  usbCapState("off", T("正在停止…"));
+  if (usbCapStopTimer) clearTimeout(usbCapStopTimer);
+  usbCapStopTimer = setTimeout(() => {
+    usbCapStopTimer = null;
+    usbCapState("bad", T("停止超时（看 %TEMP% 下 kdock-usbpcap-*.err）"));
+  }, 10000);
+  try { await invoke("usbpcap_stop"); } catch (e) {
+    if (usbCapStopTimer) clearTimeout(usbCapStopTimer);
+    usbCapStopTimer = null;
+    usbCapState("bad", String(e));
+  }
   usbTraceMark(T("—— 已停止抓包 ——"));
 }
 
@@ -5933,12 +5953,22 @@ function bindUsb() {
   monSetMode("local");
   listen("usb://cap", (ev) => {
     const list = (ev.payload && ev.payload.records) || [];
-    for (const r of list) usbCapAdd(r);
+    usbCapAddMany(list);
   });
-  listen("usb://cap-end", () => {
+  listen("usb://cap-end", (ev) => {
+    if (usbCapStopTimer) clearTimeout(usbCapStopTimer);
+    usbCapStopTimer = null;
+    const wasLoading = usbCapLoading;
     usbCapLoading = false;
-    usbCapRedraw();
-    usbCapState("off", T("已停止 · 已载入 {n} 条").replace("{n}", usbCapRecords.length));
+    usbCapRunning = false;
+    if (wasLoading) usbCapRedraw();
+    const err = ev.payload && ev.payload.error;
+    if (err) {
+      usbCapState("bad", String(err));
+      toast(String(err));
+    } else {
+      usbCapState("off", (wasLoading ? T("已载入 {n} 条") : T("已停止 · {n} 条")).replace("{n}", usbCapRecords.length));
+    }
   });
   listen("net://cap", (ev) => {
     const r = ev.payload && ev.payload.record;
@@ -12769,8 +12799,12 @@ const EN = {
   "打开 pcap": "Open pcap",
   "打开 pcap…": "Open pcap…",
   "已载入 {n} 条": "Loaded {n} records",
-  "（停止后载入数据）": " (loads after stop)",
-  "已停止 · 已载入 {n} 条": "Stopped · loaded {n} records",
+  "抓包中 · 实时": "Capturing · live",
+  "正在启动抓包…": "Starting capture…",
+  "正在停止…": "Stopping…",
+  "请先停止抓包": "Stop the current capture first",
+  "停止超时（看 %TEMP% 下 kdock-usbpcap-*.err）": "Stop timed out (check kdock-usbpcap-*.err in %TEMP%)",
+  "已停止 · {n} 条": "Stopped · {n} records",
   "监听": "Monitor",
   "tshark 列的网卡": "Interfaces listed by tshark",
   "tshark（Wireshark 命令行 + Npcap）": "tshark (Wireshark CLI + Npcap)",
