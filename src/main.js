@@ -1410,6 +1410,7 @@ function showPane(tab) {
   if (work === "agent") agUnreadClear();      // 切过来就算看过了，清掉未读角标
   document.querySelectorAll("[data-param]").forEach((p) => { p.hidden = p.dataset.param !== tab; });
   document.documentElement.dataset.tab = tab;      // 窄窗样式要按"当前这一页"决定收不收那条参数带（如计算器）
+  document.documentElement.classList.toggle("kb-focus", tab === "kb" && kbFocus);
   syncParamStrip();
   if (tab === "upgrade") syncUpgCtl();
   if (tab === "files") {
@@ -1466,6 +1467,8 @@ function kbVisible() {
   if (!pane || pane.hidden) return false;
   const modal = document.getElementById("settings-modal");
   if (modal && !modal.hidden) return false;
+  const help = document.getElementById("help-modal");
+  if (help && !help.hidden) return false;
   const agdlg = document.getElementById("ag-dlg");
   if (agdlg && !agdlg.hidden) return false;
   return true;
@@ -1519,12 +1522,9 @@ function kbEmptyText() {
     el1.innerHTML = "";
     const a = document.createElement("div");
     a.textContent = mgmt
-      ? en("还没打开：上面地址栏点「打开」，或者直接点这里")
-      : en("还没配「知识库管理页面」地址 —— 点这里去设置里填");
-    const b = document.createElement("div");
-    b.className = "lb";
-    b.textContent = mgmt ? mgmt : en("地址只存在本机，不会上传");
-    el1.append(a, b);
+      ? en("打开管理页面")
+      : en("在设置 → 知识库里配置管理页面");
+    el1.append(a);
     el1.hidden = !!mgmt && !!kbLastPlace.mgmt;
   }
   const el2 = $("kb-chat-empty");
@@ -1532,12 +1532,9 @@ function kbEmptyText() {
     el2.innerHTML = "";
     const a = document.createElement("div");
     a.textContent = chat
-      ? en("还没打开：上面点「打开」，或者直接点这里")
-      : en("还没配「知识库对话页面」地址 —— 点这里去设置里填");
-    const b = document.createElement("div");
-    b.className = "lb";
-    b.textContent = chat ? chat : en("地址只存在本机，不会上传");
-    el2.append(a, b);
+      ? en("打开对话页面")
+      : en("在设置 → 知识库里配置对话页面");
+    el2.append(a);
     el2.hidden = !!chat && !!kbLastPlace.chat;
   }
 }
@@ -1633,6 +1630,7 @@ function bindKb() {
     };
   }
   $("kb-chat-open").onclick = () => openChat().catch((e) => toast(String(e)));
+  if ($("kb-chat-focus")) $("kb-chat-focus").onclick = () => kbSetFocus(!kbFocus);
   $("kb-chat-reload").onclick = () => {
     if (!kbLastPlace.chat) { toast(en("还没打开过")); return; }
     invoke("kb_reload", { kind: "chat" }).catch((e) => toast(String(e)));
@@ -1650,7 +1648,7 @@ function bindKb() {
       $("set-kb-chat").value = c;
       urlIn.value = m;
       kbLastPlace = {};
-      if ($("set-kb-state")) $("set-kb-state").textContent = en("已保存（只在本机）");
+      if ($("set-kb-state")) $("set-kb-state").textContent = en("已保存");
       toast(en("知识库地址已保存"));
     };
   }
@@ -1671,8 +1669,24 @@ function bindKb() {
       if (el) ro.observe(el);
     }
   }
+  kbSetFocus(kbFocus);
   // 兜底：有些变化（拖左栏/右栏的把手、改缩放）不会触发上面两个
   setInterval(() => { if (kbVisible()) kbSync(false).catch(() => {}); }, 700);
+}
+
+let kbFocus = localStorage.getItem("kdock_kb_focus") !== "0";
+function kbSetFocus(on) {
+  kbFocus = !!on;
+  localStorage.setItem("kdock_kb_focus", kbFocus ? "1" : "0");
+  document.documentElement.classList.toggle("kb-focus", kbFocus && helpCurrentPage() === "kb");
+  const b = $("kb-chat-focus");
+  if (b) {
+    b.textContent = en(kbFocus ? "管理" : "全屏");
+    b.title = en(kbFocus ? "显示知识库管理页面" : "全屏显示知识库对话页面");
+  }
+  kbLastPlace = {};
+  syncParamStrip();
+  kbSyncSoon();
 }
 
 function bindTabs() {
@@ -6065,6 +6079,422 @@ function langWalk() {
   }
 }
 
+// ---------------- 上下文帮助（F1 / 标题栏 / 设置 / 各分区的 ?） ----------------
+const HELP_PAGE_LABEL = {
+  link: "传输", cmds: "命令表", agent: "Agent", kb: "知识库",
+  upgrade: "固件升级", flash: "烧录", files: "文件管理", adb: "安卓 ADB",
+  env: "环境配置", chart: "实时图表", seq: "中控编排", scope: "示波器",
+  capture: "屏幕共享", logic: "逻辑分析仪", batch: "批量文本",
+  calc: "计算器", datacalc: "数据计算", debug: "调试",
+};
+const HELP_PAGE_ROOT = {
+  link: "help-transfer-start", cmds: "help-cmds", agent: "help-agent-chat",
+  kb: "help-kb-chat", upgrade: "help-upgrade-start", flash: "help-flash-programmer",
+  files: "help-files-start", adb: "help-adb-device", env: "help-env-first",
+  chart: "help-chart-main", seq: "help-seq-links", scope: "help-scope-connect",
+  capture: "help-capture-source", logic: "help-logic-source",
+  batch: "help-batch-main", calc: "help-calc-history", datacalc: "help-datacalc-main",
+  debug: "help-debug-gdb",
+};
+
+const HELP_GROUPS = [
+  { title: "概览", items: [
+    { id: "help-work", title: "Work with KDock",
+      zh: "把目标说出来，KDock 会和你一起推进。页面、设备与会话都可以直接开始。",
+      en: "Tell KDock what you want to get done. Pages, devices and sessions are ready when you are." },
+    { id: "help-shortcuts", title: "快捷键",
+      zh: "F1 打开当前页帮助；Ctrl+, 打开设置；Ctrl+L 清空传输日志。",
+      en: "F1 opens help for the current page; Ctrl+, opens Settings; Ctrl+L clears the transfer log." },
+  ]},
+  { title: "传输", items: [
+    { id: "help-transfer-start", title: "从这里开始",
+      zh: "选择串口、TCP、UDP 或 SSH，连接后即可在下方收发。",
+      en: "Pick serial, TCP, UDP or SSH, connect, then send and receive below." },
+    { id: "help-transfer-stats", title: "统计",
+      zh: "显示本次连接的收发字符数、字节数和日志行数。",
+      en: "Characters, bytes and log lines for the current link." },
+    { id: "help-transfer-quick", title: "快捷发送",
+      zh: "常用指令点一行即可发送；「编辑」里可以增删改。",
+      en: "Click a saved command to send it; add, edit or remove rows via Edit." },
+    { id: "help-cmds", title: "命令表",
+      zh: "搜索并发送常用命令，点击一行直接执行。",
+      en: "Search and send common commands; click a row to run it." },
+  ]},
+  { title: "Agent", items: [
+    { id: "help-agent-chat", title: "对话",
+      zh: "把目标交给 Agent；它会读取工作区、调用工具并持续汇报结果。",
+      en: "Give the Agent a goal; it reads the workspace, uses tools and reports back as it goes." },
+    { id: "help-agent-info", title: "Agent 信息",
+      zh: "当前模型、上下文、费用、输出速度和缓存命中。",
+      en: "Current model, context, cost, output speed and cache hits." },
+    { id: "help-agent-context", title: "上下文成分",
+      zh: "当前上下文里系统提示、历史、技能和工具各占多少 token。",
+      en: "How much of the context is system prompt, history, skills and tools." },
+    { id: "help-agent-skills", title: "技能",
+      zh: "按需加载的流程说明；开关决定哪些内容常驻上下文。",
+      en: "On-demand procedures; switches decide what stays in context." },
+    { id: "help-agent-mcp", title: "MCP 服务",
+      zh: "外部工具服务，启用后会以工具形式提供给 Agent。",
+      en: "External tool servers exposed to the Agent when enabled." },
+    { id: "help-agent-links", title: "页面里的链接",
+      zh: "列出当前网页中的链接，方便继续打开或交给 Agent 读取。",
+      en: "Links found on the current page, ready to open or hand to the Agent." },
+  ]},
+  { title: "知识库", items: [
+    { id: "help-kb-chat", title: "对话",
+      zh: "知识库对话页；点右上角「管理」切换到数据管理页面。",
+      en: "Knowledge-base chat; use Manage at the top right to switch to the admin page." },
+    { id: "help-kb-admin", title: "管理",
+      zh: "知识库后台或数据集管理页；在设置 → 知识库里配置地址。",
+      en: "Knowledge-base admin or dataset page; set its URL in Settings → Knowledge base." },
+  ]},
+  { title: "固件升级", items: [
+    { id: "help-upgrade-start", title: "从这里开始",
+      zh: "选择串口或 TCP 连接到待升级设备。",
+      en: "Connect to the target over serial or TCP." },
+    { id: "help-upgrade-firmware", title: "固件",
+      zh: "选择本地 .fw 包，或从服务器读取可用版本后升级。",
+      en: "Choose a local .fw package or read versions from a server, then upgrade." },
+  ]},
+  { title: "烧录", items: [
+    { id: "help-flash-tools", title: "烧录工具路径",
+      zh: "自动检测不到时，在这里指定 OpenOCD、J-Link 或厂商 CLI。",
+      en: "Point to OpenOCD, J-Link or a vendor CLI when auto-detection misses it." },
+    { id: "help-flash-programmer", title: "烧录器",
+      zh: "选择工具、适配器、接口、速度和目标芯片。",
+      en: "Pick the tool, adapter, interface, speed and target chip." },
+    { id: "help-flash-firmware", title: "固件",
+      zh: ".hex / .elf 使用文件内地址；.bin 使用下方起始地址；.fw 在固件升级页使用。",
+      en: ".hex / .elf use addresses from the file; .bin uses the start address below; .fw belongs to Firmware upgrade." },
+    { id: "help-flash-preview", title: "命令预览",
+      zh: "执行前显示将要运行的烧录命令。",
+      en: "Shows the command that will run before flashing." },
+  ]},
+  { title: "文件管理", items: [
+    { id: "help-files-start", title: "从这里开始",
+      zh: "按设备支持的方式选择串口、TCP、FTP 或 TFTP 并连接。",
+      en: "Choose serial, TCP, FTP or TFTP as the target supports, then connect." },
+    { id: "help-files-dir", title: "目录",
+      zh: "浏览远端目录，新建或删除条目。",
+      en: "Browse the remote directory and create or remove entries." },
+    { id: "help-files-pull", title: "取回本机",
+      zh: "把选中的远端文件或目录下载到本机。",
+      en: "Download the selected remote file or folder." },
+    { id: "help-files-push", title: "发到设备",
+      zh: "把本机文件发送到当前远端路径。",
+      en: "Send a local file to the current remote path." },
+    { id: "help-files-tftp", title: "内置 TFTP 服务端",
+      zh: "让局域网设备从这台电脑取文件，也可以允许写入。",
+      en: "Serve files from this PC to LAN devices; writes can be enabled." },
+  ]},
+  { title: "安卓 ADB", items: [
+    { id: "help-adb-device", title: "设备",
+      zh: "当前通过 adb 连接的设备；插线或开无线调试后点「刷新」。",
+      en: "The device currently connected over adb; refresh after plugging in or enabling wireless debugging." },
+    { id: "help-adb-wireless", title: "无线调试",
+      zh: "用配对码完成一次配对，再连接到设备的无线调试端口。",
+      en: "Pair once with the code, then connect to the device's wireless-debugging port." },
+    { id: "help-adb-mirror", title: "投屏",
+      zh: "查看设备画面；可开启反向控制，或改用 scrcpy 获得更流畅的画面。",
+      en: "View the device screen, optionally with control, or use scrcpy for smoother video." },
+    { id: "help-adb-transfer", title: "传文件",
+      zh: "在电脑与设备之间推送、取回文件，也可以直接截图存盘。",
+      en: "Push and pull files between PC and device, or save a screenshot." },
+    { id: "help-adb-apk", title: "APK",
+      zh: "安装、覆盖安装或卸载应用。",
+      en: "Install, overwrite or uninstall apps." },
+    { id: "help-adb-commands", title: "常用命令",
+      zh: "常用 adb shell 指令，点一下即可执行。",
+      en: "Common adb shell commands, ready to run." },
+  ]},
+  { title: "环境配置", items: [
+    { id: "help-env-first", title: "首次运行检查",
+      zh: "检测串口驱动、调试器、工具链等组件，缺失的可以在这里安装。",
+      en: "Checks serial drivers, debuggers and toolchains; missing pieces can be installed here." },
+    { id: "help-env-location", title: "安装位置",
+      zh: "统一存放便携工具与工具链；留空时使用默认目录。",
+      en: "Shared folder for portable tools and toolchains; blank uses the default." },
+    { id: "help-env-progress", title: "安装进度",
+      zh: "显示当前组件的安装输出。",
+      en: "Installer output for the current component." },
+  ]},
+  { title: "其它页面", items: [
+    { id: "help-chart-main", title: "图表",
+      zh: "把串口数据画成实时曲线；在下方选择通道。",
+      en: "Plot serial data live; choose channels below." },
+    { id: "help-chart-channels", title: "通道",
+      zh: "选择要显示的数据列和颜色。",
+      en: "Choose the data columns and colors to show." },
+    { id: "help-seq-links", title: "中控连接",
+      zh: "给编排步骤准备主连接、中控连接或临时连接。",
+      en: "Prepare main, flow or ad-hoc links for steps." },
+    { id: "help-seq-node", title: "选中节点",
+      zh: "编辑当前节点的连接、内容、延时与等待条件。",
+      en: "Edit the selected node's link, payload, delay and wait condition." },
+    { id: "help-seq-file", title: "编排文件",
+      zh: "导入或导出编排 JSON，也可以清空画布。",
+      en: "Import or export flow JSON, or clear the canvas." },
+    { id: "help-scope-connect", title: "示波器连接",
+      zh: "填写示波器地址与 SCPI 端口后连接。",
+      en: "Enter the scope address and SCPI port, then connect." },
+    { id: "help-scope-status", title: "机器状态",
+      zh: "显示示波器型号、固件和当前状态。",
+      en: "Scope model, firmware and current state." },
+    { id: "help-scope-channels", title: "通道",
+      zh: "开关通道并设置耦合、档位与偏移。",
+      en: "Enable channels and set coupling, scale and offset." },
+    { id: "help-scope-measure", title: "自动测量",
+      zh: "读取当前通道的幅值、频率、周期等测量值。",
+      en: "Read amplitude, frequency, period and other measurements." },
+    { id: "help-scope-timebase", title: "时基 / 触发",
+      zh: "设置时间范围、触发源、电平与模式。",
+      en: "Set the timebase, trigger source, level and mode." },
+    { id: "help-scope-scpi", title: "SCPI",
+      zh: "直接发送任意 SCPI 指令。",
+      en: "Send any SCPI command directly." },
+    { id: "help-capture-source", title: "来源",
+      zh: "选择本机桌面、VNC、RTSP、RTMP 或 H.264 输入。",
+      en: "Choose the local desktop, VNC, RTSP, RTMP or H.264 input." },
+    { id: "help-capture-view", title: "画面",
+      zh: "设置帧率、画质、缩放与解码尺寸。",
+      en: "Set frame rate, quality, scale and decode size." },
+    { id: "help-logic-source", title: "数据来源",
+      zh: "读取示例、VCD、CSV 或原始二进制采样。",
+      en: "Load the sample, VCD, CSV or raw binary capture." },
+    { id: "help-logic-decoder", title: "解码器",
+      zh: "给选中的通道添加协议解码。",
+      en: "Add protocol decoders to selected channels." },
+    { id: "help-logic-measure", title: "测量",
+      zh: "查看当前视图窗口与选中通道的频率、占空比和脉宽。",
+      en: "Frequency, duty cycle and pulse widths for the current view and channel." },
+    { id: "help-batch-main", title: "批量文本",
+      zh: "逐行处理文本，并可把结果逐行发到串口。",
+      en: "Process text line by line and send the result over serial." },
+    { id: "help-calc-history", title: "历史记录",
+      zh: "保存计算历史，可标记、复用或清空。",
+      en: "Keep calculation history for reuse, marking or clearing." },
+    { id: "help-calc-bases", title: "各进制一览",
+      zh: "同时查看当前值的十进制、十六进制、八进制和二进制。",
+      en: "See the current value in decimal, hex, octal and binary." },
+    { id: "help-datacalc-main", title: "数据计算",
+      zh: "校验、浮点、进制字节序以及 AES / RSA 工具。",
+      en: "Checksums, floating point, byte order and AES / RSA tools." },
+    { id: "help-datacalc-help", title: "说明",
+      zh: "各输入框的格式与结果含义，都在对应分组里。",
+      en: "Input formats and result meanings follow the matching group above." },
+    { id: "help-debug-gdb", title: "GDB",
+      zh: "连接 GDB，并在这里查看与发送调试命令。",
+      en: "Connect GDB and send debug commands here." },
+    { id: "help-debug-server", title: "GDB Server",
+      zh: "启动 openocd、J-Link GDB Server 或 pyocd，给 GDB 提供调试端口。",
+      en: "Run openocd, J-Link GDB Server or pyocd to provide GDB's debug port." },
+    { id: "help-debug-firmware", title: "固件 / 运行控制",
+      zh: "载入 ELF，并继续、暂停、单步、复位目标。",
+      en: "Load an ELF and continue, pause, step or reset the target." },
+  ]},
+];
+
+const HELP_HEADING_MAP = {
+  link: { "从这里开始": "help-transfer-start", "统计": "help-transfer-stats", "快捷发送": "help-transfer-quick" },
+  agent: { "Agent 信息": "help-agent-info", "上下文成分": "help-agent-context", "技能": "help-agent-skills", "MCP 服务": "help-agent-mcp", "页面里的链接": "help-agent-links" },
+  kb: { "对话页面": "help-kb-chat", "管理页面": "help-kb-admin" },
+  upgrade: { "从这里开始": "help-upgrade-start", "固件": "help-upgrade-firmware" },
+  flash: { "烧录器": "help-flash-programmer", "固件": "help-flash-firmware", "命令预览": "help-flash-preview" },
+  files: { "从这里开始": "help-files-start", "目录": "help-files-dir", "取回本机": "help-files-pull", "发到设备": "help-files-push" },
+  adb: { "设备": "help-adb-device", "无线调试": "help-adb-wireless", "投屏": "help-adb-mirror", "传文件": "help-adb-transfer", "APK": "help-adb-apk", "常用命令": "help-adb-commands" },
+  env: { "首次运行检查": "help-env-first", "安装位置": "help-env-location", "安装进度": "help-env-progress" },
+  chart: { "图表": "help-chart-main", "通道": "help-chart-channels" },
+  seq: { "中控连接": "help-seq-links", "选中节点": "help-seq-node", "编排文件": "help-seq-file" },
+  scope: { "连接": "help-scope-connect", "机器状态": "help-scope-status", "通道": "help-scope-channels", "自动测量": "help-scope-measure", "时基 / 触发": "help-scope-timebase", "SCPI": "help-scope-scpi" },
+  capture: { "来源": "help-capture-source", "画面": "help-capture-view" },
+  logic: { "数据来源": "help-logic-source", "解码器": "help-logic-decoder", "测量": "help-logic-measure" },
+  calc: { "历史记录": "help-calc-history", "各进制一览": "help-calc-bases" },
+  datacalc: { "串口常用换算": "help-datacalc-main", "说明": "help-datacalc-help" },
+  debug: { "GDB Server": "help-debug-server", "固件 / 运行控制": "help-debug-firmware", "GDB": "help-debug-gdb" },
+};
+
+const HELP_SUMMARY_MAP = {
+  flash: { "烧录工具路径": "help-flash-tools" },
+  files: { "内置 TFTP 服务端": "help-files-tftp" },
+};
+
+const helpItemById = new Map(HELP_GROUPS.flatMap((g) => g.items.map((it) => [it.id, { ...it, group: g.title }])));
+let helpCurrent = "help-work";
+
+function helpLang() { return LANG === "en" ? "en" : "zh"; }
+function helpTitle(it) { return helpLang() === "en" ? (it.enTitle || en(it.title)) : it.title; }
+function helpText(it) { return helpLang() === "en" ? it.en : it.zh; }
+
+function helpPageOf(el) {
+  const pane = el.closest("[data-param]");
+  if (pane) return pane.dataset.param;
+  const work = el.closest("[data-work]");
+  return work ? work.dataset.work : "";
+}
+
+function helpHeadingText(el) {
+  const c = el.cloneNode(true);
+  c.querySelectorAll(".help-f1, .btn, .grow, label.chk, input, select").forEach((n) => n.remove());
+  return (c.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function helpAnchorFor(page, label, map) {
+  const m = map[page] || {};
+  for (const [key, anchor] of Object.entries(m)) {
+    if (label === key || label.startsWith(key)) return anchor;
+  }
+  return "";
+}
+
+function decorateHelpHeadings() {
+  for (const el of document.querySelectorAll(".cardtitle, .adv > summary")) {
+    if (el.querySelector(":scope > .help-f1")) continue;
+    const page = helpPageOf(el);
+    const label = helpHeadingText(el);
+    const anchor = el.matches("summary")
+      ? helpAnchorFor(page, label, HELP_SUMMARY_MAP)
+      : helpAnchorFor(page, label, HELP_HEADING_MAP);
+    if (!anchor) continue;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "help-f1";
+    b.dataset.help = anchor;
+    b.textContent = "?";
+    b.title = en("帮助（F1）");
+    b.setAttribute("aria-label", en("帮助（F1）"));
+    b.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openHelp(anchor);
+    });
+    el.appendChild(b);
+  }
+}
+
+function helpCurrentPage() {
+  return document.documentElement.dataset.tab || "link";
+}
+
+function helpSyncPageLabel() {
+  const page = helpCurrentPage();
+  const el = $("set-help-current");
+  if (el) el.textContent = en(HELP_PAGE_LABEL[page] || "");
+}
+
+function buildHelpNav() {
+  const nav = $("help-nav");
+  if (!nav) return;
+  nav.innerHTML = "";
+  for (const g of HELP_GROUPS) {
+    const h = document.createElement("div");
+    h.className = "helpnav-page";
+    h.textContent = en(g.title);
+    nav.appendChild(h);
+    for (const it of g.items) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.dataset.help = it.id;
+      b.textContent = helpTitle(it);
+      b.onclick = () => showHelpItem(it.id);
+      nav.appendChild(b);
+    }
+  }
+}
+
+function buildHelpIndex() {
+  const box = $("set-help-list");
+  if (!box) return;
+  box.innerHTML = "";
+  for (const g of HELP_GROUPS) {
+    const h = document.createElement("div");
+    h.className = "helpindex-page";
+    h.textContent = en(g.title);
+    box.appendChild(h);
+    for (const it of g.items) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.dataset.help = it.id;
+      const t = document.createElement("span");
+      t.textContent = helpTitle(it);
+      const d = document.createElement("small");
+      d.textContent = helpText(it);
+      b.append(t, d);
+      b.onclick = () => openHelp(it.id);
+      box.appendChild(b);
+    }
+  }
+  helpSyncPageLabel();
+}
+
+function showHelpItem(id) {
+  const it = helpItemById.get(id) || helpItemById.get("help-work");
+  if (!it) return;
+  helpCurrent = it.id;
+  document.querySelectorAll("#help-nav button").forEach((b) => b.classList.toggle("active", b.dataset.help === it.id));
+  const active = document.querySelector(`#help-nav button[data-help="${it.id}"]`);
+  if (active && active.scrollIntoView) active.scrollIntoView({ block: "nearest" });
+  const crumb = $("help-crumb");
+  if (crumb) crumb.textContent = `${en(it.group)} / ${helpTitle(it)}`;
+  const label = $("help-page-label");
+  if (label) label.textContent = en(it.group);
+  const body = $("help-body");
+  if (!body) return;
+  body.innerHTML = "";
+  const h = document.createElement("h2");
+  h.textContent = helpTitle(it);
+  const p = document.createElement("p");
+  p.textContent = helpText(it);
+  body.append(h, p);
+  const content = body.closest(".helpcontent");
+  if (content) content.scrollTop = 0;
+}
+
+function openHelp(anchor) {
+  const id = anchor || HELP_PAGE_ROOT[helpCurrentPage()] || "help-work";
+  const m = $("help-modal");
+  if (!m) return;
+  const sm = $("settings-modal");
+  if (sm && !sm.hidden) closeSettings();
+  m.hidden = false;
+  buildHelpNav();
+  showHelpItem(id);
+  kbSyncSoon();
+}
+
+function closeHelp() {
+  const m = $("help-modal");
+  if (m) m.hidden = true;
+  kbSyncSoon();
+}
+
+function bindHelp() {
+  const m = $("help-modal");
+  if (!m) return;
+  const close = $("help-close");
+  if (close) close.onclick = closeHelp;
+  m.addEventListener("click", (e) => { if (e.target === m) closeHelp(); });
+  if ($("tb-help")) $("tb-help").onclick = () => openHelp(HELP_PAGE_ROOT[helpCurrentPage()]);
+  if ($("set-help-open")) $("set-help-open").onclick = () => openHelp(HELP_PAGE_ROOT[helpCurrentPage()]);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "F1") {
+      e.preventDefault();
+      openHelp(HELP_PAGE_ROOT[helpCurrentPage()]);
+    } else if (e.key === "Escape" && !m.hidden) {
+      e.preventDefault();
+      closeHelp();
+    }
+  });
+  decorateHelpHeadings();
+  buildHelpIndex();
+  window.kdockOnLang(() => {
+    buildHelpIndex();
+    if (!m.hidden) {
+      buildHelpNav();
+      showHelpItem(helpCurrent);
+    }
+  });
+}
+
 // ---------------- 设置弹窗（供应商/模型、主题配色、通用、关于） ----------------
 function openSettings(section) {
   const m = document.getElementById("settings-modal");
@@ -6078,6 +6508,7 @@ function openSettings(section) {
   // 打开模型页先落在「使用」面板；实时负载**不主动拉**（等用户展开免费模型那块再拉）
   if (section === "model") agProvTab("use");
   if (section === "about") agLoadTools();
+  if (section === "help") buildHelpIndex();
   kbSyncSoon();      // 知识库页那块是原生子视图，会盖住弹窗 —— 开设置就先收起来
 }
 
@@ -6102,6 +6533,7 @@ function bindSettings() {
       // 才切回来的，只重画旧快照就会看不见新技能（后端的目录指纹缓存很便宜）
       if (b.dataset.set === "skills") { agLoadSkills(); }
       if (b.dataset.set === "tools") { agToolRows = []; renderToolsPage(); }
+      if (b.dataset.set === "help") buildHelpIndex();
       if (b.dataset.set === "about" || b.dataset.set === "general") agRenderAbout();
       if (LANG === "en") setTimeout(() => langWalk(), 0);   // 这一页里运行时拼出来的文字
     };
@@ -6260,6 +6692,273 @@ const AG_PRESETS = [
   { id: "gateway", name: "自定义 / 自建网关", endpoint: "", model: "", ctx: 128000,
     note: "OneAPI / NewAPI / vLLM / 企业内网网关：填它的 base_url（看到 /v1 为止）。Claude、Gemini 官方不是这个格式，也得走这类网关。" },
 ];
+
+/* ── models.dev 精简目录 ─────────────────────────────────────────────────────
+   这里不复制 opencode 的运行时模型实现，只读同一份公开目录：provider 的 api / npm
+   与模型的 context、output、tool_call、cost。KDock 目前只直连 OpenAI 兼容和
+   Anthropic Messages 两类协议，所以目录里只保留后端真正能调用的厂商。
+   原始 api.json 约 5.7MB；压缩成“文本 + 工具调用”模型后缓存到 localStorage。 */
+const MD_URL = "https://models.dev/api.json";
+const MD_CACHE_KEY = "kdock_modelsdev_catalog_v2";
+const MD_TTL = 24 * 60 * 60 * 1000;
+const MD_POPULAR = [
+  "deepseek", "anthropic", "openai", "moonshotai", "moonshotai-cn",
+  "zhipuai", "zai", "alibaba", "alibaba-cn", "minimax", "minimax-cn",
+  "xai", "groq", "openrouter", "siliconflow", "siliconflow-cn",
+  "volcengine", "mistral", "cerebras", "ollama-cloud", "lmstudio", "github-copilot",
+];
+const MD_OPENAI_IDS = new Set([
+  ...MD_POPULAR, "deepinfra", "togetherai", "fireworks-ai", "perplexity",
+  "openrouter", "requesty", "novita-ai", "hyperbolic", "nebius", "sambanova",
+]);
+let mdCatalog = null;
+let mdLoading = false;
+let mdProviderId = "";
+let mdModelKey = "";
+let mdQuery = "";
+let mdShowAll = false;
+
+function mdKind(p) {
+  const npm = String(p.npm || "").toLowerCase();
+  if (npm.includes("anthropic")) return "anthropic";
+  if (npm.includes("openai") || MD_OPENAI_IDS.has(String(p.id))) return "openai";
+  return "";
+}
+
+function mdCached() {
+  try {
+    const c = JSON.parse(localStorage.getItem(MD_CACHE_KEY) || "null");
+    return c && Array.isArray(c.providers) && c.providers.length ? c : null;
+  } catch (_) { return null; }
+}
+
+function mdCompact(raw) {
+  const providers = [];
+  for (const p of Object.values(raw || {})) {
+    const kind = mdKind(p);
+    if (!kind || !p || !p.api) continue;
+    const models = [];
+    for (const m of Object.values(p.models || {})) {
+      if (!m || !m.id || !m.tool_call) continue;
+      if (!(m.modalities && Array.isArray(m.modalities.output) && m.modalities.output.includes("text"))) continue;
+      const ctx = Number(m.limit && m.limit.context) || 0;
+      const out = Number(m.limit && m.limit.output) || 0;
+      if (!ctx) continue;
+      const c = m.cost || {};
+      models.push({
+        id: String(m.id),
+        name: String(m.name || m.id),
+        ctx,
+        out,
+        input: Number(c.input) || 0,
+        output: Number(c.output) || 0,
+        cache: Number(c.cache_read) || 0,
+        reasoning: !!m.reasoning,
+        status: m.status || "",
+        release: m.release_date || "",
+      });
+    }
+    if (!models.length) continue;
+    models.sort((a, b) =>
+      (a.status === "deprecated" ? 1 : 0) - (b.status === "deprecated" ? 1 : 0) ||
+      String(b.release).localeCompare(String(a.release)) || a.name.localeCompare(b.name));
+    providers.push({
+      id: String(p.id), name: String(p.name || p.id), api: String(p.api || ""),
+      doc: String(p.doc || ""), npm: String(p.npm || ""), kind, models,
+    });
+  }
+  const rank = (id) => { const i = MD_POPULAR.indexOf(id); return i < 0 ? 999 : i; };
+  providers.sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));
+  return providers;
+}
+
+async function mdEnsure(force) {
+  if (mdLoading) return;
+  const cached = mdCached();
+  if (!force && mdCatalog) { mdRender(); return; }
+  if (!force && cached && Date.now() - Number(cached.at || 0) < MD_TTL) {
+    mdCatalog = cached;
+    mdRender();
+    return;
+  }
+  mdLoading = true;
+  if (mdCatalog) mdRender();
+  if ($("md-state")) $("md-state").textContent = en("读取 models.dev…");
+  try {
+    const r = await fetch(MD_URL, { cache: "no-store" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const raw = await r.json();
+    const providers = mdCompact(raw);
+    if (!providers.length) throw new Error(en("目录里没有可用模型"));
+    mdCatalog = { at: Date.now(), providers };
+    try { localStorage.setItem(MD_CACHE_KEY, JSON.stringify(mdCatalog)); }
+    catch (_) {
+      // 配额不够就只缓存热门厂商，目录仍可在本次运行里用
+      const hot = providers.filter((p) => MD_POPULAR.includes(p.id));
+      try { localStorage.setItem(MD_CACHE_KEY, JSON.stringify({ at: Date.now(), providers: hot })); } catch (_) {}
+    }
+  } catch (e) {
+    if (cached) mdCatalog = cached;
+    if ($("md-state")) $("md-state").textContent = en("目录读取失败：") + String(e && e.message ? e.message : e);
+  } finally {
+    mdLoading = false;
+    mdRender();
+  }
+}
+
+const mdTrim0 = (s) => String(s).includes(".") ? String(s).replace(/0+$/, "").replace(/\.$/, "") : String(s);
+const mdK = (n) => n >= 1e6 ? mdTrim0((n / 1e6).toFixed(n % 1e6 ? 1 : 0)) + "M"
+  : n >= 1000 ? mdTrim0((n / 1000).toFixed(n % 1000 ? 1 : 0)) + "K" : String(n || 0);
+const mdMoney = (n) => n > 0 ? "$" + mdTrim0(Number(n).toFixed(n < 1 ? 4 : 2)) : "—";
+
+function mdCurrent() {
+  return (mdCatalog && mdCatalog.providers || []).find((p) => p.id === mdProviderId) || null;
+}
+function mdCurrentModel() {
+  const p = mdCurrent();
+  return p ? p.models.find((m) => m.id === mdModelKey) || null : null;
+}
+
+function mdRender() {
+  const pbox = $("md-providers");
+  const mbox = $("md-models");
+  if (!pbox || !mbox) return;
+  const q = mdQuery.trim().toLowerCase();
+  const all = (mdCatalog && mdCatalog.providers) || [];
+  let ps = all.filter((p) => !q || p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) ||
+    p.models.some((m) => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)));
+  if (!q && !mdShowAll) ps = ps.filter((p) => MD_POPULAR.includes(p.id));
+  if (mdProviderId && !ps.some((p) => p.id === mdProviderId)) mdProviderId = "";
+  if (!mdProviderId && ps.length) mdProviderId = ps[0].id;
+  if (mdProviderId && !ps.some((p) => p.id === mdProviderId)) mdProviderId = ps.length ? ps[0].id : "";
+  pbox.textContent = "";
+  for (const p of ps) {
+    const b = document.createElement("button");
+    b.className = "mdprovider" + (p.id === mdProviderId ? " active" : "");
+    const n = document.createElement("span"); n.className = "n"; n.textContent = p.name;
+    const c = document.createElement("span"); c.className = "c";
+    c.textContent = `${p.models.length} ${en("个模型")}`;
+    b.append(n, c);
+    b.onclick = () => { mdProviderId = p.id; mdModelKey = ""; mdRender(); };
+    pbox.appendChild(b);
+  }
+  if (!q && !mdShowAll && all.length > ps.length) {
+    const more = document.createElement("button");
+    more.className = "mdprovider mdmore";
+    more.textContent = `${en("显示全部")} ${all.length} ${en("家供应商")}`;
+    more.onclick = () => { mdShowAll = true; mdRender(); };
+    pbox.appendChild(more);
+  } else if (!q && mdShowAll) {
+    const less = document.createElement("button");
+    less.className = "mdprovider mdmore";
+    less.textContent = en("只看常用");
+    less.onclick = () => { mdShowAll = false; mdRender(); };
+    pbox.appendChild(less);
+  }
+  if (!ps.length) pbox.appendChild(mdEmpty(en("没有匹配的供应商")));
+
+  const p = mdCurrent();
+  mbox.textContent = "";
+  if (!p) {
+    mbox.appendChild(mdEmpty(mdCatalog ? en("没有匹配的模型") : en("目录还没加载")));
+  } else {
+    const models = p.models.filter((m) => !q || m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
+    const MAX = 400;
+    for (const m of models.slice(0, MAX)) {
+      const b = document.createElement("button");
+      b.className = "mdmodel";
+      const n = document.createElement("span"); n.className = "mn"; n.textContent = m.name;
+      const meta = document.createElement("span"); meta.className = "mm";
+      meta.textContent = `${mdK(m.ctx)} ctx · ${mdMoney(m.input)}/${mdMoney(m.output)}`;
+      const id = document.createElement("span"); id.className = "mi"; id.textContent = m.id;
+      const tags = document.createElement("span"); tags.className = "mm";
+      tags.textContent = `${m.reasoning ? en("推理") + " · " : ""}${m.status === "deprecated" ? en("旧版") : en("工具")}`;
+      b.append(n, meta, id, tags);
+      b.onclick = () => {
+        mdModelKey = m.id;
+        mdRenderPick(true);
+        mdRender();
+      };
+      mbox.appendChild(b);
+    }
+    if (models.length > MAX) mbox.appendChild(mdEmpty(`${en("还有")} ${models.length - MAX} ${en("个，继续搜索缩小范围")}`));
+    if (!models.length) mbox.appendChild(mdEmpty(en("这个供应商下没有匹配模型")));
+  }
+  if ($("md-state")) {
+    $("md-state").textContent = mdCatalog
+      ? `${all.length} ${en("家供应商")} · ${all.reduce((n, x) => n + x.models.length, 0)} ${en("个模型")}`
+      : en("尚未加载");
+  }
+  mdRenderPick(false);
+}
+
+function mdEmpty(text) {
+  const d = document.createElement("div"); d.className = "mdempty"; d.textContent = text; return d;
+}
+
+function mdRenderPick(reset) {
+  const box = $("md-pick");
+  if (!box) return;
+  const p = mdCurrent(), m = mdCurrentModel();
+  box.hidden = !(p && m);
+  if (!p || !m) return;
+  if ($("md-pick-title")) $("md-pick-title").textContent = `${p.name} · ${m.name}`;
+  if ($("md-pick-badges")) {
+    const tags = [p.kind === "anthropic" ? "Anthropic" : "OpenAI", `${mdK(m.ctx)} ctx`, `${mdK(m.out)} out`];
+    if (m.reasoning) tags.push(en("推理"));
+    $("md-pick-badges").textContent = tags.join(" · ");
+  }
+  if ($("md-pick-meta")) {
+    $("md-pick-meta").textContent = `${m.id} · ${en("输入")} ${mdMoney(m.input)} / ${en("缓存命中")} ${mdMoney(m.cache)} / ${en("输出")} ${mdMoney(m.output)} · ${en("每百万 token，美元")}`;
+  }
+  if (reset) {
+    if ($("md-endpoint")) $("md-endpoint").value = p.api;
+    const id = ("md-" + p.id + "-" + m.id).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 72);
+    if ($("md-id")) $("md-id").value = id;
+    if ($("md-key")) $("md-key").value = "";
+  }
+  const id = ($("md-id") && $("md-id").value || "").trim();
+  const exists = !!(agCfg && (agCfg.providers || []).some((x) => x.id === id));
+  const hasSecret = !!(agCfg && (agCfg.secrets || []).includes(id));
+  if ($("md-key")) $("md-key").placeholder = exists && hasSecret ? en("已保存，留空即可") : en("粘贴 Key");
+  if ($("md-pick-state")) $("md-pick-state").textContent = exists ? en("已有同名配置，保存会更新它") : "";
+}
+
+async function mdAddModel() {
+  const p = mdCurrent(), m = mdCurrentModel();
+  if (!p || !m) return;
+  const id = ($("md-id") && $("md-id").value || "").trim();
+  const endpoint = ($("md-endpoint") && $("md-endpoint").value || "").trim();
+  if (!id) return toast(en("ID 不能空"));
+  if (!endpoint) return toast(en("地址不能空"));
+  const provider = {
+    id,
+    name: `${p.name} · ${m.name}`,
+    kind: p.kind,
+    endpoint,
+    model: m.id,
+    api_key_ref: id,
+    temperature: 0.2,
+    context_window: m.ctx,
+    reserve_output: Math.max(1024, Math.min(m.out || 8192, 65536)),
+    max_messages: 40,
+    supports_tools: true,
+    supports_stream: true,
+    pricing: {
+      currency: "USD", peak_enabled: false,
+      peak_hit: m.cache, peak_miss: m.input, peak_out: m.output,
+      offpeak_hit: m.cache, offpeak_miss: m.input, offpeak_out: m.output,
+    },
+  };
+  try {
+    await invoke("agent_provider_save", { provider, makeActive: true });
+    const key = ($("md-key") && $("md-key").value || "").trim();
+    if (key) await invoke("agent_secret_set", { name: id, value: key });
+    toast(en("已添加：") + m.name);
+    await agLoadConfig();
+    agProvTab("use");
+  } catch (e) { toast(String(e)); }
+}
 
 function agEscape(s) {
   return String(s == null ? "" : s)
@@ -6781,7 +7480,25 @@ function agRender() {
     agAppendEvent(agEvents[i], false);
     i += 1;
   }
-  if (agCfg && !(agCfg.providers || []).length) {
+  if (!agEvents.length) {
+    const welcome = document.createElement("div");
+    welcome.className = "agwelcome";
+    const title = document.createElement("div");
+    title.className = "agwelcome-title";
+    title.textContent = "Work with KDock";
+    const sub = document.createElement("div");
+    sub.className = "agwelcome-sub";
+    sub.textContent = en("把目标说出来，KDock 会和你一起推进。");
+    welcome.append(title, sub);
+    if (agCfg && !(agCfg.providers || []).length) {
+      const hint = document.createElement("div");
+      hint.className = "agwelcome-hint";
+      hint.textContent = en("先在设置里选择一个模型。");
+      welcome.appendChild(hint);
+    }
+    box.appendChild(welcome);
+  }
+  if (agCfg && !(agCfg.providers || []).length && agEvents.length) {
     const hint = document.createElement("div");
     hint.className = "agmsg note";
     const h = document.createElement("div");
@@ -6792,8 +7509,7 @@ function agRender() {
     h.appendChild(w);
     const b = document.createElement("div");
     b.className = "bubble";
-    b.textContent = "还没有可用的模型：点左下角「设置」（或 Ctrl+,）→ 模型与供应商 → 选一个厂家预设点「填入表单」，"
-      + "粘上你的 API Key 保存，就能开始对话了。";
+    b.textContent = en("先在设置里选择一个模型。");
     hint.appendChild(h);
     hint.appendChild(b);
     box.appendChild(hint);
@@ -6963,7 +7679,7 @@ async function agNewWorkspace() {
 /** 对话头：名字 + 本会话完成了多少轮正常对话 */
 function agUpdateHeader() {
   const t = agEl("ag-title");
-  if (t) t.textContent = agMeta ? en(agMeta.title || "（无标题）") : en("（还没选对话）");
+  if (t) t.textContent = agMeta ? en(agMeta.title || "（无标题）") : "Work with KDock";
   const n = agEvents.filter((e) => e.type === "assistant" && String(e.text || "").trim()).length;
   const g = agEl("ag-turns");
   if (g) g.textContent = agMeta ? n + en(" 轮") : "";
@@ -7771,6 +8487,12 @@ async function bindAgent() {
   document.querySelectorAll("#ag-prov-tabs .segtab").forEach((b) => {
     b.onclick = () => agProvTab(b.dataset.provtab);
   });
+  if (agEl("md-search")) {
+    agEl("md-search").addEventListener("input", () => { mdQuery = agEl("md-search").value || ""; mdRender(); });
+  }
+  if (agEl("md-refresh")) agEl("md-refresh").onclick = () => mdEnsure(true);
+  if (agEl("md-add")) agEl("md-add").onclick = () => mdAddModel();
+  if (agEl("md-id")) agEl("md-id").addEventListener("input", () => mdRenderPick(false));
   agEl("ag-provider").onchange = () => {
     const id = agEl("ag-provider").value;
     if (!id) return;
@@ -7914,6 +8636,7 @@ function agProvTab(name) {
     agSyncFreeSection();
     if (amdNeedsData()) amdLoadPull(false);
   }
+  if (name === "catalog") mdEnsure(false);
   if (LANG === "en") langWalk();
 }
 
@@ -9849,7 +10572,7 @@ let LANG = localStorage.getItem("kdock_lang") === "zh" ? "zh" : "en";
 const EN = {
   "调试": "Debug", "设备": "Device", "工具": "Tools",
   // 安卓 ADB：无线调试（Android 11+）
-  "无线调试（Android 11+）": "Wireless debugging (Android 11+)",
+  "无线调试": "Wireless debugging", "无线调试（Android 11+）": "Wireless debugging (Android 11+)",
   "找设备": "Find devices",
   "列出局域网里正在广播的无线调试设备（adb mdns services）": "List wireless-debugging devices advertising on the LAN (adb mdns services)",
   "配对": "Pair", "配对码": "Pairing code",
@@ -9872,6 +10595,7 @@ const EN = {
   "屏幕捕获": "Capture", "逻辑分析仪": "Logic",
   "批量文本": "Batch text", "计算器": "Calculator",
   "文件": "File", "编辑": "Edit", "视图": "View", "窗口": "Window", "帮助": "Help",
+  "概览": "Overview", "其它页面": "More pages", "管理": "Manage", "全屏": "Full width",
   "连接": "Connect", "断开": "Disconnect", "发送": "Send", "清空": "Clear", "清空日志": "Clear log",
   "开始": "Start", "停止": "Stop", "暂停接收": "Pause RX", "自动滚动": "Auto scroll",
   "ASCII 交互": "ASCII mode", "复制全部输出": "Copy output", "清空发送区": "Clear input",
@@ -9879,14 +10603,16 @@ const EN = {
   "暗色主题": "Dark theme", "亮色主题": "Light theme", "跟随系统": "Follow system",
   "配色与设置…": "Accent & settings…", "最小化": "Minimize", "最大化 / 还原": "Maximize / Restore",
   "关闭到托盘": "Close to tray", "开机自启": "Run at startup", "断线自动重连": "Auto reconnect",
-  "快捷键": "Shortcuts", "关于 KDock": "About KDock", "退出 KDock": "Quit KDock",
+  "快捷键": "Shortcuts", "功能帮助": "Help", "功能帮助…": "Context help…", "功能帮助（F1）": "Help (F1)",
+  "关于 KDock": "About KDock", "退出 KDock": "Quit KDock",
   "保存会话日志…": "Save session…", "加载会话日志…": "Load session…", "导出 CSV…": "Export CSV…",
   "回放会话": "Replay session", "导入编排 JSON…": "Import flow JSON…", "导出编排 JSON…": "Export flow JSON…",
+  "从这里开始": "Start here", "帮助（F1）": "Help (F1)",
   "连接设备": "Device link", "方式": "Mode", "串口": "Port", "波特率": "Baud", "目标 IP": "Host",
   "端口": "Port", "路径": "Path", "地址": "Address", "文件": "File", "速度": "Speed",
   "接口": "Interface", "适配器": "Adapter", "工具": "Tool", "目标芯片": "Target chip",
   "器件库": "Device library", "固件": "Firmware", "命令预览": "Command preview",
-  "烧录器": "Programmer", "烧录工具路径（换电脑时用）": "Tool paths (for a new PC)",
+  "烧录器": "Programmer", "烧录工具路径": "Tool paths",
   "自动检测": "Auto detect", "清空重填": "Reset & detect", "到中间选型号": "Pick a model →",
   "选择固件文件": "Choose firmware", "擦除": "Erase", "校验": "Verify", "复位": "Reset",
   "目录": "Directory", "列出目录": "List", "上级": "Up", "取回本机": "Pull to PC",
@@ -9977,8 +10703,8 @@ const EN = {
   "（读不到）": "(unreadable)",
   "（还没有中控连接；用「主连接」也可以）": "(no flow links yet; Main link works too)",
   "（还没有读版本）": "(version not read yet)",
-  "hex/elf 自带地址；bin 要填下面的起始地址（STM32 一般是": "hex/elf carry their own addresses; for bin fill the start address below (usually",
-  "是 OTA 升级包，请到「固件升级」页用。": "is an OTA package — use the Firmware page.",
+  ".hex / .elf 自带地址；.bin 需填写起始地址。.fw 请在「固件升级」页使用。":
+    ".hex / .elf carry their own addresses; .bin needs a start address. Use .fw on the Firmware upgrade page.",
   // 占位符
   "JLink.exe 路径": "JLink.exe path",
   "openocd 的 scripts 目录（可留空）": "openocd scripts dir (optional)",
@@ -10283,6 +11009,25 @@ const EN = {
 
   // ============ 设置：模型与供应商 ============
   "厂家预设": "Vendor preset", "— 选厂家 —": "— pick a vendor —", "填入表单": "Fill form",
+  "添加模型": "Add model", "高级": "Advanced",
+  "搜索模型或供应商，例如 claude / deepseek / glm": "Search models or providers, e.g. claude / deepseek / glm",
+  "刷新目录": "Refresh catalog", "读取 models.dev…": "Loading models.dev…",
+  "显示全部": "Show all", "只看常用": "Popular only",
+  "目录来自 models.dev，只显示当前后端可直连的 OpenAI 兼容 / Anthropic 模型。":
+    "Catalog data comes from models.dev; only OpenAI-compatible and Anthropic models this backend can call directly are shown.",
+  "目录里没有可用模型": "No usable models in the catalog",
+  "目录读取失败：": "Catalog failed to load: ", "个模型": "models",
+  "家供应商": "providers", "没有匹配的供应商": "No matching provider",
+  "没有匹配的模型": "No matching model", "目录还没加载": "Catalog not loaded",
+  "推理": "reasoning", "旧版": "deprecated", "工具": "tools",
+  "还有": "Showing first 400; ", "个，继续搜索缩小范围": "more — keep typing to narrow it down",
+  "这个供应商下没有匹配模型": "No matching model for this provider",
+  "尚未加载": "not loaded", "缓存命中": "cache hit", "输出": "output",
+  "每百万 token，美元": "USD per million tokens",
+  "已保存，留空即可": "saved — leave blank to keep it", "粘贴 Key": "Paste key",
+  "已有同名配置，保存会更新它": "A profile with this ID exists and will be updated",
+  "ID 不能空": "ID cannot be empty", "地址不能空": "Endpoint cannot be empty",
+  "已添加：": "Added: ",
   "DeepSeek（OpenAI 兼容）": "DeepSeek (OpenAI-compatible)",
   "DeepSeek（Anthropic 格式）": "DeepSeek (Anthropic format)",
   "智谱 GLM": "Zhipu GLM", "阿里通义 DashScope": "Alibaba DashScope", "硅基流动": "SiliconFlow",
@@ -10345,6 +11090,11 @@ const EN = {
   "（没有检测到串口）": "(no serial port found)",
   "（还没对话，点 ＋）": "(no sessions yet — click ＋)", "（无标题）": "(untitled)",
   "（还没选对话）": "(no session selected)", " 轮": " turns",
+  "把目标说出来，KDock 会和你一起推进。": "Tell KDock what you want to get done.",
+  "先在设置里选择一个模型。": "Choose a model in Settings first.",
+  "说说你想完成什么…": "What would you like to get done?",
+  "显示知识库管理页面": "Show the knowledge-base admin page",
+  "全屏显示知识库对话页面": "Show the knowledge-base chat page full width",
   "… 还有 ": "… ", " 个对话（点开）": " more sessions (click to show)",
   "⚠ 没密钥": "⚠ no key", "正在请求…": "requesting…",
   "该厂商没有余额接口": "this vendor has no balance endpoint",
@@ -10396,8 +11146,6 @@ const EN = {
   "在中间点一下节点或连线，这里改参数。": "Click a node or an edge in the middle to edit its parameters here.",
   "这里只管**开关**（关掉的技能不进口令索引，agent 也看不到）。 路径 / 导入 / 编辑都在":
     "This page only shows toggles (a disabled skill is not indexed and stays invisible to the agent). Paths, import and editing live in",
-  "： hex/elf 自带地址；bin 要填下面的起始地址（STM32 一般是":
-    ": hex/elf carry their own address; a .bin needs the start address below (usually",
   "例：^(\\w+)=(\\d+)$": "e.g. ^(\\w+)=(\\d+)$",
   "例：$1 -> $2": "e.g. $1 -> $2",
   "思考中…": "thinking…", "思考中": "thinking",
@@ -10705,7 +11453,9 @@ const EN = {
   "对话": "Chat", "知识库页面": "Knowledge base pages",
   "管理页面": "Admin page", "对话页面": "Chat page",
   "去知识库页": "Go to the knowledge base page",
-  "地址只存在本机，不会上传": "The URL is stored on this machine only and is never uploaded",
+  "打开管理页面": "Open admin page",
+  "在设置 → 知识库里配置管理页面": "Set the admin page in Settings → Knowledge base",
+  "在设置 → 知识库里配置对话页面": "Set the chat page in Settings → Knowledge base",
   "还没配「知识库管理页面」地址 —— 点这里去设置里填":
     "No \"admin page\" URL yet — click here to set it in Settings",
   "还没配「知识库对话页面」地址 —— 点这里去设置里填":
@@ -10792,6 +11542,17 @@ const EN = {
   "光标": "Cursors",
   "清光标": "Clear cursors",
   "点一下放 A · Shift+点放 B · 滚轮缩放 · 拖动平移 · 双击适应": "click = cursor A · Shift+click = B · wheel = zoom · drag = pan · double-click = fit",
+  "点 A · Shift 点 B · Alt 点/「＋标记」加标记 · 拖标记线 · 点解码块选中区间":
+    "click = A · Shift-click = B · Alt-click / +mark = add marker · drag a marker line · click a decoded block to select its span",
+  "行 −": "Rows −", "行 ＋": "Rows +", "降低行高，多看几路": "Reduce row height to see more channels",
+  "增大行高，波形更清楚": "Increase row height for clearer waveforms",
+  "＋标记": "+ marker", "点击设为 A；Shift+点击设为 B；拖动标记线可移动":
+    "Click to set A, Shift-click to set B, drag the marker line to move it",
+  "删除这个标记": "Delete this marker",
+  "点通道名选中它；点波形放 A，Shift 点放 B，Alt 点加标记。":
+    "Click a channel name to select it; click the waveform for A, Shift-click for B, Alt-click to add a marker.",
+  "缩小时波形上的标签会自动避让；完整结果始终在这里。":
+    "Labels on the waveform avoid overlapping as you zoom out; the full decoded list stays here.",
   "数据来源": "Source",
   "解码器": "Decoders",
   "测量（当前视图窗口 · 选中的通道）": "Measure (current view · selected channel)",
@@ -11125,10 +11886,7 @@ const EN = {
   "{a} × {b}（消隐 {c} × {d}）": "{a} × {b} (blanking {c} × {d})",
   "显示器 ": "Monitor ",
   "一条 .md 一条指令：frontmatter 里写 name / description，正文就是提示词模板（里面的 {{args}} 会换成命令后面跟的参数）。把文件丢进下面的目录就行 —— 技能作者也能随技能一起分发。": "One .md = one command: frontmatter holds name / description, the body is the prompt template ({{args}} becomes whatever follows the command). Drop files into the folder below — skill authors can ship them with a skill.",
-  "管理页面贴在「知识库」页的中间，对话页面贴在它右边那一栏；两个都是内置浏览器（WebView2）直接渲染的真实页面，所以 Dify 这类重前端界面也能用，登录状态跟着本机 WebView2 走。": "The admin page sits in the middle of the Knowledge base page, the chat page in the right column; both are real pages rendered by the built-in browser (WebView2), so heavy front-ends like Dify work, and logins follow this machine's WebView2.",
-  "地址只保存在本机（界面偏好里），不会写进仓库、也不上传；留空的话，在知识库页点一下中间那块就会跳到这一页来填。": "Addresses are stored locally only (UI prefs) — never committed or uploaded. Leave them empty and clicking the middle of the Knowledge base page jumps here to fill them in.",
   "左边是「文件校验 / 浮点 / 进制字节序 / AES / RSA」。AES 与 RSA 走系统的 WebCrypto（浏览器内实现，不发到网上）；密钥只在你本机的框里，不写盘。": "Left column: file hashing / floating point / byte order / AES / RSA. AES and RSA use the system WebCrypto (in-browser, nothing leaves the machine); keys stay in the boxes here and are never written to disk.",
-  "这一块是内置浏览器直接渲染的对话页面（中间那块是管理页面）。两个地址都在 设置 → 知识库 里改，配置只存在本机。": "This pane is the chat page rendered by the built-in browser (the middle one is the admin page). Both addresses live in Settings → Knowledge base, and the config stays on this machine.",
   "RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent 也能用同一套 scope_* 工具干同样的事。": "The LAN port that ships with RIGOL DS1000Z series (TCP 5555, SCPI text). Once connected the agent can do the same things through the same scope_* tools.",
   "{\"b\":1,\"a\":[1,2,{\"c\":true}]}  或  \\\"{\\\\\\\"a\\\\\\\":1}\\\"（转义过的也行）": "{\"b\":1,\"a\":[1,2,{\"c\":true}]}  or  \"{\\\"a\\\":1}\" (escaped also works)",
   "可留空；例：-ex \"target extended-remote :3333\"": "Optional; e.g. -ex \"target extended-remote :3333\"",
@@ -11276,7 +12034,7 @@ const EN = {
   "内置 TFTP 服务端": "Built-in TFTP server", "根目录": "Root folder",
   "要给出去的文件放这儿": "files you want to serve go here",
   "允许写入": "Allow writes", "启动": "Start", "未启动": "not running",
-  "69 端口要管理员权限；被占用或没权限就换个 1024 以上的端口。设备侧命令示例：": "Port 69 needs admin rights; if it's taken or denied, use a port above 1024. Device-side example: ",
+  "示例：": "Example: ",
   "tftp -i 本机IP GET kdock.bin": "tftp -i <this PC> GET kdock.bin",
   "本机桌面（DXGI）": "This PC's desktop (DXGI)", "VNC（可控制键鼠）": "VNC (with keyboard/mouse control)",
   "RTSP（FFmpeg）": "RTSP (FFmpeg)", "RTMP（FFmpeg）": "RTMP (FFmpeg)",
@@ -11475,7 +12233,8 @@ function tbMenuDefs() {
       { t: "断线自动重连", chk: () => $("opt-reconnect").checked, run: () => tbToggle("opt-reconnect") },
     ]},
     { label: "帮助", items: [
-      { t: "快捷键", run: () => { pushSys("[帮助] Enter 发送 / Shift+Enter 换行 · Ctrl+L 清屏 · 中控里 Delete 删选中节点或连线 · 画布滚轮缩放 · 标题栏双击最大化"); toast("快捷键已写到输出区"); } },
+      { t: "功能帮助…", k: "F1", run: () => openHelp(HELP_PAGE_ROOT[helpCurrentPage()]) },
+      { t: "快捷键", run: () => { pushSys("[帮助] F1 当前页帮助 / Enter 发送 / Shift+Enter 换行 · Ctrl+L 清屏 · 中控里 Delete 删选中节点或连线 · 画布滚轮缩放 · 标题栏双击最大化"); toast("快捷键已写到输出区"); } },
       { t: "关于 KDock", run: () => { pushSys("[关于] KDock · 串口/网络调试 + openocd/J-Link 烧录 + 中控编排（Tauri 2 + Rust）"); toast("KDock"); } },
     ]},
   ];
@@ -11657,6 +12416,7 @@ async function main() {
   invoke("splash_show").catch(() => {});
   initControls();
   bindTooltips();               // 悬停提示改自绘（原生 title 的气泡又慢又丑）
+  decorateHelpHeadings();       // 先把中文标题与帮助锚点对上，再切语言
   switchMode("serial");
 
   applyLang(LANG);
@@ -11680,6 +12440,7 @@ async function main() {
   bindCapture();
   bindAdb();                    // 安卓 ADB：设备 / shell / 推拉 / APK / 投屏
   bindSettings();
+  bindHelp();
   bindCache();
   bindAgent();
   bindAgentEvents();

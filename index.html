@@ -19,6 +19,7 @@
         <span id="status-chip" class="chip">未连接</span>
         <button id="tb-params" class="tb-icon" title="收起参数区">▭</button>
         <button id="tb-theme-btn" class="tb-icon" title="切换主题：暗色 / 亮色 / 跟随系统">◐</button>
+        <button id="tb-help" class="tb-icon" title="功能帮助（F1）">?</button>
         <button id="tb-lang" class="tb-icon" title="Switch to English">中</button>
                 <button id="tb-settings" class="tb-chip" title="设置（Ctrl+, ）"><span class="tbs-ico">⚙</span><span class="tbs-txt">设置</span></button>
         <div class="tb-win">
@@ -61,6 +62,7 @@
             <button class="modaltab" data-set="mcp">MCP</button>
             <button class="modaltab" data-set="kb">知识库</button>
             <button class="modaltab" data-set="cache">缓存</button>
+            <button class="modaltab" data-set="help">帮助</button>
             <button class="modaltab" data-set="about">关于与数据</button>
           </div>
           <div class="modalcontent">
@@ -107,7 +109,8 @@
             <div class="setpane" data-setpane="model" hidden>
               <div class="segtabs" id="ag-prov-tabs">
                 <button class="segtab active" data-provtab="use">使用</button>
-                <button class="segtab" data-provtab="new">新增 / 编辑</button>
+                <button class="segtab" data-provtab="catalog">添加模型</button>
+                <button class="segtab" data-provtab="new">高级</button>
               </div>
 
               <!-- ① 使用：只挑"用哪个"，行内只有编辑 / 删除 -->
@@ -154,7 +157,40 @@
                   换机器本来就带不走，导过去重新粘一次）。</p>
               </div>
 
-              <!-- ② 新增 / 编辑：完整表单，保存放最下面 -->
+              <!-- ② 添加模型：从 models.dev 精简目录里选，自动带出上下文 / 价格 / 工具能力 -->
+              <div class="provtab" data-provtab-pane="catalog" hidden>
+                <div class="trow">
+                  <input id="md-search" class="dirinput grow" placeholder="搜索模型或供应商，例如 claude / deepseek / glm" />
+                  <button id="md-refresh" class="btn small">刷新目录</button>
+                  <span id="md-state" class="lb"></span>
+                </div>
+                <p class="hint">目录来自 models.dev，只显示当前后端可直连的 OpenAI 兼容 / Anthropic 模型。</p>
+                <div class="mdgrid">
+                  <div id="md-providers" class="mdproviders"></div>
+                  <div id="md-models" class="mdmodels"></div>
+                </div>
+                <div id="md-pick" class="mdpick" hidden>
+                  <div class="trow">
+                    <span id="md-pick-title" class="mdpick-title"></span>
+                    <span class="grow"></span>
+                    <span id="md-pick-badges" class="chips"></span>
+                  </div>
+                  <div id="md-pick-meta" class="lb"></div>
+                  <div class="field"><label for="md-key">API Key</label>
+                    <input id="md-key" type="password" placeholder="粘贴 Key" /></div>
+                  <details class="adv">
+                    <summary>连接设置</summary>
+                    <div class="field"><label for="md-endpoint">地址</label><input id="md-endpoint" /></div>
+                    <div class="field"><label for="md-id">ID</label><input id="md-id" /></div>
+                  </details>
+                  <div class="trow">
+                    <button id="md-add" class="btn primary">添加并使用</button>
+                    <span id="md-pick-state" class="lb"></span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ③ 高级：完整表单，保存放最下面 -->
               <div class="provtab" data-provtab-pane="new" hidden>
                 <div class="cardtitle" id="ag-prov-new-title">新增供应商</div>
                 <div class="field"><label for="ag-preset">厂家预设</label>
@@ -269,6 +305,17 @@
                 <button id="cache-del" class="btn small danger">删除选中…</button>
               </div>
               <div id="cache-list" class="agentlist"></div>
+            </div>
+
+            <div class="setpane" data-setpane="help" hidden>
+              <div class="cardtitle">功能帮助</div>
+              <p class="hint">按 F1 打开当前页面的帮助，或从下面选择。</p>
+              <div class="trow">
+                <button id="set-help-open" class="btn small primary">打开当前页帮助</button>
+                <span class="grow"></span>
+                <span id="set-help-current" class="lb"></span>
+              </div>
+              <div id="set-help-list" class="helpindex"></div>
             </div>
 
             <div class="setpane" data-setpane="about" hidden>
@@ -403,7 +450,7 @@
                 配置文件：<code id="set-mcp-path"></code></p>
             </div>
 
-            <!-- 知识库：两个页面地址（只存在本机，不进仓库） -->
+            <!-- 知识库：两个页面地址 -->
             <div class="setpane" data-setpane="kb" hidden>
               <div class="cardtitle">知识库页面</div>
               <div class="field"><label for="set-kb-mgmt">管理页面</label>
@@ -416,10 +463,27 @@
                 <span class="grow"></span>
                 <span id="set-kb-state" class="lb"></span>
               </div>
-              <p class="hint">管理页面贴在「知识库」页的中间，对话页面贴在它右边那一栏；两个都是内置浏览器（WebView2）直接渲染的真实页面，所以 Dify 这类重前端界面也能用，登录状态跟着本机 WebView2 走。</p>
-              <p class="hint">地址只保存在本机（界面偏好里），不会写进仓库、也不上传；留空的话，在知识库页点一下中间那块就会跳到这一页来填。</p>
             </div>
 
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 上下文帮助：所有页面的标题栏 ?、F1、设置里的帮助入口都落到这里 -->
+    <div id="help-modal" class="modal" hidden>
+      <div class="modalbox helpbox">
+        <div class="modalhead">
+          <span class="modaltitle">功能帮助</span>
+          <span id="help-page-label" class="lb"></span>
+          <span class="grow"></span>
+          <button id="help-close" class="tb-wbtn">×</button>
+        </div>
+        <div class="modalbody">
+          <div id="help-nav" class="modalnav helpnav"></div>
+          <div class="modalcontent helpcontent">
+            <div id="help-crumb" class="helpcrumb"></div>
+            <div id="help-body"></div>
           </div>
         </div>
       </div>
@@ -447,11 +511,11 @@
         <div class="navsec">
           <div class="navgroup">AI</div>
           <div class="navrow">
-            <button class="navitem" data-tab="agent" title="会自己动手的调试助手"><i>✦</i><span>Agent</span></button>
+            <button class="navitem" data-tab="agent" title="和 KDock 一起工作"><i>✦</i><span>Agent</span></button>
             <button id="ag-ws-new" class="navmini" title="新建工作区（选一个目录）">🗒+</button>
           </div>
           <div id="ag-nav-tree" class="navsub"></div>
-          <button class="navitem" data-tab="kb" title="知识库：中间是管理页面、右边是对话页面（两个地址在设置里配）"><i>◈</i><span>知识库</span></button>
+          <button class="navitem" data-tab="kb" title="知识库"><i>◈</i><span>知识库</span></button>
         </div>
         <div class="navsec">
           <div class="navgroup">设备</div>
@@ -623,7 +687,7 @@
         <!-- Agent：对话 + 工具调用 -->
         <div class="workpane" data-work="agent" hidden>
           <div class="trow">
-            <span id="ag-title" class="agtitle">（还没选对话）</span>
+            <span id="ag-title" class="agtitle">Work with KDock</span>
             <span id="ag-turns" class="agturn"></span>
             <span id="ag-state" class="agst" title="空闲"><span class="led"></span><span class="spin"></span></span>
             <span id="ag-goal" class="aggoal" hidden></span>
@@ -642,7 +706,12 @@
             </div>
           </div>
           <div class="framebox grow agentbox" id="ag-box">
-            <div id="ag-chat" class="agentchat"></div>
+            <div id="ag-chat" class="agentchat">
+              <div class="agwelcome">
+                <div class="agwelcome-title">Work with KDock</div>
+                <div class="agwelcome-sub">把目标说出来，KDock 会和你一起推进。</div>
+              </div>
+            </div>
             <div id="ag-rail" class="agrail" title="用户消息：悬停看前几个字，点一下跳过去"></div>
           </div>
           <div class="vsplit" id="ag-chat-grip" title="拖动调整对话区高度（双击复位）"></div>
@@ -652,7 +721,7 @@
               <span class="grow"></span>
               <span id="ag-usage" class="lb" title="上一轮的 token 用量"></span>
             </div>
-            <textarea id="ag-input" rows="3" placeholder="例：看一下设备根目录里有什么，再把 /config/config.bin 取回来"></textarea>
+            <textarea id="ag-input" rows="3" placeholder="说说你想完成什么…"></textarea>
             <div id="ag-cmd-hint" class="hint" hidden>
               <code>/goal &lt;目标&gt;</code> 设定长期目标（每轮都带上，<code>/goal clear</code> 清除）·
               <code>/compact</code> 压缩上下文 · <code>/new</code> 新会话 ·
@@ -1336,6 +1405,8 @@
             <button id="la-zout" class="btn small" title="缩小">−</button>
             <button id="la-zin" class="btn small" title="放大">＋</button>
             <button id="la-fit" class="btn small">适应窗口</button>
+            <button id="la-row-dec" class="btn small" title="降低行高，多看几路">行 −</button>
+            <button id="la-row-inc" class="btn small" title="增大行高，波形更清楚">行 ＋</button>
             <span id="la-span" class="lb"></span>
             <span id="la-zoomspan" class="lb"></span>
             <span class="grow"></span>
@@ -1343,7 +1414,11 @@
           </div>
           <div class="lagrid grow">
             <div class="lalabels" id="la-labels"></div>
-            <canvas id="la-canvas" class="lacanvas"></canvas>
+            <div class="lawrap" id="la-wrap">
+              <svg id="la-wave-svg" class="lawavesvg" aria-hidden="true"></svg>
+              <svg id="la-overlay-svg" class="lawavesvg lawave-overlay" aria-hidden="true"></svg>
+              <canvas id="la-canvas" class="lacanvas-input" tabindex="0"></canvas>
+            </div>
           </div>
           <div class="trow lacurbar">
             <span class="lb">光标</span>
@@ -1351,9 +1426,13 @@
             <span class="lb">B <b id="la-b">—</b></span>
             <span class="lb">Δt <b id="la-dt">—</b></span>
             <span class="lb">1/Δt <b id="la-freq">—</b></span>
+            <span class="lb">t <b id="la-hover">—</b></span>
+            <span class="lb">值 <b id="la-hoverv">—</b></span>
+            <button id="la-add-mark" class="btn tiny">＋标记</button>
             <button id="la-clr-cur" class="btn tiny">清光标</button>
+            <div id="la-marks" class="lamarks"></div>
             <span class="grow"></span>
-            <span class="lb">点一下放 A · Shift+点放 B · 滚轮缩放 · 拖动平移 · 双击适应</span>
+            <span class="lb">点 A · Shift 点 B · Alt 点/「＋标记」加标记 · 拖标记线 · 点解码块选中区间</span>
             <span id="la-msg" class="lb"></span>
           </div>
         </div>
@@ -1487,7 +1566,7 @@
 
         <!-- 传输参数 -->
         <div class="parampane" data-param="link" hidden>
-          <div class="cardtitle">连接</div>
+          <div class="cardtitle">从这里开始</div>
           <div class="field">
             <label for="mode">方式</label>
             <select id="mode" title="连接方式：串口 / TCP 客户端 / TCP 服务端 / UDP">
@@ -1576,7 +1655,7 @@
 
         <!-- 升级参数 -->
         <div class="parampane" data-param="upgrade" hidden>
-          <div class="cardtitle">连接设备</div>
+          <div class="cardtitle">从这里开始</div>
           <div class="field">
             <label for="upg-mode">方式</label>
             <select id="upg-mode">
@@ -1638,7 +1717,7 @@
 
         <!-- 文件参数 -->
         <div class="parampane" data-param="files" hidden>
-          <div class="cardtitle">连接设备</div>
+          <div class="cardtitle">从这里开始</div>
           <div class="field">
             <label for="fl-mode">方式</label>
             <select id="fl-mode">
@@ -1719,7 +1798,7 @@
               <button id="fl-tftp-stop" class="btn small">停止</button>
             </div>
             <div class="state"><span class="dot" id="fl-tftp-state">未启动</span></div>
-            <p class="hint">69 端口要管理员权限；被占用或没权限就换个 1024 以上的端口。设备侧命令示例：<code>tftp -i 本机IP GET kdock.bin</code>。</p>
+            <p class="hint">示例：<code>tftp -i 本机IP GET kdock.bin</code></p>
             <pre id="fl-tftp-log" class="dbgout tftplog"></pre>
           </details>
         </div>
@@ -1942,12 +2021,12 @@
             <button id="kb-chat-open" class="btn small primary">打开</button>
             <button id="kb-chat-reload" class="btn small" title="重新加载">↻</button>
             <span class="grow"></span>
+            <button id="kb-chat-focus" class="btn small" title="切换全屏与并排">管理</button>
             <button id="kb-chat-save" class="btn small" title="把这个地址存成「对话页面」默认（设置 → 知识库）">存为默认</button>
           </div>
           <div id="kb-chat-host" class="kbhost grow">
             <div class="placeholder kbempty" id="kb-chat-empty"></div>
           </div>
-          <p class="hint">这一块是内置浏览器直接渲染的对话页面（中间那块是管理页面）。两个地址都在 设置 → 知识库 里改，配置只存在本机。</p>
         </div>
 
         <!-- 图表参数 -->
@@ -2003,7 +2082,7 @@
         <!-- 烧录参数 -->
         <div class="parampane" data-param="flash" hidden>
           <details class="adv" id="fl-tools-box">
-            <summary>烧录工具路径（换电脑时用）</summary>
+            <summary>烧录工具路径</summary>
             <div class="field">
               <label for="fl-tool-openocd">OpenOCD</label>
               <div class="inline">
@@ -2083,9 +2162,7 @@
             </div>
           </div>
           <div class="field"><label for="fl-path">路径</label><input id="fl-path" placeholder="选文件后自动填" /></div>
-          <p class="hint" id="fl-fw-hint">支持 <code>.hex</code> / <code>.elf</code> / <code>.bin</code>：
-            hex/elf 自带地址；bin 要填下面的起始地址（STM32 一般是 <code>0x08000000</code>）。
-            <code>.fw</code> 是 OTA 升级包，请到「固件升级」页用。</p>
+          <p class="hint" id="fl-fw-hint"><code>.hex</code> / <code>.elf</code> 自带地址；<code>.bin</code> 需填写起始地址。<code>.fw</code> 请在「固件升级」页使用。</p>
           <div class="field"><label for="fl-addr">地址</label><input id="fl-addr" value="0x08000000" /></div>
           <div class="btnrow">
             <button id="fl-erase" class="btn">擦除</button>
@@ -2356,6 +2433,10 @@
           </div>
           <div id="la-dec-list" class="ladeclist"></div>
 
+          <div class="cardtitle">解码结果<span class="grow"></span><span id="la-dec-count" class="lb"></span></div>
+          <div id="la-dec-results" class="ladecresults"></div>
+          <p class="hint">缩小时波形上的标签会自动避让；完整结果始终在这里。</p>
+
           <div class="cardtitle">测量（当前视图窗口 · 选中的通道）</div>
           <div class="aginfo dcinfo">
             <div class="row"><span class="k">通道</span><span class="v" id="la-msel">—</span></div>
@@ -2364,7 +2445,7 @@
             <div class="row"><span class="k">脉冲数</span><span class="v" id="la-mpulse">—</span></div>
             <div class="row"><span class="k">高 / 低脉宽</span><span class="v" id="la-mw">—</span></div>
           </div>
-          <p class="hint">在左边通道名上点一下 = 选中它（测的就是它）。</p>
+          <p class="hint">点通道名选中它；点波形放 A，Shift 点放 B，Alt 点加标记。</p>
         </div>
       </aside>
     </main>

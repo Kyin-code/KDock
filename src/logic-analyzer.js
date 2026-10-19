@@ -35,25 +35,18 @@ const LA = {
   src: "",                // 当前来源说明
   view: { t0: 0, span: 0 },   // 视图窗口（秒）
   cur: { a: null, b: null },  // 光标（秒）
+  marks: [],                  // 额外标记 [{ name, t, color }]，A/B 仍是主光标
+  activeMark: -1,
+  rowScale: 1,                // 纵向倍率：波形太密时放大行高
   hover: null,                // 鼠标位置（秒）
+  hoverDec: null,             // 鼠标下的解码项
+  decHits: [],                // 解码项命中区（随每次重绘更新）
   dec: [],                    // 解码器 [{ kind, opts... }]
   sel: 0,                     // 当前通道（测量用）
   drag: null,
 };
-/* 画布后备分辨率 = CSS 尺寸 × 有效 DPR（系统缩放 × 软件自己的"放大"）。
-   以前这里硬性 min(2, dpr)：只要有效 DPR 超过 2（比如 150% 显示缩放 + 1.6 倍放大 = 2.4），
-   后备位图就比屏幕上的实际像素少，浏览器把它**放大**贴上去 —— 整页波形就糊了（实测 3.0 时被拉 1.5 倍）。
-   现在按真实 DPR 走，只加一个"像素总量"上限兜住极端情况下的内存。 */
-function pixelBudgetDpr(w, h) {
-  const raw = window.devicePixelRatio || 1;
-  let dpr = Math.min(3, raw);
-  const maxPixels = 12_000_000;                 // 约 46MB 的位图，再大就意义不大了
-  const cssPixels = Math.max(1, w * h);
-  if (cssPixels * dpr * dpr > maxPixels) dpr = Math.max(1, Math.sqrt(maxPixels / cssPixels));
-  return dpr;
-}
 const COLORS = ["#4ea1ff", "#ffd166", "#7ee787", "#ff8fa3", "#c792ea", "#7fd1e0", "#f5a97f", "#c9d1d9"];
-const ROW_H = 30;
+const MARK_COLORS = ["#ff9f43", "#ff6b9d", "#5ad1ff", "#b18cff", "#ffd166", "#4fd1a1"];
 
 /* ============================ 数据 ============================ */
 
@@ -64,8 +57,11 @@ function setChans(list, rate, src) {
   LA.src = src;
   LA.ctx = mkCtx(rate, list);
   LA.cur = { a: null, b: null };
+  LA.marks = [];
+  LA.activeMark = -1;
   LA.hover = null;
-  fitView();
+  LA.renderKey = "";
+  autoView();
   renderAll();
 }
 
@@ -76,6 +72,16 @@ const t2i = (t) => Math.round(t * LA.rate);
 /** 适应窗口：整段数据铺满 */
 function fitView() {
   LA.view.span = LA.n > 1 ? (LA.n - 1) / LA.rate : 1e-3;
+  LA.view.t0 = 0;
+}
+
+/** 打开数据时的第一屏：最多铺 20k 个采样点，先让人看清边沿；
+ *  想看整段再用「适应窗口」。整段直接铺满时每像素上百次跳变，再高的分辨率
+ *  也只能显示成一条实心带。 */
+function autoView() {
+  const total = LA.n > 1 ? (LA.n - 1) / LA.rate : 1e-3;
+  const readable = 20000 / Math.max(1, LA.rate);
+  LA.view.span = Math.min(total, Math.max(1e-3, readable));
   LA.view.t0 = 0;
 }
 
@@ -272,114 +278,152 @@ function renderAll() { renderWave(); renderLabels(); renderReadout(); renderDecL
 
 function cv() { return $id("la-canvas"); }
 
+function svgEsc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+/** 波形与左侧通道列共用这一套行高，避免两边错位。 */
+function laGeom(H) {
+  const rows = Math.max(1, rowsOut().rows);
+  const AXIS = 28, PAD = 8;
+  const minRow = 20 * LA.rowScale, maxRow = 36 * LA.rowScale;
+  const rowH = Math.max(minRow, Math.min(maxRow, (H - AXIS - PAD) / rows));
+  return { AXIS, PAD, rows, rowH };
+}
 function renderWave() {
   const c = cv();
-  if (!c) return;
+  const wrap = $id("la-wrap");
+  const base = $id("la-wave-svg");
+  const overlay = $id("la-overlay-svg");
+  if (!c || !wrap || !base || !overlay) return;
   // 行多了（10 路 + 一堆解码器）就别硬挤：给画布一个下限，让整页滚，也不要把下面的解码行裁掉
   const rowsWant = LA.chans.length + LA.dec.filter((d) => d.on !== false).length;
-  const minH = Math.max(200, rowsWant * 16 + 40);
-  if (c.style.minHeight !== minH + "px") c.style.minHeight = minH + "px";
+  const minH = Math.max(260, rowsWant * 25 * LA.rowScale + 48);
+  if (wrap.style.minHeight !== minH + "px") wrap.style.minHeight = minH + "px";
   const box = c.getBoundingClientRect();
   if (box.width < 4 || box.height < 4) return;          // 还没布局好（隐藏中）就别画，否则画布被压成 0×0
-  const dpr = pixelBudgetDpr(box.width, box.height);
-  if (c.width !== Math.round(box.width * dpr) || c.height !== Math.round(box.height * dpr)) {
-    c.width = Math.round(box.width * dpr);
-    c.height = Math.round(box.height * dpr);
-  }
-  const g = c.getContext("2d");
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // 画布现在只负责接收鼠标/键盘事件；真正的波形由 SVG 按最终设备像素绘制。
+  if (c.width !== 1 || c.height !== 1) { c.width = 1; c.height = 1; }
   const W = box.width, H = box.height;
   const css = getComputedStyle(document.documentElement);
   const fg = `hsl(${css.getPropertyValue("--foreground") || "210 20% 92%"})`;
   const muted = `hsl(${css.getPropertyValue("--muted-foreground") || "215 15% 65%"} / .9)`;
   const line = `hsl(${css.getPropertyValue("--surface-line") || "220 15% 28%"})`;
-  g.clearRect(0, 0, W, H);
-  g.font = "11px ui-monospace, Consolas, monospace";
-  g.textBaseline = "middle";
-
-  const AXIS = 22, PAD = 6;
-  const { dec, rows } = rowsOut();
-  const rowH = Math.max(16, Math.min(ROW_H, (H - AXIS - PAD) / Math.max(1, rows)));
+  const { AXIS, rowH } = laGeom(H);
+  const { dec } = rowsOut();
   const x2t = (x) => LA.view.t0 + (x / W) * LA.view.span;
   const t2x = (t) => (t - LA.view.t0) / LA.view.span * W;
 
-  // 时间轴
-  g.fillStyle = muted;
-  const step = niceStep(LA.view.span, Math.max(2, Math.round(W / 110)));
-  const first = Math.ceil(LA.view.t0 / step) * step;
-  for (let t = first; t <= LA.view.t0 + LA.view.span; t += step) {
-    const x = t2x(t);
-    g.strokeStyle = line; g.globalAlpha = .55;
-    g.beginPath(); g.moveTo(x, AXIS); g.lineTo(x, H); g.stroke();
-    g.globalAlpha = 1;
-    g.fillText(fmtT(t, LA.view.span), Math.max(2, Math.min(W - 44, x + 3)), AXIS / 2);
+  const key = [
+    W.toFixed(3), H.toFixed(3), LA.view.t0, LA.view.span, LA.n, LA.rate, LA.rowScale,
+    LA.chans.map((ch) => `${ch.name}:${ch.color}:${ch.on ? 1 : 0}`).join("|"),
+    JSON.stringify(LA.dec),
+  ].join("~");
+  if (LA.renderKey !== key) {
+    const out = [];
+    out.push(`<rect x="0" y="0" width="${W}" height="${H}" fill="${line}" fill-opacity="0.025"/>`);
+    // 行底色 + 分隔线
+    const allRows = LA.chans.length + dec.length;
+    for (let r = 0; r < allRows; r++) {
+      const y = AXIS + r * rowH;
+      if (r % 2) out.push(`<rect x="0" y="${y}" width="${W}" height="${rowH}" fill="${line}" fill-opacity="0.10"/>`);
+      out.push(`<line x1="0" y1="${y + rowH}" x2="${W}" y2="${y + rowH}" stroke="${line}" stroke-opacity="0.42" shape-rendering="crispEdges"/>`);
+    }
+    // 时间轴
+    const step = niceStep(LA.view.span, Math.max(2, Math.round(W / 110)));
+    const first = Math.ceil(LA.view.t0 / step) * step;
+    for (let t = first; t <= LA.view.t0 + LA.view.span; t += step) {
+      const x = Math.round(t2x(t)) + 0.5;
+      out.push(`<line x1="${x}" y1="${AXIS}" x2="${x}" y2="${H}" stroke="${line}" stroke-opacity="0.50" shape-rendering="crispEdges"/>`);
+      out.push(`<text class="la-timelabel" x="${Math.max(2, Math.min(W - 60, x + 4))}" y="${AXIS / 2 + 1}" fill="${muted}" font-size="11.5" dominant-baseline="middle">${svgEsc(fmtT(t, LA.view.span))}</text>`);
+    }
+    out.push(`<line x1="0" y1="${AXIS}" x2="${W}" y2="${AXIS}" stroke="${line}" stroke-opacity="0.8" shape-rendering="crispEdges"/>`);
+
+    // 波形：确定电平走实线，一列内多次跳变只画半透明活动带。
+    const x0i = Math.max(0, Math.floor(LA.view.t0 * LA.rate));
+    const x1i = Math.min(LA.n - 1, Math.ceil((LA.view.t0 + LA.view.span) * LA.rate));
+    LA.chans.forEach((ch, r) => {
+      if (!ch.on) return;
+      const top = AXIS + r * rowH, h = Math.max(8, rowH - 7);
+      const yHi = Math.round(top + 4), yLo = Math.round(top + h);
+      let ds = "", db = "", prevY = null;
+      for (let px = 0; px < W; px++) {
+        const i0 = Math.max(x0i, Math.floor(x2t(px) * LA.rate));
+        const i1p = Math.min(x1i, Math.floor(x2t(px + 1) * LA.rate));
+        let lo = null, hi = null;
+        for (let i = i0; i <= i1p; i++) { const v = at(ch, i); if (lo === null || v < lo) lo = v; if (hi === null || v > hi) hi = v; }
+        if (lo === null) { prevY = null; continue; }
+        const x = px + 0.5;
+        if (lo === hi) {
+          const y = lo ? yHi : yLo;
+          if (prevY != null && prevY !== y) ds += `M${x} ${prevY}V${y}`;
+          ds += `M${x} ${y}H${x + 1}`;
+          prevY = y;
+        } else {
+          db += `M${x} ${yHi}V${yLo}`;
+          prevY = null;
+        }
+      }
+      if (ds) out.push(`<path d="${ds}" fill="none" stroke="${ch.color}" stroke-width="1.15" stroke-linecap="butt" shape-rendering="crispEdges"/>`);
+      if (db) out.push(`<path d="${db}" fill="none" stroke="${ch.color}" stroke-opacity="0.30" stroke-width="1" stroke-linecap="butt" shape-rendering="crispEdges"/>`);
+    });
+
+    // 解码器行
+    LA.decHits = [];
+    dec.forEach((d, k) => {
+      const top = AXIS + (LA.chans.length + k) * rowH, h = Math.max(9, rowH - 7);
+      let lastLabelRight = -Infinity;
+      for (const it of decodeOf(d)) {
+        const xa = t2x(it.i0 / LA.rate), xb = t2x(it.i1 / LA.rate);
+        if (xb < -20 || xa > W + 20) continue;
+        const w = Math.max(9, xb - xa);
+        const col = CLS_COLOR[it.cls] || "#4ea1ff";
+        const label = String(it.text);
+        const need = Math.max(22, label.length * 6.1 + 8);
+        out.push(`<g><rect x="${Math.round(xa) + 0.5}" y="${Math.round(top + 4) + 0.5}" width="${Math.round(w)}" height="${h}" rx="2" fill="${col}" fill-opacity="0.18" stroke="${col}" stroke-width="1" shape-rendering="crispEdges"/><title>${svgEsc(label)}</title></g>`);
+        let tx = null;
+        if (w >= need + 6) tx = Math.round(xa) + 4;
+        else if (w >= 10 && xa >= lastLabelRight + 6) tx = Math.round(xa + w) + 4;
+        else if (xa >= lastLabelRight + need + 8) tx = Math.round(xa) + 4;
+        if (tx != null && tx < W - 6) {
+          out.push(`<text class="la-declabel" x="${tx}" y="${top + h / 2 + 3}" fill="${fg}" stroke="var(--surface-0)" stroke-width="2.5" paint-order="stroke" font-size="10.5" dominant-baseline="middle">${svgEsc(label)}</text>`);
+          lastLabelRight = tx + need;
+        }
+        LA.decHits.push({ x0: xa, x1: xa + w, y0: top + 4, y1: top + 4 + h, it, kind: d.kind, col });
+      }
+    });
+    base.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    base.setAttribute("width", String(W));
+    base.setAttribute("height", String(H));
+    base.innerHTML = out.join("");
+    LA.renderKey = key;
   }
+  renderOverlay(overlay, W, H, AXIS, rowH, t2x, fg, muted);
+}
 
-  // 波形：按像素列聚合（每列看这一段采样是"恒定"还是"有跳变"）
-  const x0i = Math.max(0, Math.floor(LA.view.t0 * LA.rate));
-  const x1i = Math.min(LA.n - 1, Math.ceil((LA.view.t0 + LA.view.span) * LA.rate));
-  LA.chans.forEach((ch, r) => {
-    if (!ch.on) return;                                 // 隐藏的占行但不画波形
-    const top = AXIS + r * rowH, h = rowH - 5;
-    const yHi = top + 3, yLo = top + h;
-    g.strokeStyle = ch.color; g.lineWidth = 1.6;
-    g.beginPath();
-    let prevY = null;
-    for (let px = 0; px < W; px++) {
-      const i0 = Math.max(x0i, Math.floor(x2t(px) * LA.rate));
-      const i1p = Math.min(x1i, Math.floor(x2t(px + 1) * LA.rate));
-      let lo = null, hi = null;
-      for (let i = i0; i <= i1p; i++) { const v = at(ch, i); if (lo === null || v < lo) lo = v; if (hi === null || v > hi) hi = v; }
-      if (lo === null) { prevY = null; continue; }
-      if (lo === hi) {
-        const y = lo ? yHi : yLo;
-        if (prevY != null && prevY !== y) { g.moveTo(px, prevY); g.lineTo(px, y); }   // 竖直过渡
-        g.moveTo(px, y); g.lineTo(px + 1, y);
-        prevY = y;
-      } else {                                       // 这一列里有跳变：上下顶满（"忙"的样子）
-        g.moveTo(px, yHi); g.lineTo(px, yLo);
-        if (prevY != null) { g.moveTo(px, prevY); g.lineTo(px, prevY === yHi ? yLo : yHi); }
-        prevY = null;
-      }
-    }
-    g.stroke();
-  });
-  // 解码器行：每个解码器一行，把解出来的每一"项"画成一个方块（颜色按项的类型分）
-  dec.forEach((d, k) => {
-    const top = AXIS + (LA.chans.length + k) * rowH, h = rowH - 5;
-    const res = decodeOf(d);
-    g.font = "10px ui-monospace, Consolas, monospace";
-    for (const it of res) {
-      const xa = t2x(it.i0 / LA.rate), xb = t2x(it.i1 / LA.rate);
-      if (xb < -20 || xa > W + 20) continue;
-      const w = Math.max(8, xb - xa);
-      const col = CLS_COLOR[it.cls] || "#4ea1ff";
-      g.fillStyle = col + "33";
-      g.strokeStyle = col;
-      g.beginPath(); g.rect(xa, top + 3, w, h); g.fill(); g.stroke();
-      if (w > 26) {                                   // 够宽才写字；写不下就裁在方块里，别糊到隔壁
-        g.save();
-        g.beginPath(); g.rect(xa + 1, top + 3, w - 2, h); g.clip();
-        g.fillStyle = fg;
-        g.fillText(String(it.text), xa + 3, top + h / 2 + 3);
-        g.restore();
-      }
-    }
-  });
-
-  // 光标 + 悬停线
-  const drawCur = (t, color, dash, name) => {
+function renderOverlay(svg, W, H, AXIS, rowH, t2x, fg, muted) {
+  const out = [];
+  if (LA.hoverDec) {
+    const h = LA.hoverDec;
+    out.push(`<rect x="${Math.round(h.x0) + 0.5}" y="${Math.round(h.y0) + 0.5}" width="${Math.round(h.x1 - h.x0)}" height="${Math.round(h.y1 - h.y0)}" rx="2" fill="${h.col}" fill-opacity="0.18" stroke="${h.col}" stroke-width="1.5" shape-rendering="crispEdges"/>`);
+  }
+  const drawCur = (t, color, dash, name, alpha) => {
     if (t == null) return;
-    const x = t2x(t);
+    const x = Math.round(t2x(t)) + 0.5;
     if (x < -10 || x > W + 10) return;
-    g.strokeStyle = color; g.setLineDash(dash ? [4, 3] : []); g.lineWidth = 1.2;
-    g.beginPath(); g.moveTo(x, AXIS - 4); g.lineTo(x, H); g.stroke();
-    g.setLineDash([]);
-    g.fillStyle = color; g.fillText(name, Math.max(2, Math.min(W - 12, x + 3)), 8);
+    out.push(`<line x1="${x}" y1="${AXIS - 4}" x2="${x}" y2="${H}" stroke="${color}" stroke-opacity="${alpha == null ? 1 : alpha}" stroke-width="1.2" ${dash ? 'stroke-dasharray="5 4"' : ""} shape-rendering="crispEdges"/>`);
+    if (name) out.push(`<text x="${Math.max(2, Math.min(W - 24, x + 4))}" y="9" fill="${color}" font-size="10.5" font-weight="600" dominant-baseline="middle">${svgEsc(name)}</text>`);
   };
-  drawCur(LA.cur.a, "#ffd166", false, "A");
-  drawCur(LA.cur.b, "#7ee787", true, "B");
-  if (LA.hover != null) { g.strokeStyle = muted; g.globalAlpha = .5; drawCur(LA.hover, muted, true, ""); g.globalAlpha = 1; }
+  drawCur(LA.cur.a, "#ffd166", false, "A", 1);
+  drawCur(LA.cur.b, "#7ee787", true, "B", 1);
+  LA.marks.forEach((m, i) => drawCur(m.t, m.color, false, String(i + 1), 1));
+  if (LA.hover != null) drawCur(LA.hover, muted, true, "", 0.55);
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", String(W));
+  svg.setAttribute("height", String(H));
+  svg.innerHTML = out.join("");
 }
 
 function renderLabels() {
@@ -388,10 +432,9 @@ function renderLabels() {
   const { on } = rowsOut();
   const c = cv();
   const H = c ? c.getBoundingClientRect().height : 300;
-  const rows = rowsOut().rows;
-  const rowH = Math.max(16, Math.min(ROW_H, (H - 22 - 6) / Math.max(1, rows)));
+  const { AXIS, rowH } = laGeom(H);
   box.textContent = "";
-  const pad = el("div", "lalabel-h"); pad.style.height = "22px"; pad.textContent = T("通道");
+  const pad = el("div", "lalabel-h"); pad.style.height = AXIS + "px"; pad.textContent = T("通道");
   box.appendChild(pad);
   LA.chans.forEach((ch, i) => {
     const r = el("div", "lalabel" + (i === LA.sel ? " sel" : "") + (ch.on ? "" : " off"));
@@ -496,6 +539,42 @@ function renderDecList() {
     row.appendChild(del);
     box.appendChild(row);
   });
+  renderDecResults();
+}
+
+/** 右栏完整解码结果：波形上放不下的文字仍能逐条读，点一条把 A/B 放到它的起止位置。 */
+function renderDecResults() {
+  const box = $id("la-dec-results");
+  if (!box) return;
+  box.textContent = "";
+  const t0 = LA.view.t0, t1 = LA.view.t0 + LA.view.span;
+  let total = 0, shown = 0;
+  for (const d of LA.dec) {
+    if (d.on === false) continue;
+    const spec = DECODERS[d.kind];
+    const name = spec ? T(spec.name) : String(d.kind);
+    const items = decodeOf(d).filter((it) => it.i1 / LA.rate >= t0 && it.i0 / LA.rate <= t1);
+    total += items.length;
+    for (const it of items) {
+      if (shown >= 300) continue;
+      const b = el("button", "ladecresult");
+      b.append(
+        el("span", "dc-kind", name),
+        el("span", "dc-val", String(it.text)),
+        el("span", "dc-t", fmtT(it.i0 / LA.rate, LA.view.span)),
+      );
+      b.title = `${name}: ${it.text}`;
+      b.onclick = () => {
+        LA.cur.a = it.i0 / LA.rate;
+        LA.cur.b = it.i1 / LA.rate;
+        renderAll();
+      };
+      box.appendChild(b);
+      shown += 1;
+    }
+  }
+  if (!shown) box.appendChild(el("p", "hint", T("当前窗口没有解码结果")));
+  if ($id("la-dec-count")) $id("la-dec-count").textContent = total > shown ? `${shown} / ${total}` : String(total);
 }
 
 /** 工具行/参数区的读数 */
@@ -511,6 +590,11 @@ function renderReadout() {
   set("la-zoomspan", T("窗口 {a} ~ {b}").replace("{a}", fmtT(t0, LA.view.span)).replace("{b}", fmtT(t1, LA.view.span)));
   set("la-a", LA.cur.a == null ? "—" : fmtT(LA.cur.a, LA.view.span));
   set("la-b", LA.cur.b == null ? "—" : fmtT(LA.cur.b, LA.view.span));
+  set("la-hover", LA.hover == null ? "—" : fmtT(LA.hover, LA.view.span));
+  if ($id("la-hoverv")) {
+    const hv = LA.hover != null && LA.chans[LA.sel] ? String(at(LA.chans[LA.sel], t2i(LA.hover))) : "—";
+    set("la-hoverv", hv);
+  }
   const d = LA.cur.a != null && LA.cur.b != null ? Math.abs(LA.cur.b - LA.cur.a) : null;
   set("la-dt", d == null ? "—" : fmtT(d, d));
   set("la-freq", d ? (1 / d >= 1000 ? (1 / d / 1000).toFixed(3) + " kHz" : (1 / d).toFixed(1) + " Hz") : "—");
@@ -524,6 +608,63 @@ function renderReadout() {
   set("la-mw", m && m.pulses
     ? fmtT(m.minHi, m.minHi) + " ~ " + fmtT(m.maxHi, m.maxHi) + " / " + fmtT(m.minLo, m.minLo) + " ~ " + fmtT(m.maxLo, m.maxLo)
     : "—");
+  renderMarks();
+}
+
+function addMark(t) {
+  if (t == null || !isFinite(t)) return -1;
+  const tt = Math.max(0, Math.min(LA.n / LA.rate, Number(t)));
+  const idx = LA.marks.length;
+  LA.marks.push({ t: tt, color: MARK_COLORS[idx % MARK_COLORS.length] });
+  LA.activeMark = idx;
+  return idx;
+}
+
+function markerAt(x, W) {
+  let best = -1, dist = 6;
+  LA.marks.forEach((m, i) => {
+    const dx = Math.abs((m.t - LA.view.t0) / LA.view.span * W - x);
+    if (dx < dist) { dist = dx; best = i; }
+  });
+  return best;
+}
+
+function cursorAt(x, W) {
+  let best = "", dist = 6;
+  for (const key of ["a", "b"]) {
+    const t = LA.cur[key];
+    if (t == null) continue;
+    const dx = Math.abs((t - LA.view.t0) / LA.view.span * W - x);
+    if (dx < dist) { dist = dx; best = key; }
+  }
+  return best;
+}
+
+function renderMarks() {
+  const box = $id("la-marks");
+  if (!box) return;
+  box.textContent = "";
+  LA.marks.forEach((m, i) => {
+    const b = el("button", "lamark" + (i === LA.activeMark ? " active" : ""));
+    b.style.setProperty("--lamark", m.color);
+    b.title = T("点击设为 A；Shift+点击设为 B；拖动标记线可移动");
+    b.append(el("span", "lamark-no", String(i + 1)), el("span", "lamark-t", fmtT(m.t, LA.view.span)));
+    b.onclick = (e) => {
+      LA.activeMark = i;
+      if (e.shiftKey) LA.cur.b = m.t; else LA.cur.a = m.t;
+      renderAll();
+    };
+    const x = el("span", "lamark-x", "×");
+    x.title = T("删除这个标记");
+    x.onclick = (e) => {
+      e.stopPropagation();
+      LA.marks.splice(i, 1);
+      LA.activeMark = Math.min(LA.activeMark, LA.marks.length - 1);
+      renderAll();
+    };
+    b.appendChild(x);
+    box.appendChild(b);
+  });
 }
 
 /* ============================ 交互 ============================ */
@@ -546,11 +687,42 @@ function bindInteract() {
     }
     clampView(); renderWave(); renderReadout();
   }, { passive: false });
-  c.addEventListener("pointerdown", (e) => { LA.drag = { x: e.offsetX, t0: LA.view.t0, moved: false }; c.setPointerCapture(e.pointerId); });
+  c.addEventListener("pointerdown", (e) => {
+    const W = c.getBoundingClientRect().width;
+    const ck = cursorAt(e.offsetX, W);
+    const mi = markerAt(e.offsetX, W);
+    if (ck) {
+      LA.drag = { kind: "cur", key: ck, x: e.offsetX, moved: false };
+    } else if (mi >= 0) {
+      LA.activeMark = mi;
+      LA.drag = { kind: "mark", index: mi, x: e.offsetX, moved: false };
+    } else {
+      const hit = LA.decHits.find((h) => e.offsetX >= h.x0 && e.offsetX <= h.x1 && e.offsetY >= h.y0 && e.offsetY <= h.y1);
+      LA.drag = hit
+        ? { kind: "dec", hit, x: e.offsetX, moved: false }
+        : { kind: "pan", x: e.offsetX, t0: LA.view.t0, moved: false };
+    }
+    c.setPointerCapture(e.pointerId);
+  });
   c.addEventListener("pointermove", (e) => {
     LA.hover = x2t(e.offsetX);
-    if (LA.drag) {
-      const W = c.getBoundingClientRect().width;
+    const hit = LA.decHits.find((h) => e.offsetX >= h.x0 && e.offsetX <= h.x1 && e.offsetY >= h.y0 && e.offsetY <= h.y1);
+    LA.hoverDec = hit || null;
+    const W = c.getBoundingClientRect().width;
+    const onLine = !!cursorAt(e.offsetX, W) || markerAt(e.offsetX, W) >= 0;
+    c.style.cursor = hit ? "pointer" : onLine ? "ew-resize" : "";
+    if ($id("la-msg")) $id("la-msg").textContent = hit
+      ? `${DECODERS[hit.kind] ? T(DECODERS[hit.kind].name) : hit.kind}: ${hit.it.text}`
+      : (LA.msgText || "");
+    if (LA.drag && LA.drag.kind === "cur") {
+      if (Math.abs(e.offsetX - LA.drag.x) > 1) LA.drag.moved = true;
+      LA.cur[LA.drag.key] = Math.max(0, Math.min(LA.n / LA.rate, x2t(e.offsetX)));
+      renderWave(); renderReadout();
+    } else if (LA.drag && LA.drag.kind === "mark") {
+      if (Math.abs(e.offsetX - LA.drag.x) > 1) LA.drag.moved = true;
+      LA.marks[LA.drag.index].t = Math.max(0, Math.min(LA.n / LA.rate, x2t(e.offsetX)));
+      renderWave(); renderReadout();
+    } else if (LA.drag && LA.drag.kind === "pan") {
       const dt = -((e.offsetX - LA.drag.x) / W) * LA.view.span;
       if (Math.abs(e.offsetX - LA.drag.x) > 2) LA.drag.moved = true;
       LA.view.t0 = LA.drag.t0 + dt;
@@ -559,14 +731,30 @@ function bindInteract() {
     renderLabels(); renderReadout();
   });
   c.addEventListener("pointerup", (e) => {
-    if (LA.drag && !LA.drag.moved) {
+    if (LA.drag && LA.drag.kind === "cur") {
+      renderAll();
+    } else if (LA.drag && LA.drag.kind === "mark") {
+      LA.activeMark = LA.drag.index;
+      renderAll();
+    } else if (LA.drag && LA.drag.kind === "dec" && !LA.drag.moved) {
+      const it = LA.drag.hit.it;
+      LA.cur.a = it.i0 / LA.rate;
+      LA.cur.b = it.i1 / LA.rate;
+      renderAll();
+    } else if (LA.drag && LA.drag.kind === "pan" && !LA.drag.moved) {
       const t = x2t(e.offsetX);
-      if (e.shiftKey) LA.cur.b = t; else LA.cur.a = t;
+      if (e.altKey) addMark(t);
+      else if (e.shiftKey) LA.cur.b = t;
+      else LA.cur.a = t;
       renderAll();
     }
     LA.drag = null;
   });
-  c.addEventListener("pointerleave", () => { LA.hover = null; renderAll(); });
+  c.addEventListener("pointerleave", () => {
+    LA.hover = null; LA.hoverDec = null;
+    if ($id("la-msg")) $id("la-msg").textContent = LA.msgText || "";
+    renderAll();
+  });
   c.addEventListener("dblclick", () => { fitView(); renderAll(); });
   // 键盘：← → 平移，+ - 缩放，Home 回起点
   c.tabIndex = 0;
@@ -578,6 +766,10 @@ function bindInteract() {
     else if (e.key === "+" || e.key === "=") { zoomAt(W / 2, 0.8); }
     else if (e.key === "-") { zoomAt(W / 2, 1.25); }
     else if (e.key === "Home") { LA.view.t0 = 0; renderWave(); renderReadout(); }
+    else if (e.key === "m" || e.key === "M") { addMark(LA.hover != null ? LA.hover : LA.view.t0 + LA.view.span / 2); renderAll(); }
+    else if ((e.key === "Delete" || e.key === "Backspace") && LA.activeMark >= 0 && LA.marks[LA.activeMark]) {
+      LA.marks.splice(LA.activeMark, 1); LA.activeMark = -1; renderAll();
+    }
     else return;
     e.preventDefault();
   });
@@ -600,7 +792,8 @@ function clampView() {
 function msg(text, bad) {
   const e = $id("la-msg");
   if (!e) return;
-  e.textContent = text || "";
+  LA.msgText = text || "";
+  e.textContent = LA.msgText;
   e.style.color = bad ? "hsl(var(--destructive))" : "";
 }
 
@@ -626,6 +819,7 @@ export function laAgentState() {
   const d = LA.cur.a != null && LA.cur.b != null ? Math.abs(LA.cur.b - LA.cur.a) : null;
   L.push(`光标：A=${LA.cur.a == null ? "—" : fmtT(LA.cur.a, LA.view.span)}　B=${LA.cur.b == null ? "—" : fmtT(LA.cur.b, LA.view.span)}` +
     (d ? `　Δt=${fmtT(d, d)}　1/Δt=${fmtHz(1 / d)}` : ""));
+  if (LA.marks.length) L.push("标记：" + LA.marks.map((m, i) => `${i + 1}=${fmtT(m.t, LA.view.span)}`).join("　"));
   const ht = LA.hover != null ? t2i(LA.hover) : null;
   L.push("通道：" + LA.chans.map((c, i) => `${c.name}${c.on ? "" : "(隐藏)"}${ht != null ? "=" + at(c, ht) : ""}`).join("  "));
   L.push("解码器：" + (LA.dec.length ? LA.dec.map((x, i) => `#${i} ${decBrief(x)}`).join("；") : "（无）"));
@@ -650,6 +844,7 @@ export function laAgentRead(args) {
     const m = measure(i, i0, i1);
     return { 通道: c.name, 频率_Hz: m && m.freq ? +m.freq.toFixed(2) : 0, 占空比: m ? +(m.duty * 100).toFixed(1) : 0, 脉冲数: m ? m.pulses : 0 };
   });
+  out.标记 = LA.marks.map((m, i) => ({ "#": i + 1, 时间_s: +m.t.toFixed(12) }));
   return JSON.stringify(out, null, 1);
 }
 
@@ -688,8 +883,16 @@ export async function laAgentConfig(args) {
     LA.cur.b = a.cursors.b == null ? null : Number(a.cursors.b);
     done.push("光标已设");
   }
+  if (Array.isArray(a.markers)) {
+    LA.marks = a.markers.map((m, i) => ({
+      t: Math.max(0, Math.min(LA.n / LA.rate, Number(m && m.t != null ? m.t : m) || 0)),
+      color: MARK_COLORS[i % MARK_COLORS.length],
+    }));
+    LA.activeMark = LA.marks.length ? 0 : -1;
+    done.push(`标记=${LA.marks.length} 个`);
+  }
   renderAll();
-  return done.length ? "已改：" + done.join("；") + "\n（采集数据没动）" : "没有可改的字段（能改：sampleRate / decoders / channels / select / view / cursors）";
+  return done.length ? "已改：" + done.join("；") + "\n（采集数据没动）" : "没有可改的字段（能改：sampleRate / decoders / channels / select / view / cursors / markers）";
 }
 
 /** agent：开始一次采集。source=demo 载入示例场景（scenario 可选）；真机要等驱动 */
@@ -774,6 +977,7 @@ export function initLogic() {
     return;
   }
   laBound = true;
+  LA.rowScale = Math.max(0.75, Math.min(1.8, Number(localStorage.getItem("kdock_la_row_scale") || "1") || 1));
   const btn = (id, fn) => { const b = $id(id); if (b) b.onclick = fn; };
   // 示例场景（下拉选一个，或按「载入」）
   const scn = $id("la-scn");
@@ -797,6 +1001,20 @@ export function initLogic() {
   btn("la-fit", () => { fitView(); renderAll(); });
   btn("la-zin", () => zoomAt(cv().getBoundingClientRect().width / 2, 0.8));
   btn("la-zout", () => zoomAt(cv().getBoundingClientRect().width / 2, 1.25));
+  btn("la-row-dec", () => {
+    LA.rowScale = Math.max(0.75, Math.round((LA.rowScale - 0.15) * 100) / 100);
+    localStorage.setItem("kdock_la_row_scale", String(LA.rowScale));
+    renderAll();
+  });
+  btn("la-row-inc", () => {
+    LA.rowScale = Math.min(1.8, Math.round((LA.rowScale + 0.15) * 100) / 100);
+    localStorage.setItem("kdock_la_row_scale", String(LA.rowScale));
+    renderAll();
+  });
+  btn("la-add-mark", () => {
+    addMark(LA.hover != null ? LA.hover : LA.view.t0 + LA.view.span / 2);
+    renderAll();
+  });
   btn("la-clr-cur", () => { LA.cur = { a: null, b: null }; renderAll(); });
   // 协议下拉：按分类分组，19 种都在里面
   const proto = $id("la-proto");

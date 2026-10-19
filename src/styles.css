@@ -416,10 +416,23 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 
 .card { margin-top: 12px; padding: 10px 12px; border-radius: 12px; border: 1px solid hsl(var(--border) / 0.55); background: var(--surface-2); }
 .cardtitle {
+  display: flex; align-items: center; gap: 6px;
   color: hsl(var(--muted-foreground)); font-size: 11.5px; letter-spacing: .6px;
   text-transform: uppercase; margin: 14px 0 8px;
 }
 .cardtitle:first-child, .card .cardtitle { margin-top: 0; }
+.help-f1 {
+  flex: 0 0 auto; width: 17px; height: 17px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid hsl(var(--border) / 0.75); border-radius: 50%;
+  background: transparent; color: hsl(var(--muted-foreground));
+  font: 600 10.5px/1 "Segoe UI", sans-serif; letter-spacing: 0; text-transform: none;
+  cursor: pointer;
+}
+.help-f1:hover {
+  color: hsl(var(--primary)); border-color: hsl(var(--primary) / 0.65);
+  background: hsl(var(--primary) / 0.10);
+}
 
 /* ── 参数区（宽窗在右栏，窄窗整行挪到下面）统一对齐 ────────────────────────────
    目标：一整栏只留两个左边缘 —— 标签统一右对齐到一处，控件（输入框 / 下拉 / 按钮 / 复选框）
@@ -676,6 +689,17 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
 .kbhost > .kbempty .kbbtn { pointer-events: none; }
 .kbpane #kb-url { min-width: 12rem; }
 
+/* 知识库专注模式：保留左侧导航，把对话页铺满其余区域；参数区里的「管理」切回并排。 */
+html.kb-focus[data-tab="kb"] .split { grid-template-columns: var(--nav-w, 152px) 5px minmax(0, 1fr); }
+html.kb-focus[data-tab="kb"] .split > .work,
+html.kb-focus[data-tab="kb"] .split > #gutter-r { display: none; }
+html.kb-focus[data-tab="kb"] .split > .params {
+  grid-column: 3 / -1; grid-row: 1; display: flex; flex-direction: column;
+  max-height: none; overflow: hidden; padding: 12px 14px 14px;
+}
+html.kb-focus[data-tab="kb"] .parampane.kbpane { flex: 1 1 auto; min-height: 0; }
+html.kb-focus[data-tab="kb"] .parampane.kbpane #kb-chat-host { height: auto; flex: 1 1 auto; min-height: 0; }
+
 /* 示波器页：波形 / 截屏 两个视图 + 每通道一张卡片 */
 #sc-plot { margin-top: 8px; }
 #sc-shot { align-self: center; margin: auto; image-rendering: auto; background: #000; }
@@ -786,7 +810,7 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
 .nodecfg code { background: hsl(var(--accent)); padding: 0 3px; border-radius: 4px; }
 
 /* ── 逻辑分析仪：左边通道列 + 右边波形（canvas）── */
-.lagrid { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: 6px; flex: 1 1 auto; min-height: 220px; }
+.lagrid { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: 6px; flex: 1 1 auto; min-height: 260px; }
 .lalabels { display: flex; flex-direction: column; min-width: 0; overflow: auto; border: 1px solid var(--surface-line); border-radius: 10px; background: var(--surface-1); padding: 0 4px; }
 .lalabel-h { display: flex; align-items: center; font-size: 11.5px; color: hsl(var(--muted-foreground)); padding-left: 6px; }
 .lalabel { display: flex; align-items: center; gap: 5px; min-width: 0; cursor: pointer; border-top: 1px solid var(--surface-line-soft); font-size: 12px; }
@@ -799,14 +823,52 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
 .lalabel .laname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lalabel .laval { flex: 0 0 auto; font-family: Consolas, monospace; font-size: 11px; color: hsl(var(--foreground) / 0.75); }
 .lalabel.ladec { color: hsl(var(--primary)); }
-.lacanvas { width: 100%; height: 100%; min-height: 220px; min-width: 12rem; border: 1px solid var(--surface-line); border-radius: 10px; background: var(--surface-0); }
+.lawrap { position: relative; min-height: 260px; min-width: 12rem; }
+.lawavesvg {
+  position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden;
+  border: 1px solid var(--surface-line); border-radius: 10px;
+  background: var(--surface-0); pointer-events: none;
+}
+.lawavesvg text { font-family: Consolas, "Cascadia Mono", ui-monospace, monospace; }
+.lawave-overlay { background: transparent; border-color: transparent; z-index: 1; }
+.lacanvas-input {
+  position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%;
+  min-width: 0; min-height: 0; border: none; border-radius: 10px;
+  background: transparent; outline: none;
+}
 .laviewbar, .lacurbar { gap: 8px; flex-wrap: wrap; }
 .lacurbar b { font-family: Consolas, monospace; font-weight: 600; }
+.lamarks { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-height: 22px; }
+.lamark {
+  height: 22px; padding: 0 6px; display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--lamark) 55%, transparent);
+  border-radius: 6px; background: color-mix(in srgb, var(--lamark) 12%, transparent);
+  color: hsl(var(--foreground)); font: 11px/1 Consolas, monospace; cursor: pointer;
+}
+.lamark.active { border-color: var(--lamark); background: color-mix(in srgb, var(--lamark) 22%, transparent); }
+.lamark-no { color: var(--lamark); font-weight: 700; }
+.lamark-t { color: hsl(var(--muted-foreground)); }
+.lamark-x { padding-left: 2px; color: hsl(var(--muted-foreground)); }
+.lamark-x:hover { color: hsl(var(--destructive)); }
 .ladeclist { display: flex; flex-direction: column; gap: 4px; }
 .ladecrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ladecrow .laname { font-weight: 600; font-size: 12px; }
 .ladecrow select.tight { min-width: 4.4rem; }
 .ladecrow input.num { width: 5.5rem; }
+.ladecresults {
+  display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow: auto;
+  border: 1px solid var(--surface-line); border-radius: 8px; background: var(--surface-1); padding: 4px;
+}
+.ladecresult {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 7px; align-items: center;
+  min-height: 24px; padding: 3px 6px; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: hsl(var(--foreground)); font: inherit; font-size: 11.5px;
+  text-align: left; cursor: pointer;
+}
+.ladecresult:hover { border-color: var(--surface-line); background: var(--surface-2); }
+.ladecresult .dc-kind { color: hsl(var(--primary)); }
+.ladecresult .dc-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ladecresult .dc-t { color: hsl(var(--muted-foreground)); font: 10.5px/1.3 Consolas, monospace; }
 
 /* ============ 烧录：器件库网格 ============ */
 .devgrid {
@@ -1234,6 +1296,16 @@ summary.tb-icon::-webkit-details-marker { display: none; }
    它的自动最小尺寸就成了 0 —— 整张工具卡会被压成一条 2px 高、100 多像素宽的横线
    （就是"左侧那条异常横线"，实测 126x2 / 151x2）。这里统一禁止收缩，超高交给容器滚动。 */
 .agentchat > * { flex: 0 0 auto; }
+.agwelcome {
+  margin: auto; max-width: 560px; padding: 44px 24px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.agwelcome .agwelcome-title {
+  font-size: clamp(24px, 3.2vw, 38px); font-weight: 680; letter-spacing: -0.7px;
+  color: hsl(var(--foreground));
+}
+.agwelcome .agwelcome-sub { font-size: 13px; color: hsl(var(--muted-foreground)); }
+.agwelcome .agwelcome-hint { font-size: 12px; color: hsl(var(--muted-foreground) / 0.85); }
 .agmsg { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .agmsg > .head { display: flex; align-items: center; gap: 7px; font-size: 11px; color: hsl(var(--muted-foreground)); }
 .agmsg > .head .who { font-weight: 650; letter-spacing: .3px; }
@@ -1553,6 +1625,48 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .modaltab.active { background: hsl(var(--primary) / 0.14); border-color: hsl(var(--primary) / 0.42); }
 .modalcontent { overflow: auto; padding: 12px 16px 20px; }
 .setpane .cardtitle:first-child { margin-top: 2px; }
+
+/* 上下文帮助 */
+.helpbox { width: min(980px, 94vw); height: min(760px, 90vh); }
+.helpnav { gap: 3px; }
+.helpnav .helpnav-page {
+  margin: 9px 8px 3px; font-size: 10.5px; letter-spacing: .75px;
+  color: hsl(var(--muted-foreground)); text-transform: uppercase;
+}
+.helpnav button {
+  min-height: 28px; padding: 4px 9px; text-align: left; cursor: pointer;
+  border: 1px solid transparent; border-radius: 7px; background: none;
+  color: hsl(var(--foreground)); font: inherit; font-size: 12px; line-height: 1.35;
+}
+.helpnav button:hover { background: var(--surface-3); }
+.helpnav button.active {
+  color: hsl(var(--primary)); border-color: hsl(var(--primary) / 0.35);
+  background: hsl(var(--primary) / 0.10);
+}
+.helpcontent { padding: 18px 24px 28px; }
+.helpcrumb { margin-bottom: 9px; color: hsl(var(--muted-foreground)); font-size: 11.5px; }
+.helpcontent h2 { margin: 0 0 8px; font-size: 19px; letter-spacing: -0.2px; }
+.helpcontent h3 { margin: 20px 0 6px; font-size: 13px; }
+.helpcontent p { margin: 0 0 10px; color: hsl(var(--muted-foreground)); font-size: 12.5px; line-height: 1.75; }
+.helpcontent code {
+  padding: 1px 5px; border-radius: 4px; background: hsl(var(--accent));
+  font: 11.5px/1.5 Consolas, "Cascadia Mono", monospace;
+}
+.helpindex { display: flex; flex-direction: column; gap: 3px; margin-top: 12px; }
+.helpindex .helpindex-page {
+  margin: 12px 0 3px; color: hsl(var(--muted-foreground));
+  font-size: 10.5px; letter-spacing: .75px; text-transform: uppercase;
+}
+.helpindex button {
+  min-height: 30px; padding: 5px 9px; text-align: left; cursor: pointer;
+  border: 1px solid transparent; border-radius: 8px; background: transparent;
+  color: hsl(var(--foreground)); font: inherit; font-size: 12.5px;
+}
+.helpindex button:hover { background: var(--surface-2); border-color: var(--surface-line); }
+.helpindex small {
+  display: block; margin: 2px 0 0; color: hsl(var(--muted-foreground));
+  font-size: 11px; line-height: 1.45;
+}
 
 /* 消息左右分栏：用户靠右，agent 靠左 */
 .agentchat > .agmsg.user { align-items: flex-end; }
@@ -2065,6 +2179,44 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .provlist .provrow { padding: 7px 9px; cursor: pointer; }
 .provrow button { height: 22px; padding: 0 8px; font-size: 11px; border-radius: 6px; }
 .provrow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 添加模型：models.dev 精简目录 */
+.mdgrid {
+  display: grid; grid-template-columns: minmax(9rem, 0.34fr) minmax(0, 1fr);
+  gap: 8px; height: min(360px, 42vh); min-height: 220px;
+}
+.mdproviders, .mdmodels {
+  overflow: auto; border: 1px solid var(--surface-line); border-radius: 10px;
+  background: var(--surface-1); padding: 5px;
+}
+.mdproviders { display: flex; flex-direction: column; gap: 3px; }
+.mdprovider, .mdmodel {
+  width: 100%; border: 1px solid transparent; border-radius: 8px; background: transparent;
+  color: hsl(var(--foreground)); font: inherit; text-align: left; cursor: pointer;
+}
+.mdprovider { padding: 7px 8px; font-size: 12px; }
+.mdprovider .n { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mdprovider .c { display: block; margin-top: 2px; color: hsl(var(--muted-foreground)); font-size: 10.5px; }
+.mdprovider:hover, .mdmodel:hover { background: var(--surface-2); border-color: var(--surface-line); }
+.mdprovider.active { color: hsl(var(--primary)); border-color: hsl(var(--primary) / 0.45); background: hsl(var(--primary) / 0.10); }
+.mdprovider.mdmore { margin-top: 4px; color: hsl(var(--muted-foreground)); text-align: center; font-size: 11px; border-color: var(--surface-line); }
+.mdmodels { display: flex; flex-direction: column; gap: 3px; }
+.mdmodel { padding: 7px 9px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; }
+.mdmodel .mn { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mdmodel .mi { color: hsl(var(--muted-foreground)); font: 10.5px/1.45 Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mdmodel .mm { color: hsl(var(--muted-foreground)); font-size: 10.5px; white-space: nowrap; text-align: right; }
+.mdmodel .mf { color: hsl(var(--success)); font-size: 10px; }
+.mdempty { padding: 18px 12px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 12px; }
+.mdpick {
+  margin-top: 10px; padding: 10px 12px 12px; border: 1px solid var(--surface-line);
+  border-radius: 10px; background: var(--surface-1);
+}
+.mdpick-title { font-size: 13px; font-weight: 650; }
+.mdpick .field { margin-top: 8px; }
+@media (max-width: 720px) {
+  .mdgrid { grid-template-columns: 1fr; height: min(520px, 52vh); }
+  .mdproviders { max-height: 150px; }
+}
 
 /* 表单最下面那条：保存按钮单独一行、放最底下 */
 .trow.endcap {
