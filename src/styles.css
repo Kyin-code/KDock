@@ -3115,9 +3115,13 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   gap: 6px; padding: 1px 2px; align-items: start;
 }
 .trrow .t { color: hsl(var(--muted-foreground)); }
-.trrow .d { font-weight: 600; }
-.trrow.rx .d { color: hsl(var(--primary)); }
-.trrow.tx .d { color: hsl(var(--success)); }
+.trrow .d {
+  justify-self: start; font-weight: 600; font-size: 10.5px; line-height: 1.7;
+  padding: 0 6px; border-radius: 5px; letter-spacing: .02em;
+}
+/* TX / RX 都跟着主题色（--primary 会随所选配色变），只靠填充/描边区分方向 */
+.trrow.tx .d { background: hsl(var(--primary) / 0.18); color: hsl(var(--primary)); }
+.trrow.rx .d { background: transparent; color: hsl(var(--muted-foreground)); box-shadow: inset 0 0 0 1px hsl(var(--border) / 0.75); }
 .trrow .n { text-align: right; color: hsl(var(--muted-foreground)); }
 .trrow .h { white-space: pre-wrap; word-break: break-all; }
 .trrow .a { white-space: pre-wrap; word-break: break-all; color: hsl(var(--muted-foreground)); }
