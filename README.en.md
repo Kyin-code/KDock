@@ -328,6 +328,9 @@ Thanks to:
 - [opencode](https://github.com/anomalyco/opencode) — the Agent interaction model (context/cost panel, skills and
   MCP organisation, steering a run mid-flight) benefited a lot from it;
 - [CC Switch](https://github.com/farion1231/cc-switch) — the provider-profile list and skill management layout;
+- [USBPcap](https://github.com/desowin/usbpcap): USB capture driver (GPLv2) and command-line tool
+  (BSD-2-Clause), installed by the user as an **optional external component**; KDock only invokes it and
+  parses its output. See [NOTICE](NOTICE).
 - [Tauri](https://github.com/tauri-apps/tauri), [uPlot](https://github.com/leeoniya/uPlot),
   [RustCrypto](https://github.com/RustCrypto) and the many other open-source projects we build on.
 

@@ -5541,22 +5541,31 @@ function usbRenderDetail() {
 }
 
 function usbRenderAll() {
-  usbComFill();
   usbRenderList();
   usbRenderDetail();
   usbRenderInfo();
 }
 
-/* ────────── 原始数据抓取（串口 RX/TX，逐段十六进制） ────────── */
-const usbTrace = [];          // { ts, dir, len, hex, asc }
-const USB_TRACE_MAX = 4000;
+/* ────────── USBPcap 抓包：解析 pcap 里的 USB 传输 ────────── */
+let usbCapInit = false;
+const usbCapRecords = [];     // 原始记录（保存用）
+const USB_CAP_MAX = 6000;
 
-function usbTraceStamp() {
-  const d = new Date();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  const ss = String(d.getSeconds()).padStart(2, "0");
-  return hh + ":" + mm + ":" + ss + "." + String(d.getMilliseconds()).padStart(3, "0");
+function usbCapState(kind, text) {
+  const n = $("usb-cap-state");
+  if (!n) return;
+  n.textContent = text || "";
+  n.style.color = kind === "on" ? "hsl(var(--success))" : kind === "bad" ? "hsl(var(--destructive))" : "";
+}
+
+function usbTraceMark(text) {
+  const box = $("usb-trace");
+  if (!box) return;
+  const row = document.createElement("div");
+  row.className = "trmark";
+  row.textContent = text;
+  box.appendChild(row);
+  if ($("usb-autoscroll") && $("usb-autoscroll").checked) box.scrollTop = box.scrollHeight;
 }
 
 function usbHexStr(u8, max) {
@@ -5574,52 +5583,143 @@ function usbAsciiStr(u8, max) {
   return s;
 }
 
-function usbTraceRow(rec) {
+function usbCapTime(us) {
+  const d = new Date(Math.floor(us / 1000));
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  const ms = String(Math.floor((us % 1000000) / 1000)).padStart(3, "0");
+  return hh + ":" + mm + ":" + ss + "." + ms;
+}
+
+function usbCapRow(r) {
   const row = document.createElement("div");
-  row.className = "trrow " + (rec.dir === "RX" ? "rx" : "tx");
-  const t = document.createElement("span"); t.className = "t"; t.textContent = rec.ts;
-  const d = document.createElement("span"); d.className = "d"; d.textContent = rec.dir;
-  const n = document.createElement("span"); n.className = "n"; n.textContent = String(rec.len);
-  const h = document.createElement("span"); h.className = "h"; h.textContent = rec.hex;
-  const a = document.createElement("span"); a.className = "a"; a.textContent = rec.asc;
-  row.append(t, d, n, h, a);
+  row.className = "trrow cap " + (r.dir === "IN" ? "in" : "out");
+  const u8 = Uint8Array.from(atob(r.data || ""), (c) => c.charCodeAt(0));
+  const t = document.createElement("span"); t.className = "t"; t.textContent = usbCapTime(r.t);
+  const dev = document.createElement("span"); dev.className = "dev"; dev.textContent = r.bus + "." + r.dev;
+  const ep = document.createElement("span"); ep.className = "ep"; ep.textContent = r.ep;
+  const ty = document.createElement("span"); ty.className = "ty"; ty.textContent = r.xfer + " " + r.dir;
+  const st = document.createElement("span"); st.className = "st" + (r.status ? " bad" : "");
+  st.textContent = r.status ? "0x" + r.status.toString(16).toUpperCase() : "OK";
+  const h = document.createElement("span"); h.className = "h"; h.textContent = usbHexStr(u8, 128);
+  const a = document.createElement("span"); a.className = "a";
+  if (r.setup) {
+    a.textContent = r.setup.type + " " + r.setup.dir
+      + " bm=" + r.setup.bmRequestType + " bReq=" + r.setup.bRequest
+      + " wV=" + r.setup.wValue + " wI=" + r.setup.wIndex + " wL=" + r.setup.wLength;
+  } else {
+    a.textContent = usbAsciiStr(u8, 128);
+  }
+  row.append(t, dev, ep, ty, st, h, a);
   return row;
 }
 
-function usbTraceAdd(dir, u8) {
-  const rec = {
-    ts: usbTraceStamp(), dir, len: u8.length,
-    hex: usbHexStr(u8, 256), asc: usbAsciiStr(u8, 256),
-  };
-  usbTrace.push(rec);
+function usbCapAdd(r) {
+  usbCapRecords.push(r);
   const box = $("usb-trace");
   if (!box) return;
-  if (usbTrace.length > USB_TRACE_MAX) {
-    usbTrace.shift();
-    if (box.firstChild) box.firstChild.remove();
+  if (usbCapRecords.length > USB_CAP_MAX) {
+    usbCapRecords.splice(0, usbCapRecords.length - USB_CAP_MAX);
+    usbCapRedraw();
+    return;
   }
-  box.appendChild(usbTraceRow(rec));
+  if ($("usb-ctl-only") && $("usb-ctl-only").checked && r.xfer !== "ctl") return;
+  box.appendChild(usbCapRow(r));
   if ($("usb-autoscroll") && $("usb-autoscroll").checked) box.scrollTop = box.scrollHeight;
 }
 
-function usbTraceClear() {
-  usbTrace.length = 0;
+function usbCapRedraw() {
+  const box = $("usb-trace");
+  if (!box) return;
+  box.textContent = "";
+  const onlyCtl = $("usb-ctl-only") && $("usb-ctl-only").checked;
+  for (const r of usbCapRecords) {
+    if (onlyCtl && r.xfer !== "ctl") continue;
+    box.appendChild(usbCapRow(r));
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+async function usbCapInfo() {
+  const sel = $("usb-cap-dev");
+  if (!sel) return;
+  try {
+    const d = await invoke("usbpcap_info");
+    sel.textContent = "";
+    if (!d.installed) {
+      const o = document.createElement("option"); o.textContent = T("未安装 USBPcap"); sel.appendChild(o);
+      usbCapState("bad", T("未安装 USBPcap"));
+      if ($("usb-cap-start")) $("usb-cap-start").disabled = true;
+      return;
+    }
+    if (d.rebootPending) {
+      const o = document.createElement("option"); o.textContent = T("需要重启一次"); sel.appendChild(o);
+      usbCapState("bad", T("已安装 · 需要重启一次"));
+      if ($("usb-cap-start")) $("usb-cap-start").disabled = true;
+      return;
+    }
+    if (!d.devices || !d.devices.length) {
+      const o = document.createElement("option"); o.textContent = T("没有可用的根 Hub"); sel.appendChild(o);
+      usbCapState("bad", T("没有可用的根 Hub"));
+      return;
+    }
+    for (const p of d.devices) {
+      const o = document.createElement("option");
+      o.value = p;
+      o.textContent = p.replace("\\.\\", "") + (d.devices.length > 1 ? " (" + (d.devices.indexOf(p) + 1) + "/" + d.devices.length + ")" : "");
+      sel.appendChild(o);
+    }
+    if ($("usb-cap-start")) $("usb-cap-start").disabled = false;
+  } catch (e) {
+    usbCapState("bad", String(e && e.message ? e.message : e));
+  }
+}
+
+async function usbCapStart() {
+  const dev = $("usb-cap-dev") && $("usb-cap-dev").value;
+  if (!dev) return toast(T("没有可抓包的根 Hub"));
+  try {
+    await invoke("usbpcap_start", { device: dev });
+    usbCapState("on", T("抓包中") + " · " + dev);
+    usbTraceMark(T("—— 开始抓包 ") + dev + " ——");
+  } catch (e) {
+    usbCapState("bad", String(e && e.message ? e.message : e));
+    toast(String(e && e.message ? e.message : e));
+  }
+}
+
+async function usbCapStop() {
+  try { await invoke("usbpcap_stop"); } catch (_) {}
+  usbCapState("off", T("未抓包"));
+  usbTraceMark(T("—— 已停止抓包 ——"));
+}
+
+function usbCapClear() {
+  usbCapRecords.length = 0;
   const box = $("usb-trace");
   if (box) box.textContent = "";
 }
 
-async function usbTraceSave() {
-  if (!usbTrace.length) return toast(T("还没有数据"));
+async function usbCapSave() {
+  if (!usbCapRecords.length) return toast(T("还没有数据"));
   const p = await dlgSave({
-    defaultPath: "usb-trace.txt",
+    defaultPath: "usb-capture.txt",
     filters: [{ name: T("文本"), extensions: ["txt"] }],
   });
   const path = typeof p === "string" ? p : (p && p.path);
   if (!path) return;
-  let out = "KDock serial capture — " + new Date().toLocaleString() + "\n";
-  out += "# time         dir   len  data | ascii\n";
-  for (const r of usbTrace) {
-    out += r.ts + "  " + r.dir + "  " + String(r.len).padStart(5) + "  " + r.hex + "  |" + r.asc + "|\n";
+  let out = "KDock USB capture — " + new Date().toLocaleString() + "\n";
+  out += "# time            bus.dev ep     type      status data | ascii/setup\n";
+  for (const r of usbCapRecords) {
+    const u8 = Uint8Array.from(atob(r.data || ""), (c) => c.charCodeAt(0));
+    const extra = r.setup
+      ? r.setup.type + " " + r.setup.dir + " bm=" + r.setup.bmRequestType + " bReq=" + r.setup.bRequest
+        + " wValue=" + r.setup.wValue + " wIndex=" + r.setup.wIndex + " wLength=" + r.setup.wLength
+      : usbAsciiStr(u8, 256);
+    out += usbCapTime(r.t) + "  " + (r.bus + "." + r.dev).padEnd(7) + " " + r.ep.padEnd(6) + " "
+      + (r.xfer + " " + r.dir).padEnd(9) + " " + (r.status ? "0x" + r.status.toString(16) : "OK").padEnd(6)
+      + " " + usbHexStr(u8, 128) + " |" + extra + "|\n";
   }
   try {
     await invoke("file_write_text", { path, content: out });
@@ -5627,110 +5727,9 @@ async function usbTraceSave() {
   } catch (e) { toast(String(e)); }
 }
 
-function usbComFill() {
-  const sel = $("usb-com");
-  if (!sel) return;
-  const cur = sel.value;
-  const list = (usbData && usbData.serial) || [];
-  sel.textContent = "";
-  for (const sp of list) {
-    const o = document.createElement("option");
-    o.value = sp.port;
-    o.textContent = sp.port + (sp.product ? " · " + sp.product : "");
-    sel.appendChild(o);
-  }
-  if (!list.length) {
-    const o = document.createElement("option"); o.textContent = T("没有串口"); sel.appendChild(o);
-  } else if (cur && [...sel.options].some((o) => o.value === cur)) {
-    sel.value = cur;
-  }
-}
-
-function usbMonState(kind, text) {
-  const n = $("usb-mon-state");
-  if (!n) return;
-  n.textContent = text || "";
-  n.style.color = kind === "on" ? "hsl(var(--success))" : kind === "wait" ? "hsl(var(--warning))" : "";
-}
-
-function usbTraceMark(text) {
-  const box = $("usb-trace");
-  if (!box) return;
-  const row = document.createElement("div");
-  row.className = "trmark";
-  row.textContent = text;
-  box.appendChild(row);
-  if ($("usb-autoscroll") && $("usb-autoscroll").checked) box.scrollTop = box.scrollHeight;
-}
-
-/** 监听目标：优先左边选中的节点；否则用下拉里的串口 */
-function usbMonTarget() {
-  const baud = Number($("usb-baud") && $("usb-baud").value) || 115200;
-  const findDev = (sp) => (usbData.devices || []).find((d) =>
-    sp && sp.vid && d.instance.toUpperCase().includes("VID_" + sp.vid)
-    && d.instance.toUpperCase().includes("PID_" + sp.pid));
-  if (usbSel && usbSel.kind === "com") {
-    const sp = (usbData.serial || []).find((x) => x.port === usbSel.key);
-    if (sp) {
-      const d = findDev(sp);
-      return { instance: d ? d.instance : "", port: sp.port, vid: sp.vid || "", pid: sp.pid || "", serial: sp.serial || "", baud };
-    }
-  }
-  if (usbSel && usbSel.kind === "dev") {
-    const d = (usbData.devices || []).find((x) => x.instance === usbSel.key);
-    if (d) {
-      const sp = (usbData.serial || []).find((x) => x.vid === d.vid && x.pid === d.pid);
-      return { instance: d.instance, port: sp ? sp.port : "", vid: d.vid || "", pid: d.pid || "", serial: sp ? (sp.serial || "") : "", baud };
-    }
-  }
-  const port = $("usb-com") && $("usb-com").value;
-  if (!port) return null;
-  const sp = (usbData.serial || []).find((x) => x.port === port) || {};
-  const d = findDev(sp);
-  return { instance: d ? d.instance : "", port, vid: sp.vid || "", pid: sp.pid || "", serial: sp.serial || "", baud };
-}
-
-async function usbMonStart() {
-  const t = usbMonTarget();
-  if (!t) return toast(T("先选一个设备或串口"));
-  try {
-    await invoke("usb_monitor_start", { target: t });
-    usbMonState("wait", T("等待设备…"));
-    usbTraceMark(T("—— 开始监听 ") + (t.port || t.instance) + " ——");
-  } catch (e) { toast(String(e)); }
-}
-
-async function usbMonStop() {
-  try { await invoke("usb_monitor_stop"); } catch (_) {}
-  usbMonState("off", T("未监听"));
-}
-
-function usbParseHex(s) {
-  const clean = String(s).replace(/0x/gi, "").replace(/[^0-9a-fA-F]/g, "");
-  const n = clean.length >> 1;
-  const u8 = new Uint8Array(n);
-  for (let i = 0; i < n; i++) u8[i] = parseInt(clean.substr(i * 2, 2), 16);
-  return u8;
-}
-
-async function usbComSend() {
-  const el = $("usb-tx-input");
-  if (!el || !el.value) return;
-  const hex = $("usb-tx-mode") && $("usb-tx-mode").value === "hex";
-  const data = el.value;
-  try {
-    await invoke("usb_monitor_write", { data, hex });
-    usbTraceAdd("TX", hex ? usbParseHex(data) : new TextEncoder().encode(data));
-    el.value = "";
-    if ($("usb-tx-hint")) $("usb-tx-hint").textContent = "";
-  } catch (e) {
-    toast(String(e));
-    if ($("usb-tx-hint")) $("usb-tx-hint").textContent = String(e);
-  }
-}
-
 function usbOnShow() {
   if (!usbData) usbRefresh();
+  if (!usbCapInit) { usbCapInit = true; usbCapInfo(); }
   if (usbAutoTimer) clearInterval(usbAutoTimer);
   usbAutoTimer = setInterval(() => {
     if (document.documentElement.dataset.tab !== "usb") return;
@@ -5752,31 +5751,17 @@ function bindUsb() {
   if ($("usb-elev")) $("usb-elev").onclick = () => usbElevate();
   if ($("usb-elev2")) $("usb-elev2").onclick = () => usbElevate();
   if ($("usb-clear-log")) $("usb-clear-log").onclick = () => { usbLogLines.length = 0; usbRenderLog(); };
-  if ($("usb-mon-start")) $("usb-mon-start").onclick = () => usbMonStart();
-  if ($("usb-mon-stop")) $("usb-mon-stop").onclick = () => usbMonStop();
-  if ($("usb-tx-send")) $("usb-tx-send").onclick = () => usbComSend();
-  if ($("usb-tx-input")) $("usb-tx-input").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); usbComSend(); } };
-  if ($("usb-trace-clear")) $("usb-trace-clear").onclick = () => usbTraceClear();
-  if ($("usb-trace-save")) $("usb-trace-save").onclick = () => usbTraceSave();
-  listen("usb://mon-rx", (ev) => {
-    const p = ev.payload || {};
-    if (!p.data) return;
-    const u8 = Uint8Array.from(atob(p.data), (c) => c.charCodeAt(0));
-    usbTraceAdd("RX", u8);
+  if ($("usb-cap-start")) $("usb-cap-start").onclick = () => usbCapStart();
+  if ($("usb-cap-stop")) $("usb-cap-stop").onclick = () => usbCapStop();
+  if ($("usb-ctl-only")) $("usb-ctl-only").onchange = () => usbCapRedraw();
+  if ($("usb-trace-clear")) $("usb-trace-clear").onclick = () => usbCapClear();
+  if ($("usb-trace-save")) $("usb-trace-save").onclick = () => usbCapSave();
+  listen("usb://cap", (ev) => {
+    const list = (ev.payload && ev.payload.records) || [];
+    for (const r of list) usbCapAdd(r);
   });
-  listen("usb://mon-state", (ev) => {
-    const p = ev.payload || {};
-    if (p.state === "listening") {
-      usbMonState("on", T("监听中") + (p.port ? " · " + p.port : ""));
-      usbTraceMark(T("—— 已连接 ") + (p.port || "") + " ——");
-    } else if (p.state === "waiting") {
-      usbMonState("wait", T("等待设备重连…"));
-      const why = p.msg && p.msg !== "absent" ? " " + p.msg : "";
-      usbTraceMark(T("—— 设备断开，等待重连 ——") + why);
-    } else if (p.state === "stopped") {
-      usbMonState("off", T("未监听"));
-      usbTraceMark(T("—— 已停止监听 ——"));
-    }
+  listen("usb://cap-end", () => {
+    usbCapState("off", T("未抓包"));
   });
 }
 
@@ -12594,6 +12579,25 @@ const EN = {
   "小驱动可以内置：把安装包丢进": "Small drivers can be bundled: drop the installer into ",
   "drivers\\<组件id>\\": "drivers\\<item id>\\",
   "检测中…": "Detecting…",
+  "USBPcap（USB 抓包驱动 + 命令行）": "USBPcap (USB capture driver + CLI)",
+  "开源的 USB 抓包过滤驱动：被动抓取所有设备的控制/批量/中断传输，不干扰原有逻辑。驱动 GPLv2、命令行工具 BSD-2-Clause；KDock 只调用你安装的组件，不打包、不链接它的代码。装完需要重启一次。": "Open-source USB capture filter driver: passively captures control / bulk / interrupt transfers of every device without disturbing normal operation. Driver is GPLv2, the command-line tool is BSD-2-Clause; KDock only invokes the component you install — it does not bundle or link its code. Reboot once after installing.",
+  "设备视图：谁挂在哪个端口、VID/PID、速度、接口和端点、绑定到哪个驱动。原始传输（每一笔 IN/OUT 的 payload）由 USBPcap 抓取，需要先在「环境配置」里安装并重启一次。": "Device view: what sits on which port, VID/PID, speed, interfaces and endpoints, which driver it binds to. Raw transfers (the payload of every IN/OUT) come from USBPcap — install it from Environment setup and reboot once.",
+  "需要重启一次": "Reboot once",
+  "已安装 · 需要重启一次": "Installed · reboot once",
+  "抓包": "Capture",
+  "开始抓包": "Start capture",
+  "停止抓包": "Stop capture",
+  "未抓包": "Not capturing",
+  "抓包中": "Capturing",
+  "只看控制传输": "Control only",
+  "只看控制传输：设备枚举和 RNDIS 握手都在这里": "Control transfers only: enumeration and the RNDIS handshake live here",
+  "USBPcap 根 Hub（每个根 Hub 一个）": "USBPcap root hub (one per root hub)",
+  "没有可抓包的根 Hub": "No root hub available",
+  "未安装 USBPcap": "USBPcap not installed",
+  "需要重启一次（驱动刚装）": "Reboot once (driver just installed)",
+  "没有可用的根 Hub": "No root hub available",
+  "—— 开始抓包 ": "—— capture started ",
+  "—— 已停止抓包 ——": "—— capture stopped ——",
   "串口节点（也可以直接在左边列表里点一个设备）": "Serial node (or click a device in the list)",
   "监听目标": "Monitor target",
   "开始监听": "Start monitoring",
@@ -12636,7 +12640,6 @@ const EN = {
   " · 新插入 {n}": " · new {n}",
   " · 已拔出 {n}": " · removed {n}",
   "设备列表不需要权限；端口拓扑、设备描述符、配置/接口/端点要打开 Hub 句柄，Windows 要求管理员 —— 点上面按钮会弹一次 UAC，子进程读完就退出，主程序不提权。": "The device list needs no privileges; port topology and descriptors require opening the hub handle, which Windows only allows to administrators — the button above raises one UAC prompt, a child process reads once and exits, and the main app stays unelevated.",
-  "这是 Bus Hound 的「设备视图」那一半：谁挂在哪个端口、VID/PID、速度、接口和端点、绑定到哪个驱动。传输级抓包（每一笔 IN/OUT 的 payload）需要 USBPcap 这类过滤驱动，本页不装驱动。": "This is the \"device view\" half of Bus Hound: what sits on which port, VID/PID, speed, interfaces and endpoints, which driver it binds to. Transfer-level capture (the payload of every IN/OUT) needs a filter driver such as USBPcap; this page installs no driver.",
   "刷新": "Refresh",
   "USB 设备": "USB devices",
   "端口 / 描述符可读": "Ports / descriptors readable",
@@ -12649,9 +12652,7 @@ const EN = {
   "点左边一个设备看描述符": "Pick a device on the left to see its descriptors",
   "热插拔": "Hot-plug",
   "以管理员读取端口 / 描述符": "Read ports / descriptors as admin",
-  "设备列表不需要权限；<b>端口拓扑、设备描述符、配置/接口/端点</b>要打开 Hub 句柄，Windows 要求管理员 —— 点上面按钮会弹一次 UAC，子进程读完就退出，主程序不提权。": "The device list needs no privileges; port topology and descriptors require opening the hub handle, which Windows only allows to administrators — the button above raises one UAC prompt, a child process reads once and exits, the main app stays unelevated.",
   "说明": "Notes",
-  "这是 Bus Hound 的「设备视图」那一半：谁挂在哪个端口、VID/PID、速度、接口和端点、绑定到哪个驱动。<b>传输级抓包</b>（每一笔 IN/OUT 的 payload）需要 USBPcap 这类过滤驱动，本页不装驱动。": "This is the \"device view\" half of Bus Hound: what sits on which port, VID/PID, speed, interfaces and endpoints, which driver it binds to. Transfer-level capture (payload of every IN/OUT) needs a filter driver such as USBPcap; this page installs no driver.",
   "警告": "Warnings",
   "等待 UAC 授权…": "Waiting for UAC…",
   "已读到端口 / 描述符": "Ports / descriptors loaded",

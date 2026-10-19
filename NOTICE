@@ -15,6 +15,12 @@ MICU-OmniProbe  (https://github.com/zuoliangyu/MICU-OmniProbe)
 uPlot (https://github.com/leeoniya/uPlot) — MIT — 曲线绘制
 Tauri (https://github.com/tauri-apps/tauri) — MIT OR Apache-2.0 — 桌面应用框架
 
+USBPcap  (https://github.com/desowin/usbpcap)
+  声明许可: USBPcapDriver GPLv2；USBPcapCMD BSD-2-Clause
+  使用方式: **可选的外部组件**。KDock 不打包、不链接、不修改其代码；仅在用户自行安装后，
+            运行时调用 USBPcapCMD.exe 抓包，并解析它生成的 pcap 文件。
+            未安装时该功能不可用，软件其余部分不受影响。
+
 --------------------------------------------------------------------------------
 2. 主要第三方依赖 / Bundled third-party components
 --------------------------------------------------------------------------------

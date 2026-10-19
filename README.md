@@ -67,7 +67,7 @@ CI 就会重建一次，这个链接永远指向最新那份，GitHub 上标着 
 | --- | --- |
 | **传输** | 串口（全参数组合）、TCP/UDP 客户端与服务器、HEX/文本双模式、行尾处理、编码切换、会话日志与回放、ANSI 终端渲染、快捷发送 |
 | **调试辅助** | 命令表速查（标准 Linux 命令）、批量文本处理、计算器（含 32 位控制板 / IEEE754 / 文件校验） |
-| **USB 诊断** | 免驱：**串口节点监听**（开始/停止；断开自动等重连，RX/TX 逐段 HEX + ASCII、发送、保存）、设备列表（串口 / Hub 端口 / 全部 USB 设备）、设备/配置/接口/端点描述符、速度、热插拔日志；读 Hub 需提权时用一次 UAC 的子进程读取 |
+| **USB 诊断** | **USBPcap 原始传输抓包**（控制 / 批量 / 中断，HEX + ASCII，只看控制传输、保存）、设备列表（串口 / Hub 端口 / 全部 USB 设备）、设备/配置/接口/端点描述符、速度、热插拔日志；读 Hub 需提权时用一次 UAC 的子进程读取 |
 | **固件** | `.fw` 升级包解析与校验、**串口在线升级（YMODEM）**、**网口在线升级（服务通道）**、从 HTTP 服务器拉取版本清单 |
 | **烧录** | 调用外部烧录器（OpenOCD / J-Link / STM32CubeProgrammer）完成烧录、擦除、校验、复位 |
 | **环境配置** | 驱动 / 工具链的一键检测与安装（CH34x · FTDI · J-Link+JFlash · arm-none-eabi-gcc · OpenOCD · PulseView(sigrok) · RT-Thread Env · ST-Link · Zadig）：只读扫描本机（PATH / 注册表 / pnputil / 各盘常见目录）、内置安装包优先、winget / git 一键装、首次运行检查必需驱动 |
@@ -445,6 +445,8 @@ A：设置 → 通用里可以切换中英文，切换是即时生效的。
 - [opencode](https://github.com/anomalyco/opencode)：Agent 的交互形态参考了它 ——
   上下文成分/花费面板、技能与 MCP 的组织方式、"边跑边补充方向"这些都受益于它；
 - [CC Switch](https://github.com/farion1231/cc-switch)：供应商 profile 列表与技能管理的组织方式参考了它；
+- [USBPcap](https://github.com/desowin/usbpcap)：USB 抓包驱动（GPLv2）与命令行工具（BSD-2-Clause），
+  作为**可选外部组件**由用户自行安装，KDock 只调用并解析其输出；许可说明见 [NOTICE](NOTICE)。
 - [Tauri](https://github.com/tauri-apps/tauri)、[uPlot](https://github.com/leeoniya/uPlot)、
   [RustCrypto](https://github.com/RustCrypto) 等开源项目提供的坚实基础。
 

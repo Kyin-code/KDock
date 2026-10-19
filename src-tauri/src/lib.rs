@@ -18,6 +18,8 @@ mod shell;
 mod storage;
 mod transport;
 pub mod usb;
+pub use usbcapture::run_helper as usbcapture_run_helper;
+pub mod usbcapture;
 mod upgrade;
 mod webview2;
 
@@ -3520,9 +3522,9 @@ pub fn run() {
             logic::logic_devices,
             usb::usb_diag,
             usb::usb_diag_elevated,
-            usb::usb_monitor_start,
-            usb::usb_monitor_stop,
-            usb::usb_monitor_write,
+            usbcapture::usbpcap_info,
+            usbcapture::usbpcap_start,
+            usbcapture::usbpcap_stop,
             logic::logic_capture,
             env_setup::env_install,
             storage::command_table_get,

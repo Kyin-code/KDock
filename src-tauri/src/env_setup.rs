@@ -276,6 +276,23 @@ pub static ITEMS: &[Item] = &[
         },
     },
     Item {
+        id: "usbpcap",
+        name: "USBPcap（USB 抓包驱动 + 命令行）",
+        kind_cn: "USB 驱动",
+        desc: "开源的 USB 抓包过滤驱动：被动抓取所有设备的控制/批量/中断传输，不干扰原有逻辑。驱动 GPLv2、命令行工具 BSD-2-Clause；KDock 只调用你安装的组件，不打包、不链接它的代码。装完需要重启一次。",
+        url: "https://github.com/desowin/usbpcap",
+        required: false,
+        min_version: Some("1.5"),
+        size_mb: 1.0,
+        rules: &[exe("USBPcapCMD.exe", "C:\\Program Files\\USBPcap;C:\\Program Files (x86)\\USBPcap", "", "")],
+        plan: Plan::Download {
+            url: "https://github.com/desowin/usbpcap/releases/download/1.5.4.0/USBPcapSetup-1.5.4.0.exe",
+            file: "USBPcapSetup-1.5.4.0.exe",
+            args: "/S",
+            elevated: true,
+        },
+    },
+    Item {
         id: "rtthread_env",
         name: "RT-Thread Env 工具",
         kind_cn: "运行时",
