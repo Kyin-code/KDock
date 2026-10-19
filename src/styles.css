@@ -266,9 +266,19 @@ html[data-fs="1"] .capbar { display: none; }
 }
 
 /* ── 安卓 ADB 页：上面投屏、下面 shell 日志 ── */
-.adbpane { display: flex; flex-direction: column; gap: 8px; }
-.adbpane .adblog { flex: 0 0 28vh; min-height: 120px; overflow: auto; }
-.adbpane .capview.grown { flex: 1 1 auto; }
+.adbpane { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
+.adbpane .adblog { flex: 0 1 28vh; min-height: 80px; max-height: 30vh; overflow: auto; }
+.adbpane .capview.grown { flex: 1 1 0; min-height: 120px; }
+@media (max-width: 980px) {
+  /* 小窗口优先保住投屏画面：工具栏压成一行，日志区限高，画面不被日志挤没 */
+  .adbpane > .trow { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; }
+  .adbpane .adblog { flex: 0 0 12vh; min-height: 52px; max-height: 64px; }
+  .adbpane .capview.grown { min-height: 120px; }
+}
+@media (max-width: 760px) {
+  .adbpane .adblog { flex-basis: 52px; min-height: 52px; }
+  .adbpane .capview.grown { min-height: 100px; }
+}
 .placeholder {
   flex: 1; display: flex; align-items: center; justify-content: center;
   color: hsl(var(--muted-foreground)); font-size: 13px;
