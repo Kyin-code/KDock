@@ -18,7 +18,7 @@ use windows_sys::Win32::System::Pipes::{
     PIPE_WAIT,
 };
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
@@ -34,6 +34,7 @@ struct Cap {
     stop: Arc<AtomicBool>,
     pcap: PathBuf,
     stopfile: PathBuf,
+    got: Arc<AtomicUsize>,
 }
 
 static CAP: LazyLock<Mutex<Option<Cap>>> = LazyLock::new(|| Mutex::new(None));
@@ -230,7 +231,10 @@ pub async fn usbpcap_info() -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn usbpcap_start(app: tauri::AppHandle, device: String, devices: Option<String>) -> Result<Value, String> {
-    let _ = usbpcap_stop();
+    if let Some(c) = take_cap() {
+        c.stop.store(true, Ordering::Relaxed);
+        let _ = std::fs::write(&c.stopfile, b"stop");
+    }
     let cmd = find_cmd().ok_or_else(|| "没装 USBPcap —— 到「环境配置」里装一下".to_string())?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -271,8 +275,19 @@ pub async fn usbpcap_start(app: tauri::AppHandle, device: String, devices: Optio
          $psi.RedirectStandardOutput = $true\n\
          $psi.CreateNoWindow = $true\n\
          $proc = [System.Diagnostics.Process]::Start($psi)\n\
-         $client = New-Object System.IO.Pipes.NamedPipeClientStream('.', '{}', [System.IO.Pipes.PipeDirection]::Out)\n\
-         $client.Connect(10000)\n\
+         $log = '{}'\n\
+         try {{\n\
+           $client = New-Object System.IO.Pipes.NamedPipeClientStream('.', '{}', [System.IO.Pipes.PipeDirection]::Out)\n\
+           $client.Connect(8000)\n\
+           \"connected\" | Out-File $log\n\
+         }} catch {{\n\
+           \"connect failed: $($_.Exception.Message)\" | Out-File $log\n\
+           if (-not $proc.HasExited) {{ $proc.Kill() }}\n\
+           $p2 = Start-Process -FilePath '{}' -ArgumentList '-d','{}','{}','-o','{}' -PassThru -WindowStyle Hidden\n\
+           while (-not (Test-Path -LiteralPath $stopPath)) {{ Start-Sleep -Milliseconds 200 }}\n\
+           if (-not $p2.HasExited) {{ Stop-Process -Id $p2.Id -Force }}\n\
+           exit\n\
+         }}\n\
          $src = $proc.StandardOutput.BaseStream\n\
          $buf = New-Object byte[] 65536\n\
          while ($true) {{\n\
@@ -291,7 +306,12 @@ pub async fn usbpcap_start(app: tauri::AppHandle, device: String, devices: Optio
         cmd.display(),
         device,
         pick,
-        pipe_name
+        format!("{}.log", ps1.display()),
+        pipe_name,
+        cmd.display(),
+        device,
+        pick,
+        pcap.display()
     );
     std::fs::write(&ps1, script).map_err(|e| format!("写提权脚本失败：{e}"))?;
     let ps = format!(
@@ -309,33 +329,73 @@ pub async fn usbpcap_start(app: tauri::AppHandle, device: String, devices: Optio
     }
 
     let stop = Arc::new(AtomicBool::new(false));
+    let got = Arc::new(AtomicUsize::new(0));
     {
         let app2 = app.clone();
         let st2 = stop.clone();
+        let g2 = got.clone();
         let handle = PipeHandle(ph);
-        std::thread::spawn(move || reader_loop_pipe(app2, handle, st2));
+        std::thread::spawn(move || reader_loop_pipe(app2, handle, st2, g2));
     }
     if let Ok(mut g) = CAP.lock() {
-        *g = Some(Cap { stop, pcap: pcap.clone(), stopfile: stopfile.clone() });
+        *g = Some(Cap { stop, pcap: pcap.clone(), stopfile: stopfile.clone(), got });
     }
     let _ = cmd;
     return Ok(json!({ "pcap": pcap.to_string_lossy(), "device": device, "pipe": pipe_name }));
 }
 
-#[tauri::command]
-pub fn usbpcap_stop() -> Result<(), String> {
+fn take_cap() -> Option<Cap> {
     if let Ok(mut g) = CAP.lock() {
-        if let Some(c) = g.take() {
-            c.stop.store(true, Ordering::Relaxed);
-            let _ = std::fs::write(&c.stopfile, b"stop");
-            std::thread::sleep(Duration::from_millis(400));
-            let _ = c.pcap.clone();
-        }
+        g.take()
+    } else {
+        None
+    }
+}
+
+#[tauri::command]
+pub async fn usbpcap_stop(app: tauri::AppHandle) -> Result<(), String> {
+    let Some(c) = take_cap() else { return Ok(()); };
+    c.stop.store(true, Ordering::Relaxed);
+    let _ = std::fs::write(&c.stopfile, b"stop");
+    std::thread::sleep(Duration::from_millis(600));
+    // 管道没连上（一条记录都没收到）→ 回退：脚本会把 pcap 写到文件，这里再解析
+    if c.got.load(Ordering::Relaxed) == 0 {
+        let app2 = app.clone();
+        let path = c.pcap.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            use tauri::Emitter;
+            for _ in 0..50 {
+                if let Ok(mut f) = std::fs::File::open(&path) {
+                    let mut parser = Parser::new();
+                    let mut buf = [0u8; 65536];
+                    let mut batch: Vec<Value> = Vec::new();
+                    loop {
+                        match f.read(&mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                batch.extend(parser.feed(&buf[..n]));
+                                if batch.len() >= 500 {
+                                    let _ = app2.emit("usb://cap", json!({ "records": batch }));
+                                    batch = Vec::new();
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    if !batch.is_empty() {
+                        let _ = app2.emit("usb://cap", json!({ "records": batch }));
+                    }
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            let _ = app2.emit("usb://cap-end", json!({}));
+        });
     }
     Ok(())
 }
 
-fn reader_loop_pipe(app: tauri::AppHandle, handle: PipeHandle, _stop: Arc<AtomicBool>) {
+fn reader_loop_pipe(app: tauri::AppHandle, handle: PipeHandle, _stop: Arc<AtomicBool>, got: Arc<AtomicUsize>) {
     use tauri::Emitter;
     // 等提权脚本连上来（阻塞；脚本连不上时这个线程会一直等，进程退出时一起结束）
     unsafe {
@@ -356,6 +416,7 @@ fn reader_loop_pipe(app: tauri::AppHandle, handle: PipeHandle, _stop: Arc<Atomic
             Ok(n) => {
                 let recs = parser.feed(&buf[..n]);
                 if !recs.is_empty() {
+                    got.fetch_add(recs.len(), Ordering::Relaxed);
                     let _ = app.emit("usb://cap", json!({ "records": recs }));
                 }
             }

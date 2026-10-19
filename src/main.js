@@ -5550,6 +5550,7 @@ function usbRenderAll() {
 /* ────────── USBPcap 抓包：解析 pcap 里的 USB 传输 ────────── */
 let usbCapInit = false;
 let usbCapLoading = false;
+let usbCapDevices = [];
 const usbCapRecords = [];     // 原始记录（保存用）
 const USB_CAP_MAX = 50000;
 
@@ -5674,33 +5675,22 @@ function usbCapRedraw() {
 }
 
 async function usbCapInfo() {
-  const sel = $("usb-cap-dev");
-  if (!sel) return;
   try {
     const d = await invoke("usbpcap_info");
-    sel.textContent = "";
+    usbCapDevices = d.devices || [];
     if (!d.installed) {
-      const o = document.createElement("option"); o.textContent = T("未安装 USBPcap"); sel.appendChild(o);
       usbCapState("bad", T("未安装 USBPcap"));
       if ($("usb-cap-start")) $("usb-cap-start").disabled = true;
       return;
     }
     if (d.rebootPending) {
-      const o = document.createElement("option"); o.textContent = T("需要重启一次"); sel.appendChild(o);
       usbCapState("bad", T("已安装 · 需要重启一次"));
       if ($("usb-cap-start")) $("usb-cap-start").disabled = true;
       return;
     }
-    if (!d.devices || !d.devices.length) {
-      const o = document.createElement("option"); o.textContent = T("没有可用的根 Hub"); sel.appendChild(o);
+    if (!usbCapDevices.length) {
       usbCapState("bad", T("没有可用的根 Hub"));
       return;
-    }
-    for (const p of d.devices) {
-      const o = document.createElement("option");
-      o.value = p;
-      o.textContent = p.replace("\\.\\", "") + (d.devices.length > 1 ? " (" + (d.devices.indexOf(p) + 1) + "/" + d.devices.length + ")" : "");
-      sel.appendChild(o);
     }
     if ($("usb-cap-start")) $("usb-cap-start").disabled = false;
   } catch (e) {
@@ -5726,7 +5716,7 @@ async function usbCapOpen() {
 }
 
 async function usbCapStart() {
-  const dev = $("usb-cap-dev") && $("usb-cap-dev").value;
+  const dev = usbCapDevices[0];
   if (!dev) return toast(T("没有可抓包的根 Hub"));
   try {
     const target = $("usb-cap-target") && $("usb-cap-target").value;
@@ -5743,7 +5733,13 @@ async function usbCapStop() {
   // 停止后要把整份 pcap 读进来（几万条）：先关掉逐条渲染，等 cap-end 一次性重绘
   usbCapLoading = true;
   usbCapState("off", T("正在载入抓包数据…"));
+  const guard = setTimeout(() => {
+    if (!usbCapLoading) return;
+    usbCapLoading = false;
+    usbCapState("bad", T("载入超时（看 %TEMP% 下 kdock-usbpcap-*.log）"));
+  }, 30000);
   try { await invoke("usbpcap_stop"); } catch (_) {}
+  setTimeout(() => clearTimeout(guard), 2000);
   usbTraceMark(T("—— 已停止抓包 ——"));
 }
 
@@ -12765,6 +12761,8 @@ const EN = {
   "小驱动可以内置：把安装包丢进": "Small drivers can be bundled: drop the installer into ",
   "drivers\\<组件id>\\": "drivers\\<item id>\\",
   "检测中…": "Detecting…",
+  "正在载入抓包数据…": "Loading capture data…",
+  "载入超时（看 %TEMP% 下 kdock-usbpcap-*.log）": "Load timeout (check kdock-usbpcap-*.log in %TEMP%)",
   "全部设备": "All devices",
   "地址": "Addr",
   "只抓这个设备节点（USB 地址来自 Hub 端口信息）": "Capture only this device node (USB address from hub port info)",
