@@ -9,6 +9,14 @@
 
 use serde_json::{json, Value};
 use std::io::Read;
+#[cfg(windows)]
+use std::os::windows::io::{FromRawHandle, RawHandle};
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_INBOUND;
+use windows_sys::Win32::System::Pipes::{
+    ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES,
+    PIPE_WAIT,
+};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -18,6 +26,9 @@ use std::time::Duration;
 use std::os::windows::process::CommandExt;
 
 const EXE_EXTRA: &str = "C:\\Program Files\\USBPcap;C:\\Program Files (x86)\\USBPcap";
+
+struct PipeHandle(HANDLE);
+unsafe impl Send for PipeHandle {}
 
 struct Cap {
     stop: Arc<AtomicBool>,
@@ -230,14 +241,54 @@ pub async fn usbpcap_start(app: tauri::AppHandle, device: String) -> Result<Valu
     let _ = std::fs::remove_file(&pcap);
     let _ = std::fs::remove_file(&stopfile);
 
+    let pipe_name = format!("kdock-usbpcap-{stamp}");
+    let pipe_wide = w(&format!("\\\\.\\pipe\\{pipe_name}"));
+    let ph = unsafe {
+        CreateNamedPipeW(
+            pipe_wide.as_ptr(),
+            PIPE_ACCESS_INBOUND,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            PIPE_UNLIMITED_INSTANCES,
+            65536,
+            65536,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+    if ph == INVALID_HANDLE_VALUE {
+        return Err(format!("创建命名管道失败：{}", unsafe { GetLastError() }));
+    }
     let ps1 = std::env::temp_dir().join(format!("kdock-usbpcap-{stamp}.ps1"));
     let script = format!(
-        "$p = Start-Process -FilePath '{}' -ArgumentList '-d','{}','-A','-o','{}' -PassThru -WindowStyle Hidden -RedirectStandardOutput '{}.out' -RedirectStandardError '{}.err'\n\
-         while (-not (Test-Path -LiteralPath '{}')) {{ Start-Sleep -Milliseconds 200 }}\n\
-         if (-not $p.HasExited) {{ Stop-Process -Id $p.Id -Force }}\n\
-         Remove-Item -LiteralPath '{}' -ErrorAction SilentlyContinue\n",
-        cmd.display(), device, pcap.display(), pcap.display(), pcap.display(),
-        stopfile.display(), stopfile.display()
+        "$ErrorActionPreference='Stop'\n\
+         $stopPath = '{}'\n\
+         $psi = New-Object System.Diagnostics.ProcessStartInfo\n\
+         $psi.FileName = '{}'\n\
+         $psi.Arguments = '-d {} -A -o -'\n\
+         $psi.UseShellExecute = $false\n\
+         $psi.RedirectStandardOutput = $true\n\
+         $psi.CreateNoWindow = $true\n\
+         $proc = [System.Diagnostics.Process]::Start($psi)\n\
+         $client = New-Object System.IO.Pipes.NamedPipeClientStream('.', '{}', [System.IO.Pipes.PipeDirection]::Out)\n\
+         $client.Connect(10000)\n\
+         $src = $proc.StandardOutput.BaseStream\n\
+         $buf = New-Object byte[] 65536\n\
+         while ($true) {{\n\
+           if (Test-Path -LiteralPath $stopPath) {{ break }}\n\
+           $t = $src.ReadAsync($buf, 0, $buf.Length)\n\
+           while (-not $t.IsCompleted) {{ if (Test-Path -LiteralPath $stopPath) {{ break }}; Start-Sleep -Milliseconds 100 }}\n\
+           if (Test-Path -LiteralPath $stopPath) {{ break }}\n\
+           $n = $t.Result\n\
+           if ($n -le 0) {{ break }}\n\
+           $client.Write($buf, 0, $n); $client.Flush()\n\
+         }}\n\
+         if (-not $proc.HasExited) {{ $proc.Kill() }}\n\
+         $client.Dispose()\n\
+         Remove-Item -LiteralPath $stopPath -ErrorAction SilentlyContinue\n",
+        stopfile.display(),
+        cmd.display(),
+        device,
+        pipe_name
     );
     std::fs::write(&ps1, script).map_err(|e| format!("写提权脚本失败：{e}"))?;
     let ps = format!(
@@ -250,37 +301,22 @@ pub async fn usbpcap_start(app: tauri::AppHandle, device: String) -> Result<Valu
         .status()
         .map_err(|e| format!("启动提权进程失败：{e}"))?;
     if !st.success() {
+        unsafe { CloseHandle(ph) };
         return Err("提权失败或用户取消了 UAC".into());
-    }
-    // 等 pcap 文件出现（最多 6 秒）
-    let mut ok = false;
-    for _ in 0..60 {
-        if pcap.exists() {
-            ok = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    if !ok {
-        let _ = std::fs::write(&stopfile, b"stop");
-        return Err(format!(
-            "USBPcap 没开始写数据（{}）。设备名对吗？驱动装完需要重启一次。",
-            device
-        ));
     }
 
     let stop = Arc::new(AtomicBool::new(false));
     {
         let app2 = app.clone();
         let st2 = stop.clone();
-        let file = pcap.clone();
-        std::thread::spawn(move || reader_loop(app2, file, st2));
+        let handle = PipeHandle(ph);
+        std::thread::spawn(move || reader_loop_pipe(app2, handle, st2));
     }
     if let Ok(mut g) = CAP.lock() {
         *g = Some(Cap { stop, pcap: pcap.clone(), stopfile: stopfile.clone() });
     }
     let _ = cmd;
-    Ok(json!({ "pcap": pcap.to_string_lossy(), "device": device }))
+    return Ok(json!({ "pcap": pcap.to_string_lossy(), "device": device, "pipe": pipe_name }));
 }
 
 #[tauri::command]
@@ -296,50 +332,36 @@ pub fn usbpcap_stop() -> Result<(), String> {
     Ok(())
 }
 
-fn reader_loop(app: tauri::AppHandle, file: PathBuf, stop: Arc<AtomicBool>) {
+fn reader_loop_pipe(app: tauri::AppHandle, handle: PipeHandle, _stop: Arc<AtomicBool>) {
     use tauri::Emitter;
-    // USBPcapCMD 抓包期间对 pcap 是独占打开（share=0），读不了；
-    // 所以这里等停止后再整体解析，分批发给前端。
-    while !stop.load(Ordering::Relaxed) {
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    let mut f = None;
-    for _ in 0..100 {
-        match std::fs::File::open(&file) {
-            Ok(fh) => {
-                f = Some(fh);
-                break;
-            }
-            Err(_) => std::thread::sleep(Duration::from_millis(100)),
+    // 等提权脚本连上来（阻塞；脚本连不上时这个线程会一直等，进程退出时一起结束）
+    unsafe {
+        let ok = ConnectNamedPipe(handle.0, std::ptr::null_mut());
+        if ok == 0 && GetLastError() != 535 {
+            // 535 = ERROR_PIPE_CONNECTED（已经连上）
+            CloseHandle(handle.0);
+            let _ = app.emit("usb://cap-end", json!({}));
+            return;
         }
     }
-    let Some(mut f) = f else {
-        let _ = app.emit("usb://cap-end", json!({}));
-        return;
-    };
+    let mut file = unsafe { std::fs::File::from_raw_handle(handle.0 as RawHandle) };
     let mut parser = Parser::new();
     let mut buf = [0u8; 65536];
-    let mut batch: Vec<Value> = Vec::new();
     loop {
-        match f.read(&mut buf) {
+        match file.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
-                batch.extend(parser.feed(&buf[..n]));
-                if batch.len() >= 200 {
-                    let _ = app.emit("usb://cap", json!({ "records": batch }));
-                    batch = Vec::new();
+                let recs = parser.feed(&buf[..n]);
+                if !recs.is_empty() {
+                    let _ = app.emit("usb://cap", json!({ "records": recs }));
                 }
             }
             Err(_) => break,
         }
     }
-    if !batch.is_empty() {
-        let _ = app.emit("usb://cap", json!({ "records": batch }));
-    }
     let _ = app.emit("usb://cap-end", json!({}));
 }
 
-/// 打开一个已有的 pcap（比如之前抓好但界面没来得及显示的），分批推给前端
 #[tauri::command]
 pub async fn usbpcap_open(app: tauri::AppHandle, path: String) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
