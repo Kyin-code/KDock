@@ -438,16 +438,26 @@ A：设置 → 通用里可以切换中英文，切换是即时生效的。
 
 本项目以 **Apache License 2.0** 开源，见 [LICENSE](LICENSE)；第三方组件与借鉴项目的声明见 [NOTICE](NOTICE)。
 
-特别感谢（设计/交互参考过的开源项目）：
+实际使用、且上游仓库带有 LICENSE 文件的开源项目：
 
-- [MICU-OmniProbe](https://github.com/zuoliangyu/MICU-OmniProbe)（README 声明 MIT）：
-  实时图表的实现思路与配色方案参考了它；
-- [opencode](https://github.com/anomalyco/opencode)：Agent 的交互形态参考了它 ——
-  上下文成分/花费面板、技能与 MCP 的组织方式、"边跑边补充方向"这些都受益于它；
-- [CC Switch](https://github.com/farion1231/cc-switch)：供应商 profile 列表与技能管理的组织方式参考了它；
-- [USBPcap](https://github.com/desowin/usbpcap)：USB 抓包驱动（GPLv2）与命令行工具（BSD-2-Clause），
-  作为**可选外部组件**由用户自行安装，KDock 只调用并解析其输出；许可说明见 [NOTICE](NOTICE)。
+- [DSView](https://github.com/DreamSourceLab/DSView) — GPL-3.0；解码器文件为 GPL-2.0+，独立运行
+- [PulseView / sigrok](https://github.com/sigrokproject/pulseview) — GPL-3.0 / GPL-2.0+，外部采集与解码程序
+- [USBPcap](https://github.com/desowin/usbpcap) — GPLv2 / BSD-2-Clause，外部抓包组件
+- [Microsoft Calculator](https://github.com/microsoft/calculator) — MIT
+- [opencode](https://github.com/anomalyco/opencode) — MIT
+- [CC Switch](https://github.com/farion1231/cc-switch) — MIT
+- [OxideSerial](https://github.com/Z1R343L-D77/OxideSerial) — MIT
+- [ModelDNA](https://github.com/RadicalNotion/modeldna-cli) — Apache-2.0
+- [Model Provenance Kit](https://github.com/cisco-ai-defense/model-provenance-kit) — Apache-2.0
+- [scrcpy](https://github.com/Genymobile/scrcpy) — Apache-2.0，外部投屏程序
+- [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools) — Apache-2.0，外部 adb
+- [Codex](https://github.com/openai/codex) — Apache-2.0
 - [Tauri](https://github.com/tauri-apps/tauri)、[uPlot](https://github.com/leeoniya/uPlot)、
-  [RustCrypto](https://github.com/RustCrypto) 等开源项目提供的坚实基础。
+  [RustCrypto](https://github.com/RustCrypto) 等直接依赖，完整许可见 [NOTICE](NOTICE)
+
+其他外部程序（Wireshark/tshark、FFmpeg、PuTTY、Zadig、Tftpd64、OpenSSH、RT-Thread Env）按各自许可使用。
+
+GPL 组件均以独立文件或外部程序使用；KDock 不链接、不打包其代码，也不销售或再许可第三方代码。
+DSView 解码器复制后仍按 GPL-2.0+ 提供。
 
 欢迎 issue / PR。

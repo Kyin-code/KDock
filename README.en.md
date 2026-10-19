@@ -321,18 +321,28 @@ Settings → General switches between Chinese and English instantly.
 KDock is released under the **Apache License 2.0** — see [LICENSE](LICENSE). Third-party components and the
 projects we learned from are listed in [NOTICE](NOTICE).
 
-Thanks to:
+Open-source projects we actually use whose upstream repository ships a LICENSE file:
 
-- [MICU-OmniProbe](https://github.com/zuoliangyu/MICU-OmniProbe) (MIT per its README) — the live-chart approach and
-  colour scheme were inspired by it;
-- [opencode](https://github.com/anomalyco/opencode) — the Agent interaction model (context/cost panel, skills and
-  MCP organisation, steering a run mid-flight) benefited a lot from it;
-- [CC Switch](https://github.com/farion1231/cc-switch) — the provider-profile list and skill management layout;
-- [USBPcap](https://github.com/desowin/usbpcap): USB capture driver (GPLv2) and command-line tool
-  (BSD-2-Clause), installed by the user as an **optional external component**; KDock only invokes it and
-  parses its output. See [NOTICE](NOTICE).
+- [DSView](https://github.com/DreamSourceLab/DSView) — GPL-3.0; decoder files are GPL-2.0+ and run as separate files
+- [PulseView / sigrok](https://github.com/sigrokproject/pulseview) — GPL-3.0 / GPL-2.0+, external capture and decode programs
+- [USBPcap](https://github.com/desowin/usbpcap) — GPLv2 / BSD-2-Clause, external capture component
+- [Microsoft Calculator](https://github.com/microsoft/calculator) — MIT
+- [opencode](https://github.com/anomalyco/opencode) — MIT
+- [CC Switch](https://github.com/farion1231/cc-switch) — MIT
+- [OxideSerial](https://github.com/Z1R343L-D77/OxideSerial) — MIT
+- [ModelDNA](https://github.com/RadicalNotion/modeldna-cli) — Apache-2.0
+- [Model Provenance Kit](https://github.com/cisco-ai-defense/model-provenance-kit) — Apache-2.0
+- [scrcpy](https://github.com/Genymobile/scrcpy) — Apache-2.0, external mirroring program
+- [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools) — Apache-2.0, external adb
+- [Codex](https://github.com/openai/codex) — Apache-2.0
 - [Tauri](https://github.com/tauri-apps/tauri), [uPlot](https://github.com/leeoniya/uPlot),
-  [RustCrypto](https://github.com/RustCrypto) and the many other open-source projects we build on.
+  [RustCrypto](https://github.com/RustCrypto) and other direct dependencies; see [NOTICE](NOTICE)
+
+Other external programs (Wireshark/tshark, FFmpeg, PuTTY, Zadig, Tftpd64, OpenSSH, RT-Thread Env) are used
+under their own licences.
+
+GPL components are used as separate files or external programs; KDock does not link or bundle their code and
+does not sell or sublicense third-party code. DSView decoders remain GPL-2.0+ after copying.
 
 Issues and pull requests are welcome.
 

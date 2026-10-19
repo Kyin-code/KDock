@@ -1,4 +1,4 @@
-/* KDock —— 视觉风格参考 MICU-OmniProbe（MIT）：
+/* KDock —— 视觉风格：
    HSL 令牌 + 分层半透明 surface + 大圆角 + 柔和阴影 + 亮/暗双主题 */
 :root {
   /* 深色底跟着配色走（applyScheme 会按当前色相覆盖；这里给的是"默认海洋蓝"那一档，
@@ -1065,7 +1065,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .vsplit:hover, .vsplit.dragging { background: hsl(var(--primary) / 0.55); }
 
-/* ========== 参考 Hermes：大功能区用"线条"分隔连成一体，内部控件才用圆角矩形 ========== */
+/* ========== 大功能区用"线条"分隔连成一体，内部控件才用圆角矩形 ========== */
 .split { gap: 0; padding: 0; }
 /* 分隔条：透明 5px（还能拖），中间画一条 1px 线 */
 .gutter {
@@ -1114,7 +1114,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 /* ==========================================================================
    传输页：整块做成一张"卡片"——
    顶部一行（日志路径面包屑 + 对话时间）、中间输出、工具行、输入行、底部拼合条。
-   内部全部用线条分隔（沿用 Hermes 那套：大功能区线条、内部控件圆角）。
+   内部全部用线条分隔（大功能区线条、内部控件圆角）。
    ========================================================================== */
 .workpane.shell { padding: 0; gap: 0; }
 /* 中栏不再是一张浮起来的圆角卡：外框（面包屑那行 -> 发送区）改成直角、无边框、无阴影，
@@ -2050,7 +2050,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .btcol.dragover .bted { border-color: hsl(var(--primary) / 0.85); background: hsl(var(--primary) / 0.07); }
 
-/* 文本比对（CLion 那种并排 diff）：左行号 / 左文本 / 右行号 / 右文本，四列对齐 */
+/* 文本比对（并排 diff）：左行号 / 左文本 / 右行号 / 右文本，四列对齐 */
 .btdiff { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0; }
 .btdiffbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .btdiffbar .lb { font-size: 12.5px; }
@@ -2059,7 +2059,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   border: 1px solid var(--surface-line); border-radius: 10px; background: var(--surface-1);
   font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; line-height: 1.55;
 }
-/* 中间留一列专门放 > < 两个箭头（跟 CLion 一样：点一下就把这处搬到对面） */
+/* 中间留一列专门放 > < 两个箭头（点一下就把这处搬到对面） */
 .btdiffrow { display: grid; grid-template-columns: 3.4rem minmax(0, 1fr) 2.6rem 3.4rem minmax(0, 1fr); }
 .btdiffrow .arrows { display: flex; align-items: center; justify-content: center; gap: 2px; padding: 0; background: var(--surface-2); }
 .btdiffrow .arrows button {
@@ -2327,7 +2327,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .dbgin { height: 30px; font-family: Consolas, "Cascadia Mono", monospace; }
 
 /* ==========================================================================
-   悬停提示：自绘气泡（接管原生 title，样子参考 CLion）
+   悬停提示：自绘气泡（接管原生 title，样子参考常见 IDE）
    --------------------------------------------------------------------------
    原生 title 的气泡是系统画的：延迟 ~1s、样式跟系统走（Windows 上是个发白的
    方框），而且卡片是 overflow:hidden 的，气泡还会被裁掉。文本来源见 main.js 的

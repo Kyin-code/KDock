@@ -4,16 +4,21 @@ Copyright 2026 KDock contributors
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
 --------------------------------------------------------------------------------
-1. 借鉴与致谢 / Third-party projects we learned from
+1. 第三方项目与使用边界 / Third-party projects and usage boundaries
 --------------------------------------------------------------------------------
-
-MICU-OmniProbe  (https://github.com/zuoliangyu/MICU-OmniProbe)
-  声明许可: MIT（该仓库 README 中声明；仓库内未附 LICENSE 文件）
-  使用方式: 实时图表（波形展示）的实现思路、界面配色方案与视觉风格参考了该项目。
-            未直接复制其源代码；如后续引入其代码片段，将在此处保留其版权声明与许可全文。
 
 uPlot (https://github.com/leeoniya/uPlot) — MIT — 曲线绘制
 Tauri (https://github.com/tauri-apps/tauri) — MIT OR Apache-2.0 — 桌面应用框架
+
+DreamSourceLab DSView  (https://github.com/DreamSourceLab/DSView) — GPL-3.0
+  使用方式: 逻辑分析仪交互与协议解码的参考。安装「DSView 解码引擎」时，从其安装目录复制
+            Python 解码器（各文件声明 GPL-2.0+），仅适配注册元数据（id、annotation、matched），
+            由外部 sigrok-cli 进程加载。KDock 不链接、不编译、不打包这些文件；复制后的解码器
+            仍按 GPL-2.0+ 提供，KDock 不销售或再许可它们。
+
+sigrok / PulseView  (https://github.com/sigrokproject/pulseview,
+                     https://github.com/sigrokproject/sigrok-cli) — GPL-3.0 / GPL-2.0+
+  使用方式: 逻辑分析仪的可选外部采集/解码程序，KDock 只调用并解析输出，不打包、不链接。
 
 USBPcap  (https://github.com/desowin/usbpcap)
   声明许可: USBPcapDriver GPLv2；USBPcapCMD BSD-2-Clause
@@ -25,6 +30,24 @@ Wireshark / tshark  (https://www.wireshark.org/)
   声明许可: GPLv2（tshark 与 Wireshark 本体）；Npcap 由 Wireshark 安装包提供（其许可见 n pcap 安装目录）
   使用方式: **可选的外部组件**。KDock 不打包、不链接其代码；仅在用户自行安装后，运行时调用
             tshark.exe 并把它的 EK JSON 输出渲染成表格。未安装时「监听 → 网络」不可用。
+
+Microsoft Calculator  (https://github.com/microsoft/calculator) — MIT（LICENSE）
+opencode  (https://github.com/anomalyco/opencode) — MIT（LICENSE）
+CC Switch  (https://github.com/farion1231/cc-switch) — MIT（LICENSE）
+OxideSerial  (https://github.com/Z1R343L-D77/OxideSerial) — MIT（LICENSE）
+Codex  (https://github.com/openai/codex) — Apache-2.0（LICENSE）
+  使用方式: 仅参考交互、布局或工程做法，未复制源代码。
+
+ModelDNA  (https://github.com/RadicalNotion/modeldna-cli) — Apache-2.0（LICENSE）
+Model Provenance Kit  (https://github.com/cisco-ai-defense/model-provenance-kit) — Apache-2.0（LICENSE）
+  使用方式: 仅读取公开数据生成模型家族快照（model_dna_atlas.json），保留来源与许可字段；
+            不执行其代码、不打包其源码。
+
+scrcpy  (https://github.com/Genymobile/scrcpy) — Apache-2.0（LICENSE）
+Android Platform Tools / adb  (https://developer.android.com/tools/releases/platform-tools) — Apache-2.0
+  使用方式: 可选外部程序，由用户安装后调用，不打包、不链接。
+
+GPL 组件均以独立文件或外部程序使用；KDock 不链接、不打包其代码，也不销售或再许可第三方代码。
 
 --------------------------------------------------------------------------------
 2. 主要第三方依赖 / Bundled third-party components

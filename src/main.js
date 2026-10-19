@@ -19,7 +19,7 @@ const $ = (id) => document.getElementById(id);
      · MutationObserver 盯着 title 属性 —— 读到就搬进 dataset.tip 并把 title 抹掉
        （抹掉只是为了让系统别再画那个丑框，文本一条不丢）
      · 真气泡是挂在 body 上的浮层（position:fixed），不受任何容器裁剪
-     · 悬停 380ms 才出（CLion 那种"停一下才出来"）；移开 / 滚动 / 点击 / 按键立刻收
+     · 悬停 380ms 才出（"停一下才出来"）；移开 / 滚动 / 点击 / 按键立刻收
    翻译：langWalk 认 dataset.tip（见那里的注释）。 */
 const TIP_DELAY = 380;
 let tipBox = null, tipTimer = null, tipOwner = null;
@@ -1772,7 +1772,7 @@ function bindTabs() {
   if (act) showPane(act.dataset.tab);
 }
 
-// ---------------- 实时图表（移植 MICU-OmniProbe 的波形思路，用 uPlot 画） ----------------
+// ---------------- 实时图表（波形交互参考，用 uPlot 画） ----------------
 // 设备按 "1.23,4.56,7.89" 每行发一串数字（它就是这个数据格式），这里按行解析成多通道曲线。
 let chart = null;
 let chXs = [];
@@ -6529,7 +6529,7 @@ async function bindToolOptions() {
 }
 
 // ---------------- 外观：主题(暗/亮/跟随) + 配色 ----------------
-// 配色方案取自 MICU-OmniProbe 的 themeSchemes.ts（MIT），只覆写主色/焦点色/点缀色/背景光斑，
+// 配色方案为 KDock 自有主题，只覆写主色/焦点色/点缀色/背景光斑，
 // 其余令牌继承主题，所以暗色和亮色都能用同一套配色。
 const SCHEMES = [
   { id: "slate", name: "石墨", h: 220, sd: 26, sl: 20 },
