@@ -5523,15 +5523,17 @@ async function usbCapSave() {
   if (!path) return;
   let out = "KDock USB capture — " + new Date().toLocaleString() + "\n";
   out += "# time            bus.dev ep     type      status data | ascii/setup\n";
+  const hexLimit = usbCapFull ? Infinity : 128;
+  const asciiLimit = usbCapFull ? Infinity : 256;
   for (const r of usbCapRecords) {
     const u8 = Uint8Array.from(atob(r.data || ""), (c) => c.charCodeAt(0));
     const extra = r.setup
       ? r.setup.type + " " + r.setup.dir + " bm=" + r.setup.bmRequestType + " bReq=" + r.setup.bRequest
         + " wValue=" + r.setup.wValue + " wIndex=" + r.setup.wIndex + " wLength=" + r.setup.wLength
-      : usbAsciiStr(u8, 256);
+      : usbAsciiStr(u8, asciiLimit);
     out += usbCapTime(r.t) + "  " + (r.bus + "." + r.dev).padEnd(7) + " " + r.ep.padEnd(6) + " "
       + (r.xfer + " " + r.dir).padEnd(9) + " " + (r.status ? "0x" + r.status.toString(16) : "OK").padEnd(6)
-      + " " + usbHexStr(u8, 128) + " |" + extra + "|\n";
+      + " " + usbHexStr(u8, hexLimit) + " |" + extra + "|\n";
   }
   try {
     await invoke("file_write_text", { path, content: out });
@@ -12562,7 +12564,7 @@ const EN = {
   "未抓包": "Not capturing",
   "抓包中": "Capturing",
   "完整数据": "Full data",
-  "显示完整 HEX/ASCII（关闭时每行最多 128 字节；大包会让表格变长）": "Show full HEX/ASCII (max 128 bytes per row when off; large packets make rows longer)",
+  "显示/保存完整 HEX/ASCII（关闭时每行最多 128 字节；大包会让表格变长）": "Show/save full HEX/ASCII (max 128 bytes per row when off; large packets make rows longer)",
   "只看控制传输": "Control only",
   "只看控制传输：设备枚举和 RNDIS 握手都在这里": "Control transfers only: enumeration and the RNDIS handshake live here",
   "USBPcap 根 Hub（每个根 Hub 一个）": "USBPcap root hub (one per root hub)",
