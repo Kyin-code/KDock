@@ -18,6 +18,18 @@
 ## [未发布]
 
 ### 新增
+- **环境配置再扩充**（USB 转串口 / 探针 / 工具链 / 蓝牙）：新增 23 项 ——
+  CP210x、PL2303、MCP2200/2221、Infineon-Cypress USB-Serial、WCH-Link、TI XDS110（纯驱动，官网入口 +
+  内置安装包）；Python、Git、CMake、Ninja、Meson、LLVM、OpenSSL、QEMU、Renode、dtc、Wireshark、
+  MobaXterm、UsbDk、ESP-IDF 安装器、nrfutil（winget 一键）；pyOCD、esptool（pip 一键，新增 Plan::Pip）；
+  nRF Connect for Desktop（BLE 调试）。**J-Link 也从"只给官网"升级成 winget 直装**
+  （Nordic 转发的官方包）。实测 42 项扫描 1.14 s，布局矩阵 272 组 0 问题。
+- **英文界面补齐**：渲染工具清单（设置 → 工具）时没走 TOOL_DESC_EN，导致 95 条中文说明漏翻；
+  另外补齐了 agent 新增的 33 个工具说明（workspace_* / plan_* / subagent_* / adb_* / screen_* / ssh_run /
+  output_read）以及 45 条运行时文案。现在英文扫漏**只剩 2 条**（"中文"按钮和它的提示，故意不翻）。
+- **逻辑分析仪的确定性记录**：新增 docs/09-逻辑分析仪-准确性与解码自测.md —— 写清
+  各驱动的 unitsize（fx2lafw 8ch=1 / 16ch=2、DSLogic / saleae-logic16 恒为 2）、已验证硬件、
+  解码器状态（示例验证 ≠ 真机验证）、以及改完必须跑的回归清单与追加式记录表。
 - **梦源 DSLogic 也兼容了**（同一套 sigrok 链路）：环境配置新增「DSLogic（梦源）固件」，一键从
   DSView 官方仓库下载 9 个固件 / 位流（Basic / Plus / Pro / U2 / U3，MD5 校验）并复制到 sigrok-cli 的
   `share\sigrok-firmware`；16 通道按 libsigrok 的 `unitsize=2` 解析（8 通道仍是 1 字节/采样），

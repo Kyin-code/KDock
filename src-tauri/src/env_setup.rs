@@ -61,6 +61,8 @@ pub enum Plan {
     Fetch { url: &'static str, file: &'static str },
     /// 下载一组固件（原名 → 目标名）到 sigrok-cli 的 share\sigrok-firmware（DSLogic 这类）
     FwSet { base: &'static str, files: &'static [(&'static str, &'static str)] },
+    /// 装 Python 包（python -m pip install --user --upgrade）
+    Pip { packages: &'static str },
     /// git clone 到安装目录（RT-Thread Env）
     Git { repo: &'static str },
     /// 走 winget（微软包管理器）：有官方包的直接一键，不用我们猜直链
@@ -200,7 +202,7 @@ pub static ITEMS: &[Item] = &[
         min_version: Some("7.80"),
         size_mb: 120.0,
         rules: &[reg("HKLM\\SOFTWARE\\SEGGER\\J-Link", "Version"), exe("JLink.exe", "C:\\Program Files\\SEGGER;C:\\Program Files (x86)\\SEGGER", "", "")],
-        plan: Plan::Manual,   // SEGGER 下载页要点同意条款，直链拿不到；官网进去选 "J-Link Software and Documentation Pack"
+        plan: Plan::Winget { id: "NordicSemiconductor.JLink" },   // Nordic 转发的官方 J-Link 安装包，winget 能直装
     },
     Item {
         id: "armgcc",
@@ -434,6 +436,309 @@ pub static ITEMS: &[Item] = &[
             service: "sshd",
             post: &["ssh-keygen -A"],
         },
+    },
+    // ── 2026-10 扩充：USB 转串口 / 桥接芯片（纯驱动；官网入口 + 内置安装包） ──
+    Item {
+        id: "cp210x",
+        name: "Silicon Labs CP210x 串口驱动",
+        kind_cn: "USB 驱动",
+        desc: "CP2102 / CP2104 / CP2105 / CP2108 —— 开发板最常见的 USB 转串口之一。装完才会出现 COM 口。",
+        url: "https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers",
+        required: false,
+        min_version: None,
+        size_mb: 12.0,
+        rules: &[inf("silabser.inf")],
+        plan: Plan::Manual,
+    },
+    Item {
+        id: "pl2303",
+        name: "Prolific PL2303 串口驱动",
+        kind_cn: "USB 驱动",
+        desc: "老款 USB 转串口，工业设备和老开发板很多。注意新版 Windows 上老芯片会被官方驱动拒认，必要时用内置的旧版安装包。",
+        url: "https://www.prolific.com.tw/US/ShowProduct.aspx?p_id=225&pcid=41",
+        required: false,
+        min_version: None,
+        size_mb: 5.0,
+        rules: &[inf("ser2pl.inf"), inf("ser2pl64.inf")],
+        plan: Plan::Manual,
+    },
+    Item {
+        id: "mcp2200",
+        name: "Microchip MCP2200 / MCP2221 驱动",
+        kind_cn: "USB 驱动",
+        desc: "USB 转串口 + GPIO / I2C 的桥接芯片，Microchip 官方 CDC 驱动。",
+        url: "https://www.microchip.com/en-us/product/MCP2200",
+        required: false,
+        min_version: None,
+        size_mb: 5.0,
+        rules: &[inf("mchpcdc.inf")],
+        plan: Plan::Manual,
+    },
+    Item {
+        id: "cyserial",
+        name: "Infineon / Cypress USB-Serial 驱动",
+        kind_cn: "USB 驱动",
+        desc: "CY7C65211 / CY7C65215 这类 USB-Serial 桥接（也带 GPIO / I2C / SPI）。",
+        url: "https://www.infineon.com/cms/en/product/universal-serial-bus/usb-serial-bridge-controller/",
+        required: false,
+        min_version: None,
+        size_mb: 10.0,
+        rules: &[inf("cyusbserial.inf")],
+        plan: Plan::Manual,
+    },
+    // ── 调试探针 ──
+    Item {
+        id: "wchlink",
+        name: "WCH-Link / WCH-LinkE 驱动",
+        kind_cn: "调试器",
+        desc: "沁恒 RISC-V / Cortex-M 调试器（WCH-Link、WCH-LinkE）。用 WCH-LinkUtility 或 MounRiver 时会装。",
+        url: "https://www.wch.cn/downloads/WCH-LinkUtility_ZIP.html",
+        required: false,
+        min_version: None,
+        size_mb: 5.0,
+        rules: &[inf("wchlink.inf"), inf("wchlinke.inf")],
+        plan: Plan::Manual,
+    },
+    Item {
+        id: "xds110",
+        name: "TI XDS110 / XDS100 驱动",
+        kind_cn: "调试器",
+        desc: "TI MSP430 / C2000 / Sitara 的 XDS110、XDS100 调试探针驱动（CCS 里带，也可以单独装）。",
+        url: "https://www.ti.com/tool/CCSTUDIO",
+        required: false,
+        min_version: None,
+        size_mb: 20.0,
+        rules: &[inf("xds110usb.inf"), inf("xds110port.inf")],
+        plan: Plan::Manual,
+    },
+    // ── 工具链 / 构建 / 脚本 ──
+    Item {
+        id: "python",
+        name: "Python 3",
+        kind_cn: "构建",
+        desc: "脚本与工具依赖：pyOCD、esptool、pyserial、intelhex 这些都要它。装完记得勾 Add to PATH（winget 默认会加）。",
+        url: "https://www.python.org/downloads/windows/",
+        required: false,
+        min_version: Some("3.8"),
+        size_mb: 30.0,
+        rules: &[exe("python.exe", "", "--version", "")],
+        plan: Plan::Winget { id: "Python.Python.3.12" },
+    },
+    Item {
+        id: "git",
+        name: "Git（含 Git LFS 可用）",
+        kind_cn: "构建",
+        desc: "版本控制；RT-Thread Env 拉包、很多 SDK 的 submodule 都靠它。",
+        url: "https://git-scm.com/download/win",
+        required: false,
+        min_version: Some("2.30"),
+        size_mb: 60.0,
+        rules: &[exe("git.exe", "", "--version", "")],
+        plan: Plan::Winget { id: "Git.Git" },
+    },
+    Item {
+        id: "cmake",
+        name: "CMake",
+        kind_cn: "构建",
+        desc: "跨平台构建系统：STM32Cube / ESP-IDF / Zephyr / 大多数现代嵌入式工程都用它生成 Ninja / Make 工程。",
+        url: "https://cmake.org/download/",
+        required: false,
+        min_version: Some("3.20"),
+        size_mb: 60.0,
+        rules: &[exe("cmake.exe", "C:\\Program Files\\CMake\\bin;D:\\ENV;F:\\ENV", "--version", "")],
+        plan: Plan::Winget { id: "Kitware.CMake" },
+    },
+    Item {
+        id: "ninja",
+        name: "Ninja",
+        kind_cn: "构建",
+        desc: "CMake 最常用的后端：比 Make 快很多，几乎所有嵌入式 IDE 的默认选择。",
+        url: "https://ninja-build.org/",
+        required: false,
+        min_version: Some("1.10"),
+        size_mb: 5.0,
+        rules: &[exe("ninja.exe", "C:\\Program Files\\Ninja;D:\\ENV;F:\\ENV", "--version", "")],
+        plan: Plan::Winget { id: "Ninja-build.Ninja" },
+    },
+    Item {
+        id: "meson",
+        name: "Meson",
+        kind_cn: "构建",
+        desc: "另一套现代构建系统（Zephyr / 部分开源 BSP 在用），配合 Ninja。",
+        url: "https://mesonbuild.com/",
+        required: false,
+        min_version: Some("0.60"),
+        size_mb: 10.0,
+        rules: &[exe("meson.exe", "", "--version", "")],
+        plan: Plan::Winget { id: "mesonbuild.meson" },
+    },
+    Item {
+        id: "llvm",
+        name: "LLVM / Clang + lld",
+        kind_cn: "工具链",
+        desc: "替代 GCC 的编译器，部分工程（RISC-V / 嵌入式 Rust / 某些 SDK）需要；也自带 lld 链接器。",
+        url: "https://llvm.org/",
+        required: false,
+        min_version: Some("15"),
+        size_mb: 900.0,
+        rules: &[exe("clang.exe", "C:\\Program Files\\LLVM\\bin;D:\\ENV;F:\\ENV", "--version", "")],
+        plan: Plan::Winget { id: "LLVM.LLVM" },
+    },
+    Item {
+        id: "openssl",
+        name: "OpenSSL",
+        kind_cn: "构建",
+        desc: "生成密钥 / 证书 / 摘要，固件签名和 TLS 调试都会用到。",
+        url: "https://slproweb.com/products/Win32OpenSSL.html",
+        required: false,
+        min_version: Some("1.1"),
+        size_mb: 30.0,
+        rules: &[exe("openssl.exe", "C:\\Program Files\\OpenSSL-Win64\\bin;D:\\ENV;F:\\ENV", "version", "")],
+        plan: Plan::Winget { id: "ShiningLight.OpenSSL.Light" },
+    },
+    Item {
+        id: "qemu",
+        name: "QEMU",
+        kind_cn: "运行时",
+        desc: "仿真运行：没有板子时跑 ARM / RISC-V Linux、跑 U-Boot 验证镜像。",
+        url: "https://www.qemu.org/download/#windows",
+        required: false,
+        min_version: Some("6.0"),
+        size_mb: 200.0,
+        rules: &[exe("qemu-system-x86_64.exe", "C:\\Program Files\\qemu", "--version", "")],
+        plan: Plan::Winget { id: "SoftwareFreedomConservancy.QEMU" },
+    },
+    Item {
+        id: "renode",
+        name: "Renode",
+        kind_cn: "运行时",
+        desc: "无板仿真：整块板子（CPU + 外设 + 网络）都能模拟，适合 CI 里跑固件。",
+        url: "https://renode.io/",
+        required: false,
+        min_version: None,
+        size_mb: 120.0,
+        rules: &[exe("Renode.exe", "C:\\Program Files\\Renode", "", "")],
+        plan: Plan::Winget { id: "Renode.Renode" },
+    },
+    Item {
+        id: "dtc",
+        name: "Device Tree Compiler（dtc）",
+        kind_cn: "构建",
+        desc: "编译 / 反编译设备树（.dts ↔ .dtb），Linux BSP 和 U-Boot 常用。",
+        url: "https://git.kernel.org/pub/scm/utils/dtc/dtc.git",
+        required: false,
+        min_version: None,
+        size_mb: 2.0,
+        rules: &[exe("dtc.exe", "", "--version", "")],
+        plan: Plan::Winget { id: "oss-winget.dtc" },
+    },
+    Item {
+        id: "usbdk",
+        name: "UsbDk Runtime",
+        kind_cn: "USB 驱动",
+        desc: "USB 设备重定向 / 抓包用的通用运行时（Wireshark 的 USBPcap、部分虚拟化工具依赖）。",
+        url: "https://github.com/daynix/UsbDk",
+        required: false,
+        min_version: None,
+        size_mb: 5.0,
+        rules: &[inf("usbdk.inf")],
+        plan: Plan::Winget { id: "daynix.UsbDk" },
+    },
+    // ── 网络 / 协议 ──
+    Item {
+        id: "wireshark",
+        name: "Wireshark",
+        kind_cn: "网络",
+        desc: "网络 / USB / BLE / CAN 抓包分析。配合 USBPcap、nRF Sniffer 用。",
+        url: "https://www.wireshark.org/download.html",
+        required: false,
+        min_version: None,
+        size_mb: 90.0,
+        rules: &[exe("Wireshark.exe", "C:\\Program Files\\Wireshark", "", "")],
+        plan: Plan::Winget { id: "WiresharkFoundation.Wireshark" },
+    },
+    Item {
+        id: "mobaxterm",
+        name: "MobaXterm",
+        kind_cn: "网络",
+        desc: "终端 + 串口 + X11 + SFTP 的多合一工具（A 核 / Linux 板子常用）。",
+        url: "https://mobaxterm.mobatek.net/download.html",
+        required: false,
+        min_version: None,
+        size_mb: 30.0,
+        rules: &[glob("*:\\Program Files\\Mobatek\\MobaXterm\\MobaXterm.exe", "", "")],
+        plan: Plan::Winget { id: "Mobatek.MobaXterm" },
+    },
+    // ── 烧录 / 调试 CLI ──
+    Item {
+        id: "pyocd",
+        name: "pyOCD",
+        kind_cn: "烧录",
+        desc: "Python 版 CMSIS-DAP / J-Link 调试与烧录 CLI（DAPLink、ST-Link、J-Link 都能用）。需要先装 Python。",
+        url: "https://pyocd.io/",
+        required: false,
+        min_version: None,
+        size_mb: 15.0,
+        rules: &[
+            exe("pyocd.exe", "", "--version", ""),
+            glob("*:\\Users\\*\\AppData\\Roaming\\Python\\Python3*\\Scripts\\pyocd.exe", "", ""),
+        ],
+        plan: Plan::Pip { packages: "pyocd" },
+    },
+    Item {
+        id: "esptool",
+        name: "esptool（ESP32 烧录）",
+        kind_cn: "烧录",
+        desc: "ESP32 / ESP8266 的烧录、读 MAC、擦除、读 Flash。需要先装 Python。",
+        url: "https://docs.espressif.com/projects/esptool/",
+        required: false,
+        min_version: None,
+        size_mb: 10.0,
+        rules: &[
+            exe("esptool.exe", "", "version", ""),
+            glob("*:\\Users\\*\\AppData\\Roaming\\Python\\Python3*\\Scripts\\esptool.exe", "", ""),
+        ],
+        plan: Plan::Pip { packages: "esptool" },
+    },
+    Item {
+        id: "esp_idf",
+        name: "ESP-IDF（安装管理器）",
+        kind_cn: "工具链",
+        desc: "乐鑫官方 ESP-IDF 安装管理器 CLI：装工具链、拉 SDK、切版本都在它里面。",
+        url: "https://docs.espressif.com/projects/esp-idf/",
+        required: false,
+        min_version: None,
+        size_mb: 40.0,
+        rules: &[exe("eim.exe", "", "--version", "")],
+        plan: Plan::Winget { id: "Espressif.EIM-CLI" },
+    },
+    // ── 蓝牙 / BLE ──
+    Item {
+        id: "nrfutil",
+        name: "nRF Util（Nordic CLI）",
+        kind_cn: "蓝牙",
+        desc: "Nordic 的通用 CLI：nRF52 系列 DFU 打包 / 烧录、BLE 调试辅助（nrfutil device / dfu）。",
+        url: "https://www.nordicsemi.com/Products/Development-tools/nRF-Util",
+        required: false,
+        min_version: None,
+        size_mb: 30.0,
+        rules: &[exe("nrfutil.exe", "", "--version", "")],
+        plan: Plan::Winget { id: "NordicSemiconductor.nrfutil" },
+    },
+    Item {
+        id: "nrf_connect",
+        name: "nRF Connect for Desktop（BLE 调试）",
+        kind_cn: "蓝牙",
+        desc: "Nordic 的 BLE 桌面工具：扫广播、连 GATT、读写特征值、看 RSSI，配 nRF Sniffer 还能抓 BLE 包。Windows 自带蓝牙协议栈，不用另装驱动。",
+        url: "https://www.nordicsemi.com/Products/Development-tools/nRF-Connect-for-Desktop",
+        required: false,
+        min_version: None,
+        size_mb: 250.0,
+        rules: &[
+            glob("*:\\Program Files\\Nordic Semiconductor\\nRF Connect for Desktop\\*\\nRF Connect for Desktop.exe", "", ""),
+            glob("*:\\Users\\*\\AppData\\Local\\Programs\\nrfconnect\\*\\nRF Connect for Desktop.exe", "", ""),
+        ],
+        plan: Plan::Manual,
     },
 ];
 
@@ -745,21 +1050,30 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
 static SCAN_CACHE: std::sync::Mutex<Option<(std::time::Instant, Value)>> = std::sync::Mutex::new(None);
 
 #[tauri::command]
-pub fn env_scan(force: Option<bool>, dir: Option<String>) -> Result<Value, String> {
+pub async fn env_scan(force: Option<bool>, dir: Option<String>) -> Result<Value, String> {
     // 前端把"安装目录"传进来：清单里那些 %ENVDIR% 规则要用它去找
     if let Some(d) = dir.filter(|d| !d.trim().is_empty()) {
         set_env_dir(&d);
     }
-    if !force.unwrap_or(false) {
-        if let Ok(g) = SCAN_CACHE.lock() {
-            if let Some((t, v)) = g.as_ref() {
-                if t.elapsed().as_secs() < 900 { return Ok(v.clone()); }
+    // 清单长到 40+ 项后一次扫描要 1 秒出头 —— 丢到阻塞线程池，别卡 UI（首次运行检查也走它）
+    tauri::async_runtime::spawn_blocking(move || {
+        if !force.unwrap_or(false) {
+            if let Ok(g) = SCAN_CACHE.lock() {
+                if let Some((t, v)) = g.as_ref() {
+                    if t.elapsed().as_secs() < 900 {
+                        return Ok(v.clone());
+                    }
+                }
             }
         }
-    }
-    let v = env_scan_now()?;
-    if let Ok(mut g) = SCAN_CACHE.lock() { *g = Some((std::time::Instant::now(), v.clone())); }
-    Ok(v)
+        let v = env_scan_now()?;
+        if let Ok(mut g) = SCAN_CACHE.lock() {
+            *g = Some((std::time::Instant::now(), v.clone()));
+        }
+        Ok(v)
+    })
+    .await
+    .map_err(|e| format!("后台扫描失败：{e}"))?
 }
 
 fn env_scan_now() -> Result<Value, String> {
@@ -1010,6 +1324,15 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
             else {
                 run_powershell(&app, it.id, &format!(
                     "winget install --id {wid} --accept-package-agreements --accept-source-agreements --disable-interactivity; exit $LASTEXITCODE"
+                ), false)?
+            }
+        }
+        Plan::Pip { packages } => {
+            if dry {
+                format!("（模拟）会跑 python -m pip install --user --upgrade {packages}")
+            } else {
+                run_powershell(&app, it.id, &format!(
+                    "python -m pip install --user --upgrade {packages}; exit $LASTEXITCODE"
                 ), false)?
             }
         }

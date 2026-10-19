@@ -66,6 +66,8 @@ function runs(ctx, ch, i0, i1) {
 function it(i0, i1, cls, text, aux) { return { i0, i1, cls, text, aux }; }
 
 const hx = (v, w) => "0x" + (v >>> 0).toString(16).toUpperCase().padStart(w || 2, "0");
+/** 界面文案跟着语言走（解码器是共用模块，只能借 window.kdockT） */
+const LT = (s) => (window.kdockT ? window.kdockT(s) : s);
 const hexBytes = (arr) => arr.map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
 /** 可打印就带上字符，方便一眼看出是 ASCII 还是二进制 */
 const chOf = (v) => (v >= 32 && v < 127 ? String.fromCharCode(v) : "");
@@ -707,7 +709,7 @@ const necDec = {
           const cmd = byte(bits.slice(16, 24)), ncmd = byte(bits.slice(24, 32));
           const ok = ((addr ^ naddr) === 0xff) && ((cmd ^ ncmd) === 0xff);
           out.push(it(r.i0, endI, ok ? "data" : "err",
-            "NEC 地址 " + hx(addr) + " 命令 " + hx(cmd) + (ok ? "" : " 取反校验错"),
+            LT("NEC 地址 ") + hx(addr) + LT(" 命令 ") + hx(cmd) + (ok ? "" : LT(" 取反校验错")),
             { addr: hx(addr), cmd: hx(cmd), addrOk: (addr ^ naddr) === 0xff, cmdOk: (cmd ^ ncmd) === 0xff }));
         } else {
           out.push(it(r.i0, endI, "err", "位不全（" + bits.length + "/32）", {}));
