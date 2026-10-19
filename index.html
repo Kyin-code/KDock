@@ -660,7 +660,7 @@
           </div>
         </div>
 
-        <!-- USB 诊断：原始数据抓取（串口 RX/TX）+ 设备树 + 热插拔日志 -->
+        <!-- USB 监听：原始传输表铺满中间，右侧只放设备管理器 -->
         <div class="workpane usbpane" data-work="usb" hidden>
           <div class="trow">
             <span class="lb">监听</span>
@@ -691,17 +691,8 @@
             <span id="net-state" class="lb">未抓包</span>
             <span id="net-hint" class="lb"></span>
           </div>
-          <div class="usbgrid grow">
-            <div id="usb-list" class="usblist"></div>
-            <div id="usb-trace" class="usbtrace"></div>
-            <div id="net-trace" class="usbtrace" hidden></div>
-          </div>
-          <div class="trow">
-            <span class="lb">热插拔</span>
-            <span class="grow"></span>
-            <button id="usb-clear-log" class="btn tiny">清空</button>
-          </div>
-          <pre id="usb-log" class="envlog usblog"></pre>
+          <div id="usb-trace" class="usbtrace grow"></div>
+          <div id="net-trace" class="usbtrace grow" hidden></div>
         </div>
 
         <!-- 环境配置：驱动 / 工具链 一键检测与安装 -->
@@ -1597,21 +1588,16 @@
             </div>
           </div>
 
-        <!-- USB 诊断参数 -->
-        <div class="parampane" data-param="usb" hidden>
-          <div class="cardtitle">设备详情</div>
-          <div id="usb-detail" class="usbdetail"><p class="hint">点左边一个设备看描述符</p></div>
-          <div class="cardtitle">概览</div>
-          <div id="usb-info" class="aginfo dcinfo"></div>
-          <div class="btnrow">
-            <button id="usb-elev2" class="btn primary">以管理员读取端口 / 描述符</button>
-            <button id="usb-rescan2" class="btn">重新扫描</button>
+        <!-- USB 设备管理器：只保留设备树，占满右栏给抓包分析留出中间空间 -->
+        <div class="parampane usbmanpane" data-param="usb" hidden>
+          <div class="usbmanhead">
+            <span class="cardtitle">设备管理器</span>
+            <span class="grow"></span>
+            <button id="usb-rescan2" class="btn tiny" title="重新扫描设备">重新扫描</button>
+            <button id="usb-elev2" class="btn tiny primary" title="需要管理员权限才能读取 Hub 端口和描述符">管理员读取</button>
           </div>
-          <p class="hint">设备列表不需要权限；端口拓扑、设备描述符、配置/接口/端点要打开 Hub 句柄，Windows 要求管理员 —— 点上面按钮会弹一次 UAC，子进程读完就退出，主程序不提权。</p>
-          <div class="cardtitle">说明</div>
-          <p class="hint">设备视图：谁挂在哪个端口、VID/PID、速度、接口和端点、绑定到哪个驱动。原始传输（每一笔 IN/OUT 的 payload）由 USBPcap 抓取，需要先在「环境配置」里安装并重启一次。</p>
-          <div class="cardtitle">警告<span class="grow"></span><span id="usb-warn-n" class="lb"></span></div>
-          <div id="usb-warns" class="aginfo dcinfo"></div>
+          <div id="usb-sum" class="lb usbmansum"></div>
+          <div id="usb-list" class="usblist grow"></div>
         </div>
 
         <!-- 环境配置参数 -->

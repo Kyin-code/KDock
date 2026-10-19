@@ -5145,13 +5145,11 @@ const T = (s) => en(s);
 let usbData = null;
 let usbBusy = false;
 let usbSel = null;          // { kind: "port" | "dev", key }
-let usbPrevMap = null;
 let usbAutoTimer = null;
-/** instance -> { dev, state: "present" | "added" | "removed", at } */
-const usbState = new Map();
-const USB_ADDED_MS = 20000;   // 新插入高亮保留 20 秒
-const USB_GONE_MS = 90000;    // 已拔出（红色）保留 90 秒
-const usbLogLines = [];       // { text, kind: "" | "add" | "del" }
+
+/** Windows 设备问题码（CM_PROB_*）的常见几项 */
+const USB_PROBLEM = { 1: "设备未配置", 10: "无法启动", 22: "已停用", 24: "设备未安装", 28: "没有驱动", 31: "驱动加载失败", 43: "驱动故障" };
+const usbProblemText = (c) => (c ? (USB_PROBLEM[c] ? T(USB_PROBLEM[c]) : T("问题码") + " " + c) : "");
 
 function usbMsg(t, bad) {
   const n = $("usb-sum");
@@ -5160,75 +5158,11 @@ function usbMsg(t, bad) {
   n.style.color = bad ? "hsl(var(--destructive))" : "";
 }
 
-function usbRenderLog() {
-  const box = $("usb-log");
-  if (!box) return;
-  box.textContent = "";
-  for (const x of usbLogLines) {
-    const sp = document.createElement("span");
-    sp.className = x.kind === "add" ? "usblog-add" : x.kind === "del" ? "usblog-del" : "";
-    sp.textContent = x.text + "\n";
-    box.appendChild(sp);
-  }
-  box.scrollTop = box.scrollHeight;
-}
-
-function usbLogPush(line, kind) {
-  usbLogLines.push({ text: line, kind: kind || "" });
-  if (usbLogLines.length > 300) usbLogLines.shift();
-  usbRenderLog();
-}
-
-/** Windows 设备问题码（CM_PROB_*）的常见几项 */
-const USB_PROBLEM = { 1: "设备未配置", 10: "无法启动", 22: "已停用", 24: "设备未安装", 28: "没有驱动", 31: "驱动加载失败", 43: "驱动故障" };
-const usbProblemText = (c) => (c ? (USB_PROBLEM[c] ? T(USB_PROBLEM[c]) : T("问题码") + " " + c) : "");
-
-/** 维护"新插入 / 已拔出"状态（带 TTL），渲染时按状态上色 */
-function usbTrack(d, now, baseline) {
-  const present = new Set();
-  for (const x of ((d && d.devices) || [])) {
-    present.add(x.instance);
-    const cur = usbState.get(x.instance);
-    if (!cur || cur.state === "removed") {
-      usbState.set(x.instance, { dev: x, state: baseline ? "present" : "added", at: now });
-    } else {
-      cur.dev = x;
-      if (cur.state === "added" && now - cur.at > USB_ADDED_MS) cur.state = "present";
-    }
-  }
-  for (const [k, v] of usbState) {
-    if (present.has(k)) continue;
-    if (v.state !== "removed") { v.state = "removed"; v.at = now; }
-    else if (now - v.at > USB_GONE_MS) usbState.delete(k);
-  }
-}
-
-/** 热插拔 = 两次快照的 instance id 差集 */
-function usbDiff(d) {
-  const map = new Map();
-  for (const x of ((d && d.devices) || [])) map.set(x.instance, x);
-  if (usbPrevMap) {
-    const t = new Date().toLocaleTimeString();
-    for (const [k, v] of map) {
-      if (usbPrevMap.has(k)) continue;
-      usbLogPush(`[${t}] + ${v.name || "USB"}  ${v.vid || "----"}:${v.pid || "----"}  ${v.location || ""}`, "add");
-    }
-    for (const [k, v] of usbPrevMap) {
-      if (map.has(k)) continue;
-      usbLogPush(`[${t}] − ${v.name || "USB"}  ${v.vid || "----"}:${v.pid || "----"}  ${v.location || ""}`, "del");
-    }
-  }
-  usbPrevMap = map;
-}
-
 async function usbRefresh() {
   if (usbBusy) return;
   usbBusy = true;
   try {
-    const d = await invoke("usb_diag");
-    usbTrack(d, Date.now(), usbPrevMap === null);
-    usbDiff(d);
-    usbData = d;
+    usbData = await invoke("usb_diag");
     usbRenderAll();
   } catch (e) {
     usbMsg(String(e && e.message ? e.message : e), true);
@@ -5240,10 +5174,7 @@ async function usbElevate() {
   usbBusy = true;
   usbMsg(T("等待 UAC 授权…"));
   try {
-    const d = await invoke("usb_diag_elevated");
-    usbTrack(d, Date.now(), usbPrevMap === null);
-    usbDiff(d);
-    usbData = d;
+    usbData = await invoke("usb_diag_elevated");
     usbRenderAll();
     toast(T("已读到端口 / 描述符"));
   } catch (e) {
@@ -5253,61 +5184,26 @@ async function usbElevate() {
   } finally { usbBusy = false; }
 }
 
-function usbKv(box, k, v) {
-  const d = document.createElement("div");
-  const a = document.createElement("span"); a.className = "k"; a.textContent = k;
-  const b = document.createElement("span"); b.className = "v"; b.textContent = v == null ? "—" : String(v);
-  d.className = "usbkv-row"; d.style.display = "contents";
-  d.append(a, b); box.appendChild(d);
-}
-
-function usbRenderInfo() {
+function usbRenderSummary() {
   if (!usbData) return;
   const devs = usbData.devices || [];
   const hubs = usbData.hubs || [];
   const ports = hubs.reduce((n, h) => n + ((h.ports || []).length), 0);
-  const added = [...usbState.values()].filter((v) => v.state === "added").length;
-  const gone = [...usbState.values()].filter((v) => v.state === "removed").length;
-  usbMsg(T("USB 设备 {n} · 端口设备 {m} · 串口 {s}").replace("{n}", devs.length).replace("{m}", ports).replace("{s}", ((usbData.serial || []).length))
-    + (added ? T(" · 新插入 {n}").replace("{n}", added) : "")
-    + (gone ? T(" · 已拔出 {n}").replace("{n}", gone) : ""));
-  const box = $("usb-info");
-  if (box) {
-    box.textContent = "";
-    const grid = document.createElement("div"); grid.className = "usbkv";
-    const kv = (k, v, cls) => {
-      const a = document.createElement("span"); a.className = "k"; a.textContent = k;
-      const b = document.createElement("span"); b.className = "v" + (cls ? " " + cls : ""); b.textContent = v;
-      grid.append(a, b);
-    };
-    kv(T("USB 设备"), String(devs.length));
-    kv(T("Hub 数"), String(hubs.length));
-    kv(T("端口上的设备"), String(ports));
-    kv(T("读取权限"), usbData.admin ? T("端口 / 描述符可读") : T("只读设备列表"), usbData.admin ? "" : "err");
-    box.appendChild(grid);
-  }
-  const warns = $("usb-warns");
-  if (warns) {
-    warns.textContent = "";
-    const list = usbData.warnings || [];
-    if (!list.length) {
-      const d = document.createElement("div"); d.className = "row";
-      const v = document.createElement("span"); v.className = "v"; v.textContent = T("无");
-      d.appendChild(v); warns.appendChild(d);
-    } else {
-      for (const w of list) {
-        const d = document.createElement("div"); d.className = "row";
-        const v = document.createElement("span"); v.className = "v"; v.textContent = w;
-        d.appendChild(v); warns.appendChild(d);
-      }
-    }
-    if ($("usb-warn-n")) $("usb-warn-n").textContent = list.length ? String(list.length) : "";
-  }
+  let text = T("USB 设备 {n} · 端口设备 {m} · 串口 {s}")
+    .replace("{n}", devs.length)
+    .replace("{m}", ports)
+    .replace("{s}", ((usbData.serial || []).length));
+  if (!usbData.admin) text += " · " + T("只读设备列表");
+  const warns = (usbData.warnings || []).length;
+  if (warns) text += " · " + T("警告 {n}").replace("{n}", warns);
+  usbMsg(text);
 }
 
+/** 右侧设备管理器：串口 / Hub 端口树 / SetupAPI 设备列表 */
 function usbRenderList() {
   const box = $("usb-list");
   if (!box) return;
+  const keepTop = box.scrollTop;
   box.textContent = "";
   const serials = (usbData && usbData.serial) || [];
   if (serials.length) {
@@ -5324,7 +5220,7 @@ function usbRenderList() {
       const id = document.createElement("span"); id.className = "id";
       id.textContent = sp.vid ? sp.vid + ":" + sp.pid : T("非 USB");
       row.append(nm, id);
-      row.onclick = () => { usbSel = { kind: "com", key: sp.port }; usbRenderList(); usbRenderDetail(); };
+      row.onclick = () => { usbSel = { kind: "com", key: sp.port }; usbRenderList(); };
       box.appendChild(row);
     }
   }
@@ -5345,7 +5241,7 @@ function usbRenderList() {
         const id = document.createElement("span"); id.className = "id";
         id.textContent = p.vid + ":" + p.pid;
         row.append(nm, id);
-        row.onclick = () => { usbSel = { kind: "port", key }; usbRenderList(); usbRenderDetail(); };
+        row.onclick = () => { usbSel = { kind: "port", key }; usbRenderList(); };
         box.appendChild(row);
       }
     }
@@ -5364,11 +5260,11 @@ function usbRenderList() {
     const k = sp.vid + ":" + sp.pid;
     comMap.set(k, (comMap.get(k) || []).concat([sp.port]));
   }
-  const devRow = (d, st) => {
+  for (const d of ((usbData && usbData.devices) || [])) {
     const row = document.createElement("div");
     const sel = usbSel && usbSel.kind === "dev" && usbSel.key === d.instance;
-    const bad = d.problem && st !== "removed";
-    row.className = "usbrow" + (sel ? " sel" : "") + (st ? " " + st : "") + (bad ? " problem" : "");
+    const bad = !!d.problem;
+    row.className = "usbrow" + (sel ? " sel" : "") + (bad ? " problem" : "");
     row.title = d.instance;
     const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = d.name || d.instance;
     const id = document.createElement("span"); id.className = "id";
@@ -5381,172 +5277,23 @@ function usbRenderList() {
       ctag.textContent = coms.join("/");
       row.appendChild(ctag);
     }
-    if (st === "added" || st === "removed") {
-      const tag = document.createElement("span");
-      tag.className = "tag " + (st === "added" ? "new" : "gone");
-      tag.textContent = st === "added" ? T("新插入") : T("已拔出");
-      row.appendChild(tag);
-    } else if (bad) {
+    if (bad) {
       const tag = document.createElement("span");
       tag.className = "tag bad";
       tag.textContent = usbProblemText(d.problem);
       row.appendChild(tag);
     }
-    row.onclick = () => { usbSel = { kind: "dev", key: d.instance }; usbRenderList(); usbRenderDetail(); };
+    row.onclick = () => { usbSel = { kind: "dev", key: d.instance }; usbRenderList(); };
     box.appendChild(row);
-  };
-  for (const d of ((usbData && usbData.devices) || [])) {
-    const st = (usbState.get(d.instance) || {}).state;
-    devRow(d, st === "added" ? "added" : st === "removed" ? "removed" : "");
   }
-  const goneRows = [...usbState.values()].filter((v) => v.state === "removed").sort((a, b) => b.at - a.at);
-  if (goneRows.length) {
-    const gh = document.createElement("div");
-    gh.className = "usbhub usbgonehead";
-    gh.textContent = T("已拔出（{n}）").replace("{n}", goneRows.length);
-    box.appendChild(gh);
-    for (const v of goneRows) devRow(v.dev, "removed");
-  }
-}
-
-function usbDetailHeader(box, title, sub) {
-  const t = document.createElement("div");
-  t.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:8px;";
-  const a = document.createElement("b"); a.textContent = title;
-  const b = document.createElement("span"); b.className = "lb"; b.textContent = sub || "";
-  t.append(a, b);
-  box.appendChild(t);
-}
-
-function usbRenderDetail() {
-  const box = $("usb-detail");
-  if (!box) return;
-  box.textContent = "";
-  if (!usbData || !usbSel) {
-    const p = document.createElement("p"); p.className = "hint";
-    p.textContent = T("点左边一个设备看描述符");
-    box.appendChild(p);
-    return;
-  }
-  if (usbSel.kind === "port") {
-    let hit = null;
-    for (const h of (usbData.hubs || [])) {
-      for (const p of (h.ports || [])) {
-        if ((h.instance || "") + "#" + p.port === usbSel.key) hit = { hub: h, p };
-      }
-    }
-    if (!hit) { usbSel = null; usbRenderDetail(); return; }
-    const p = hit.p;
-    usbDetailHeader(box, T("端口设备"), "VID " + p.vid + " : PID " + p.pid);
-    const grid = document.createElement("div"); grid.className = "usbkv";
-    const kv = (k, v) => {
-      const a = document.createElement("span"); a.className = "k"; a.textContent = k;
-      const b = document.createElement("span"); b.className = "v"; b.textContent = v;
-      grid.append(a, b);
-    };
-    kv(T("端口"), String(p.port));
-    kv(T("速度"), p.speed);
-    kv("VID:PID", p.vid + ":" + p.pid);
-    kv("bcdUSB", p.bcdUSB);
-    kv("bcdDevice", p.bcdDevice);
-    kv(T("设备类"), p.class + " / " + p.subClass + " / " + p.protocol);
-    kv(T("配置数"), String(p.numConfigs));
-    box.appendChild(grid);
-    if (p.config) {
-      const c = p.config;
-      const h2 = document.createElement("div"); h2.className = "usbif";
-      const t2 = document.createElement("div"); t2.className = "t";
-      t2.textContent = T("配置描述符");
-      h2.appendChild(t2);
-      const g2 = document.createElement("div"); g2.className = "usbkv";
-      const kv2 = (k, v) => {
-        const a = document.createElement("span"); a.className = "k"; a.textContent = k;
-        const b = document.createElement("span"); b.className = "v"; b.textContent = v;
-        g2.append(a, b);
-      };
-      kv2(T("接口数"), String(c.numInterfaces));
-      kv2(T("自供电"), c.selfPowered ? T("是") : T("否"));
-      kv2(T("最大电流"), c.maxPowerMa + " mA");
-      h2.appendChild(g2);
-      for (const it of (c.interfaces || [])) {
-        const d = document.createElement("div"); d.className = "usbif";
-        const t3 = document.createElement("div"); t3.className = "t";
-        t3.textContent = T("接口 {n}").replace("{n}", it.number) + (it.alt ? " (alt " + it.alt + ")" : "") + " · class 0x" + Number(it.class).toString(16).toUpperCase();
-        d.appendChild(t3);
-        const eps = document.createElement("div"); eps.className = "usbep";
-        const hdr = document.createElement("span"); hdr.style.fontWeight = "600"; hdr.textContent = "EP";
-        const hdr2 = document.createElement("span"); hdr2.style.fontWeight = "600"; hdr2.textContent = T("方向");
-        const hdr3 = document.createElement("span"); hdr3.style.fontWeight = "600"; hdr3.textContent = T("类型");
-        const hdr4 = document.createElement("span"); hdr4.style.fontWeight = "600"; hdr4.textContent = T("包大小");
-        const hdr5 = document.createElement("span"); hdr5.style.fontWeight = "600"; hdr5.textContent = T("间隔");
-        eps.append(hdr, hdr2, hdr3, hdr4, hdr5);
-        for (const e of (it.endpoints || [])) {
-          for (const v of [e.address, e.dir, e.type, String(e.maxPacket), String(e.interval)]) {
-            const s = document.createElement("span"); s.textContent = v; eps.appendChild(s);
-          }
-        }
-        d.appendChild(eps);
-        h2.appendChild(d);
-      }
-      box.appendChild(h2);
-    } else {
-      const p2 = document.createElement("p"); p2.className = "hint";
-      p2.textContent = T("这个端口没读到配置描述符（设备可能需要先被驱动认领，或读取被拒绝）。");
-      box.appendChild(p2);
-    }
-    return;
-  }
-  if (usbSel.kind === "com") {
-    const sp = (usbData.serial || []).find((x) => x.port === usbSel.key);
-    if (!sp) { usbSel = null; usbRenderDetail(); return; }
-    usbDetailHeader(box, sp.port, sp.type === "usb" ? "USB" : sp.type === "bluetooth" ? "Bluetooth" : sp.type === "pci" ? "PCI" : "");
-    const g = document.createElement("div"); g.className = "usbkv";
-    const kv = (k, v) => {
-      const a = document.createElement("span"); a.className = "k"; a.textContent = k;
-      const b = document.createElement("span"); b.className = "v"; b.textContent = v || "—";
-      g.append(a, b);
-    };
-    kv(T("端口"), sp.port);
-    kv(T("类型"), sp.type);
-    if (sp.vid) kv("VID:PID", sp.vid + ":" + sp.pid);
-    kv(T("序列号"), sp.serial || "—");
-    kv(T("厂商"), sp.manufacturer || "—");
-    kv(T("产品"), sp.product || "—");
-    const dev = (usbData.devices || []).find((d) => sp.vid && d.instance.toUpperCase().includes("VID_" + sp.vid) && d.instance.toUpperCase().includes("PID_" + sp.pid));
-    if (dev) {
-      kv(T("驱动服务"), dev.service || "—");
-      kv(T("位置"), dev.location || "—");
-      kv(T("设备实例"), dev.instance);
-      if (dev.problem) kv(T("问题码"), dev.problem + " · " + usbProblemText(dev.problem));
-    }
-    box.appendChild(g);
-    return;
-  }
-  const d = ((usbData.devices || []).find((x) => x.instance === usbSel.key)) || (usbState.get(usbSel.key) || {}).dev;
-  if (!d) { usbSel = null; usbRenderDetail(); return; }
-  usbDetailHeader(box, d.name || d.instance, (d.vid || "----") + ":" + (d.pid || "----"));
-  const grid = document.createElement("div"); grid.className = "usbkv";
-  const kv = (k, v) => {
-    const a = document.createElement("span"); a.className = "k"; a.textContent = k;
-    const b = document.createElement("span"); b.className = "v"; b.textContent = v || "—";
-    grid.append(a, b);
-  };
-  kv(T("设备实例"), d.instance);
-  kv(T("设备类"), d.class || "—");
-  kv(T("驱动服务"), d.service || "—");
-  kv(T("厂商"), d.manufacturer || "—");
-  kv(T("位置"), d.location || "—");
-  if (d.problem) kv(T("问题码"), d.problem + " · " + usbProblemText(d.problem));
-  box.appendChild(grid);
+  box.scrollTop = keepTop;
 }
 
 function usbRenderAll() {
   usbRenderList();
   usbCapFillTargets();
-  usbRenderDetail();
-  usbRenderInfo();
+  usbRenderSummary();
 }
-
 /* ────────── USBPcap 抓包：解析 pcap 里的 USB 传输 ────────── */
 let usbCapInit = false;
 let usbCapLoading = false;
@@ -5930,7 +5677,6 @@ window.__usbCapLoadPath = async (path) => {
   try { return await invoke("usbpcap_open", { path }); }
   finally { usbCapLoading = false; }
 };
-window.__usbState = usbState;
 window.__usbRender = () => usbRenderAll();
 window.__usbRefresh = () => usbRefresh();
 window.__usbTimer = () => usbAutoTimer;
@@ -5938,9 +5684,7 @@ window.__usbTimer = () => usbAutoTimer;
 function bindUsb() {
   if ($("usb-refresh")) $("usb-refresh").onclick = () => usbRefresh();
   if ($("usb-rescan2")) $("usb-rescan2").onclick = () => usbRefresh();
-  if ($("usb-elev")) $("usb-elev").onclick = () => usbElevate();
   if ($("usb-elev2")) $("usb-elev2").onclick = () => usbElevate();
-  if ($("usb-clear-log")) $("usb-clear-log").onclick = () => { usbLogLines.length = 0; usbRenderLog(); };
   if ($("usb-cap-start")) $("usb-cap-start").onclick = () => usbCapStart();
   if ($("usb-cap-stop")) $("usb-cap-stop").onclick = () => usbCapStop();
   if ($("usb-cap-open")) $("usb-cap-open").onclick = () => usbCapOpen();
@@ -12855,6 +12599,10 @@ const EN = {
   "没有串口": "No serial port",
   "还没有数据": "No data yet",
   "串口读取失败：": "Serial read failed: ",
+  "设备管理器": "Device manager",
+  "管理员读取": "Read as admin",
+  "警告 {n}": "Warnings: {n}",
+  "需要管理员权限才能读取 Hub 端口和描述符": "Administrator rights are required to read hub ports and descriptors",
   "设备详情": "Device details",
   "串口（COM）": "Serial ports (COM)",
   "USB 设备 {n} · 端口设备 {m} · 串口 {s}": "USB devices {n} · port devices {m} · serial {s}",
@@ -13263,6 +13011,7 @@ function applyLang(lang) {
     safe(agRenderTree, "agRenderTree");    // 工作区/会话树里的固定文案
     safe(agRenderInfo, "agRenderInfo");    // Agent 信息面板
     safe(agRefreshBreakdown, "agRefreshBreakdown");
+    safe(() => { if (usbData) { usbRenderList(); usbCapFillTargets(); usbRenderSummary(); } }, "usb");
     for (const fn of langHooks) safe(fn, "hook");
   } finally {
     window.__langBusy = false;

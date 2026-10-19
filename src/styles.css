@@ -626,7 +626,7 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
      免得所有页都固定 30vh、内容多的那几页非得在小窗口里滚。 */
   .split > .params { grid-column: 1 / -1; grid-row: 2; max-height: min(45vh, var(--param-max, 30vh)); }
   /* 这条横向很宽、只有 30vh 高：表单类面板折成两栏，一屏能看全；表格 / 列表 / 对话类保持单栏 */
-  .params .parampane:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]) {
+  .params .parampane:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]):not([data-param="usb"]) {
     display: block; column-width: 20rem; column-gap: 18px;   /* 按宽度自动 2~3 栏，一屏能看全 */
     column-fill: balance;
   }
@@ -3045,17 +3045,31 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   .params .parampane[data-param="env"] > * { break-inside: avoid; }
 }
 
-/* ================= USB 诊断页 ================= */
-.usbpane { gap: 8px; }
-.usbgrid {
-  display: grid; grid-template-columns: minmax(280px, 38%) minmax(0, 1fr);
-  gap: 10px; min-height: 180px;
+/* ================= USB 监听页 ================= */
+.usbpane { gap: 8px; overflow: hidden; }
+.usbpane > .usbtrace { flex: 1 1 auto; min-height: 0; }
+
+/* 右栏专门给设备管理器：默认更宽，但保留用户拖动；只设最小宽度，不设最大宽度 */
+html[data-tab="usb"] .split {
+  grid-template-columns: var(--nav-w, 152px) 5px minmax(0, 1fr) 5px max(var(--param-w, 420px), 380px);
 }
+html[data-tab="usb"] .params {
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.usbmanpane { flex: 1; min-height: 0; gap: 6px; }
+.usbmanhead { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex: 0 0 auto; }
+.usbmanhead .cardtitle { margin: 0; flex: 1 1 auto; min-width: 0; }
+.usbmansum { flex: 0 0 auto; white-space: normal; overflow-wrap: anywhere; }
+.usbmanpane .usblist { flex: 1 1 auto; min-height: 0; }
+
 .usblist {
   overflow: auto; padding: 6px; border: 1px solid var(--surface-line); border-radius: 10px;
   background: hsl(var(--card) / 0.4);
 }
-.usbhub { margin: 8px 0 3px; font-size: 11.5px; font-weight: 600; color: hsl(var(--muted-foreground)); }
+.usbhub {
+  margin: 9px 0 3px; font-size: 11.5px; font-weight: 600; color: hsl(var(--muted-foreground));
+  line-height: 1.35; overflow-wrap: anywhere;
+}
 .usbhub:first-child { margin-top: 0; }
 .usbrow {
   display: flex; align-items: center; gap: 8px; min-width: 0; padding: 3px 7px;
@@ -3066,45 +3080,31 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
 .usbrow .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usbrow .id { flex: 0 0 auto; font-family: Consolas, "Cascadia Mono", monospace; font-size: 11px; color: hsl(var(--muted-foreground)); }
 .usbport { padding-left: 14px; }
-.usbdetail {
-  overflow: auto; min-width: 0; padding: 10px 12px; border: 1px solid var(--surface-line);
-  border-radius: 10px; background: hsl(var(--card) / 0.4);
-}
-.usbkv {
-  display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: 3px 10px; font-size: 12.5px;
-}
-.usbkv .k { color: hsl(var(--muted-foreground)); }
-.usbkv .v { font-family: Consolas, "Cascadia Mono", monospace; overflow-wrap: anywhere; }
-.usbif { margin-top: 10px; padding-top: 8px; border-top: 1px dashed hsl(var(--border) / 0.5); }
-.usbif .t { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
-.usbep {
-  display: grid; grid-template-columns: 4.5rem 4rem 8rem 6rem 5rem; gap: 4px 8px;
-  padding-left: 10px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 11.5px;
-}
-.usblog { min-height: 70px; max-height: 150px; }
-@media (max-width: 980px) {
-  .usbgrid { grid-template-columns: minmax(0, 1fr); }
-  .usbdetail { max-height: 42vh; }
-}
-
-/* USB 热插拔标记：绿 = 新插入，红 = 已拔出 */
-.usbrow.added { background: hsl(var(--success) / 0.14); box-shadow: inset 0 0 0 1px hsl(var(--success) / 0.35); }
-.usbrow.added .nm { color: hsl(var(--success)); }
-.usbrow.removed { background: hsl(var(--destructive) / 0.10); }
-.usbrow.removed .nm { color: hsl(var(--destructive)); text-decoration: line-through; }
 .usbrow .tag { flex: 0 0 auto; font-size: 10px; line-height: 1.5; padding: 0 6px; border-radius: 999px; }
-.usbrow .tag.new { background: hsl(var(--success) / 0.2); color: hsl(var(--success)); }
-.usbrow .tag.gone { background: hsl(var(--destructive) / 0.18); color: hsl(var(--destructive)); }
 .usbrow .tag.bad { background: hsl(var(--destructive) / 0.16); color: hsl(var(--destructive)); }
 .usbrow .tag.com { background: hsl(var(--primary) / 0.16); color: hsl(var(--primary)); }
 .usbrow.usbcom .nm { font-family: Consolas, "Cascadia Mono", monospace; font-weight: 600; }
 .usbrow.problem .nm { color: hsl(var(--destructive)); }
-.usbgonehead { color: hsl(var(--destructive)); }
-.usblog-add { color: hsl(var(--success)); }
-.usblog-del { color: hsl(var(--destructive)); }
 
+@media (max-width: 1180px) and (min-width: 981px) {
+  html[data-tab="usb"] .split {
+    grid-template-columns: min(var(--nav-w, 152px), 15rem) 5px minmax(0, 1fr) 5px max(var(--param-w, 420px), 360px);
+  }
+}
+@media (max-width: 980px) {
+  /* 窄窗：工具栏各压成一行（需要时横向滚动），把高度留给原始数据 */
+  .usbpane > .trow { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; }
+  .usbpane #usb-cap-target { min-width: 9rem; max-width: 15rem; }
+  .usbpane #usb-local-bar > .lb:first-child,
+  .usbpane #usb-local-bar > .lb:nth-child(2),
+  .usbpane #usb-local-bar > label.chk,
+  .usbpane #usb-cap-open { display: none; }
+  html[data-tab="usb"] .split > .params { max-height: min(48vh, var(--param-max, 36vh)); }
+  html[data-tab="usb"] .params .parampane[data-param="usb"] {
+    display: flex; flex-direction: column; column-width: auto; flex: 1; min-height: 0;
+  }
+}
 /* USB 诊断：原始数据表（时间 / 方向 / 长度 / HEX / ASCII） */
-.usbgrid { grid-template-columns: minmax(180px, 22%) minmax(0, 1fr); }
 .usbtrace {
   overflow: auto; min-width: 0; padding: 4px 6px; border: 1px solid var(--surface-line);
   border-radius: 10px; background: var(--surface-0);
@@ -3130,8 +3130,6 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   margin: 3px 0; padding: 2px 4px; border-top: 1px dashed hsl(var(--border) / 0.6);
   color: hsl(var(--muted-foreground)); font-style: italic;
 }
-.usbtx { flex: 1 1 auto; min-width: 8rem; }
-.params .usbdetail { border: none; background: transparent; padding: 0; max-height: none; overflow: visible; }
 
 /* USBPcap 抓包表：时间 / 设备 / 端点 / 类型 / 状态 / 数据 / ASCII·setup */
 .trrow.cap {
