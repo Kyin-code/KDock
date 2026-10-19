@@ -7466,6 +7466,12 @@ const AG_PRESETS = [
     note: "很快的推理服务，国内要代理。" },
   { id: "xai", name: "xAI Grok", endpoint: "https://api.x.ai/v1", model: "grok-2-latest", ctx: 131072,
     note: "国内要代理。" },
+  { id: "xiaomi-mimo-pro", name: "小米 MiMo V2.6 Pro（Token Plan）",
+    endpoint: "https://token-plan-cn.xiaomimimo.com/v1", model: "mimo-v2.6-pro", ctx: 1048576,
+    note: "小米 MiMo Token Plan 国内入口，OpenAI 兼容；1M 上下文、支持工具调用。" },
+  { id: "xiaomi-mimo-flash", name: "小米 MiMo V2.6 Flash（Token Plan）",
+    endpoint: "https://token-plan-cn.xiaomimimo.com/v1", model: "mimo-v2.6-flash", ctx: 1048576,
+    note: "小米 MiMo Token Plan 国内入口，OpenAI 兼容；1M 上下文、支持工具调用。" },
   { id: "ollama", name: "Ollama（本机）", endpoint: "http://127.0.0.1:11434/v1", model: "qwen2.5:14b", ctx: 32768,
     note: "本机跑模型：先 `ollama serve`；API Key 随便填一个（例如 ollama），本机不校验。" },
   { id: "lmstudio", name: "LM Studio（本机）", endpoint: "http://127.0.0.1:1234/v1", model: "local-model", ctx: 32768,
@@ -7479,20 +7485,67 @@ const AG_PRESETS = [
     note: "OneAPI / NewAPI / vLLM / 企业内网网关：填它的 base_url（看到 /v1 为止）。Claude、Gemini 官方不是这个格式，也得走这类网关。" },
 ];
 
+/** 预设列表不能等配置接口回来才填；否则刚打开「高级」时下拉是空的。 */
+function agEnsurePresets() {
+  const ps = agEl("ag-preset");
+  if (!ps) return;
+  if (ps.options.length <= 1) {
+    ps.innerHTML = '<option value="">— 选厂家 —</option>';
+    for (const p of AG_PRESETS) {
+      const o = document.createElement("option");
+      o.value = p.id;
+      o.textContent = en(p.name);
+      ps.appendChild(o);
+    }
+  }
+  if (!ps.value && AG_PRESETS.length) ps.value = AG_PRESETS[0].id;
+}
+
 /* ── models.dev 精简目录 ─────────────────────────────────────────────────────
    这里不复制 opencode 的运行时模型实现，只读同一份公开目录：provider 的 api / npm
    与模型的 context、output、tool_call、cost。KDock 目前只直连 OpenAI 兼容和
    Anthropic Messages 两类协议，所以目录里只保留后端真正能调用的厂商。
    原始 api.json 约 5.7MB；压缩成“文本 + 工具调用”模型后缓存到 localStorage。 */
 const MD_URL = "https://models.dev/api.json";
-const MD_CACHE_KEY = "kdock_modelsdev_catalog_v2";
+const MD_CACHE_KEY = "kdock_modelsdev_catalog_v3";
 const MD_TTL = 24 * 60 * 60 * 1000;
 const MD_POPULAR = [
   "deepseek", "anthropic", "openai", "moonshotai", "moonshotai-cn",
   "zhipuai", "zai", "alibaba", "alibaba-cn", "minimax", "minimax-cn",
-  "xai", "groq", "openrouter", "siliconflow", "siliconflow-cn",
+  "xai", "groq", "xiaomi", "xiaomi-token-plan-cn", "openrouter", "siliconflow", "siliconflow-cn",
   "volcengine", "mistral", "cerebras", "ollama-cloud", "lmstudio", "github-copilot",
 ];
+/** 目录用英文名检索；中文界面下这些别名让“输入厂商中文名”也能搜到。 */
+const MD_ALIASES = {
+  deepseek: ["深度求索", "深度"],
+  anthropic: ["克劳德", "claude"],
+  openai: ["开放智能", "gpt"],
+  google: ["谷歌", "gemini", "双子座"],
+  moonshotai: ["月之暗面", "月暗", "kimi"],
+  "moonshotai-cn": ["月之暗面", "月暗", "kimi"],
+  zhipuai: ["智谱", "glm"],
+  zai: ["智谱", "glm"],
+  alibaba: ["阿里", "通义", "千问", "qwen"],
+  "alibaba-cn": ["阿里", "通义", "千问", "qwen"],
+  minimax: ["稀宇", "海螺"],
+  "minimax-cn": ["稀宇", "海螺"],
+  xai: ["马斯克", "grok"],
+  xiaomi: ["小米", "米", "mimo"],
+  "xiaomi-token-plan-cn": ["小米", "米", "mimo", "token plan"],
+  volcengine: ["火山", "豆包", "方舟"],
+  siliconflow: ["硅基流动"],
+  "siliconflow-cn": ["硅基流动"],
+};
+/** models.dev 对官方 SDK 供应商不给 api；补上 KDock 能直连的默认入口。 */
+const MD_DEFAULT_API = {
+  anthropic: "https://api.anthropic.com",
+  openai: "https://api.openai.com/v1",
+  xai: "https://api.x.ai/v1",
+  groq: "https://api.groq.com/openai/v1",
+  mistral: "https://api.mistral.ai/v1",
+  cerebras: "https://api.cerebras.ai/v1",
+  lmstudio: "http://127.0.0.1:1234/v1",
+};
 const MD_OPENAI_IDS = new Set([
   ...MD_POPULAR, "deepinfra", "togetherai", "fireworks-ai", "perplexity",
   "openrouter", "requesty", "novita-ai", "hyperbolic", "nebius", "sambanova",
@@ -7522,7 +7575,8 @@ function mdCompact(raw) {
   const providers = [];
   for (const p of Object.values(raw || {})) {
     const kind = mdKind(p);
-    if (!kind || !p || !p.api) continue;
+    const api = p && (p.api || MD_DEFAULT_API[p.id]);
+    if (!kind || !api) continue;
     const models = [];
     for (const m of Object.values(p.models || {})) {
       if (!m || !m.id || !m.tool_call) continue;
@@ -7549,7 +7603,7 @@ function mdCompact(raw) {
       (a.status === "deprecated" ? 1 : 0) - (b.status === "deprecated" ? 1 : 0) ||
       String(b.release).localeCompare(String(a.release)) || a.name.localeCompare(b.name));
     providers.push({
-      id: String(p.id), name: String(p.name || p.id), api: String(p.api || ""),
+      id: String(p.id), name: String(p.name || p.id), api: String(api || ""),
       doc: String(p.doc || ""), npm: String(p.npm || ""), kind, models,
     });
   }
@@ -7611,7 +7665,8 @@ function mdRender() {
   if (!pbox || !mbox) return;
   const q = mdQuery.trim().toLowerCase();
   const all = (mdCatalog && mdCatalog.providers) || [];
-  let ps = all.filter((p) => !q || p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) ||
+  let ps = all.filter((p) => !q ||
+    `${p.name} ${p.id} ${(MD_ALIASES[p.id] || []).join(" ")}`.toLowerCase().includes(q) ||
     p.models.some((m) => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)));
   if (!q && !mdShowAll) ps = ps.filter((p) => MD_POPULAR.includes(p.id));
   if (mdProviderId && !ps.some((p) => p.id === mdProviderId)) mdProviderId = "";
@@ -8242,6 +8297,43 @@ function agToolGroupNode(group) {
   return wrap;
 }
 
+function agWelcomeNode() {
+  const welcome = document.createElement("div");
+  welcome.className = "agwelcome";
+  const title = document.createElement("div");
+  title.className = "agwelcome-title";
+  title.textContent = "Work with KDock";
+  const sub = document.createElement("div");
+  sub.className = "agwelcome-sub";
+  sub.textContent = en("把目标说出来，KDock 会和你一起推进。");
+  welcome.append(title, sub);
+  if (agCfg && !(agCfg.providers || []).length) {
+    const hint = document.createElement("div");
+    hint.className = "agwelcome-hint";
+    hint.textContent = en("先在设置里选择一个模型。");
+    welcome.appendChild(hint);
+  }
+  return welcome;
+}
+
+function agWelcomeHide() {
+  const box = agEl("ag-chat") || agChatEl;
+  if (!box) return;
+  box.querySelectorAll(".agwelcome").forEach((n) => n.remove());
+}
+
+/** 欢迎页只在“没有消息，而且输入框也是空的”时出现。 */
+function agSyncWelcome() {
+  const box = agEl("ag-chat") || agChatEl;
+  if (!box) return;
+  const typing = !!((agEl("ag-input") && agEl("ag-input").value) || "").trim();
+  if (!agEvents.length && !typing) {
+    if (!box.querySelector(".agwelcome")) box.appendChild(agWelcomeNode());
+  } else {
+    agWelcomeHide();
+  }
+}
+
 function agRender() {
   const box = agEl("ag-chat");
   if (!box) return;
@@ -8266,24 +8358,7 @@ function agRender() {
     agAppendEvent(agEvents[i], false);
     i += 1;
   }
-  if (!agEvents.length) {
-    const welcome = document.createElement("div");
-    welcome.className = "agwelcome";
-    const title = document.createElement("div");
-    title.className = "agwelcome-title";
-    title.textContent = "Work with KDock";
-    const sub = document.createElement("div");
-    sub.className = "agwelcome-sub";
-    sub.textContent = en("把目标说出来，KDock 会和你一起推进。");
-    welcome.append(title, sub);
-    if (agCfg && !(agCfg.providers || []).length) {
-      const hint = document.createElement("div");
-      hint.className = "agwelcome-hint";
-      hint.textContent = en("先在设置里选择一个模型。");
-      welcome.appendChild(hint);
-    }
-    box.appendChild(welcome);
-  }
+  agSyncWelcome();
   if (agCfg && !(agCfg.providers || []).length && agEvents.length) {
     const hint = document.createElement("div");
     hint.className = "agmsg note";
@@ -8312,6 +8387,7 @@ let agChatEl = null;
 function agAppendEvent(ev, scroll = true) {
   const box = agEl("ag-chat") || agChatEl;
   if (!box) return;
+  agWelcomeHide();
   const t = ev.type || ev;
   if (t === "user") {
     const node = agMsgNode("user", ev.text);
@@ -9090,6 +9166,7 @@ async function agSend() {
   }
   const backup = box.value;
   box.value = "";
+  agWelcomeHide();
   try {
     // **先发再上屏**：被拒的时候不要把用户的话弄丢
     const r = await invoke("agent_send", { sessionId: agMeta.id, text, providerId: agCfg ? agCfg.activeId : null });
@@ -9102,6 +9179,7 @@ async function agSend() {
     }
   } catch (e) {
     box.value = backup;
+    agSyncWelcome();
     agRunning = false;
     agState("空闲");
     agSyncRunning();
@@ -9266,6 +9344,7 @@ async function bindAgent() {
   if (agEl("ag-input") && agEl("ag-cmd-hint")) {
     agEl("ag-input").addEventListener("input", () => {
       agEl("ag-cmd-hint").hidden = !agEl("ag-input").value.startsWith("/");
+      agSyncWelcome();
     });
   }
 
@@ -9273,12 +9352,21 @@ async function bindAgent() {
   document.querySelectorAll("#ag-prov-tabs .segtab").forEach((b) => {
     b.onclick = () => agProvTab(b.dataset.provtab);
   });
+  agEnsurePresets();
   if (agEl("md-search")) {
     agEl("md-search").addEventListener("input", () => { mdQuery = agEl("md-search").value || ""; mdRender(); });
   }
   if (agEl("md-refresh")) agEl("md-refresh").onclick = () => mdEnsure(true);
   if (agEl("md-add")) agEl("md-add").onclick = () => mdAddModel();
   if (agEl("md-id")) agEl("md-id").addEventListener("input", () => mdRenderPick(false));
+  if (agEl("ag-model-pick")) {
+    agEl("ag-model-pick").onchange = () => {
+      const v = agEl("ag-model-pick").value;
+      if (v && agEl("ag-p-model")) agEl("ag-p-model").value = v;
+    };
+  }
+  if (agEl("ag-p-endpoint")) agEl("ag-p-endpoint").addEventListener("input", agClearModelPicker);
+  if (agEl("ag-p-kind")) agEl("ag-p-kind").addEventListener("change", agClearModelPicker);
   agEl("ag-provider").onchange = () => {
     const id = agEl("ag-provider").value;
     if (!id) return;
@@ -9306,6 +9394,7 @@ async function bindAgent() {
       const p = AG_PRESETS.find((x) => x.id === (agEl("ag-preset") ? agEl("ag-preset").value : ""));
       if (!p) return toast("先选一个厂家");
       agNewProfile = true;
+      agClearModelPicker();
       if (agEl("ag-prov-new-title")) agEl("ag-prov-new-title").textContent = "新增供应商";
       if (agEl("ag-prov-cancel")) agEl("ag-prov-cancel").hidden = false;
       agEl("ag-p-id").value = p.id;
@@ -9342,10 +9431,8 @@ async function bindAgent() {
     if (!probe.endpoint) return toast("先填地址（endpoint）");
     try {
       const list = await invoke("agent_probe_models", { provider: probe, apiKey: agFormKey() });
-      const dl = agEl("ag-model-list");
-      dl.innerHTML = "";
-      for (const m of list) { const o = document.createElement("option"); o.value = m; dl.appendChild(o); }
-      toast(list.length ? `拉到 ${list.length} 个模型，点模型输入框选` : "这个服务没给模型列表，手填吧");
+      agSetModelOptions(list);
+      toast(list.length ? `拉到 ${list.length} 个模型，右侧下拉直接选` : "这个服务没给模型列表，手填吧");
     } catch (e) { toast(String(e)); }
   };
   agEl("ag-p-ping").onclick = async () => {
@@ -9388,15 +9475,7 @@ async function agLoadConfig() {
     agEl("ag-key-hint").textContent = `${en("密钥存储：")}${scheme}　${en("数据目录：")}${agCfg.dataDir}`;
   }
   await agLoadQuickModels();
-  if (agEl("ag-preset") && !agEl("ag-preset").options.length) {
-    const ps = agEl("ag-preset");
-    ps.innerHTML = '<option value="">— 选厂家 —</option>';
-    for (const p of AG_PRESETS) {
-      const o = document.createElement("option");
-      o.value = p.id; o.textContent = p.name;
-      ps.appendChild(o);
-    }
-  }
+  agEnsurePresets();
   agRenderProviders();
   // 用户正在「新增 / 编辑」页填表时，别被后台刷新把表单冲掉
   if (agCfg.providers.length && !agNewProfile && !agOnNewTab()) {
@@ -9423,6 +9502,7 @@ function agProvTab(name) {
     if (amdNeedsData()) amdLoadPull(false);
   }
   if (name === "catalog") mdEnsure(false);
+  if (name === "new") agEnsurePresets();
   if (LANG === "en") langWalk();
 }
 
@@ -9548,6 +9628,49 @@ function agFormKey() {
   return k ? k : null;      // 空的话后端会回退到密钥库里存的那把
 }
 
+function agClearModelPicker() {
+  const pick = agEl("ag-model-pick");
+  if (pick) {
+    pick.innerHTML = "";
+    pick.hidden = true;
+  }
+  if (agEl("ag-model-list")) agEl("ag-model-list").innerHTML = "";
+}
+
+/** 「拉模型列表」之后同时填 datalist 和可点选下拉；输入框已有文字也能直接选。 */
+function agSetModelOptions(list) {
+  const dl = agEl("ag-model-list");
+  const pick = agEl("ag-model-pick");
+  const models = [...new Set((list || []).map((x) => String(x)).filter(Boolean))];
+  if (dl) {
+    dl.innerHTML = "";
+    for (const m of models) {
+      const o = document.createElement("option");
+      o.value = m;
+      dl.appendChild(o);
+    }
+  }
+  if (!pick) return;
+  pick.innerHTML = "";
+  if (!models.length) {
+    pick.hidden = true;
+    return;
+  }
+  const ph = document.createElement("option");
+  ph.value = "";
+  ph.textContent = en("选择模型…");
+  pick.appendChild(ph);
+  for (const m of models) {
+    const o = document.createElement("option");
+    o.value = m;
+    o.textContent = m;
+    pick.appendChild(o);
+  }
+  const cur = (agEl("ag-p-model") && agEl("ag-p-model").value || "").trim();
+  if (models.includes(cur)) pick.value = cur;
+  pick.hidden = false;
+}
+
 /** 对话页那个"模型"下拉：切当前生效的 profile */
 /** 这条 profile 是不是"AMD Radeon Cloud 内置"那批（id 形如 amd-xxx） */
 const isAmdProfile = (p) => !!p && /^amd-/.test(String(p.id || ""));
@@ -9630,6 +9753,7 @@ function bindQuickModels() {
 function agFillProvider(id) {
   const p = agCfg && agCfg.providers.find((x) => x.id === id);
   if (!p) return;
+  agClearModelPicker();
   agEl("ag-p-id").value = p.id;
   agEl("ag-p-name").value = p.name;
   agEl("ag-p-endpoint").value = p.endpoint;
@@ -11828,6 +11952,7 @@ const EN = {
 
   // ============ 设置：模型与供应商 ============
   "厂家预设": "Vendor preset", "— 选厂家 —": "— pick a vendor —", "填入表单": "Fill form",
+  "选择模型…": "Choose a model…", "从已获取的模型列表中选择": "Choose from the fetched model list",
   "添加模型": "Add model", "高级": "Advanced",
   "搜索模型或供应商，例如 claude / deepseek / glm": "Search models or providers, e.g. claude / deepseek / glm",
   "刷新目录": "Refresh catalog", "读取 models.dev…": "Loading models.dev…",

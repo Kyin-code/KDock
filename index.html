@@ -213,7 +213,10 @@
                 <p class="hint">DeepSeek 两种都支持：OpenAI 兼容填 <code>https://api.deepseek.com</code>，
                   Anthropic 格式填 <code>https://api.deepseek.com/anthropic</code>。</p>
                 <div class="field"><label for="ag-p-model">模型</label>
-                  <input id="ag-p-model" placeholder="deepseek-chat" list="ag-model-list" />
+                  <div class="inline grow">
+                    <input id="ag-p-model" class="grow" placeholder="deepseek-chat" list="ag-model-list" />
+                    <select id="ag-model-pick" class="tight" title="从已获取的模型列表中选择" hidden></select>
+                  </div>
                   <datalist id="ag-model-list"></datalist>
                 </div>
                 <div class="field"><label for="ag-p-key">API Key</label>
