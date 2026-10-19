@@ -59,6 +59,8 @@ pub enum Plan {
     Zip { url: &'static str, strip: u32 },
     /// 下载单个可执行文件 → 直接放到 <安装目录>\<id>\ 里（绿色小工具，不用装）
     Fetch { url: &'static str, file: &'static str },
+    /// 下载一组固件（原名 → 目标名）到 sigrok-cli 的 share\sigrok-firmware（DSLogic 这类）
+    FwSet { base: &'static str, files: &'static [(&'static str, &'static str)] },
     /// git clone 到安装目录（RT-Thread Env）
     Git { repo: &'static str },
     /// 走 winget（微软包管理器）：有官方包的直接一键，不用我们猜直链
@@ -146,6 +148,19 @@ fn expand_vars(s: &str) -> String {
     }
     out
 }
+
+/// 梦源 DSLogic 各型号的固件（下载文件名 → sigrok 期望的文件名）
+const DSLOGIC_FW: &[(&str, &str)] = &[
+    ("DSLogic50.bin", "dreamsourcelab-dslogic-fpga-5v.fw"),
+    ("DSLogic33.bin", "dreamsourcelab-dslogic-fpga-3v3.fw"),
+    ("DSLogic.fw", "dreamsourcelab-dslogic-fx2.fw"),
+    ("DSLogicPro.bin", "dreamsourcelab-dslogic-pro-fpga.fw"),
+    ("DSLogicPro.fw", "dreamsourcelab-dslogic-pro-fx2.fw"),
+    ("DSLogicPlus.bin", "dreamsourcelab-dslogic-plus-fpga.fw"),
+    ("DSLogicPlus.fw", "dreamsourcelab-dslogic-plus-fx2.fw"),
+    ("DSLogicBasic.bin", "dreamsourcelab-dslogic-basic-fpga.fw"),
+    ("DSLogicBasic.fw", "dreamsourcelab-dslogic-basic-fx2.fw"),
+];
 
 /// 清单。顺序就是界面上的顺序。
 pub static ITEMS: &[Item] = &[
@@ -241,6 +256,21 @@ pub static ITEMS: &[Item] = &[
             file: "sigrok-cli-0.7.2-x86_64-installer.exe",
             args: "/S",
             elevated: true,
+        },
+    },
+    Item {
+        id: "dslogic_fw",
+        name: "DSLogic（梦源）固件",
+        kind_cn: "逻辑分析仪",
+        desc: "梦源 DSLogic 系列（Basic / Plus / Pro / U2 / U3）在 sigrok 里要这两样固件：FX2 固件 + FPGA 位流。没有它们，插上 DSLogic 也扫不到设备（sigrok-cli 会报找不到固件）。装到 sigrok-cli 的 share\\sigrok-firmware 下。",
+        url: "https://sigrok.org/wiki/DreamSourceLab_DSLogic",
+        required: false,
+        min_version: None,
+        size_mb: 1.5,
+        rules: &[glob("C:\\Program Files\\sigrok\\sigrok-cli\\share\\sigrok-firmware\\dreamsourcelab-dslogic-*.fw", "", "")],
+        plan: Plan::FwSet {
+            base: "https://github.com/DreamSourceLab/DSView/raw/886b847c21c606df3138ce7ad8f8e8c363ee758b/DSView/res",
+            files: DSLOGIC_FW,
         },
     },
     Item {
@@ -981,6 +1011,31 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
                 run_powershell(&app, it.id, &format!(
                     "winget install --id {wid} --accept-package-agreements --accept-source-agreements --disable-interactivity; exit $LASTEXITCODE"
                 ), false)?
+            }
+        }
+        Plan::FwSet { base, files } => {
+            let cli = find_exe("sigrok-cli.exe", "C:\\Program Files\\sigrok\\sigrok-cli;C:\\Program Files\\sigrok;D:\\ENV;F:\\ENV;I:\\ENV")
+                .ok_or_else(|| "先装 sigrok-cli（清单里上一项），再回来装这个固件".to_string())?;
+            let fwdir = cli
+                .parent()
+                .map(|p| p.join("share").join("sigrok-firmware"))
+                .ok_or_else(|| "找不到 sigrok-cli 的安装目录".to_string())?;
+            let mut got: Vec<std::path::PathBuf> = Vec::new();
+            for (src, dst) in files {
+                let url = format!("{base}/{src}");
+                got.push(download(&app, it.id, &url, dst)?);
+            }
+            let list = got.iter().map(|p| format!("'{}'", p.display())).collect::<Vec<_>>().join(",");
+            let script = format!(
+                "New-Item -ItemType Directory -Force -Path '{}' | Out-Null;                  Copy-Item -LiteralPath @({list}) -Destination '{}' -Force;                  (Get-ChildItem '{}' -Filter 'dreamsourcelab-*').Count",
+                fwdir.display(),
+                fwdir.display(),
+                fwdir.display()
+            );
+            if dry {
+                format!("（模拟）会下载 {} 个固件并复制到 {}（需要 UAC）", files.len(), fwdir.display())
+            } else {
+                run_powershell(&app, it.id, &script, true)?
             }
         }
         Plan::Download { url, file, args, elevated } => {

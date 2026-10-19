@@ -45,7 +45,8 @@ const LA = {
   sel: 0,                     // 当前通道（测量用）
   drag: null,
 };
-const COLORS = ["#4ea1ff", "#ffd166", "#7ee787", "#ff8fa3", "#c792ea", "#7fd1e0", "#f5a97f", "#c9d1d9"];
+const COLORS = ["#4ea1ff", "#ffd166", "#7ee787", "#ff8fa3", "#c792ea", "#7fd1e0", "#f5a97f", "#c9d1d9",
+  "#9ad6ff", "#e5c07b", "#98c379", "#e06c75", "#c678dd", "#56b6c2", "#d19a66", "#abb2bf"];
 const MARK_COLORS = ["#ff9f43", "#ff6b9d", "#5ad1ff", "#b18cff", "#ffd166", "#4fd1a1"];
 
 /* ============================ 数据 ============================ */
@@ -210,14 +211,15 @@ async function importBin(path0) {
 }
 
 /** 真机采到的原始采样：1 字节 = 8 通道（bit0 = 第一个选中的通道），跟 parseBin 一个口径 */
-function loadDeviceData(bytes, rate, names, src) {
-  const n = bytes.length;
+function loadDeviceData(bytes, rate, names, src, bpsIn) {
+  const bps = Math.max(1, bpsIn || 1);          // 8 通道 = 1 字节/采样，16 通道 = 2 字节
+  const n = Math.floor(bytes.length / bps);
   const chans = names.map((nm, k) => ({
     name: nm, color: COLORS[k % COLORS.length], bits: new Uint8Array(n), on: true,
   }));
   for (let i = 0; i < n; i++) {
-    const b = bytes[i];
-    for (let k = 0; k < chans.length; k++) chans[k].bits[i] = (b >> k) & 1;
+    const base = i * bps;
+    for (let k = 0; k < chans.length; k++) chans[k].bits[i] = (bytes[base + (k >> 3)] >> (k & 7)) & 1;
   }
   setChans(chans, rate, src);
   return n;
@@ -276,7 +278,9 @@ function laDevPick() {
   const rateSel = $id("la-dev-rate");
   if (rateSel) {
     rateSel.textContent = "";
-    const rates = (dev && dev.rates) || [];
+    const reported = (dev && dev.rates) || [];
+    // 设备偶尔没报（刚插上 / --show 超时）时给一份常见档位，保证还能采
+    const rates = reported.length ? reported : [20000, 100000, 1000000, 4000000, 8000000, 12000000, 24000000];
     for (const r of rates) {
       const o = el("option");
       o.value = String(r); o.textContent = fmtHz(r);
@@ -325,7 +329,7 @@ async function laDevCapture() {
   try {
     const r = await invoke("logic_capture", { device: dev.id, rate, samples, channels: chans });
     const bytes = Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0));
-    const n = loadDeviceData(bytes, Number(r.rate) || rate, r.channels || chans, T("设备") + "：" + dev.name);
+    const n = loadDeviceData(bytes, Number(r.rate) || rate, r.channels || chans, T("设备") + "：" + dev.name, Number(r.bps) || 1);
     const ms = Math.round(performance.now() - t0);
     laDevMsg(T("采到 {n} 点 · {ms} ms").replace("{n}", n).replace("{ms}", ms) + (r.warning ? " · " + r.warning : ""), !!r.warning);
     if (r.warning) msg(r.warning, true);

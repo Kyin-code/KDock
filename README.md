@@ -271,6 +271,14 @@ CI 就会重建一次，这个链接永远指向最新那份，GitHub 上标着 
 > 报的是 20 kHz–48 MHz，但 8 通道实测 24 MHz 才稳定），采到的点数会跟请求的比对，不够会明确提示。
 > 采不到时会把 sigrok 的原始错误带回来（典型：`LIBUSB_ERROR_ACCESS` = 设备被占用，重启一下这个 USB
 > 设备/重新插拔即可）。sigrok-cli 可以在「环境配置 → sigrok-cli（逻辑分析仪的采集后端）」一键装。
+> **梦源 DSLogic**：同一套链路（sigrok 的 `dreamsourcelab-dslogic` 驱动，支持 Basic / Plus / Pro / U2 / U3）。
+> 引擎要 FX2 固件 + FPGA 位流，在「环境配置 → DSLogic（梦源）固件」一键装（从 DSView 官方仓库下载、
+> MD5 校验、复制到 sigrok-cli 的 `share\sigrok-firmware`）。16 通道按 libsigrok 的 `unitsize=2` 解析，
+> 界面最多 16 路。
+>
+> **精度口径**：采样时钟是设备自己的晶振（FX2 典型 ±30~50 ppm），KDock **只做原样转发** —— 不重采样、
+> 不加时间戳、不做任何"修正"，所以时间轴精度就是设备规格本身；我们不标定设备，只做功能自测
+> （采到的点数、已知信号能不能解出来）。
 
 同一套能力也挂在 **Agent** 上：
 `la_decoders`（看支持哪些协议、每种协议要配哪些参数、有哪些示例场景）/ `la_state`（读状态）/

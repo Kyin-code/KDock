@@ -5,7 +5,9 @@
 //! 「列设备 → 起一次采集 → 把采样数据交给前端」，换设备不用改代码。
 //! 代价是机器上得有 sigrok-cli（「环境配置」页可以一键装）。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -19,6 +21,36 @@ const EXE_EXTRA: &str =
 
 /// 前端一次最多拿多少点（8 通道 × 2000 万点 = 160MB 的 bits，已经够狠了）
 const MAX_SAMPLES: u64 = 20_000_000;
+
+/// 设备 id → 总通道数。libsigrok 的 unitsize 按驱动/设备定：
+/// fx2lafw 8ch = 1 字节，16ch = 2 字节；DSLogic / saleae-logic16 恒为 2 字节。
+static DEV_CHANS: LazyLock<Mutex<HashMap<String, usize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 从 `--show` / `--scan` 的 "… with N channels:" 里拿总通道数
+fn parse_total_channels(text: &str) -> Option<usize> {
+    for line in text.lines() {
+        let Some((_, tail)) = line.split_once(" with ") else { continue };
+        let Some((num, _)) = tail.split_once(" channels") else { continue };
+        if let Ok(n) = num.trim().parse::<usize>() {
+            return Some(n);
+        }
+    }
+    None
+}
+
+fn total_channels(cli: &Path, id: &str) -> usize {
+    if let Ok(g) = DEV_CHANS.lock() {
+        if let Some(&n) = g.get(id) {
+            return n;
+        }
+    }
+    let (show, _) = run_both(cli, &["-d", id, "--show"]).unwrap_or_default();
+    let n = parse_total_channels(&show).unwrap_or(8);
+    if let Ok(mut g) = DEV_CHANS.lock() {
+        g.insert(id.to_string(), n);
+    }
+    n
+}
 
 fn find_cli() -> Option<PathBuf> {
     env_setup::find_tool("sigrok-cli.exe", EXE_EXTRA)
@@ -128,8 +160,19 @@ fn devices_blocking() -> Result<Value, String> {
         if id.is_empty() {
             continue;
         }
-        let show = run_both(&cli, &["-d", &id, "--show"]).map(|(o, _)| o).unwrap_or_default();
-        let rates = parse_rates(&show);
+        let mut show = run_both(&cli, &["-d", &id, "--show"]).map(|(o, _)| o).unwrap_or_default();
+        let mut rates = parse_rates(&show);
+        if rates.is_empty() {
+            // 刚插上 / 刚启动时设备可能还没稳定，等一下再问一次
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            show = run_both(&cli, &["-d", &id, "--show"]).map(|(o, _)| o).unwrap_or_default();
+            rates = parse_rates(&show);
+        }
+        if let Some(n) = parse_total_channels(&show) {
+            if let Ok(mut g) = DEV_CHANS.lock() {
+                g.insert(id.clone(), n);
+            }
+        }
         d["rates"] = json!(rates);
     }
     warnings.truncate(6);
@@ -154,11 +197,16 @@ fn capture_blocking(device: &str, rate: u64, samples: u64, channels: &[String]) 
     if channels.is_empty() {
         return Err("至少要选一个通道".into());
     }
-    if channels.len() > 8 {
-        return Err("这一版最多支持 8 个通道".into());
+    if channels.len() > 16 {
+        return Err("这一版最多支持 16 个通道".into());
     }
     let n = samples.clamp(1, MAX_SAMPLES);
     let ch = channels.join(",");
+    // libsigrok 的 binary 输出是驱动给的 unitsize：
+    //   fx2lafw 8ch = 1 字节 / 16ch = 2 字节；DSLogic、saleae-logic16 恒为 2 字节。
+    // 先按设备总通道数定，再用实际文件长度兜底（两次采集之间设备换了也不至于解错）。
+    let total = total_channels(&cli, device);
+    let mut bps: usize = if total > 8 { 2 } else { 1 };
 
     let dir = std::env::temp_dir().join("kdock-la");
     std::fs::create_dir_all(&dir).map_err(|e| format!("建临时目录失败：{e}"))?;
@@ -228,14 +276,25 @@ fn capture_blocking(device: &str, rate: u64, samples: u64, channels: &[String]) 
             format!("没采到数据：{hint}｜{msg}")
         });
     }
-    let warning = if (bytes.len() as u64) < n {
-        Some(format!("设备只采到 {} / {} 点", bytes.len(), n))
+    if bytes.len() % bps != 0 {
+        // 兜底：另一个 unitsize 能整除就用它
+        let alt = if bps == 1 { 2 } else { 1 };
+        if bytes.len() % alt == 0 {
+            bps = alt;
+        } else {
+            return Err(format!("返回的数据长度不是 {} 字节/采样的整数倍（{} 字节）", bps, bytes.len()));
+        }
+    }
+    let got = (bytes.len() / bps) as u64;
+    let warning = if got < n {
+        Some(format!("设备只采到 {} / {} 点", got, n))
     } else {
         None
     };
     Ok(json!({
         "rate": rate,
-        "n": bytes.len(),
+        "n": got,
+        "bps": bps,
         "requested": n,
         "channels": channels,
         "data": crate::base64_encode(&bytes),
