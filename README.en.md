@@ -51,7 +51,7 @@ push to `main`, so this link always points at the newest one. GitHub marks it as
 | **Flashing** | Drives external programmers (OpenOCD / J-Link / STM32CubeProgrammer) for flash, erase, verify and reset |
 | **Environment** | One-click detection and install of drivers / toolchains (CH34x · FTDI · J-Link+JFlash · arm-none-eabi-gcc · OpenOCD · PulseView(sigrok) · RT-Thread Env · ST-Link · Zadig): read-only scan of this PC (PATH / registry / pnputil / common folders), bundled installers first, winget / git one-click install, first-run check for required drivers |
 | **Device files** | List directories, pull/push files, CRC verification (serial uses base64, network uses offset-based reads/writes) |
-| **Visualization** | Live charts (multi-channel), screen capture, **oscilloscope** (RIGOL DS1000Z series over SCPI: state, 13 auto-measurements, multi-channel waveform, screenshot, timebase/trigger control), logic analyzer slot |
+| **Visualization** | Live charts (multi-channel), screen capture, **oscilloscope** (RIGOL DS1000Z series over SCPI: state, 13 auto-measurements, multi-channel waveform, screenshot, timebase/trigger control), logic analyzer (waveform / 19 protocol decoders / import VCD·CSV·raw / **real-device capture through sigrok-cli**: fx2lafw, old Saleae Logic, saleae-logic16, DSLogic …) |
 | **Flow** | Chain local commands / TCP / UDP / serial into a timed flow with branches, run it with one click |
 | **AI Agent** | Built-in assistant that can call all of the above; OpenAI-compatible and Anthropic protocols, skills (`SKILL.md`, each can be marked "Always on" = its body goes into the system prompt every turn, which is how you shape a persona / tone), MCP servers, context compaction, throughput and cost stats |
 
@@ -211,8 +211,6 @@ itself** — even the scan is strictly read-only.
 The same capabilities are on the **Agent**: `env_scan` (scan this PC, read-only, no approval — same inventory the
 page shows) and `env_install` (install / update one item, **needs approval**; the UI switches to Environment setup
 so the user watches the progress and log live).
-
-## Using the Agent
 
 ## Using the Agent
 

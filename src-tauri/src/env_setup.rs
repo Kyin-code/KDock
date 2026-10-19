@@ -227,6 +227,23 @@ pub static ITEMS: &[Item] = &[
         plan: Plan::Winget { id: "Sigrok.PulseView" },
     },
     Item {
+        id: "sigrok_cli",
+        name: "sigrok-cli（逻辑分析仪的采集后端）",
+        kind_cn: "逻辑分析仪",
+        desc: "PulseView 同门的命令行采集工具。KDock 的「逻辑分析仪 → 真机」就是调它：fx2lafw（Saleae Logic / 各种 FX2 板）、saleae-logic16、DSLogic 这些都能用。装完不用配置，回到页面点 ↻ 就能看到设备。",
+        url: "https://sigrok.org/wiki/Downloads",
+        required: false,
+        min_version: Some("0.7"),
+        size_mb: 40.0,
+        rules: &[exe("sigrok-cli.exe", "C:\\Program Files\\sigrok\\sigrok-cli;C:\\Program Files\\sigrok;D:\\ENV;F:\\ENV;I:\\ENV", "--version", "")],
+        plan: Plan::Download {
+            url: "https://sigrok.org/download/binary/sigrok-cli/sigrok-cli-0.7.2-x86_64-installer.exe",
+            file: "sigrok-cli-0.7.2-x86_64-installer.exe",
+            args: "/S",
+            elevated: true,
+        },
+    },
+    Item {
         id: "rtthread_env",
         name: "RT-Thread Env 工具",
         kind_cn: "运行时",

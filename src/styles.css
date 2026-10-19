@@ -854,6 +854,15 @@ html.kb-focus[data-tab="kb"] .parampane.kbpane #kb-chat-host { height: auto; fle
 .ladecrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ladecrow .laname { font-weight: 600; font-size: 12px; }
 .ladecrow select.tight { min-width: 4.4rem; }
+/* 逻辑分析仪：真机采集那一行（设备 / 采样率 / 点数 / 通道 / 采集） */
+.ladevbar .la-devnum { width: 7.2em; height: 26px; padding: 0 6px; }
+.ladevchans { display: inline-flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.ladevchans label { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; color: hsl(var(--muted-foreground)); }
+.ladevchans input { margin: 0; }
+#la-dev-state { color: hsl(var(--muted-foreground)); }
+@media (max-width: 900px) {
+  .ladevbar > .lb { display: none; }   /* 窄窗只留控件本身，别让一行撑成四行 */
+}
 .ladecrow input.num { width: 5.5rem; }
 .ladecresults {
   display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow: auto;

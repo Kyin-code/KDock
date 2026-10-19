@@ -1400,6 +1400,19 @@
             <button id="la-import" class="btn small">导入 VCD / CSV…</button>
             <button id="la-bin" class="btn small">原始二进制…</button>
           </div>
+          <div class="trow ladevbar">
+            <span class="lb">真机</span>
+            <select id="la-dev" class="tight" title="sigrok 看到的设备（fx2lafw / Saleae / DSLogic…）"></select>
+            <button id="la-dev-refresh" class="btn small" title="重新扫描设备">↻</button>
+            <span class="lb">采样率</span>
+            <select id="la-dev-rate" class="tight" title="设备支持的采样率"></select>
+            <span class="lb">点数</span>
+            <input id="la-dev-samples" class="la-devnum" value="200000" title="这次采多少个点" />
+            <span class="lb">通道</span>
+            <span id="la-dev-chans" class="ladevchans"></span>
+            <button id="la-dev-start" class="btn small primary">采集</button>
+            <span id="la-dev-state" class="lb"></span>
+          </div>
           <div class="trow laviewbar">
             <span class="lb">视图</span>
             <button id="la-zout" class="btn small" title="缩小">−</button>

@@ -264,13 +264,18 @@ CI 就会重建一次，这个链接永远指向最新那份，GitHub 上标着 
 右栏按解码器列出它要的参数（通道 / 波特率 / 模式…），加协议就是"下拉里选一个 + 点 ＋"；
 **存盘**导出 CSV（time + 各通道）或 VCD（PulseView / DSView / GTKWave 能打开）。
 
-> 真机采集（fx2lafw / DSLogic 这类 USB 逻辑分析仪）**这一版还没接驱动**，能用的来源是上面这些；
-> 接驱动时只要把采到的 samples 换进去，查看 / 解码 / 导出这条链路不用动。
+> **真机采集**：逻辑分析仪页新增了「真机」那一行 —— 设备 / 采样率 / 点数 / 通道 / 采集。
+> 后端走 **sigrok-cli**（`-O binary` 的原始采样直接进现有波形管线），所以 fx2lafw（老款 Saleae Logic、
+> 各种 FX2 板）、saleae-logic16、DSLogic 这些 sigrok 认得设备都能直接用；页面上的设备、通道和采样率
+> 都是从设备自己报上来的（`--scan` / `--show`），不是写死的。采样率受设备限制（这台老 Saleae Logic
+> 报的是 20 kHz–48 MHz，但 8 通道实测 24 MHz 才稳定），采到的点数会跟请求的比对，不够会明确提示。
+> 采不到时会把 sigrok 的原始错误带回来（典型：`LIBUSB_ERROR_ACCESS` = 设备被占用，重启一下这个 USB
+> 设备/重新插拔即可）。sigrok-cli 可以在「环境配置 → sigrok-cli（逻辑分析仪的采集后端）」一键装。
 
 同一套能力也挂在 **Agent** 上：
 `la_decoders`（看支持哪些协议、每种协议要配哪些参数、有哪些示例场景）/ `la_state`（读状态）/
 `la_read`（读解出来的字节 + 字段判定 + 每路测量）/ `la_config`（改配置：采样率、整份替换解码器列表、
-通道显隐、选中哪一路、视图窗口、光标）/ `la_capture`（载入示例场景，或 source=device 明确报"驱动还没接"）/
+通道显隐、选中哪一路、视图窗口、光标）/ `la_capture`（载入示例场景，或 source=device 用真机采一段：可给 device / rate / samples / channels）/
 `la_save`（存 CSV / VCD）。**采到的数据本身 agent 改不了** —— 只能改配置或重新采集；
 跟传输页那套一个形状：读类不审批，写配置 / 采集 / 存盘要审批。
 

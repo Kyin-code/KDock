@@ -553,10 +553,14 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
             "view":{"type":"object","description":"单位秒","properties":{"t0":{"type":"number"},"span":{"type":"number"}}},
             "cursors":{"type":"object","description":"单位秒；a/b 给 null 表示清掉","properties":{"a":{"type":"number"},"b":{"type":"number"}}}
         }}), true);
-    push("la_capture", "**开始一次采集**。source=demo 载入内置示例场景（scenario 可选：bus = 常用总线 UART/PWM/I2C/SPI/DS18B20/NEC；more = 调试与音频 CAN/JTAG/I2S/PS2；enc = 编码与工业总线 Manchester/DHT/LIN/Modbus/SWD/DMX；不给就用第一个，场景 id 也能从 la_decoders 拿）；source=device 会给明确报错（真机驱动还没接）。",
+    push("la_capture", "**开始一次采集**。source=demo 载入内置示例场景（scenario 可选：bus = 常用总线 UART/PWM/I2C/SPI/DS18B20/NEC；more = 调试与音频 CAN/JTAG/I2S/PS2；enc = 编码与工业总线 Manchester/DHT/LIN/Modbus/SWD/DMX；不给就用第一个，场景 id 也能从 la_decoders 拿）；source=device 用接在机器上的真机采一段（sigrok-cli / fx2lafw 这类；device 不填就用当前选中的那台，rate 默认 1 MHz，samples 默认 200000）。",
         json!({"type":"object","properties":{
             "source":{"type":"string","enum":["demo","device"],"description":"默认 demo"},
-            "scenario":{"type":"string","description":"示例场景 id，见 la_decoders"}
+            "scenario":{"type":"string","description":"示例场景 id，见 la_decoders"},
+            "device":{"type":"string","description":"sigrok 设备 id（不填 = 当前选中的）"},
+            "rate":{"type":"integer","description":"采样率 Hz，默认 1000000"},
+            "samples":{"type":"integer","description":"采样点数，默认 200000"},
+            "channels":{"type":"array","items":{"type":"string"},"description":"通道名，如 [\"D0\",\"D1\"]；不填 = 当前勾选的"}
         }}), true);
     push("la_save", "把当前逻辑分析仪的数据**存成文件**（要 path）。format=csv（time + 各通道）或 vcd（PulseView / DSView / GTKWave 能打开）；超过 20 万点只存前 20 万。",
         json!({"type":"object","properties":{

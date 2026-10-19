@@ -18,6 +18,18 @@
 ## [未发布]
 
 ### 新增
+- **逻辑分析仪接真机了**：页面上多一行「真机」—— 设备 / 采样率 / 点数 / 通道 / 采集。后端调
+  **sigrok-cli**（`-O binary` 的原始采样直接进现有波形管线），所以 fx2lafw（老款 Saleae Logic、
+  各种 FX2 板）、saleae-logic16、DSLogic 这些 sigrok 认得的设备都能用；设备 / 通道 / 采样率都是
+  从设备自己报上来的（`--scan` / `--show`），不是写死的。agent 的 `la_capture {source:'device'}`
+  同步可用（可给 device / rate / samples / channels）。
+  实测：接一台初代 Saleae Logic（VID:PID 0925:3881，系统里本来就是 WinUSB 驱动，**不需要换驱动**）——
+  8 通道 1 MHz × 20 万点用了 0.54 s，24 MHz × 100 万点 0.68 s，采集 → 波形 / 测量 / 解码管线全通；
+  48 MHz 这台只能拿到几千点，所以采样率列表按设备上报的给，实际点数不足会明确提示。
+  采不到时把 sigrok 的原始错误带回界面（典型 `LIBUSB_ERROR_ACCESS` = 设备被占用，重启 USB 设备 /
+  重新插拔即可；这轮实测踩到过一次，已经写成提示）。
+- 环境配置新增 **sigrok-cli**（逻辑分析仪的采集后端）：检测 + 一键安装（sigrok.org 官方安装包，装驱动要 UAC）。
+- 顺手修：README.en 里重复的 `## Using the Agent` 标题（上一轮插「环境配置」一节时带出来的）。
 - **CI 自动发"测试版"Release**（给不想自己编译的人一个下载入口）：`main` 每推一次就重建，并更新
   同一个 **Pre-release**（tag `test-latest`，链接固定），里面挂三样东西 —— 免安装 zip（解压双击
   `KDock.exe`）、**NSIS 安装包**（`bundle.active` 打开，装到当前用户、有开始菜单入口和卸载）、

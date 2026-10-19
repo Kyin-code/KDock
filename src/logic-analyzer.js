@@ -209,6 +209,138 @@ async function importBin(path0) {
   } catch (e) { msg(String(e && e.message ? e.message : e), true); }
 }
 
+/** 真机采到的原始采样：1 字节 = 8 通道（bit0 = 第一个选中的通道），跟 parseBin 一个口径 */
+function loadDeviceData(bytes, rate, names, src) {
+  const n = bytes.length;
+  const chans = names.map((nm, k) => ({
+    name: nm, color: COLORS[k % COLORS.length], bits: new Uint8Array(n), on: true,
+  }));
+  for (let i = 0; i < n; i++) {
+    const b = bytes[i];
+    for (let k = 0; k < chans.length; k++) chans[k].bits[i] = (b >> k) & 1;
+  }
+  setChans(chans, rate, src);
+  return n;
+}
+
+/* ======================= 真机采集（sigrok-cli 后端） ======================= */
+
+let laDevs = [];          // logic_devices 的结果：[{id,name,channels:[],rates:[]}]
+let laDevBusy = false;
+
+function laDevMsg(text, bad) {
+  const n = $id("la-dev-state");
+  if (!n) return;
+  n.textContent = text || "";
+  n.style.color = bad ? "hsl(var(--destructive))" : "";
+}
+
+/** 扫设备（sigrok-cli --scan）。quiet = 不先清空下拉（首屏后台扫用） */
+async function laDevRefresh(quiet) {
+  const sel = $id("la-dev");
+  if (!sel) return;
+  if (!quiet) {
+    sel.textContent = "";
+    const o = el("option"); o.textContent = T("扫描设备中…"); sel.appendChild(o);
+  }
+  laDevMsg(T("扫描设备中…"));
+  try {
+    const r = await invoke("logic_devices");
+    laDevs = r.devices || [];
+    sel.textContent = "";
+    if (!laDevs.length) {
+      const o = el("option"); o.textContent = T("没有找到设备"); sel.appendChild(o);
+      laDevMsg(T("没找到逻辑分析仪（接了设备的话检查驱动）"), true);
+      return;
+    }
+    for (const d of laDevs) {
+      const o = el("option");
+      o.value = d.id;
+      o.textContent = d.name + (d.channels && d.channels.length ? " · " + d.channels.length + "ch" : "");
+      sel.appendChild(o);
+    }
+    laDevPick();
+    laDevMsg(T("找到 {n} 台设备").replace("{n}", laDevs.length));
+  } catch (e) {
+    laDevs = [];
+    sel.textContent = "";
+    const o = el("option"); o.textContent = T("不可用"); sel.appendChild(o);
+    laDevMsg(String(e && e.message ? e.message : e), true);
+  }
+}
+
+/** 选中设备后填采样率列表 + 通道勾选框 */
+function laDevPick() {
+  const sel = $id("la-dev");
+  const dev = laDevs.find((d) => d.id === (sel && sel.value)) || laDevs[0];
+  const rateSel = $id("la-dev-rate");
+  if (rateSel) {
+    rateSel.textContent = "";
+    const rates = (dev && dev.rates) || [];
+    for (const r of rates) {
+      const o = el("option");
+      o.value = String(r); o.textContent = fmtHz(r);
+      rateSel.appendChild(o);
+    }
+    if (rates.length) {
+      rateSel.value = String(rates.includes(1000000) ? 1000000 : rates[Math.floor(rates.length / 2)]);
+    }
+  }
+  const box = $id("la-dev-chans");
+  if (box) {
+    box.textContent = "";
+    for (const c of ((dev && dev.channels) || [])) {
+      const lab = el("label");
+      const inp = document.createElement("input");
+      inp.type = "checkbox"; inp.value = c; inp.checked = true;
+      lab.appendChild(inp);
+      lab.appendChild(document.createTextNode(c));
+      box.appendChild(lab);
+    }
+  }
+}
+
+function laDevSelChans() {
+  const box = $id("la-dev-chans");
+  if (!box) return [];
+  return [...box.querySelectorAll("input[type=checkbox]")].filter((i) => i.checked).map((i) => i.value);
+}
+
+/** 采一次（界面按钮和 agent 都走这里）。返回一句可读结果。 */
+async function laDevCapture() {
+  if (laDevBusy) return T("上一次采集还没结束");
+  const sel = $id("la-dev");
+  const devId = (sel && sel.value) || "";
+  const dev = laDevs.find((d) => d.id === devId);
+  if (!dev) { const m = T("先选一台设备（没列出来的话点 ↻）"); laDevMsg(m, true); return m; }
+  const rate = Number(($id("la-dev-rate") && $id("la-dev-rate").value) || 0) || 1e6;
+  const samples = Math.max(1, Math.min(20000000, Number(($id("la-dev-samples") && $id("la-dev-samples").value) || 0) || 200000));
+  const chans = laDevSelChans();
+  if (!chans.length) { const m = T("至少勾一个通道"); laDevMsg(m, true); return m; }
+  laDevBusy = true;
+  const btn = $id("la-dev-start");
+  if (btn) btn.disabled = true;
+  laDevMsg(T("采集中…"));
+  const t0 = performance.now();
+  try {
+    const r = await invoke("logic_capture", { device: dev.id, rate, samples, channels: chans });
+    const bytes = Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0));
+    const n = loadDeviceData(bytes, Number(r.rate) || rate, r.channels || chans, T("设备") + "：" + dev.name);
+    const ms = Math.round(performance.now() - t0);
+    laDevMsg(T("采到 {n} 点 · {ms} ms").replace("{n}", n).replace("{ms}", ms) + (r.warning ? " · " + r.warning : ""), !!r.warning);
+    if (r.warning) msg(r.warning, true);
+    return T("采到 {n} 点（{r}）").replace("{n}", n).replace("{r}", fmtHz(rate));
+  } catch (e) {
+    const m = String(e && e.message ? e.message : e);
+    laDevMsg(m, true);
+    msg(m, true);
+    return m;
+  } finally {
+    laDevBusy = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
 /* ============================ 解码器 ============================ */
 
 /** 当前数据 + 一个解码器配置 → 解出来的项（走 logic-decoders.js 的注册表） */
@@ -895,7 +1027,7 @@ export async function laAgentConfig(args) {
   return done.length ? "已改：" + done.join("；") + "\n（采集数据没动）" : "没有可改的字段（能改：sampleRate / decoders / channels / select / view / cursors / markers）";
 }
 
-/** agent：开始一次采集。source=demo 载入示例场景（scenario 可选）；真机要等驱动 */
+/** agent：开始一次采集。source=demo 载入示例场景；source=device 用 sigrok 接的真机采一段 */
 export async function laAgentCapture(args) {
   const a = args || {};
   const src = String(a.source || "demo");
@@ -907,7 +1039,19 @@ export async function laAgentCapture(args) {
     return "已载入示例：" + LA.src + "\n" + laAgentState();
   }
   if (src === "device" || src === "usb") {
-    return "真机采集（fx2lafw / DSLogic 这类 USB 逻辑分析仪）这一版还没接驱动，采不了 —— 现在能用的来源是示例场景（source=demo）/ 导入 VCD / CSV / 原始二进制。";
+    if (!$id("la-dev") || !laDevs.length) await laDevRefresh(true);
+    const sel = $id("la-dev");
+    if (a.device && sel && [...sel.options].some((o) => o.value === a.device)) {
+      sel.value = a.device;
+      laDevPick();
+    }
+    if (a.rate && $id("la-dev-rate")) $id("la-dev-rate").value = String(a.rate);
+    if (a.samples && $id("la-dev-samples")) $id("la-dev-samples").value = String(a.samples);
+    if (Array.isArray(a.channels) && $id("la-dev-chans")) {
+      for (const inp of $id("la-dev-chans").querySelectorAll("input[type=checkbox]")) inp.checked = a.channels.includes(inp.value);
+    }
+    const r = await laDevCapture();
+    return (r || "（没有结果）") + "\n" + laAgentState();
   }
   return `不认识的 source：${src}（可用：demo）`;
 }
@@ -996,6 +1140,11 @@ export function initLogic() {
     if (r > 0) { LA.rate = r; clampView(); renderAll(); msg(T("采样率已改为 ") + fmtHz(r)); }
     else renderAll();
   };
+  // 真机采集：设备 / 采样率 / 点数 / 通道 / 采集
+  btn("la-dev-refresh", () => laDevRefresh(false));
+  if ($id("la-dev")) $id("la-dev").onchange = () => laDevPick();
+  btn("la-dev-start", () => laDevCapture());
+  if (!laDevs.length) laDevRefresh(true);      // 首屏后台扫一次，不挡渲染
   btn("la-import", () => importFile());
   btn("la-bin", () => importBin(""));
   btn("la-fit", () => { fitView(); renderAll(); });

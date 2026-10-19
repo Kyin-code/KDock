@@ -9,6 +9,7 @@ mod checksum;
 mod debug;
 mod env_setup;
 mod kbview;
+mod logic;
 mod netfs;
 mod ocr;
 mod remote_screen;
@@ -2642,7 +2643,7 @@ fn file_read_bytes(path: String, max_bytes: Option<u64>) -> Result<serde_json::V
 }
 
 /// base64（标准字母表，带 padding）—— 只给上面那个命令用，不引依赖
-fn base64_encode(data: &[u8]) -> String {
+pub(crate) fn base64_encode(data: &[u8]) -> String {
     const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
     for c in data.chunks(3) {
@@ -3515,6 +3516,8 @@ pub fn run() {
             file_read_bytes,
             file_write_text,
             env_setup::env_scan,
+            logic::logic_devices,
+            logic::logic_capture,
             env_setup::env_install,
             storage::command_table_get,
             storage::command_table_save,
