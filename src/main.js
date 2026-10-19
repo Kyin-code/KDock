@@ -624,6 +624,8 @@ function pushSys(text) {
 
 function applyPorts(ports) {
   {
+    const preferred = ports.find((p) =>
+      /Infineon DAS JDS|J-?Link/i.test(`${p.friendly || ""} ${p.description || ""}`));
     const opts = ports.length
       ? ports.map((p) => {
           const desc = p.friendly || p.description || "";
@@ -643,7 +645,13 @@ function applyPorts(ports) {
         if (o.value === prev) n.selected = true;
         sel.appendChild(n);
       }
-      if (opts.length && !sel.value) sel.selectedIndex = 0;   // 第一次进来直接选第一个
+      // 第一次进来优先选开发板的 DAS JDS 串口，否则选第一个。
+      if (opts.length && !sel.value) {
+        const pick = preferred && Array.from(sel.options).some((o) => o.value === preferred.port_name)
+          ? preferred.port_name
+          : opts[0].value;
+        if (pick) sel.value = pick;
+      }
     }
   }
 }
@@ -1916,6 +1924,17 @@ async function flDetectTools(clearFirst) {
     const sc = (r.openocd || {}).scripts || "";
     if (sc) $("fl-tool-scripts").value = sc;
     seg.push("scripts" + (sc ? " ✓" : " ✗"));
+    try {
+      const ports = await invoke("list_ports");
+      const das = (ports || []).find((p) => /Infineon DAS JDS/i.test(`${p.friendly || ""} ${p.description || ""}`));
+      seg.push(das ? `DAS ✓ ${das.port_name}` : "DAS ✗");
+      const jlink = (ports || []).find((p) => /J-?Link/i.test(`${p.friendly || ""} ${p.description || ""}`));
+      seg.push(jlink ? `J-Link probe ✓ ${jlink.port_name}` : "J-Link probe ✗");
+      const cmsis = await invoke("cmsis_probe_detail");
+      seg.push(cmsis ? `CMSIS-DAP ✓ ${cmsis}` : "CMSIS-DAP ✗");
+    } catch (_) {
+      seg.push("DAS ✗");
+    }
     flCfgSave();
     $("fl-tool-state").textContent = seg.join("  ·  ");
     pushSys("[烧录] 工具: " + seg.join(" | "));
@@ -10478,7 +10497,7 @@ const TOOL_DESC_EN = {
   output_read: "Read the full text of a truncated tool output (large outputs are spilled to the tool-output folder and the result carries the path). offset/limit are in characters, default 0/1200; read the next slice if it does not fit instead of pasting everything back. Read only what you need (for logs, look at head/tail first) — this is what keeps cache hits high.",
   ssh_run: "Run one command on a remote machine over SSH and return the exit code and output. Password login goes through PuTTY plink (Windows' built-in ssh.exe only prompts in a console); without a password it uses ssh.exe with a key (pass key). The host fingerprint is remembered on first connect and mismatches are refused. Set background=true when starting a daemon/service (the tool detaches it and returns started); redirect logs to a file in cmd. Do not set background for ordinary commands.",
   // 环境配置（驱动 / 工具链）
-  env_scan: "Scan this PC for drivers and toolchains (read-only): CH34x/CH340, FTDI FT2232/D2XX, SEGGER J-Link (+JFlash/GDB Server/RTT), GNU Arm toolchain, OpenOCD, logic analyzer (PulseView/sigrok), RT-Thread Env, ST-Link driver, Zadig. Reports installed/version/path per item and which **required** ones are missing. Same data the Environment setup page shows.",
+  env_scan: "Scan this PC for drivers and toolchains (read-only): CH34x/CH340, FTDI FT2232/D2XX, Infineon TriBoard/DAS JDS, SEGGER J-Link/J-Link OB, CMSIS-DAP/DAPLink, GNU Arm toolchain, OpenOCD, logic analyzer (PulseView/sigrok), RT-Thread Env, ST-Link driver, Zadig. Reports installed/version/path per item and which **required** ones are missing. Same data the Environment setup page shows.",
   env_install: "Install / update one item (really downloads and installs, may raise one UAC prompt). id comes from env_scan. The UI switches to the Environment setup page so the user watches the progress.",
 };
 
@@ -12998,6 +13017,12 @@ const EN = {
   "USB 转串口 + GPIO / I2C 的桥接芯片，Microchip 官方 CDC 驱动。": "USB-to-serial plus GPIO / I2C bridge chip; installs Microchip's official CDC driver.",
   "Infineon / Cypress USB-Serial 驱动": "Infineon / Cypress USB-Serial driver",
   "CY7C65211 / CY7C65215 这类 USB-Serial 桥接（也带 GPIO / I2C / SPI）。": "CY7C65211 / CY7C65215 USB-Serial bridges (also expose GPIO / I2C / SPI).",
+  "Infineon TriBoard / DAS JDS": "Infineon TriBoard / DAS JDS",
+  "AURIX TC3xx TriBoard 的板载 DAS JDS 调试口与串口。识别到后会同时出现 Infineon DAS JDS Debug 和 Infineon DAS JDS COM。": "On-board DAS JDS debug and serial interfaces on AURIX TC3xx TriBoards. A working connection exposes both Infineon DAS JDS Debug and Infineon DAS JDS COM.",
+  "SEGGER J-Link / J-Link OB 探针": "SEGGER J-Link / J-Link OB probe",
+  "当前接入的 J-Link / J-Link OB 调试探针（USB VID 1366）。J-Link OB 常见于开发板板载调试器，可能同时提供 JLink CDC UART 串口。": "Connected J-Link / J-Link OB probe (USB VID 1366). J-Link OB is often the on-board debugger on a development board and may also expose a JLink CDC UART port.",
+  "CMSIS-DAP / DAPLink 调试探针": "CMSIS-DAP / DAPLink debug probe",
+  "通过 pyOCD 动态枚举任意厂商的 CMSIS-DAP / DAPLink 探针；型号、唯一 ID 和可选 CDC 串口都从实际设备读取，不绑定 VID/PID。": "Dynamically enumerate CMSIS-DAP / DAPLink probes from any vendor through pyOCD. Model, unique ID and optional CDC port come from the connected device, with no VID/PID binding.",
   "WCH-Link / WCH-LinkE 驱动": "WCH-Link / WCH-LinkE driver",
   "沁恒 RISC-V / Cortex-M 调试器（WCH-Link、WCH-LinkE）。用 WCH-LinkUtility 或 MounRiver 时会装。": "WCH RISC-V / Cortex-M debug probes (WCH-Link, WCH-LinkE). Installed together with WCH-LinkUtility or MounRiver.",
   "TI XDS110 / XDS100 驱动": "TI XDS110 / XDS100 driver",
@@ -13028,8 +13053,8 @@ const EN = {
   "网络 / USB / BLE / CAN 抓包分析。配合 USBPcap、nRF Sniffer 用。": "Network / USB / BLE / CAN capture analysis. Works with USBPcap and the nRF Sniffer.",
   "MobaXterm": "MobaXterm",
   "终端 + 串口 + X11 + SFTP 的多合一工具（A 核 / Linux 板子常用）。": "Terminal + serial + X11 + SFTP in one (common for Cortex-A / Linux boards).",
-  "pyOCD": "pyOCD",
-  "Python 版 CMSIS-DAP / J-Link 调试与烧录 CLI（DAPLink、ST-Link、J-Link 都能用）。需要先装 Python。": "Python CMSIS-DAP / J-Link debug and flash CLI (works with DAPLink, ST-Link and J-Link). Requires Python.",
+  "DAPLink / CMSIS-DAP（pyOCD）": "DAPLink / CMSIS-DAP (pyOCD)",
+  "DAPLink、CMSIS-DAP、ST-Link、J-Link 的调试与烧录 CLI。装好后可运行 pyocd list 检查烧录器；DAPLink 设备通常还需要在 Windows 上正确绑定 HID/WinUSB 驱动。": "Debug and flash CLI for DAPLink, CMSIS-DAP, ST-Link and J-Link. After installing, run pyocd list to check the probe; DAPLink usually also needs the correct HID/WinUSB driver binding on Windows.",
   "esptool（ESP32 烧录）": "esptool (ESP32 flashing)",
   "ESP32 / ESP8266 的烧录、读 MAC、擦除、读 Flash。需要先装 Python。": "Flash, read MAC, erase and read flash on ESP32 / ESP8266. Requires Python.",
   "ESP-IDF（安装管理器）": "ESP-IDF (installation manager)",

@@ -3520,6 +3520,7 @@ pub fn run() {
             file_write_text,
             env_setup::env_scan,
             logic::logic_devices,
+            usb::cmsis_probe_detail,
             usb::usb_diag,
             usb::usb_diag_elevated,
             usbcapture::usbpcap_info,

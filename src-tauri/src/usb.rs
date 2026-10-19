@@ -119,6 +119,223 @@ fn list_devices() -> Vec<Value> {
     out
 }
 
+/// 给环境配置用的轻量设备探测：只在设备已正常启动（problem == 0）时返回摘要。
+/// `marker` 可以匹配 Instance ID 或友好名，例如 "Infineon DAS JDS" 或
+/// "VID_058B&PID_0043"。找到板载 DAS 时，把对应的 COM 口也一起带出来。
+pub fn matching_device_detail(marker: &str) -> Option<String> {
+    let needle = marker.trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return None;
+    }
+    let devices = list_devices();
+    let is_match = |d: &Value| {
+        let instance = d["instance"].as_str().unwrap_or("").to_ascii_lowercase();
+        let name = d["name"].as_str().unwrap_or("").to_ascii_lowercase();
+        d["problem"].as_u64().unwrap_or(0) == 0
+            && (instance.contains(&needle) || name.contains(&needle))
+    };
+    // 复合设备会有多个 &MI_xx 子接口；优先取父设备，才能拿到真实序列号/产品名。
+    let dev = devices
+        .iter()
+        .find(|d| is_match(d) && !d["instance"].as_str().unwrap_or("").contains("&MI_"))
+        .or_else(|| devices.iter().find(|d| is_match(d)))?;
+    let mut name = dev["name"].as_str().unwrap_or("Infineon DAS JDS").to_string();
+    let vid = dev["vid"].as_str().unwrap_or("?");
+    let pid = dev["pid"].as_str().unwrap_or("?");
+    let name_lower = name.to_ascii_lowercase();
+    let mut serial = String::new();
+
+    // USB 描述符里只写 "J-Link driver"，真正型号在 Commander 的 ShowEmuList 里。
+    // 这一步只做只读查询，不会 connect 到目标芯片。
+    if name_lower.contains("j-link") || name_lower.contains("jlink") {
+        if let Some(exe) = crate::find_jlink_exe() {
+            let script = std::env::temp_dir().join("kdock_jlink_showemulist.jlink");
+            if std::fs::write(&script, "ShowEmuList\nexit\n").is_ok() {
+                let mut cmd = std::process::Command::new(exe);
+                cmd.args(["-NoGui", "1", "-CommandFile"])
+                    .arg(&script);
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd.creation_flags(0x0800_0000);
+                }
+                if let Ok(o) = cmd.output() {
+                    let text = format!(
+                        "{}\n{}",
+                        String::from_utf8_lossy(&o.stdout),
+                        String::from_utf8_lossy(&o.stderr)
+                    );
+                    if let Some(v) = text
+                        .split("ProductName:")
+                        .nth(1)
+                        .and_then(|s| s.lines().next())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        name = v.to_string();
+                    }
+                    if let Some(v) = text
+                        .split("Serial number:")
+                        .nth(1)
+                        .and_then(|s| s.lines().next())
+                        .map(|s| s.split(',').next().unwrap_or("").trim())
+                        .filter(|s| !s.is_empty())
+                    {
+                        serial = v.to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    let mut out = format!("{name} · {vid}:{pid}");
+    if !serial.is_empty() {
+        out.push_str(&format!(" · SN {serial}"));
+    }
+    if let Ok(ports) = crate::list_ports() {
+        let vid_num = u16::from_str_radix(vid, 16).ok();
+        let pid_num = u16::from_str_radix(pid, 16).ok();
+        if let Some(p) = ports.iter().find(|p| {
+            let text = format!(
+                "{} {}",
+                p.friendly.as_deref().unwrap_or(""),
+                p.description.as_deref().unwrap_or("")
+            )
+            .to_ascii_lowercase();
+            (name_lower.contains("infineon das")
+                && name_lower.contains("jds")
+                && text.contains("infineon das")
+                && text.contains("jds"))
+                || ((name_lower.contains("j-link") || name_lower.contains("jlink"))
+                    && (text.contains("j-link") || text.contains("jlink")))
+                || (vid_num.is_some()
+                    && pid_num.is_some()
+                    && p.vid == vid_num
+                    && p.pid == pid_num)
+        }) {
+            out.push_str(&format!(" · {}", p.port_name));
+        }
+    }
+    Some(out)
+}
+
+fn pyocd_probe_line(line: &str) -> Option<(String, String)> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') || line.starts_with('-') {
+        return None;
+    }
+    let idx_end = line.find(char::is_whitespace)?;
+    let idx = &line[..idx_end];
+    if !idx.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let rest = line[idx_end..].trim();
+    let cols: Vec<&str> = if rest.contains("   ") {
+        rest.split("   ")
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        rest.split_whitespace().collect()
+    };
+    if cols.len() < 2 {
+        return None;
+    }
+    let product = cols[0].to_string();
+    let unique_id = cols[1].to_string();
+    let low = product.to_ascii_lowercase();
+    if low.contains("j-link")
+        || low.contains("jlink")
+        || low.contains("st-link")
+        || low.contains("stlink")
+    {
+        return None;
+    }
+    Some((product, unique_id))
+}
+
+/// 通过 pyOCD 枚举任意厂商的 CMSIS-DAP / DAPLink 探针。
+/// 只读枚举，不会连接目标；探针有没有 CDC 串口不是必需条件。
+pub fn cmsis_dap_detail() -> Option<String> {
+    let extra = "%USERPROFILE%\\AppData\\Roaming\\Python\\Python39\\Scripts;%APPDATA%\\Python\\Python39\\Scripts";
+    let mut rows = Vec::new();
+    if let Some(exe) = crate::env_setup::find_tool("pyocd.exe", extra) {
+        let mut cmd = std::process::Command::new(exe);
+        cmd.args(["list", "-p", "--no-header"]);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000);
+        }
+        if let Ok(o) = cmd.output() {
+            let text = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            for line in text.lines() {
+                if let Some((product, uid)) = pyocd_probe_line(line) {
+                    let mut row = format!("{product} · {uid}");
+                    if let Ok(ports) = crate::list_ports() {
+                        if let Some(p) = ports.iter().find(|p| {
+                            p.serial_number.as_deref() == Some(uid.as_str())
+                                || p.friendly.as_deref().unwrap_or("").contains(&uid)
+                                || p.description.as_deref().unwrap_or("").contains(&uid)
+                        }) {
+                            row.push_str(&format!(" · {}", p.port_name));
+                        }
+                    }
+                    rows.push(row);
+                }
+            }
+        }
+    }
+
+    // pyOCD 不可用时，仍尽量从 HID/描述符里认出明确写着 CMSIS-DAP/DAPLink 的探针。
+    if rows.is_empty() {
+        for d in list_devices() {
+            let name = d["name"].as_str().unwrap_or("");
+            let low = name.to_ascii_lowercase();
+            if d["problem"].as_u64().unwrap_or(0) == 0
+                && (low.contains("cmsis-dap") || low.contains("daplink"))
+            {
+                rows.push(format!("{name} · {}:{}", d["vid"].as_str().unwrap_or("?"), d["pid"].as_str().unwrap_or("?")));
+            }
+        }
+    }
+    if rows.is_empty() {
+        None
+    } else {
+        Some(rows.join("; "))
+    }
+}
+
+#[tauri::command]
+pub fn cmsis_probe_detail() -> Option<String> {
+    cmsis_dap_detail()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pyocd_probe_line;
+
+    #[test]
+    fn pyocd_probe_table_is_parsed_without_vendor_hardcoding() {
+        let vendor_dap = "0   Example Vendor CMSIS-DAP   EXAMPLE-0001   n/a";
+        assert_eq!(
+            pyocd_probe_line(vendor_dap),
+            Some(("Example Vendor CMSIS-DAP".into(), "EXAMPLE-0001".into()))
+        );
+        let daplink = "1   DAPLink CMSIS-DAP   ABC12345   n/a";
+        assert_eq!(
+            pyocd_probe_line(daplink),
+            Some(("DAPLink CMSIS-DAP".into(), "ABC12345".into()))
+        );
+        let jlink = "2   J-Link-OB-RA4M2-Full   1120000018   n/a";
+        assert_eq!(pyocd_probe_line(jlink), None);
+    }
+}
+
 /// 系统里的串口（COM），带 USB VID/PID / 序列号 / 厂商 / 产品名
 fn serial_ports() -> Vec<Value> {
     match serialport::available_ports() {

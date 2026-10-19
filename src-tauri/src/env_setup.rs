@@ -19,6 +19,8 @@ pub enum Kind {
     Glob,     // 用通配串扫盘（如 F:\ENV\OpenOCD-*\bin\openocd.exe）
     Inf,      // pnputil /enum-drivers 里有没有这个 .inf
     Reg,      // 注册表值（路径, 值名）
+    Device,   // 当前已正常枚举的 USB/PnP 设备（按 Instance ID 或友好名匹配）
+    PyOcd,    // 通过 pyOCD 枚举探针（跨厂商、跨 VID/PID）
     #[allow(dead_code)]
     Manual,   // 只能人工确认（例如某个需要登录/授权下载的工具）
 }
@@ -48,6 +50,12 @@ const fn inf(a: &'static str) -> Rule {
 }
 const fn reg(a: &'static str, b: &'static str) -> Rule {
     Rule { kind: Kind::Reg, a, b, ver_args: "", ver_match: "" }
+}
+const fn device(a: &'static str) -> Rule {
+    Rule { kind: Kind::Device, a, b: "", ver_args: "", ver_match: "" }
+}
+const fn pyocd_probe() -> Rule {
+    Rule { kind: Kind::PyOcd, a: "", b: "", ver_args: "", ver_match: "" }
 }
 
 #[derive(Clone, Copy)]
@@ -203,6 +211,30 @@ pub static ITEMS: &[Item] = &[
         size_mb: 120.0,
         rules: &[reg("HKLM\\SOFTWARE\\SEGGER\\J-Link", "Version"), exe("JLink.exe", "C:\\Program Files\\SEGGER;C:\\Program Files (x86)\\SEGGER", "", "")],
         plan: Plan::Winget { id: "NordicSemiconductor.JLink" },   // Nordic 转发的官方 J-Link 安装包，winget 能直装
+    },
+    Item {
+        id: "jlink_probe",
+        name: "SEGGER J-Link / J-Link OB 探针",
+        kind_cn: "调试器",
+        desc: "当前接入的 J-Link / J-Link OB 调试探针（USB VID 1366）。J-Link OB 常见于开发板板载调试器，可能同时提供 JLink CDC UART 串口。",
+        url: "https://www.segger.com/products/debug-probes/j-link/",
+        required: false,
+        min_version: None,
+        size_mb: 0.0,
+        rules: &[device("J-Link driver"), device("JLink CDC")],
+        plan: Plan::Manual,
+    },
+    Item {
+        id: "cmsis_dap_probe",
+        name: "CMSIS-DAP / DAPLink 调试探针",
+        kind_cn: "调试器",
+        desc: "通过 pyOCD 动态枚举任意厂商的 CMSIS-DAP / DAPLink 探针；型号、唯一 ID 和可选 CDC 串口都从实际设备读取，不绑定 VID/PID。",
+        url: "https://pyocd.io/",
+        required: false,
+        min_version: None,
+        size_mb: 0.0,
+        rules: &[pyocd_probe(), device("CMSIS-DAP"), device("DAPLink")],
+        plan: Plan::Manual,
     },
     Item {
         id: "armgcc",
@@ -503,6 +535,18 @@ pub static ITEMS: &[Item] = &[
         rules: &[inf("cyusbserial.inf")],
         plan: Plan::Manual,
     },
+    Item {
+        id: "infineon_das",
+        name: "Infineon TriBoard / DAS JDS",
+        kind_cn: "调试器",
+        desc: "AURIX TC3xx TriBoard 的板载 DAS JDS 调试口与串口。识别到后会同时出现 Infineon DAS JDS Debug 和 Infineon DAS JDS COM。",
+        url: "https://www.infineon.com/design-resources/platforms/aurix-software-tools/aurix-tools/tas",
+        required: false,
+        min_version: None,
+        size_mb: 40.0,
+        rules: &[device("Infineon DAS JDS")],
+        plan: Plan::Manual,
+    },
     // ── 调试探针 ──
     Item {
         id: "wchlink",
@@ -701,9 +745,9 @@ pub static ITEMS: &[Item] = &[
     // ── 烧录 / 调试 CLI ──
     Item {
         id: "pyocd",
-        name: "pyOCD",
+        name: "DAPLink / CMSIS-DAP（pyOCD）",
         kind_cn: "烧录",
-        desc: "Python 版 CMSIS-DAP / J-Link 调试与烧录 CLI（DAPLink、ST-Link、J-Link 都能用）。需要先装 Python。",
+        desc: "DAPLink、CMSIS-DAP、ST-Link、J-Link 的调试与烧录 CLI。装好后可运行 pyocd list 检查烧录器；DAPLink 设备通常还需要在 Windows 上正确绑定 HID/WinUSB 驱动。",
         url: "https://pyocd.io/",
         required: false,
         min_version: None,
@@ -1010,6 +1054,20 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
                     installed = true;
                     version = pick_version(&v).or(Some(v));
                     detail = format!("注册表 {}", r.a);
+                    break;
+                }
+            }
+            Kind::Device => {
+                if let Some(v) = crate::usb::matching_device_detail(r.a) {
+                    installed = true;
+                    detail = v;
+                    break;
+                }
+            }
+            Kind::PyOcd => {
+                if let Some(v) = crate::usb::cmsis_dap_detail() {
+                    installed = true;
+                    detail = v;
                     break;
                 }
             }
@@ -1357,11 +1415,22 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
             }
         }
         Plan::Pip { packages } => {
+            let py = if run_out("python.exe", &["--version"]).is_some() {
+                "python"
+            } else if run_out("py.exe", &["-3", "--version"]).is_some() {
+                "py -3"
+            } else {
+                return Ok(format!(
+                    "没找到 Python。先装环境配置里的 Python，或到 {} 安装后重试。",
+                    it.url
+                ));
+            };
             if dry {
-                format!("（模拟）会跑 python -m pip install --user --upgrade {packages}")
+                format!("（模拟）会跑 {py} -m pip install --user --upgrade {packages}")
             } else {
                 run_powershell(&app, it.id, &format!(
-                    "python -m pip install --user --upgrade {packages}; exit $LASTEXITCODE"
+                    "$env:NO_PROXY='*'; $env:no_proxy='*'; $env:HTTPS_PROXY=''; $env:HTTP_PROXY=''; \
+                     {py} -m pip install --user --upgrade {packages}; exit $LASTEXITCODE"
                 ), false)?
             }
         }
@@ -1404,4 +1473,57 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
     if let Ok(mut g) = SCAN_CACHE.lock() { *g = None; }   // 装完让下次扫描重新跑
     emit(&app, it.id, "done", 100, "完成");
     Ok(log)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a connected Infineon DAS JDS TriBoard"]
+    fn infineon_triboard_is_detected_with_its_com_port() {
+        let item = ITEMS
+            .iter()
+            .find(|it| it.id == "infineon_das")
+            .expect("infineon_das item");
+        let got = scan_one(item, "");
+        assert_eq!(got["installed"], json!(true), "{}", got["detail"]);
+        assert!(
+            got["detail"].as_str().unwrap_or("").contains("COM"),
+            "detail should include the DAS JDS COM port: {}",
+            got["detail"]
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a connected SEGGER J-Link / J-Link OB"]
+    fn jlink_probe_is_detected_with_its_com_port() {
+        let item = ITEMS
+            .iter()
+            .find(|it| it.id == "jlink_probe")
+            .expect("jlink_probe item");
+        let got = scan_one(item, "");
+        assert_eq!(got["installed"], json!(true), "{}", got["detail"]);
+        assert!(
+            got["detail"].as_str().unwrap_or("").contains("COM"),
+            "detail should include the J-Link CDC COM port: {}",
+            got["detail"]
+        );
+        assert!(
+            got["detail"].as_str().unwrap_or("").contains("J-Link-OB-RA4M2-Full"),
+            "detail should include the probe product name: {}",
+            got["detail"]
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a connected CMSIS-DAP probe"]
+    fn cmsis_dap_probe_is_detected() {
+        let item = ITEMS
+            .iter()
+            .find(|it| it.id == "cmsis_dap_probe")
+            .expect("cmsis_dap_probe item");
+        let got = scan_one(item, "");
+        assert_eq!(got["installed"], json!(true), "{}", got["detail"]);
+    }
 }
