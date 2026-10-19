@@ -3141,3 +3141,11 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
 .trrow.cap .st { color: hsl(var(--success)); }
 .trrow.cap .st.bad { color: hsl(var(--destructive)); }
 .trrow.cap.in .ty { color: hsl(var(--primary)); }
+
+/* 网络抓包表：时间 / 源 / 目的 / 协议 / 长度 / 信息 */
+.trrow.net { grid-template-columns: 9.5rem 11rem 11rem 6rem 4rem minmax(0, 1.4fr); }
+.trrow.net .src, .trrow.net .dst {
+  color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.trrow.net .proto { color: hsl(var(--primary)); font-weight: 600; }
+.trrow.net .len { text-align: right; color: hsl(var(--muted-foreground)); }

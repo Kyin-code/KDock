@@ -10,6 +10,7 @@ mod debug;
 mod env_setup;
 mod kbview;
 mod logic;
+mod netcapture;
 mod netfs;
 mod ocr;
 mod remote_screen;
@@ -3525,6 +3526,9 @@ pub fn run() {
             usbcapture::usbpcap_info,
             usbcapture::usbpcap_start,
             usbcapture::usbpcap_stop,
+            netcapture::tshark_info,
+            netcapture::tshark_start,
+            netcapture::tshark_stop,
             logic::logic_capture,
             env_setup::env_install,
             storage::command_table_get,

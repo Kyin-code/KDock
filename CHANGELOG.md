@@ -18,6 +18,16 @@
 ## [未发布]
 
 ### 新增
+- **「USB 诊断」改名为「监听」**，分两路数据源：
+  · **本机**：USBPcap 抓 USB 原始传输（原有能力）；
+  · **网络**：集成 **tshark**（Wireshark 命令行）—— 选网卡、开始/停止、实时表
+    `时间 / 源 / 目的 / 协议 / 长度 / 信息`，自动滚动 / 清空 / 保存；
+  · 两路共用「自动滚动 / 清空 / 保存」，切换来源不影响另一路的数据。
+- 环境配置新增 **tshark（Wireshark 命令行 + Npcap）**：winget 一键安装（Wireshark 安装包自带 Npcap）；
+  检测覆盖自定义安装目录（如 `F:\wireshark`）。
+- 许可：Wireshark / tshark 为 **GPLv2**，Npcap 由 Wireshark 安装包提供 —— KDock 只调用已安装的
+  tshark，不打包、不链接；NOTICE 已补充声明。
+- 网络抓包实测：回环网卡抓 108 个包，表格显示 `127.0.0.1 → 127.0.0.1 TCP 45 ...`。
 - **USB 诊断页接上 USBPcap**：中间是原始传输表（时间 / bus.dev / 端点 / 类型 / 状态 / HEX / ASCII），
   用 USBPcap 的过滤驱动被动抓取 **所有设备** 的控制 / 批量 / 中断传输，不干扰原有逻辑；
   「只看控制传输」一键过滤，正好用来读 RNDIS 的 `INIT` / `INIT_COMPLETE` / OID 握手；

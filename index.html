@@ -507,7 +507,7 @@
           <div class="navgroup">调试</div>
           <button class="navitem active" data-tab="link"><i>⇄</i><span>传输</span></button>
           <button class="navitem" data-tab="cmds"><i>⌘</i><span>命令表</span></button>
-          <button class="navitem" data-tab="usb" title="USB 设备树 / 描述符 / 端口（免驱，不装过滤驱动）"><i>⎔</i><span>USB 诊断</span></button>
+          <button class="navitem" data-tab="usb" title="监听：本机 USB（USBPcap）/ 网络（tshark）原始数据"><i>⎔</i><span>监听</span></button>
         </div>
         <div class="navsec">
           <div class="navgroup">AI</div>
@@ -663,20 +663,36 @@
         <!-- USB 诊断：原始数据抓取（串口 RX/TX）+ 设备树 + 热插拔日志 -->
         <div class="workpane usbpane" data-work="usb" hidden>
           <div class="trow">
-            <span class="lb">抓包</span>
-            <select id="usb-cap-dev" class="tight" title="USBPcap 根 Hub（每个根 Hub 一个）"></select>
-            <button id="usb-cap-start" class="btn small primary">开始抓包</button>
-            <button id="usb-cap-stop" class="btn small">停止抓包</button>
-            <span id="usb-cap-state" class="lb">未抓包</span>
-            <label class="chk" title="只看控制传输：设备枚举和 RNDIS 握手都在这里"><input type="checkbox" id="usb-ctl-only" /> 只看控制传输</label>
+            <span class="lb">监听</span>
+            <div class="seg" id="mon-mode">
+              <label><input type="radio" name="mon-mode" value="local" checked /> 本机</label>
+              <label><input type="radio" name="mon-mode" value="net" /> 网络</label>
+            </div>
             <span class="grow"></span>
             <label class="chk"><input type="checkbox" id="usb-autoscroll" checked /> 自动滚动</label>
             <button id="usb-trace-clear" class="btn small">清空</button>
             <button id="usb-trace-save" class="btn small">保存…</button>
           </div>
+          <div class="trow" id="usb-local-bar">
+            <span class="lb">本机 USB</span>
+            <select id="usb-cap-dev" class="tight" title="USBPcap 根 Hub（每个根 Hub 一个）"></select>
+            <button id="usb-cap-start" class="btn small primary">开始抓包</button>
+            <button id="usb-cap-stop" class="btn small">停止抓包</button>
+            <span id="usb-cap-state" class="lb">未抓包</span>
+            <label class="chk" title="只看控制传输：设备枚举和 RNDIS 握手都在这里"><input type="checkbox" id="usb-ctl-only" /> 只看控制传输</label>
+          </div>
+          <div class="trow" id="net-bar" hidden>
+            <span class="lb">网络</span>
+            <select id="net-iface" class="tight" title="tshark 列的网卡"></select>
+            <button id="net-start" class="btn small primary">开始抓包</button>
+            <button id="net-stop" class="btn small">停止抓包</button>
+            <span id="net-state" class="lb">未抓包</span>
+            <span id="net-hint" class="lb"></span>
+          </div>
           <div class="usbgrid grow">
             <div id="usb-list" class="usblist"></div>
             <div id="usb-trace" class="usbtrace"></div>
+            <div id="net-trace" class="usbtrace" hidden></div>
           </div>
           <div class="trow">
             <span class="lb">热插拔</span>

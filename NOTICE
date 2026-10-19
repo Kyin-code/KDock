@@ -21,6 +21,11 @@ USBPcap  (https://github.com/desowin/usbpcap)
             运行时调用 USBPcapCMD.exe 抓包，并解析它生成的 pcap 文件。
             未安装时该功能不可用，软件其余部分不受影响。
 
+Wireshark / tshark  (https://www.wireshark.org/)
+  声明许可: GPLv2（tshark 与 Wireshark 本体）；Npcap 由 Wireshark 安装包提供（其许可见 n pcap 安装目录）
+  使用方式: **可选的外部组件**。KDock 不打包、不链接其代码；仅在用户自行安装后，运行时调用
+            tshark.exe 并把它的 EK JSON 输出渲染成表格。未安装时「监听 → 网络」不可用。
+
 --------------------------------------------------------------------------------
 2. 主要第三方依赖 / Bundled third-party components
 --------------------------------------------------------------------------------

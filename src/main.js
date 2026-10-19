@@ -5727,6 +5727,122 @@ async function usbCapSave() {
   } catch (e) { toast(String(e)); }
 }
 
+/* ────────── 网络抓包（tshark） ────────── */
+let monMode = "local";
+let netInit = false;
+const netRecords = [];
+const NET_MAX = 4000;
+
+function netState(kind, text) {
+  const n = $("net-state");
+  if (!n) return;
+  n.textContent = text || "";
+  n.style.color = kind === "on" ? "hsl(var(--success))" : kind === "bad" ? "hsl(var(--destructive))" : "";
+}
+
+function netRow(r) {
+  const row = document.createElement("div");
+  row.className = "trrow net";
+  const t = document.createElement("span"); t.className = "t"; t.textContent = usbCapTime(r.t);
+  const src = document.createElement("span"); src.className = "src"; src.textContent = r.src || "";
+  const dst = document.createElement("span"); dst.className = "dst"; dst.textContent = r.dst || "";
+  const proto = document.createElement("span"); proto.className = "proto"; proto.textContent = r.proto || "";
+  const len = document.createElement("span"); len.className = "len"; len.textContent = r.len || "";
+  const info = document.createElement("span"); info.className = "info"; info.textContent = r.info || "";
+  row.append(t, src, dst, proto, len, info);
+  return row;
+}
+
+function netAdd(r) {
+  netRecords.push(r);
+  if (netRecords.length > NET_MAX) netRecords.shift();
+  const box = $("net-trace");
+  if (!box) return;
+  box.appendChild(netRow(r));
+  while (box.children.length > NET_MAX) box.firstChild.remove();
+  if ($("usb-autoscroll") && $("usb-autoscroll").checked) box.scrollTop = box.scrollHeight;
+}
+
+function netClear() {
+  netRecords.length = 0;
+  const box = $("net-trace");
+  if (box) box.textContent = "";
+}
+
+function netSave() {
+  if (!netRecords.length) return toast(T("还没有数据"));
+  dlgSave({ defaultPath: "net-capture.txt", filters: [{ name: T("文本"), extensions: ["txt"] }] }).then(async (p) => {
+    const path = typeof p === "string" ? p : (p && p.path);
+    if (!path) return;
+    let out = "KDock network capture — " + new Date().toLocaleString() + "\n";
+    out += "# time            src                          dst                          proto   len  info\n";
+    for (const r of netRecords) {
+      out += usbCapTime(r.t) + "  " + String(r.src || "").padEnd(28) + " " + String(r.dst || "").padEnd(28)
+        + " " + String(r.proto || "").padEnd(7) + " " + String(r.len || "").padStart(5) + "  " + (r.info || "") + "\n";
+    }
+    try {
+      await invoke("file_write_text", { path, content: out });
+      toast(T("已保存：") + path);
+    } catch (e) { toast(String(e)); }
+  });
+}
+
+async function netInfo() {
+  const sel = $("net-iface");
+  if (!sel) return;
+  try {
+    const d = await invoke("tshark_info");
+    sel.textContent = "";
+    if (!d.installed) {
+      const o = document.createElement("option"); o.textContent = T("未安装 tshark"); sel.appendChild(o);
+      netState("bad", T("未安装 tshark"));
+      if ($("net-start")) $("net-start").disabled = true;
+      return;
+    }
+    if (!d.interfaces.length) {
+      const o = document.createElement("option"); o.textContent = T("没有网卡"); sel.appendChild(o);
+      netState("bad", T("没有网卡"));
+      return;
+    }
+    for (const it of d.interfaces) {
+      const o = document.createElement("option");
+      o.value = it.device;
+      o.textContent = it.name || it.device;
+      sel.appendChild(o);
+    }
+    if ($("net-start")) $("net-start").disabled = false;
+    netState("off", T("未抓包"));
+  } catch (e) {
+    netState("bad", String(e && e.message ? e.message : e));
+  }
+}
+
+async function netStart() {
+  const dev = $("net-iface") && $("net-iface").value;
+  if (!dev) return toast(T("没有网卡"));
+  try {
+    await invoke("tshark_start", { iface: dev });
+    netState("on", T("抓包中"));
+  } catch (e) {
+    netState("bad", String(e && e.message ? e.message : e));
+    toast(String(e && e.message ? e.message : e));
+  }
+}
+
+async function netStop() {
+  try { await invoke("tshark_stop"); } catch (_) {}
+  netState("off", T("未抓包"));
+}
+
+function monSetMode(m) {
+  monMode = m === "net" ? "net" : "local";
+  if ($("usb-local-bar")) $("usb-local-bar").hidden = monMode !== "local";
+  if ($("net-bar")) $("net-bar").hidden = monMode !== "net";
+  if ($("usb-trace")) $("usb-trace").hidden = monMode !== "local";
+  if ($("net-trace")) $("net-trace").hidden = monMode !== "net";
+  if (monMode === "net" && !netInit) { netInit = true; netInfo(); }
+}
+
 function usbOnShow() {
   if (!usbData) usbRefresh();
   if (!usbCapInit) { usbCapInit = true; usbCapInfo(); }
@@ -5754,8 +5870,12 @@ function bindUsb() {
   if ($("usb-cap-start")) $("usb-cap-start").onclick = () => usbCapStart();
   if ($("usb-cap-stop")) $("usb-cap-stop").onclick = () => usbCapStop();
   if ($("usb-ctl-only")) $("usb-ctl-only").onchange = () => usbCapRedraw();
-  if ($("usb-trace-clear")) $("usb-trace-clear").onclick = () => usbCapClear();
-  if ($("usb-trace-save")) $("usb-trace-save").onclick = () => usbCapSave();
+  if ($("usb-trace-clear")) $("usb-trace-clear").onclick = () => (monMode === "net" ? netClear() : usbCapClear());
+  if ($("usb-trace-save")) $("usb-trace-save").onclick = () => (monMode === "net" ? netSave() : usbCapSave());
+  if ($("net-start")) $("net-start").onclick = () => netStart();
+  if ($("net-stop")) $("net-stop").onclick = () => netStop();
+  document.querySelectorAll('#mon-mode input').forEach((i) => { i.onchange = () => monSetMode(i.value); });
+  monSetMode("local");
   listen("usb://cap", (ev) => {
     const list = (ev.payload && ev.payload.records) || [];
     for (const r of list) usbCapAdd(r);
@@ -5763,6 +5883,11 @@ function bindUsb() {
   listen("usb://cap-end", () => {
     usbCapState("off", T("未抓包"));
   });
+  listen("net://cap", (ev) => {
+    const r = ev.payload && ev.payload.record;
+    if (r) netAdd(r);
+  });
+  listen("net://cap-end", () => netState("off", T("未抓包")));
 }
 
 /* ══════════ 环境配置：驱动 / 工具链 的检测与一键安装 ══════════
@@ -12579,6 +12704,15 @@ const EN = {
   "小驱动可以内置：把安装包丢进": "Small drivers can be bundled: drop the installer into ",
   "drivers\\<组件id>\\": "drivers\\<item id>\\",
   "检测中…": "Detecting…",
+  "监听": "Monitor",
+  "tshark 列的网卡": "Interfaces listed by tshark",
+  "tshark（Wireshark 命令行 + Npcap）": "tshark (Wireshark CLI + Npcap)",
+  "Wireshark 自带的命令行抓包工具，KDock 的「监听 → 网络」用它。安装包同时带 Npcap（WinPcap 兼容驱动）。GPLv2；KDock 只调用，不打包、不链接。": "The command-line capture tool bundled with Wireshark, used by Monitor → Network. The installer also brings Npcap (a WinPcap-compatible driver). GPLv2; KDock only invokes it — no bundling, no linking.",
+  "本机": "Local",
+  "本机 USB": "Local USB",
+  "未安装 tshark": "tshark not installed",
+  "没有网卡": "No interface",
+  "监听：本机 USB（USBPcap）/ 网络（tshark）原始数据": "Monitor: local USB (USBPcap) / network (tshark) raw data",
   "USBPcap（USB 抓包驱动 + 命令行）": "USBPcap (USB capture driver + CLI)",
   "开源的 USB 抓包过滤驱动：被动抓取所有设备的控制/批量/中断传输，不干扰原有逻辑。驱动 GPLv2、命令行工具 BSD-2-Clause；KDock 只调用你安装的组件，不打包、不链接它的代码。装完需要重启一次。": "Open-source USB capture filter driver: passively captures control / bulk / interrupt transfers of every device without disturbing normal operation. Driver is GPLv2, the command-line tool is BSD-2-Clause; KDock only invokes the component you install — it does not bundle or link its code. Reboot once after installing.",
   "设备视图：谁挂在哪个端口、VID/PID、速度、接口和端点、绑定到哪个驱动。原始传输（每一笔 IN/OUT 的 payload）由 USBPcap 抓取，需要先在「环境配置」里安装并重启一次。": "Device view: what sits on which port, VID/PID, speed, interfaces and endpoints, which driver it binds to. Raw transfers (the payload of every IN/OUT) come from USBPcap — install it from Environment setup and reboot once.",
