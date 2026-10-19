@@ -298,35 +298,79 @@ pub fn usbpcap_stop() -> Result<(), String> {
 
 fn reader_loop(app: tauri::AppHandle, file: PathBuf, stop: Arc<AtomicBool>) {
     use tauri::Emitter;
-    let mut f = loop {
+    // USBPcapCMD 抓包期间对 pcap 是独占打开（share=0），读不了；
+    // 所以这里等停止后再整体解析，分批发给前端。
+    while !stop.load(Ordering::Relaxed) {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let mut f = None;
+    for _ in 0..100 {
         match std::fs::File::open(&file) {
-            Ok(f) => break f,
-            Err(_) => {
-                if stop.load(Ordering::Relaxed) {
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(100));
+            Ok(fh) => {
+                f = Some(fh);
+                break;
             }
+            Err(_) => std::thread::sleep(Duration::from_millis(100)),
         }
+    }
+    let Some(mut f) = f else {
+        let _ = app.emit("usb://cap-end", json!({}));
+        return;
     };
     let mut parser = Parser::new();
-    let mut chunk = [0u8; 65536];
+    let mut buf = [0u8; 65536];
+    let mut batch: Vec<Value> = Vec::new();
     loop {
-        if stop.load(Ordering::Relaxed) {
-            break;
-        }
-        match f.read(&mut chunk) {
-            Ok(0) => std::thread::sleep(Duration::from_millis(60)),
+        match f.read(&mut buf) {
+            Ok(0) => break,
             Ok(n) => {
-                let recs = parser.feed(&chunk[..n]);
-                if !recs.is_empty() {
-                    let _ = app.emit("usb://cap", json!({ "records": recs }));
+                batch.extend(parser.feed(&buf[..n]));
+                if batch.len() >= 200 {
+                    let _ = app.emit("usb://cap", json!({ "records": batch }));
+                    batch = Vec::new();
                 }
             }
             Err(_) => break,
         }
     }
+    if !batch.is_empty() {
+        let _ = app.emit("usb://cap", json!({ "records": batch }));
+    }
     let _ = app.emit("usb://cap-end", json!({}));
+}
+
+/// 打开一个已有的 pcap（比如之前抓好但界面没来得及显示的），分批推给前端
+#[tauri::command]
+pub async fn usbpcap_open(app: tauri::AppHandle, path: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Emitter;
+        let mut f = std::fs::File::open(&path).map_err(|e| format!("打开失败：{e}"))?;
+        let mut parser = Parser::new();
+        let mut buf = [0u8; 65536];
+        let mut batch: Vec<Value> = Vec::new();
+        let mut total = 0usize;
+        loop {
+            match f.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    batch.extend(parser.feed(&buf[..n]));
+                    total += batch.len();
+                    if batch.len() >= 500 {
+                        let _ = app.emit("usb://cap", json!({ "records": batch }));
+                        batch = Vec::new();
+                    }
+                }
+                Err(e) => return Err(format!("读取失败：{e}")),
+            }
+        }
+        if !batch.is_empty() {
+            let _ = app.emit("usb://cap", json!({ "records": batch }));
+        }
+        let _ = app.emit("usb://cap-end", json!({}));
+        Ok(json!({ "records": total }))
+    })
+    .await
+    .map_err(|e| format!("后台任务失败：{e}"))?
 }
 
 #[cfg(test)]

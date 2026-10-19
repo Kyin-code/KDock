@@ -3525,6 +3525,7 @@ pub fn run() {
             usbcapture::usbpcap_info,
             usbcapture::usbpcap_start,
             usbcapture::usbpcap_stop,
+            usbcapture::usbpcap_open,
             netcapture::tshark_info,
             netcapture::tshark_start,
             netcapture::tshark_stop,

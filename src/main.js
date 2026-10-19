@@ -5548,8 +5548,9 @@ function usbRenderAll() {
 
 /* ────────── USBPcap 抓包：解析 pcap 里的 USB 传输 ────────── */
 let usbCapInit = false;
+let usbCapLoading = false;
 const usbCapRecords = [];     // 原始记录（保存用）
-const USB_CAP_MAX = 6000;
+const USB_CAP_MAX = 50000;
 
 function usbCapState(kind, text) {
   const n = $("usb-cap-state");
@@ -5617,15 +5618,14 @@ function usbCapRow(r) {
 
 function usbCapAdd(r) {
   usbCapRecords.push(r);
+  if (usbCapRecords.length > USB_CAP_MAX) usbCapRecords.splice(0, usbCapRecords.length - USB_CAP_MAX);
+  if (usbCapLoading) return;   // 批量载入时不逐条画，结束一次性重绘
   const box = $("usb-trace");
   if (!box) return;
-  if (usbCapRecords.length > USB_CAP_MAX) {
-    usbCapRecords.splice(0, usbCapRecords.length - USB_CAP_MAX);
-    usbCapRedraw();
-    return;
-  }
   if ($("usb-ctl-only") && $("usb-ctl-only").checked && r.xfer !== "ctl") return;
   box.appendChild(usbCapRow(r));
+  // DOM 只保留最近 2000 行（记录本身保留，用于保存 / 过滤重绘）
+  while (box.children.length > 2000) box.firstChild.remove();
   if ($("usb-autoscroll") && $("usb-autoscroll").checked) box.scrollTop = box.scrollHeight;
 }
 
@@ -5634,10 +5634,8 @@ function usbCapRedraw() {
   if (!box) return;
   box.textContent = "";
   const onlyCtl = $("usb-ctl-only") && $("usb-ctl-only").checked;
-  for (const r of usbCapRecords) {
-    if (onlyCtl && r.xfer !== "ctl") continue;
-    box.appendChild(usbCapRow(r));
-  }
+  const list = usbCapRecords.filter((r) => !onlyCtl || r.xfer === "ctl");
+  for (const r of list.slice(-2000)) box.appendChild(usbCapRow(r));
   box.scrollTop = box.scrollHeight;
 }
 
@@ -5676,12 +5674,29 @@ async function usbCapInfo() {
   }
 }
 
+async function usbCapOpen() {
+  const p = await dlgOpen({
+    title: T("打开 pcap"),
+    multiple: false, directory: false,
+    filters: [{ name: "pcap", extensions: ["pcap", "pcapng"] }],
+  });
+  const path = typeof p === "string" ? p : (p && p.path);
+  if (!path) return;
+  usbCapClear();
+  usbCapLoading = true;
+  try {
+    const r = await invoke("usbpcap_open", { path });
+    toast(T("已载入 {n} 条").replace("{n}", (r && r.records) || usbCapRecords.length));
+  } catch (e) { toast(String(e)); }
+  finally { usbCapLoading = false; }
+}
+
 async function usbCapStart() {
   const dev = $("usb-cap-dev") && $("usb-cap-dev").value;
   if (!dev) return toast(T("没有可抓包的根 Hub"));
   try {
     await invoke("usbpcap_start", { device: dev });
-    usbCapState("on", T("抓包中") + " · " + dev);
+    usbCapState("on", T("抓包中") + " · " + dev + T("（停止后载入数据）"));
     usbTraceMark(T("—— 开始抓包 ") + dev + " ——");
   } catch (e) {
     usbCapState("bad", String(e && e.message ? e.message : e));
@@ -5856,6 +5871,12 @@ function usbOnShow() {
 }
 
 // 便于自测 / 排障：看当前的热插拔状态表，并手动触发一次重绘
+window.__usbCapLoadPath = async (path) => {
+  usbCapClear();
+  usbCapLoading = true;
+  try { return await invoke("usbpcap_open", { path }); }
+  finally { usbCapLoading = false; }
+};
 window.__usbState = usbState;
 window.__usbRender = () => usbRenderAll();
 window.__usbRefresh = () => usbRefresh();
@@ -5869,6 +5890,7 @@ function bindUsb() {
   if ($("usb-clear-log")) $("usb-clear-log").onclick = () => { usbLogLines.length = 0; usbRenderLog(); };
   if ($("usb-cap-start")) $("usb-cap-start").onclick = () => usbCapStart();
   if ($("usb-cap-stop")) $("usb-cap-stop").onclick = () => usbCapStop();
+  if ($("usb-cap-open")) $("usb-cap-open").onclick = () => usbCapOpen();
   if ($("usb-ctl-only")) $("usb-ctl-only").onchange = () => usbCapRedraw();
   if ($("usb-trace-clear")) $("usb-trace-clear").onclick = () => (monMode === "net" ? netClear() : usbCapClear());
   if ($("usb-trace-save")) $("usb-trace-save").onclick = () => (monMode === "net" ? netSave() : usbCapSave());
@@ -5881,7 +5903,9 @@ function bindUsb() {
     for (const r of list) usbCapAdd(r);
   });
   listen("usb://cap-end", () => {
-    usbCapState("off", T("未抓包"));
+    usbCapLoading = false;
+    usbCapRedraw();
+    usbCapState("off", T("已停止 · 已载入 {n} 条").replace("{n}", usbCapRecords.length));
   });
   listen("net://cap", (ev) => {
     const r = ev.payload && ev.payload.record;
@@ -12704,6 +12728,11 @@ const EN = {
   "小驱动可以内置：把安装包丢进": "Small drivers can be bundled: drop the installer into ",
   "drivers\\<组件id>\\": "drivers\\<item id>\\",
   "检测中…": "Detecting…",
+  "打开 pcap": "Open pcap",
+  "打开 pcap…": "Open pcap…",
+  "已载入 {n} 条": "Loaded {n} records",
+  "（停止后载入数据）": " (loads after stop)",
+  "已停止 · 已载入 {n} 条": "Stopped · loaded {n} records",
   "监听": "Monitor",
   "tshark 列的网卡": "Interfaces listed by tshark",
   "tshark（Wireshark 命令行 + Npcap）": "tshark (Wireshark CLI + Npcap)",
