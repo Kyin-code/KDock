@@ -3131,17 +3131,39 @@ html[data-tab="usb"] .params {
   color: hsl(var(--muted-foreground)); font-style: italic;
 }
 
-/* USBPcap 抓包表：时间 / 设备 / 端点 / 类型 / 状态 / 数据 / ASCII·setup */
-.trrow.cap {
-  grid-template-columns: 9.5rem 4.2rem 4.2rem 5.2rem 4.2rem minmax(0, 1.5fr) minmax(0, 1.1fr);
+/* 抓包表共用的序号栏：固定在左侧、右对齐，复制时不带它 */
+.trrow .no {
+  text-align: right; user-select: none; color: hsl(var(--muted-foreground) / 0.7);
+  font-variant-numeric: tabular-nums;
 }
-.trrow.cap .dev, .trrow.cap .ep, .trrow.cap .ty { color: hsl(var(--muted-foreground)); }
-.trrow.cap .st { color: hsl(var(--success)); }
-.trrow.cap .st.bad { color: hsl(var(--destructive)); }
-.trrow.cap.in .ty { color: hsl(var(--primary)); }
 
-/* 网络抓包表：时间 / 源 / 目的 / 协议 / 长度 / 信息 */
-.trrow.net { grid-template-columns: 9.5rem 11rem 11rem 6rem 4rem minmax(0, 1.4fr); }
+/* USBPcap 抓包表：序号 / 时间 / 设备(全部设备时才显示) / 端点 / 方向 / 状态 / 数据 / ASCII·setup */
+.trrow.cap {
+  grid-template-columns: 2.8rem 7.3rem 3.4rem 3.1rem 2rem minmax(0, 1.9fr) minmax(0, 1.3fr);
+}
+.trrow.cap.all-dev {
+  grid-template-columns: 2.8rem 7.3rem 4.2rem 3.4rem 3.1rem 2rem minmax(0, 1.9fr) minmax(0, 1.3fr);
+}
+.trrow.cap .dev, .trrow.cap .ep { color: hsl(var(--muted-foreground)); }
+.trrow.cap .ep { font-variant-numeric: tabular-nums; }
+.trrow.cap .ty {
+  justify-self: start; padding: 0 5px; border-radius: 5px; font-size: 10.5px; font-weight: 700;
+  background: hsl(var(--warning) / 0.13); color: hsl(var(--warning));
+}
+.trrow.cap.in .ty { background: hsl(var(--primary) / 0.14); color: hsl(var(--primary)); }
+.trrow.cap .st {
+  justify-self: center; align-self: start; display: inline-flex; align-items: center; justify-content: center;
+  width: 1.35rem; height: 1.35rem; border-radius: 999px; font-size: 11px; font-weight: 700;
+  background: hsl(var(--success) / 0.13); color: hsl(var(--success));
+  box-shadow: inset 0 0 0 1px hsl(var(--success) / 0.3);
+}
+.trrow.cap .st.bad {
+  background: hsl(var(--destructive) / 0.13); color: hsl(var(--destructive));
+  box-shadow: inset 0 0 0 1px hsl(var(--destructive) / 0.3);
+}
+
+/* 网络抓包表：序号 / 时间 / 源 / 目的 / 协议 / 长度 / 信息 */
+.trrow.net { grid-template-columns: 2.8rem 7.3rem 11rem 11rem 6rem 4rem minmax(0, 1.4fr); }
 .trrow.net .src, .trrow.net .dst {
   color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }

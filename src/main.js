@@ -5298,6 +5298,8 @@ function usbRenderAll() {
 let usbCapInit = false;
 let usbCapRunning = false;
 let usbCapStopTimer = null;
+let usbCapSeq = 0;
+let usbCapFilter = "";
 let usbCapDevices = [];
 const usbCapRecords = [];     // 原始记录（保存用）
 const USB_CAP_MAX = 50000;
@@ -5378,14 +5380,19 @@ function usbCapTime(us) {
 
 function usbCapRow(r) {
   const row = document.createElement("div");
-  row.className = "trrow cap " + (r.dir === "IN" ? "in" : "out");
+  row.className = "trrow cap " + (r.dir === "IN" ? "in" : "out") + (usbCapFilter ? "" : " all-dev");
   const u8 = Uint8Array.from(atob(r.data || ""), (c) => c.charCodeAt(0));
+  const no = document.createElement("span"); no.className = "no"; no.textContent = r.n == null ? "" : r.n;
   const t = document.createElement("span"); t.className = "t"; t.textContent = usbCapTime(r.t);
-  const dev = document.createElement("span"); dev.className = "dev"; dev.textContent = r.bus + "." + r.dev;
-  const ep = document.createElement("span"); ep.className = "ep"; ep.textContent = r.ep;
-  const ty = document.createElement("span"); ty.className = "ty"; ty.textContent = r.xfer + " " + r.dir;
+  const epAddr = parseInt(r.ep, 16);
+  const epNo = Number.isFinite(epAddr) ? (epAddr & 0x0F) : r.ep;
+  const ep = document.createElement("span"); ep.className = "ep"; ep.textContent = "EP" + epNo;
+  ep.title = T("端点") + " " + r.ep;
+  const ty = document.createElement("span"); ty.className = "ty"; ty.textContent = r.dir;
+  ty.title = ({ ctl: "Control", bulk: "Bulk", int: "Interrupt", iso: "Isochronous" }[r.xfer] || r.xfer) + " " + r.dir;
   const st = document.createElement("span"); st.className = "st" + (r.status ? " bad" : "");
-  st.textContent = r.status ? "0x" + r.status.toString(16).toUpperCase() : "OK";
+  st.textContent = r.status ? "✕" : "✓";
+  st.title = r.status ? T("传输失败") + " · status 0x" + r.status.toString(16).toUpperCase() : T("传输成功") + " · status 0";
   const h = document.createElement("span"); h.className = "h"; h.textContent = usbHexStr(u8, 128);
   const a = document.createElement("span"); a.className = "a";
   if (r.setup) {
@@ -5395,13 +5402,21 @@ function usbCapRow(r) {
   } else {
     a.textContent = usbAsciiStr(u8, 128);
   }
-  row.append(t, dev, ep, ty, st, h, a);
+  row.title = T("总线") + " " + r.bus + " · " + T("设备") + " " + r.dev + " · " + T("端点") + " " + r.ep
+    + " · " + (r.xfer || "") + " " + r.dir
+    + (r.status ? " · status 0x" + r.status.toString(16).toUpperCase() : " · status 0");
+  if (usbCapFilter) {
+    row.append(no, t, ep, ty, st, h, a);
+  } else {
+    const dev = document.createElement("span"); dev.className = "dev"; dev.textContent = r.bus + "." + r.dev;
+    row.append(no, t, dev, ep, ty, st, h, a);
+  }
   return row;
 }
 
 function usbCapAddMany(list) {
   if (!list || !list.length) return;
-  for (const r of list) usbCapRecords.push(r);
+  for (const r of list) { if (r.n == null) r.n = ++usbCapSeq; usbCapRecords.push(r); }
   if (usbCapRecords.length > USB_CAP_MAX) usbCapRecords.splice(0, usbCapRecords.length - USB_CAP_MAX);
   const box = $("usb-trace");
   if (!box) return;
@@ -5460,6 +5475,8 @@ async function usbCapStart() {
     const target = $("usb-cap-target") && $("usb-cap-target").value;
     await invoke("usbpcap_start", { device: dev, devices: target || null });
     usbCapRunning = true;
+    const nextFilter = target || "";
+    if (nextFilter !== usbCapFilter) { usbCapFilter = nextFilter; usbCapRedraw(); }
     usbCapState("on", T("抓包中 · 实时"));
     usbTraceMark(T("—— 开始抓包 ") + dev + " ——");
   } catch (e) {
@@ -5488,6 +5505,7 @@ async function usbCapStop() {
 
 function usbCapClear() {
   usbCapRecords.length = 0;
+  usbCapSeq = 0;
   const box = $("usb-trace");
   if (box) box.textContent = "";
 }
@@ -5534,17 +5552,19 @@ function netState(kind, text) {
 function netRow(r) {
   const row = document.createElement("div");
   row.className = "trrow net";
+  const no = document.createElement("span"); no.className = "no"; no.textContent = r.n == null ? "" : r.n;
   const t = document.createElement("span"); t.className = "t"; t.textContent = usbCapTime(r.t);
   const src = document.createElement("span"); src.className = "src"; src.textContent = r.src || "";
   const dst = document.createElement("span"); dst.className = "dst"; dst.textContent = r.dst || "";
   const proto = document.createElement("span"); proto.className = "proto"; proto.textContent = r.proto || "";
   const len = document.createElement("span"); len.className = "len"; len.textContent = r.len || "";
   const info = document.createElement("span"); info.className = "info"; info.textContent = r.info || "";
-  row.append(t, src, dst, proto, len, info);
+  row.append(no, t, src, dst, proto, len, info);
   return row;
 }
 
 function netAdd(r) {
+  r.n = ++netSeq;
   netRecords.push(r);
   if (netRecords.length > NET_MAX) netRecords.shift();
   const box = $("net-trace");
@@ -5556,6 +5576,7 @@ function netAdd(r) {
 
 function netClear() {
   netRecords.length = 0;
+  netSeq = 0;
   const box = $("net-trace");
   if (box) box.textContent = "";
 }
@@ -12612,6 +12633,7 @@ const EN = {
   "自供电": "Self-powered",
   "最大电流": "Max power",
   "接口 {n}": "Interface {n}",
+  "端点": "Endpoint", "传输成功": "Transfer succeeded", "传输失败": "Transfer failed",
   "方向": "Dir",
   "类型": "Type",
   "包大小": "Max packet",
