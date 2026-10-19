@@ -3147,10 +3147,19 @@ html[data-tab="usb"] .params {
 .trrow.cap .dev, .trrow.cap .ep { color: hsl(var(--muted-foreground)); }
 .trrow.cap .ep { font-variant-numeric: tabular-nums; }
 .trrow.cap .ty {
+  --dir-color: hsl(var(--primary));
   justify-self: start; padding: 0 5px; border-radius: 5px; font-size: 10.5px; font-weight: 700;
-  background: hsl(var(--warning) / 0.13); color: hsl(var(--warning));
+  color: var(--dir-color); background: hsl(var(--primary) / 0.14);
+  background: color-mix(in srgb, var(--dir-color) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dir-color) 32%, transparent);
 }
-.trrow.cap.in .ty { background: hsl(var(--primary) / 0.14); color: hsl(var(--primary)); }
+/* IN 在主题色里混一点成功色，OUT 在主题色里混一点错误色 —— 两边都不再是纯绿/纯红 */
+.trrow.cap.in .ty {
+  --dir-color: color-mix(in srgb, hsl(var(--primary)) 55%, hsl(var(--success)) 45%);
+}
+.trrow.cap.out .ty {
+  --dir-color: color-mix(in srgb, hsl(var(--primary)) 55%, hsl(var(--destructive)) 45%);
+}
 .trrow.cap .st {
   justify-self: center; align-self: start; display: inline-flex; align-items: center; justify-content: center;
   width: 1.35rem; height: 1.35rem; border-radius: 999px; font-size: 11px; font-weight: 700;

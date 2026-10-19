@@ -5300,6 +5300,7 @@ let usbCapRunning = false;
 let usbCapStopTimer = null;
 let usbCapSeq = 0;
 let usbCapFilter = "";
+let usbCapFull = localStorage.getItem("kdock_usb_full_data") === "1";
 let usbCapDevices = [];
 const usbCapRecords = [];     // 原始记录（保存用）
 const USB_CAP_MAX = 50000;
@@ -5356,17 +5357,18 @@ function usbTraceMark(text) {
 
 function usbHexStr(u8, max) {
   const n = Math.min(u8.length, max);
-  let s = "";
-  for (let i = 0; i < n; i++) s += (i ? " " : "") + u8[i].toString(16).padStart(2, "0");
+  const parts = new Array(n);
+  for (let i = 0; i < n; i++) parts[i] = u8[i].toString(16).padStart(2, "0");
+  let s = parts.join(" ");
   if (u8.length > n) s += " … (+" + (u8.length - n) + ")";
   return s;
 }
 
 function usbAsciiStr(u8, max) {
   const n = Math.min(u8.length, max);
-  let s = "";
-  for (let i = 0; i < n; i++) s += (u8[i] >= 32 && u8[i] < 127) ? String.fromCharCode(u8[i]) : ".";
-  return s;
+  const parts = new Array(n);
+  for (let i = 0; i < n; i++) parts[i] = (u8[i] >= 32 && u8[i] < 127) ? String.fromCharCode(u8[i]) : ".";
+  return parts.join("");
 }
 
 function usbCapTime(us) {
@@ -5393,14 +5395,15 @@ function usbCapRow(r) {
   const st = document.createElement("span"); st.className = "st" + (r.status ? " bad" : "");
   st.textContent = r.status ? "✕" : "✓";
   st.title = r.status ? T("传输失败") + " · status 0x" + r.status.toString(16).toUpperCase() : T("传输成功") + " · status 0";
-  const h = document.createElement("span"); h.className = "h"; h.textContent = usbHexStr(u8, 128);
+  const limit = usbCapFull ? Infinity : 128;
+  const h = document.createElement("span"); h.className = "h"; h.textContent = usbHexStr(u8, limit);
   const a = document.createElement("span"); a.className = "a";
   if (r.setup) {
     a.textContent = r.setup.type + " " + r.setup.dir
       + " bm=" + r.setup.bmRequestType + " bReq=" + r.setup.bRequest
       + " wV=" + r.setup.wValue + " wI=" + r.setup.wIndex + " wL=" + r.setup.wLength;
   } else {
-    a.textContent = usbAsciiStr(u8, 128);
+    a.textContent = usbAsciiStr(u8, limit);
   }
   row.title = T("总线") + " " + r.bus + " · " + T("设备") + " " + r.dev + " · " + T("端点") + " " + r.ep
     + " · " + (r.xfer || "") + " " + r.dir
@@ -5679,6 +5682,15 @@ function bindUsb() {
   if ($("usb-cap-start")) $("usb-cap-start").onclick = () => usbCapStart();
   if ($("usb-cap-stop")) $("usb-cap-stop").onclick = () => usbCapStop();
   if ($("usb-ctl-only")) $("usb-ctl-only").onchange = () => usbCapRedraw();
+  const fullData = $("usb-full-data");
+  if (fullData) {
+    fullData.checked = usbCapFull;
+    fullData.onchange = () => {
+      usbCapFull = fullData.checked;
+      localStorage.setItem("kdock_usb_full_data", usbCapFull ? "1" : "0");
+      usbCapRedraw();
+    };
+  }
   if ($("usb-trace-clear")) $("usb-trace-clear").onclick = () => (monMode === "net" ? netClear() : usbCapClear());
   if ($("usb-trace-save")) $("usb-trace-save").onclick = () => (monMode === "net" ? netSave() : usbCapSave());
   if ($("net-start")) $("net-start").onclick = () => netStart();
@@ -12549,6 +12561,8 @@ const EN = {
   "停止抓包": "Stop capture",
   "未抓包": "Not capturing",
   "抓包中": "Capturing",
+  "完整数据": "Full data",
+  "显示完整 HEX/ASCII（关闭时每行最多 128 字节；大包会让表格变长）": "Show full HEX/ASCII (max 128 bytes per row when off; large packets make rows longer)",
   "只看控制传输": "Control only",
   "只看控制传输：设备枚举和 RNDIS 握手都在这里": "Control transfers only: enumeration and the RNDIS handshake live here",
   "USBPcap 根 Hub（每个根 Hub 一个）": "USBPcap root hub (one per root hub)",
