@@ -663,15 +663,15 @@
         <!-- USB 诊断：原始数据抓取（串口 RX/TX）+ 设备树 + 热插拔日志 -->
         <div class="workpane usbpane" data-work="usb" hidden>
           <div class="trow">
-            <span class="lb">串口</span>
-            <select id="usb-com" class="tight" title="要抓原始数据的串口"></select>
+            <span class="lb">监听目标</span>
+            <select id="usb-com" class="tight" title="串口节点（也可以直接在左边列表里点一个设备）"></select>
             <select id="usb-baud" class="tight" title="波特率">
               <option>9600</option><option>19200</option><option>38400</option><option>57600</option>
               <option selected>115200</option><option>230400</option><option>460800</option><option>921600</option>
             </select>
-            <button id="usb-com-open" class="btn small primary">打开</button>
-            <button id="usb-com-close" class="btn small">关闭</button>
-            <span id="usb-com-state" class="lb"></span>
+            <button id="usb-mon-start" class="btn small primary">开始监听</button>
+            <button id="usb-mon-stop" class="btn small">停止监听</button>
+            <span id="usb-mon-state" class="lb">未监听</span>
             <span class="grow"></span>
             <span id="usb-sum" class="lb"></span>
             <label class="chk"><input type="checkbox" id="usb-autoscroll" checked /> 自动滚动</label>

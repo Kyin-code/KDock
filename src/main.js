@@ -5646,31 +5646,63 @@ function usbComFill() {
   }
 }
 
-function usbComState(open, port, baud) {
-  const n = $("usb-com-state");
+function usbMonState(kind, text) {
+  const n = $("usb-mon-state");
   if (!n) return;
-  if (open) {
-    n.textContent = (port || "") + " · " + (baud || "") + " · " + T("抓取中");
-    n.style.color = "hsl(var(--success))";
-  } else {
-    n.textContent = T("未打开");
-    n.style.color = "";
-  }
+  n.textContent = text || "";
+  n.style.color = kind === "on" ? "hsl(var(--success))" : kind === "wait" ? "hsl(var(--warning))" : "";
 }
 
-async function usbComOpen() {
-  const port = $("usb-com") && $("usb-com").value;
+function usbTraceMark(text) {
+  const box = $("usb-trace");
+  if (!box) return;
+  const row = document.createElement("div");
+  row.className = "trmark";
+  row.textContent = text;
+  box.appendChild(row);
+  if ($("usb-autoscroll") && $("usb-autoscroll").checked) box.scrollTop = box.scrollHeight;
+}
+
+/** 监听目标：优先左边选中的节点；否则用下拉里的串口 */
+function usbMonTarget() {
   const baud = Number($("usb-baud") && $("usb-baud").value) || 115200;
-  if (!port) return toast(T("先选一个串口"));
-  try {
-    await invoke("serial_diag_open", { port, baud });
-    usbComState(true, port, baud);
-  } catch (e) { usbComState(false); toast(String(e)); }
+  const findDev = (sp) => (usbData.devices || []).find((d) =>
+    sp && sp.vid && d.instance.toUpperCase().includes("VID_" + sp.vid)
+    && d.instance.toUpperCase().includes("PID_" + sp.pid));
+  if (usbSel && usbSel.kind === "com") {
+    const sp = (usbData.serial || []).find((x) => x.port === usbSel.key);
+    if (sp) {
+      const d = findDev(sp);
+      return { instance: d ? d.instance : "", port: sp.port, vid: sp.vid || "", pid: sp.pid || "", serial: sp.serial || "", baud };
+    }
+  }
+  if (usbSel && usbSel.kind === "dev") {
+    const d = (usbData.devices || []).find((x) => x.instance === usbSel.key);
+    if (d) {
+      const sp = (usbData.serial || []).find((x) => x.vid === d.vid && x.pid === d.pid);
+      return { instance: d.instance, port: sp ? sp.port : "", vid: d.vid || "", pid: d.pid || "", serial: sp ? (sp.serial || "") : "", baud };
+    }
+  }
+  const port = $("usb-com") && $("usb-com").value;
+  if (!port) return null;
+  const sp = (usbData.serial || []).find((x) => x.port === port) || {};
+  const d = findDev(sp);
+  return { instance: d ? d.instance : "", port, vid: sp.vid || "", pid: sp.pid || "", serial: sp.serial || "", baud };
 }
 
-async function usbComClose() {
-  try { await invoke("serial_diag_close"); } catch (_) {}
-  usbComState(false);
+async function usbMonStart() {
+  const t = usbMonTarget();
+  if (!t) return toast(T("先选一个设备或串口"));
+  try {
+    await invoke("usb_monitor_start", { target: t });
+    usbMonState("wait", T("等待设备…"));
+    usbTraceMark(T("—— 开始监听 ") + (t.port || t.instance) + " ——");
+  } catch (e) { toast(String(e)); }
+}
+
+async function usbMonStop() {
+  try { await invoke("usb_monitor_stop"); } catch (_) {}
+  usbMonState("off", T("未监听"));
 }
 
 function usbParseHex(s) {
@@ -5687,7 +5719,7 @@ async function usbComSend() {
   const hex = $("usb-tx-mode") && $("usb-tx-mode").value === "hex";
   const data = el.value;
   try {
-    await invoke("serial_diag_write", { data, hex });
+    await invoke("usb_monitor_write", { data, hex });
     usbTraceAdd("TX", hex ? usbParseHex(data) : new TextEncoder().encode(data));
     el.value = "";
     if ($("usb-tx-hint")) $("usb-tx-hint").textContent = "";
@@ -5720,22 +5752,31 @@ function bindUsb() {
   if ($("usb-elev")) $("usb-elev").onclick = () => usbElevate();
   if ($("usb-elev2")) $("usb-elev2").onclick = () => usbElevate();
   if ($("usb-clear-log")) $("usb-clear-log").onclick = () => { usbLogLines.length = 0; usbRenderLog(); };
-  if ($("usb-com-open")) $("usb-com-open").onclick = () => usbComOpen();
-  if ($("usb-com-close")) $("usb-com-close").onclick = () => usbComClose();
+  if ($("usb-mon-start")) $("usb-mon-start").onclick = () => usbMonStart();
+  if ($("usb-mon-stop")) $("usb-mon-stop").onclick = () => usbMonStop();
   if ($("usb-tx-send")) $("usb-tx-send").onclick = () => usbComSend();
   if ($("usb-tx-input")) $("usb-tx-input").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); usbComSend(); } };
   if ($("usb-trace-clear")) $("usb-trace-clear").onclick = () => usbTraceClear();
   if ($("usb-trace-save")) $("usb-trace-save").onclick = () => usbTraceSave();
-  listen("usb://serial-rx", (ev) => {
+  listen("usb://mon-rx", (ev) => {
     const p = ev.payload || {};
     if (!p.data) return;
     const u8 = Uint8Array.from(atob(p.data), (c) => c.charCodeAt(0));
     usbTraceAdd("RX", u8);
   });
-  listen("usb://serial-err", (ev) => {
+  listen("usb://mon-state", (ev) => {
     const p = ev.payload || {};
-    toast(T("串口读取失败：") + (p.msg || ""));
-    usbComState(false);
+    if (p.state === "listening") {
+      usbMonState("on", T("监听中") + (p.port ? " · " + p.port : ""));
+      usbTraceMark(T("—— 已连接 ") + (p.port || "") + " ——");
+    } else if (p.state === "waiting") {
+      usbMonState("wait", T("等待设备重连…"));
+      const why = p.msg && p.msg !== "absent" ? " " + p.msg : "";
+      usbTraceMark(T("—— 设备断开，等待重连 ——") + why);
+    } else if (p.state === "stopped") {
+      usbMonState("off", T("未监听"));
+      usbTraceMark(T("—— 已停止监听 ——"));
+    }
   });
 }
 
@@ -12553,6 +12594,19 @@ const EN = {
   "小驱动可以内置：把安装包丢进": "Small drivers can be bundled: drop the installer into ",
   "drivers\\<组件id>\\": "drivers\\<item id>\\",
   "检测中…": "Detecting…",
+  "串口节点（也可以直接在左边列表里点一个设备）": "Serial node (or click a device in the list)",
+  "监听目标": "Monitor target",
+  "开始监听": "Start monitoring",
+  "停止监听": "Stop monitoring",
+  "未监听": "Not monitoring",
+  "等待设备…": "Waiting for device…",
+  "监听中": "Monitoring",
+  "等待设备重连…": "Waiting for the device to reconnect…",
+  "先选一个设备或串口": "Pick a device or serial port first",
+  "—— 开始监听 ": "—— monitoring ",
+  "—— 已连接 ": "—— connected ",
+  "—— 设备断开，等待重连 ——": "—— device disconnected, waiting for reconnect ——",
+  "—— 已停止监听 ——": "—— monitoring stopped ——",
   "保存…": "Save…",
   "要抓原始数据的串口": "Serial port to capture",
   "发送内容（文本或 HEX，回车发送）": "Data to send (text or HEX; Enter to send)",
