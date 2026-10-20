@@ -12,6 +12,7 @@ mod kbview;
 mod logic;
 mod netcapture;
 mod netfs;
+mod netip;
 mod ocr;
 mod remote_screen;
 mod scope;
@@ -3552,6 +3553,7 @@ pub fn run() {
             // 它内部要跑 PowerShell + WMI（好几秒），别挡着窗口显示 —— 丢后台线程慢慢补名字
             std::thread::spawn(refresh_friendly);
             agent::schedule::start(app.handle().clone());
+            netip::start_monitor(app.handle().clone());
             // 任务栏/标题栏图标：显式再设一次。
             // 实测这台机器上 WM_GETICON 的**大图标是 0**（只有小图标有值），
             // 任务栏按钮于是显示成空白/默认图标。
@@ -3684,6 +3686,9 @@ pub fn run() {
             logic::dsview_decoders,
             logic::dsview_decode,
             net_interfaces,
+            netip::netip_status,
+            netip::netip_settings,
+            netip::netip_refresh,
             usb::cmsis_probe_detail,
             usb::usb_diag,
             usb::usb_diag_elevated,

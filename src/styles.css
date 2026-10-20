@@ -202,6 +202,8 @@ body {
   color: hsl(var(--muted-foreground));
 }
 .chip.ok { color: hsl(var(--success)); border-color: hsl(var(--success) / 0.4); }
+.ipchip { color: hsl(var(--primary)); border-color: hsl(var(--primary) / 0.38); background: hsl(var(--primary) / 0.10); font-weight: 600; max-width: 13rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ipchip.blocked { color: hsl(var(--destructive)); border-color: hsl(var(--destructive) / 0.4); background: hsl(var(--destructive) / 0.10); }
 
 /* ── 分栏 ── */
 /* 左中右：导航 | 操作区 | 参数区（两条拖动条都能调宽） */
@@ -1701,6 +1703,11 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .modalcontent code,
 .modalcontent .hint { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 .modalcontent .trow > * { min-width: 0; }
+/* 设置里的数字输入在窄窗独占一行，避免“标签 + 输入”被挤成超宽两行 */
+.modalcontent input[type="number"] { max-width: 12rem; }
+@container app (max-width: 700px) {
+  .modalcontent .trow > input[type="number"] { flex: 1 1 100%; max-width: none; }
+}
 .modalcontent .agentlist .row .tag {
   max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -2806,7 +2813,6 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   html.noparam .split { grid-template-columns: var(--nav-w, 300px) 6px minmax(0, 1fr); }
 }
 @container app (max-width: 860px) {
-  #tb-theme-btn { display: none; }
   /* 左导航：纯图标条 */
   .split { --nav-w: 54px; grid-template-columns: var(--nav-w) 6px minmax(0, 1fr); }
   html.noparam .split { grid-template-columns: var(--nav-w, 54px) 6px minmax(0, 1fr); }
@@ -2825,7 +2831,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   html.railopen .navrow .navmini { display: inline-flex; }
 }
 @container app (max-width: 720px) {
-  #tb-lang, #tb-settings { display: none; }                     /* 语言 / 设置：设置弹窗里都有 */
+  #tb-settings { display: none; }                     /* 语言 / 主题 / 帮助都已移入设置 */
   .tb-right { gap: 5px; }
   #status-chip {
     width: 13px; min-width: 13px; height: 13px; padding: 0; border-radius: 999px;

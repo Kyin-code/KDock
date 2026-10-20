@@ -713,6 +713,73 @@ function chipSet(text, ok) {
   c.title = text;
 }
 
+/* ── 公网 IP 归属地：后端只回国家/地区，顶栏绝不显示或保存公网 IP ── */
+let agNetip = null;
+function netipPaint(st) {
+  if (st) agNetip = st;
+  const b = agNetip || {};
+  const label = b.label || "未知";
+  const chip = $("ip-location-chip");
+  if (chip) {
+    chip.textContent = `${en("当前：")}${label}`;
+    chip.title = b.updatedAt
+      ? `${en("公网 IP 归属地")} · ${label}${b.city ? " · " + b.city : ""}`
+      : en("公网 IP 归属地");
+    chip.classList.toggle("blocked", !!b.blocked);
+  }
+  const summary = $("netip-summary");
+  if (summary) {
+    summary.innerHTML =
+      `<div class="row"><span class="k">${en("归属地")}</span><span class="v">${label}</span></div>` +
+      `<div class="row"><span class="k">${en("城市 / 地区")}</span><span class="v">${[b.city, b.region].filter(Boolean).join(" / ") || "—"}</span></div>` +
+      `<div class="row"><span class="k">${en("网络组织")}</span><span class="v wrap">${b.org || "—"}</span></div>` +
+      `<div class="row"><span class="k">${en("最后更新")}</span><span class="v">${b.updatedAt ? new Date(b.updatedAt).toLocaleString() : "—"}</span></div>`;
+  }
+  const budget = $("netip-budget");
+  if (budget) {
+    const used = Number(b.todayRequests || 0), max = Number(b.dailyLimit || 100);
+    const pct = Math.min(100, Math.round((used / Math.max(1, max)) * 100));
+    budget.innerHTML =
+      `<div class="row"><span class="k">${en("今日已请求")}</span><span class="v">${used} / ${max}</span></div>` +
+      `<div class="row"><span class="k">${en("剩余")}</span><span class="v">${Math.max(0, max - used)}</span></div>` +
+      `<div class="row"><span class="k">${en("统计日期")}</span><span class="v">${b.day || "—"}</span></div>` +
+      `<div class="agctx-bar"><i style="width:${pct}%;background:hsl(var(--primary));display:block;height:100%"></i></div>` +
+      (b.blocked ? `<div class="sub" style="color:hsl(var(--destructive))">${en("今日额度已用完，明天自动恢复。")}</div>` : "");
+  }
+  if (b.lastError && $("netip-state")) $("netip-state").textContent = b.lastError;
+  if ($("netip-retry") && b.retryCount != null) $("netip-retry").value = String(b.retryCount);
+  if ($("netip-debounce") && b.debounceMs != null) $("netip-debounce").value = String(b.debounceMs);
+}
+async function netipLoad() {
+  try { netipPaint(await invoke("netip_status")); } catch (_) { netipPaint(null); }
+}
+async function netipSave() {
+  const retry = Math.max(0, Math.min(10, Number(($("netip-retry") || {}).value || 0)));
+  const debounce = Math.max(200, Math.min(60000, Number(($("netip-debounce") || {}).value || 2500)));
+  try {
+    netipPaint(await invoke("netip_settings", { retryCount: retry, debounceMs: debounce }));
+    toast(en("网络与代理设置已保存"));
+  } catch (e) { toast(String(e)); }
+}
+async function netipRefresh() {
+  const state = $("netip-state");
+  if (state) state.textContent = en("正在查询…");
+  try {
+    netipPaint(await invoke("netip_refresh"));
+    if (state) state.textContent = en("已刷新");
+  } catch (e) {
+    if (state) state.textContent = String(e);
+    toast(String(e));
+  }
+}
+function bindNetip() {
+  netipLoad();
+  if ($("netip-save")) $("netip-save").onclick = netipSave;
+  if ($("netip-refresh")) $("netip-refresh").onclick = netipRefresh;
+}
+async function bindNetipEvents() {
+  await listen("netip://changed", (ev) => netipPaint(ev.payload || null));
+}
 async function refreshStats() {
   try {
     const s = await invoke("get_stats");
@@ -6618,6 +6685,10 @@ function syncUiScaleControls() {
   set("ui-font-scale", localStorage.getItem("kdock_font_scale") || "normal");
   set("ui-zoom", String(Number(localStorage.getItem("kdock_ui_zoom") || "1")));
   set("ui-font", localStorage.getItem("kdock_ui_font") || "system");
+  if (agNetip) {
+    set("netip-retry", agNetip.retryCount);
+    set("netip-debounce", agNetip.debounceMs);
+  }
 }
 function bindUiScale() {
   const fs = $("ui-font-scale"), zm = $("ui-zoom"), fm = $("ui-font");
@@ -7513,7 +7584,6 @@ function bindHelp() {
   const close = $("help-close");
   if (close) close.onclick = closeHelp;
   m.addEventListener("click", (e) => { if (e.target === m) closeHelp(); });
-  if ($("tb-help")) $("tb-help").onclick = () => openHelp(HELP_PAGE_ROOT[helpCurrentPage()]);
   if ($("set-help-open")) $("set-help-open").onclick = () => openHelp(HELP_PAGE_ROOT[helpCurrentPage()]);
   document.addEventListener("keydown", (e) => {
     if (e.key === "F1") {
@@ -7549,6 +7619,7 @@ function openSettings(section) {
   if (section === "model") agProvTab("use");
   if (section === "about") agLoadTools();
   if (section === "help") buildHelpIndex();
+  if (section === "netip") { bindNetip(); netipLoad(); }
   kbSyncSoon();      // 知识库页那块是原生子视图，会盖住弹窗 —— 开设置就先收起来
 }
 
@@ -7574,6 +7645,8 @@ function bindSettings() {
       if (b.dataset.set === "skills") { agLoadSkills(); }
       if (b.dataset.set === "tools") { agToolRows = []; renderToolsPage(); }
       if (b.dataset.set === "help") buildHelpIndex();
+      if (b.dataset.set === "netip") { bindNetip(); netipLoad(); }
+      if (b.dataset.set === "theme") tbSyncTheme();
       if (b.dataset.set === "about" || b.dataset.set === "general") agRenderAbout();
       if (LANG === "en") setTimeout(() => langWalk(), 0);   // 这一页里运行时拼出来的文字
     };
@@ -12043,6 +12116,9 @@ const EN = {
   "Token": "Tokens", "缓存命中": "Cache hit", "花费": "Cost",
   "输入": "in", "输出": "out", "补充": "Add",
   "上下文成分": "Context breakdown", "系统提示": "System", "工具定义": "Tools",
+  "当前：": "Current: ", "公网 IP 归属地": "Public IP location", "归属地": "Location", "城市 / 地区": "City / region",
+  "网络组织": "Network organization", "最后更新": "Last updated", "今日已请求": "Requests today",
+  "剩余": "remaining", "统计日期": "Statistics date", "今日额度已用完，明天自动恢复。": "Today's quota is exhausted; it resets tomorrow.",
   "摘要": "Summary", "用户消息": "User msgs", "助手回复": "Assistant", "内置工具结果": "Built-in tool results", "MCP 工具结果": "MCP tool results",
   "剩余可用": "Free", "余额": "Balance", "已配置": "Configured", "接口格式": "API format",
   "本机估算": "local estimate", "模型上报": "provider-reported", "窗口预算": "budget",
@@ -13597,8 +13673,6 @@ function applyLang(lang) {
   uiPrefsSave();
   document.documentElement.dataset.lang = LANG;
   langWalk();
-  const btn = $("tb-lang");
-  if (btn) { btn.textContent = LANG === "en" ? "EN" : "中"; btn.title = LANG === "en" ? "Switch to 中文" : "Switch to English"; }
   // 菜单栏那 5 个按钮的文字（它们是 bind 时写进去的，切语言要跟着刷）
   const labels = ["文件", "编辑", "视图", "窗口", "帮助"];
   document.querySelectorAll("#tb-menu .tb-menu-btn").forEach((b, i) => { if (labels[i]) b.textContent = en(labels[i]); });
@@ -13663,9 +13737,8 @@ function tbCopyRx() {
   navigator.clipboard.writeText(t).then(() => toast(`已复制 ${t.length} 字符`)).catch(() => toast("复制失败"));
 }
 function tbSyncTheme() {
-  const cur = document.documentElement.dataset.theme || "dark";
-  $("tb-theme-btn").textContent = cur === "light" ? "☀" : cur === "auto" ? "◐" : "☾";
-  $("tb-theme-btn").title = `${en("主题：")}${en(TB_THEME_NAME[cur] || cur)}${en("（点一下切换）")}`;
+  // 右上角主题按钮已撤掉；设置 → 主题与配色仍是唯一入口。
+  void (document.documentElement.dataset.theme || "dark");
 }
 function tbSetTheme(m) { applyTheme(m); tbSyncTheme(); toast("主题：" + (TB_THEME_NAME[m] || m)); }
 function tbMenuDefs() {
@@ -13778,15 +13851,7 @@ function bindTitleBar() {
   $("win-close").onclick = () => tbCmd("close");
   if ($("nav-settings")) $("nav-settings").addEventListener("click", (e) => { e.stopPropagation(); openSettings("general"); });
   if ($("tb-settings")) $("tb-settings").onclick = () => openSettings("theme");
-  $("tb-theme-btn").onclick = () => {
-    const cur = document.documentElement.dataset.theme || "dark";
-    tbSetTheme(cur === "dark" ? "light" : cur === "light" ? "auto" : "dark");
-  };
-  $("tb-lang").onclick = () => {
-    applyLang(LANG === "zh" ? "en" : "zh");
-    tbCloseMenus();
-    toast(LANG === "en" ? "Language: English" : "语言：中文");
-  };
+  // 主题 / 翻译 / 帮助改由设置页和 F1 提供，右上角留给连接状态和 IP 归属地。
   tbSyncTheme();
   // 菜单栏
   const wrap = $("tb-menu");
@@ -13888,7 +13953,6 @@ function bindTitleBar() {
   document.querySelectorAll(".navitem").forEach((b) => {
     if (!b.title) { const sp = b.querySelector("span"); if (sp) b.title = sp.textContent.trim(); }
   });
-  $("tb-lang").onclick = () => { applyLang(LANG === "zh" ? "en" : "zh"); tbCloseMenus(); toast(LANG === "en" ? "Language: English" : "语言：中文"); };
   document.addEventListener("click", () => { tbCloseMenus(); openIdx = -1; });
 }
 
@@ -13923,6 +13987,8 @@ async function main() {
   bindCapture();
   bindAdb();                    // 安卓 ADB：设备 / shell / 推拉 / APK / 投屏
   bindSettings();
+  bindNetip();
+  bindNetipEvents();
   bindHelp();
   bindCache();
   bindAgent();

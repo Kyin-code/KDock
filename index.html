@@ -18,10 +18,8 @@
       </div>
       <div class="tb-right">
         <span id="status-chip" class="chip">未连接</span>
+        <span id="ip-location-chip" class="chip ipchip" title="公网 IP 归属地">当前：未知</span>
         <button id="tb-params" class="tb-icon" title="收起参数区">▭</button>
-        <button id="tb-theme-btn" class="tb-icon" title="切换主题：暗色 / 亮色 / 跟随系统">◐</button>
-        <button id="tb-help" class="tb-icon" title="功能帮助（F1）">?</button>
-        <button id="tb-lang" class="tb-icon" title="Switch to English">中</button>
                 <button id="tb-settings" class="tb-chip" title="设置（Ctrl+, ）"><span class="tbs-ico">⚙</span><span class="tbs-txt">设置</span></button>
         <div class="tb-win">
           <button id="win-min" class="tb-wbtn" title="最小化">–</button>
@@ -62,6 +60,7 @@
             <button class="modaltab" data-set="tools">工具</button>
             <button class="modaltab" data-set="mcp">MCP</button>
             <button class="modaltab" data-set="kb">知识库</button>
+            <button class="modaltab" data-set="netip">网络与代理</button>
             <button class="modaltab" data-set="cache">缓存</button>
             <button class="modaltab" data-set="help">帮助</button>
             <button class="modaltab" data-set="about">关于与数据</button>
@@ -295,6 +294,29 @@
               </div>
             </div>
             <!-- 缓存：所有持久化数据一览 + 按类删除 -->
+            <div class="setpane" data-setpane="netip" hidden>
+              <div class="cardtitle">公网 IP 归属</div>
+              <div id="netip-summary" class="aginfo"></div>
+              <p class="hint">顶栏只显示国家/地区，不显示实际公网 IP；软件也不会持久化公网 IP。
+                只有网卡地址、默认路由或代理配置发生变化时才访问 ipinfo.io。</p>
+              <div class="cardtitle">请求预算</div>
+              <div id="netip-budget" class="aginfo"></div>
+              <p class="hint">每日总计最多 100 次，跨软件重启累计；达到上限后当天不再访问 ipinfo.io。</p>
+              <div class="cardtitle">触发与重试</div>
+              <div class="trow">
+                <label class="lb" for="netip-retry">断网重试次数</label>
+                <input id="netip-retry" class="tight" type="number" min="0" max="10" step="1" />
+                <label class="lb" for="netip-debounce">防抖（毫秒）</label>
+                <input id="netip-debounce" class="tight" type="number" min="200" max="60000" step="100" />
+              </div>
+              <div class="trow">
+                <button id="netip-save" class="btn small primary">保存设置</button>
+                <button id="netip-refresh" class="btn small">手动刷新</button>
+                <span class="grow"></span>
+                <span id="netip-state" class="lb"></span>
+              </div>
+              <p class="hint">重试次数最多 10 次；防抖只延迟真正请求，本地网络指纹检查不会消耗 ipinfo 次数。</p>
+            </div>
             <div class="setpane" data-setpane="cache" hidden>
               <div class="cardtitle">持久化数据（缓存）
                 <button id="cache-reload" class="btn small">↻ 刷新</button></div>
