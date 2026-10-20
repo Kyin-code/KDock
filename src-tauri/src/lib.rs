@@ -3866,6 +3866,7 @@ pub fn run() {
             agent::mcp_save,
             agent::mcp_delete,
             agent::mcp_test,
+            agent::mcp_call,
             agent::mcp_tools,
             agent::mcp_path_hint,
             window_set_zoom,

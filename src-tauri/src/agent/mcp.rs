@@ -1,14 +1,14 @@
 //! MCP（Model Context Protocol）最小客户端：stdio + 换行分隔的 JSON-RPC 2.0。
 //!
-//! 只做三件事：initialize / tools/list / tools/call。
-//! 连接按 server 复用：第一次调用完成 initialize，之后同一个进程继续处理
-//! tools/list / tools/call。这样高频调用不用每次重新握手；配置变化时主动清理。
+//! 支持本地 stdio 与远程 Streamable HTTP 两种 transport。
+//! 两者都只实现 initialize / tools/list / tools/call；连接按 server 复用，
+//! 配置变化时主动清理。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -41,9 +41,12 @@ pub struct McpServer {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
-    /// 只有 opencode 那种 remote(HTTP) 服务才有；我们目前不支持，读到它只为了给人一句明确的提示
+    /// 远程 Streamable HTTP MCP 地址。有 command 时也可以保留 URL（用于显示/诊断），实际走 stdio。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// 远程 MCP 的额外请求头（例如 Authorization）。查询参数里已有 key 时可以不填。
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
     #[serde(default = "yes")]
     pub enabled: bool,
 }
@@ -54,8 +57,8 @@ pub struct McpServer {
 /// - opencode 那套：`{"command": ["npx", "-y", "pkg"], "environment": {...}}`
 ///   （命令和参数连在一个数组里、环境变量键叫 `environment`）
 ///
-/// 另外把 `url` 也收下：那是 remote(HTTP) 服务，我们目前只支持本地 stdio，
-/// 但要能**读进来**并在用到时报一句人话，而不是让整个文件解析失败（见 `load`）。
+/// 同时支持 opencode / VS Code / Claude 的远程写法：`url`（以及 `serverUrl` / `httpUrl`）。
+/// 没有 command 时自动走 Streamable HTTP MCP。
 #[derive(Deserialize)]
 struct RawMcp {
     id: String,
@@ -67,8 +70,10 @@ struct RawMcp {
     args: Vec<String>,
     #[serde(default, alias = "environment")]
     env: BTreeMap<String, String>,
-    #[serde(default)]
+    #[serde(default, alias = "serverUrl", alias = "httpUrl")]
     url: Option<String>,
+    #[serde(default)]
+    headers: BTreeMap<String, String>,
     #[serde(default = "yes")]
     enabled: bool,
 }
@@ -107,6 +112,7 @@ impl From<RawMcp> for McpServer {
             env: r.env,
             enabled: r.enabled,
             url: r.url,
+            headers: r.headers,
         }
     }
 }
@@ -157,33 +163,48 @@ pub fn find(app: &AppHandle, id: &str) -> Option<McpServer> {
     load(app).into_iter().find(|s| s.id == id)
 }
 
-struct Client {
-    child: Child,
-    stdin: ChildStdin,
-    /// 读线程把子进程的每一行送过来。
-    /// 为什么要单独开线程：管道读是**阻塞**的，直接在 recv 时 read_line 的话，
-    /// 对方不回话就永远醒不过来（原来的"超时"只在两行之间生效，等于没有超时），
-    /// 一个不响应的 MCP 服务能把整个 Agent 永久卡死。
-    rx: std::sync::mpsc::Receiver<String>,
-    next_id: u64,
-    info: Value,
+#[derive(Debug, Clone)]
+struct StdioTransport {
+    child: Arc<Mutex<Child>>,
+    stdin: Arc<Mutex<ChildStdin>>,
+    rx: Arc<Mutex<std::sync::mpsc::Receiver<String>>>,
 }
 
-impl Drop for Client {
+#[derive(Debug, Clone)]
+struct HttpTransport {
+    url: String,
+    headers: BTreeMap<String, String>,
+    session_id: String,
+    authenticated: bool,
+}
+
+#[derive(Debug, Clone)]
+enum Transport {
+    Stdio(StdioTransport),
+    Http(HttpTransport),
+}
+
+struct Client {
+    transport: Transport,
+    next_id: u64,
+    info: Value,
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
+}
+
+impl Drop for StdioTransport {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Ok(mut child) = self.child.lock() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 
 impl Client {
-    fn spawn(srv: &McpServer) -> Result<Self, String> {
+    fn spawn_stdio(srv: &McpServer) -> Result<Self, String> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         if srv.command.trim().is_empty() {
-            return Err(match &srv.url {
-                Some(u) => format!("「{}」是远程(HTTP) MCP（{u}）——KDock 目前只支持本地 stdio 类型", srv.id),
-                None => format!("「{}」没写 command（本地 stdio 类型必须有要启动的命令）", srv.id),
-            });
+            return Err(format!("「{}」没写 command（本地 stdio 类型必须有要启动的命令）", srv.id));
         }
         // npx/npm 这类在 Windows 上是 .cmd 脚本，必须借 cmd.exe 起（直接 CreateProcess 会失败）
         #[cfg(windows)]
@@ -228,12 +249,6 @@ impl Client {
             {
                 use std::os::windows::process::CommandExt;
                 cmd.arg("/C");
-                // ⚠️ 两个坑一起踩过（`npx.cmd` 这类 server 一直"启动失败/超时"就是这么来的）：
-                //   1. 参数必须**真的传下去**（原来只 arg(command)、args 直接丢了 → npx 空跑等超时）；
-                //   2. cmd /C 后面如果以引号开头，它会把这行的首尾引号各剥一层 —— 所以整条命令
-                //      要**再包一层引号**：cmd /C ""C:\Program Files\nodejs\npx.cmd" -y pkg"。
-                //   3. 而且要用 raw_arg：走正常 arg() 的话 Rust 会按 C 运行时规则把引号转义成 \"，
-                //      cmd 不认那种写法，命令会散掉。
                 cmd.raw_arg(format!("\"{line}\""));
             }
             #[cfg(not(windows))]
@@ -251,7 +266,7 @@ impl Client {
         }
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -260,76 +275,207 @@ impl Client {
         let mut child = cmd.spawn().map_err(|e| format!("起 {} 失败: {e}", srv.command))?;
         let stdin = child.stdin.take().ok_or("拿不到 stdin")?;
         let stdout = child.stdout.take().ok_or("拿不到 stdout")?;
+        let stderr = child.stderr.take();
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
                 if tx.send(line).is_err() {
-                    break; // 主线程不听了（已经拿到结果/退出）
+                    break;
                 }
             }
         });
-        Ok(Client { child, stdin, rx, next_id: 1, info: Value::Null })
+        let stderr_tail = Arc::new(Mutex::new(VecDeque::new()));
+        if let Some(stderr) = stderr {
+            let tail = stderr_tail.clone();
+            std::thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines().map_while(Result::ok) {
+                    if let Ok(mut q) = tail.lock() {
+                        if q.len() >= 40 { q.pop_front(); }
+                        q.push_back(line);
+                    }
+                }
+            });
+        }
+        Ok(Self {
+            transport: Transport::Stdio(StdioTransport {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(stdin)),
+                rx: Arc::new(Mutex::new(rx)),
+            }),
+            next_id: 1,
+            info: Value::Null,
+            stderr_tail,
+        })
     }
 
-    fn send(&mut self, msg: &Value) -> Result<(), String> {
+    fn spawn_http(srv: &McpServer) -> Result<Self, String> {
+        let url = srv.url.as_deref().unwrap_or("").trim();
+        if url.is_empty() {
+            return Err(format!("「{}」既没有 command，也没有 url", srv.id));
+        }
+        let mut headers = srv.headers.clone();
+        if !headers.keys().any(|k| k.eq_ignore_ascii_case("accept")) {
+            headers.insert("Accept".into(), "application/json, text/event-stream".into());
+        }
+        Ok(Self {
+            transport: Transport::Http(HttpTransport {
+                url: url.to_string(),
+                headers,
+                session_id: String::new(),
+                authenticated: false,
+            }),
+            next_id: 1,
+            info: Value::Null,
+            stderr_tail: Arc::new(Mutex::new(VecDeque::new())),
+        })
+    }
+
+    fn spawn(srv: &McpServer) -> Result<Self, String> {
+        if !srv.command.trim().is_empty() {
+            Self::spawn_stdio(srv)
+        } else {
+            Self::spawn_http(srv)
+        }
+    }
+
+    fn stderr_tail_text(&self) -> String {
+        let lines = self
+            .stderr_tail
+            .lock()
+            .map(|q| q.iter().cloned().collect::<Vec<_>>().join("\n"))
+            .unwrap_or_default();
+        if lines.trim().is_empty() { String::new() } else { format!("\nMCP stderr:\n{lines}") }
+    }
+
+    fn send_stdio(&mut self, msg: &Value) -> Result<(), String> {
+        let Transport::Stdio(t) = &self.transport else { return Err("不是 stdio transport".into()); };
         let mut line = serde_json::to_string(msg).map_err(|e| e.to_string())?;
         line.push('\n');
-        self.stdin.write_all(line.as_bytes()).map_err(|e| format!("写给 MCP 失败: {e}"))?;
-        self.stdin.flush().map_err(|e| format!("flush 失败: {e}"))
+        let mut stdin = t.stdin.lock().map_err(|_| "MCP stdin mutex".to_string())?;
+        stdin.write_all(line.as_bytes()).map_err(|e| format!("写给 MCP 失败: {e}"))?;
+        stdin.flush().map_err(|e| format!("flush 失败: {e}"))
     }
 
-    /// 读一行（跳过空行/通知），带超时
-    fn read_msg(&mut self, timeout: Duration) -> Result<Value, String> {
+    fn post_http(&mut self, msg: &Value) -> Result<String, String> {
+        let (url, headers, session_id) = match &self.transport {
+            Transport::Http(t) => (t.url.clone(), t.headers.clone(), t.session_id.clone()),
+            _ => return Err("不是 HTTP transport".into()),
+        };
+        let body = serde_json::to_string(msg).map_err(|e| e.to_string())?;
+        let mut req = ureq::post(&url)
+            .timeout(Duration::from_secs(120))
+            .set("Content-Type", "application/json");
+        for (k, v) in headers {
+            req = req.set(&k, &v);
+        }
+        if !session_id.is_empty() {
+            req = req.set("Mcp-Session-Id", &session_id);
+        }
+        let resp = req.send_string(&body).map_err(|e| {
+            match e {
+                ureq::Error::Status(code, r) => {
+                    let text = r.into_string().unwrap_or_default();
+                    format!("MCP HTTP {code}: {}", text.chars().take(600).collect::<String>())
+                }
+                other => format!("MCP HTTP 请求失败: {other}"),
+            }
+        })?;
+        if let Some(sid) = resp.header("Mcp-Session-Id") {
+            if let Transport::Http(t) = &mut self.transport {
+                t.session_id = sid.to_string();
+            }
+        }
+        resp.into_string().map_err(|e| format!("读 MCP HTTP 响应失败: {e}"))
+    }
+
+    fn read_sse_messages(text: &str, want_id: u64) -> Result<Value, String> {
+        let mut data: Vec<String> = Vec::new();
+        let mut last_json = Value::Null;
+        let consume = |data: &mut Vec<String>| -> Option<Value> {
+            if data.is_empty() { return None; }
+            let payload = data.drain(..).collect::<Vec<_>>().join("\n");
+            serde_json::from_str::<Value>(&payload)
+                .ok()
+                .and_then(|v| { if v.get("id").and_then(|x| x.as_u64()) == Some(want_id) { Some(v) } else { None } })
+        };
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("data:") {
+                data.push(rest.trim_start().to_string());
+            } else if line.trim().is_empty() {
+                if let Some(v) = consume(&mut data) { return Ok(v); }
+            }
+        }
+        if let Some(v) = consume(&mut data) { return Ok(v); }
+        if let Ok(v) = serde_json::from_str::<Value>(text.trim()) {
+            if v.get("id").and_then(|x| x.as_u64()) == Some(want_id) { return Ok(v); }
+            last_json = v;
+        }
+        if last_json.is_null() {
+            Err("MCP HTTP 响应里没有 JSON-RPC 消息".into())
+        } else {
+            Ok(last_json)
+        }
+    }
+
+    fn request_http(&mut self, method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let msg = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
+        let text = self.post_http(&msg)?;
+        let _ = timeout;
+        let reply = Self::read_sse_messages(&text, id)?;
+        if let Some(err) = reply.get("error") { return Err(format!("MCP 报错: {err}")); }
+        Ok(reply.get("result").cloned().unwrap_or(Value::Null))
+    }
+
+    fn request_stdio(&mut self, method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.send_stdio(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         let start = Instant::now();
         loop {
             let left = timeout.saturating_sub(start.elapsed());
-            if left.is_zero() {
-                return Err("等 MCP 回话超时（服务没响应）".into());
-            }
-            match self.rx.recv_timeout(left) {
-                Ok(line) => {
-                    let t = line.trim();
-                    if t.is_empty() {
-                        continue;
+            if left.is_zero() { return Err(format!("{method} 超时{}", self.stderr_tail_text())); }
+            let Transport::Stdio(t) = &self.transport else { return Err("不是 stdio transport".into()); };
+            let line = {
+                let rx = t.rx.lock().map_err(|_| "MCP stdout mutex".to_string())?;
+                match rx.recv_timeout(left) {
+                    Ok(line) => line,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        return Err(format!("等 MCP 回话超时（服务没响应）{}", self.stderr_tail_text()))
                     }
-                    if let Ok(v) = serde_json::from_str::<Value>(t) {
-                        if v.get("id").is_some() {
-                            return Ok(v);
-                        }
-                        // 通知（比如 logging）忽略
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        return Err(format!("MCP 进程提前退出{}", self.stderr_tail_text()))
                     }
-                    continue;
                 }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    return Err("等 MCP 回话超时（服务没响应）".into())
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err("MCP 进程提前退出了".into())
-                }
+            };
+            let t = line.trim();
+            if t.is_empty() { continue; }
+            if let Ok(v) = serde_json::from_str::<Value>(t) {
+                if v.get("id").and_then(|x| x.as_u64()) != Some(id) { continue; }
+                if let Some(err) = v.get("error") { return Err(format!("MCP 报错: {err}")); }
+                return Ok(v.get("result").cloned().unwrap_or(Value::Null));
             }
         }
     }
 
     fn request(&mut self, method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))?;
-        let start = Instant::now();
-        loop {
-            let left = timeout.saturating_sub(start.elapsed());
-            if left.is_zero() {
-                return Err(format!("{method} 超时"));
-            }
-            let msg = self.read_msg(left)?;
-            if msg.get("id").and_then(|v| v.as_u64()) != Some(id) {
-                continue;
-            }
-            if let Some(err) = msg.get("error") {
-                return Err(format!("MCP 报错: {err}"));
-            }
-            return Ok(msg.get("result").cloned().unwrap_or(Value::Null));
+        match self.transport {
+            Transport::Http(_) => self.request_http(method, params, timeout),
+            Transport::Stdio(_) => self.request_stdio(method, params, timeout),
         }
+    }
+
+    fn notify_http_initialized(&mut self) -> Result<(), String> {
+        let text = self.post_http(&json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+        let _ = text;
+        Ok(())
+    }
+
+    fn notify_stdio_initialized(&mut self) -> Result<(), String> {
+        self.send_stdio(&json!({"jsonrpc":"2.0","method":"notifications/initialized"}))
     }
 
     fn handshake(&mut self) -> Result<Value, String> {
@@ -342,7 +488,13 @@ impl Client {
             }),
             Duration::from_secs(20),
         )?;
-        let _ = self.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
+        match self.transport {
+            Transport::Http(_) => {
+                if let Transport::Http(t) = &mut self.transport { t.authenticated = true; }
+                let _ = self.notify_http_initialized();
+            }
+            Transport::Stdio(_) => { let _ = self.notify_stdio_initialized(); }
+        }
         Ok(r)
     }
 
@@ -351,7 +503,6 @@ impl Client {
         Ok(r.get("tools").and_then(|t| t.as_array()).cloned().unwrap_or_default())
     }
 }
-
 /// 常驻 MCP 进程池：server 配置 + filesystem extra roots 作为 key。
 static CLIENTS: LazyLock<Mutex<std::collections::HashMap<String, std::sync::Arc<Mutex<Client>>>>> =
     LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
@@ -361,7 +512,10 @@ fn client_key(srv: &McpServer) -> String {
         .lock()
         .map(|g| g.join("|"))
         .unwrap_or_default();
-    format!("{}|roots={roots}", serde_json::to_string(srv).unwrap_or_default())
+    // 远程 HTTP 的 tools/list 可能每次探测都会变；连接池只按真正影响进程/端点的字段建 key，
+    // 否则一次探测失败会把刚建好的会话丢掉。
+    let endpoint = if srv.command.trim().is_empty() { srv.url.clone().unwrap_or_default() } else { format!("{} {:?}", srv.command, srv.args) };
+    format!("{}|{}|roots={roots}|headers={:?}", srv.id, endpoint, srv.headers)
 }
 
 fn client_for(srv: &McpServer) -> Result<std::sync::Arc<Mutex<Client>>, String> {
@@ -414,6 +568,7 @@ pub fn call_tool(srv: &McpServer, tool: &str, args: &Value) -> Result<String, St
         Ok(render_content(&r))
     };
     let c = client_for(srv)?;
+    // 远程 HTTP MCP 没有常驻子进程；401 可能只是会话过期，重连一次即可。
     match call(c) {
         Ok(v) => Ok(v),
         Err(e) => {
@@ -471,6 +626,43 @@ pub fn tool_schemas(srv: &McpServer, tools: &[Value]) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_remote_url_aliases_and_headers() {
+        let srv: McpServer = serde_json::from_value(json!({
+            "id": "exa",
+            "name": "Exa",
+            "serverUrl": "https://mcp.exa.ai/mcp",
+            "headers": {"Authorization": "Bearer test"},
+            "enabled": true
+        })).unwrap();
+        assert_eq!(srv.url.as_deref(), Some("https://mcp.exa.ai/mcp"));
+        assert_eq!(srv.headers.get("Authorization").map(String::as_str), Some("Bearer test"));
+        assert!(srv.command.is_empty());
+    }
+
+    #[test]
+    fn parses_sse_jsonrpc_data_frame() {
+        let text = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[]}}\n\n";
+        let v = Client::read_sse_messages(text, 2).unwrap();
+        assert_eq!(v["id"], 2);
+        assert!(v["result"]["tools"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn remote_url_is_not_a_local_command() {
+        let srv = McpServer {
+            id: "remote".into(), name: "Remote".into(), command: String::new(),
+            args: Vec::new(), env: BTreeMap::new(),
+            url: Some("https://example.invalid/mcp".into()),
+            headers: BTreeMap::new(), enabled: true,
+        };
+        assert!(srv.command.is_empty() && srv.url.is_some());
+    }
+}
 /// 当前所有启用 server 的工具（带缓存到内存的意图：调用方自己管缓存）
 pub fn all_tool_schemas(app: &AppHandle) -> Vec<Value> {
     let mut out = Vec::new();

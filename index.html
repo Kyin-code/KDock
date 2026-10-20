@@ -439,9 +439,11 @@
             <div class="setpane" data-setpane="mcp" hidden>
               <div class="cardtitle">MCP 服务</div>
               <div id="set-mcp-list" class="agentlist"></div>
-              <div class="field"><label for="set-mcp-id">ID</label><input id="set-mcp-id" placeholder="filesystem" /></div>
-              <div class="field"><label for="set-mcp-cmd">命令</label><input id="set-mcp-cmd" placeholder="npx / node / 你的 mcp server.exe" /></div>
+              <div class="field"><label for="set-mcp-id">ID</label><input id="set-mcp-id" placeholder="exa" /></div>
+              <div class="field"><label for="set-mcp-url">远程 URL</label><input id="set-mcp-url" placeholder="https://mcp.exa.ai/mcp?exaApiKey=..." /></div>
+              <div class="field"><label for="set-mcp-cmd">本地命令</label><input id="set-mcp-cmd" placeholder="npx / node / 你的 mcp server.exe（远程模式留空）" /></div>
               <div class="field"><label for="set-mcp-args">参数</label><input id="set-mcp-args" placeholder="-y @modelcontextprotocol/server-filesystem C:\\data" /></div>
+              <div class="field"><label for="set-mcp-env">环境 / 请求头</label><input id="set-mcp-env" placeholder="EXA_API_KEY=... 或 Authorization=Bearer ...（每行一个）" /></div>
               <div class="trow">
                 <button id="set-mcp-save" class="btn small primary">保存</button>
                 <button id="set-mcp-test" class="btn small">测一测</button>
@@ -449,9 +451,9 @@
                 <span class="grow"></span>
                 <button id="set-mcp-open" class="btn small">打开配置目录</button>
               </div>
-              <p class="hint">stdio 方式：保存后按「测一测」会真的起进程握手一次（不响应会在 20 秒内报超时）。
-                启用中的服务，工具会以 <code>mcp__&lt;id&gt;__&lt;tool&gt;</code> 挂给 agent；
-                配置文件：<code id="set-mcp-path"></code></p>
+              <p class="hint">支持远程 Streamable HTTP（填 URL）和本地 stdio（填命令）。「测一测」会真的握手并列出工具；
+                启用中的服务，工具会以 <code>mcp__&lt;id&gt;__&lt;tool&gt;</code> 挂给 agent。
+                远程请求头用于 Authorization 等，本地命令的环境变量也走同一栏。配置文件：<code id="set-mcp-path"></code></p>
             </div>
 
             <!-- 知识库：两个页面地址 -->

@@ -2872,6 +2872,11 @@ pub fn mcp_test(app: AppHandle, id: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn mcp_call(app: AppHandle, id: String, tool: String, args: Value) -> Result<String, String> {
+    let srv = mcp::find(&app, &id).ok_or("找不到这个 MCP 服务")?;
+    mcp::call_tool(&srv, &tool, &args)
+}
+#[tauri::command]
 pub fn mcp_tools(app: AppHandle, id: String) -> Result<Vec<Value>, String> {
     let srv = mcp::find(&app, &id).ok_or("找不到这个 MCP 服务")?;
     let (_info, tools) = mcp::probe(&srv)?;

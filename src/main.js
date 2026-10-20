@@ -10466,13 +10466,16 @@ function renderMcpPage() {
     nm.className = "nm"; nm.textContent = m.id;
     const tag = document.createElement("span");
     tag.className = "tag";
-    tag.textContent = en(m.enabled ? "已启用" : "已停用") + " · " + [m.command, ...(m.args || [])].join(" ").slice(0, 40);
-    row.title = [m.command, ...(m.args || [])].join(" ");
+    const endpoint = m.command ? [m.command, ...(m.args || [])].join(" ") : (m.url || "");
+    tag.textContent = en(m.enabled ? "已启用" : "已停用") + " · " + endpoint.slice(0, 48);
+    row.title = endpoint;
     row.appendChild(nm); row.appendChild(tag);
     row.onclick = () => {
       agEl("set-mcp-id").value = m.id;
-      agEl("set-mcp-cmd").value = m.command;
+      agEl("set-mcp-url").value = m.url || "";
+      agEl("set-mcp-cmd").value = m.command || "";
       agEl("set-mcp-args").value = (m.args || []).join(" ");
+      agEl("set-mcp-env").value = Object.entries(m.headers && Object.keys(m.headers).length ? m.headers : (m.env || {})).map(([k, v]) => `${k}=${v}`).join("\n");
     };
     box.appendChild(row);
   }
@@ -10597,15 +10600,21 @@ function bindMcpPage() {
   agEl("set-mcp-save").onclick = async () => {
     const id = agEl("set-mcp-id").value.trim();
     if (!id) return toast("MCP 的 ID 不能空");
+    const url = agEl("set-mcp-url").value.trim();
     const command = agEl("set-mcp-cmd").value.trim();
-    if (!command) return toast("要填命令（npx / node / exe）");
+    if (!url && !command) return toast("远程模式填 URL，本地模式填命令");
     const old = (agMcps || []).find((m) => m.id === id);
+    const pairs = agEl("set-mcp-env").value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    const extra = {};
+    for (const line of pairs) { const i = line.indexOf("="); if (i > 0) extra[line.slice(0, i).trim()] = line.slice(i + 1).trim(); }
     const server = {
       id,
       name: old ? old.name : id,
       command,
-      args: agEl("set-mcp-args").value.split(/\s+/).filter(Boolean),
-      env: (old && old.env) || {},
+      args: command ? agEl("set-mcp-args").value.split(/\s+/).filter(Boolean) : [],
+      env: command ? extra : ((old && old.env) || {}),
+      url: url || undefined,
+      headers: command ? ((old && old.headers) || {}) : extra,
       enabled: old ? !!old.enabled : true,
     };
     try {
