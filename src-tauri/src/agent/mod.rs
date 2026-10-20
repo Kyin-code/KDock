@@ -1368,29 +1368,38 @@ fn tools_frozen(app: &AppHandle, session_id: &str) -> Vec<String> {
     names
 }
 
-/// 按冻结清单把工具定义拼出来（tool_calls 在 prompt 最前面，顺序也必须稳）
+/// 按会话冻结的**完整工具 schema**拼出请求前缀。
+///
+/// 为什么不只冻结名字：MCP 服务原地升级时，工具名可能不变，但 description /
+/// inputSchema 会变；只按名字重建仍会在用户不知情时让整段前缀缓存失效。
+/// 旧会话没有单独的 schema 快照文件时，这里首次补齐；此后本会话完全复用该文件。
 fn tools_schema_frozen(app: &AppHandle, session_id: &str) -> Vec<Value> {
+    let snapshot = store::session_tool_schemas_get(app, session_id);
+    if !snapshot.is_empty() {
+        return snapshot;
+    }
+
     let names = tools_frozen(app, session_id);
     let all = tools::schema_json(&tools::catalog(), true);
-    let mut builtin: Vec<Value> = Vec::new();
+    let mut frozen: Vec<Value> = Vec::new();
     for n in &names {
         if let Some(v) = all
             .iter()
             .find(|v| v["function"]["name"].as_str() == Some(n.as_str()))
         {
-            builtin.push(v.clone());
+            frozen.push(v.clone());
         }
     }
     let (mcp_schemas, _) = mcp::all_tool_schemas_cached(app);
-    // MCP 的工具是动态的：按冻结清单过滤（新启用的服务要等新会话才进清单）
     for s in mcp_schemas {
         if let Some(n) = s["function"]["name"].as_str() {
             if names.iter().any(|x| x == n) {
-                builtin.push(s);
+                frozen.push(s);
             }
         }
     }
-    builtin
+    let _ = store::session_tool_schemas_save(app, session_id, &frozen);
+    frozen
 }
 
 /// 请求前"裁剪"：只影响**这一次请求**，不写文件（codex 里叫 for_prompt）。
@@ -1453,27 +1462,36 @@ fn tool_msg(id: &str, text: &str) -> Value {
     json!({ "role": "tool", "tool_call_id": id, "content": text })
 }
 
-/// 工具结果进上下文前的预算：**留头又留尾**。
-/// 为什么这件事关系到钱：命中率 ≈ 1 − Δ/P，Δ 就是"上一轮之后新加的 token"，
-/// 而 Δ 的大头正是工具结果（波形、日志、目录列表、网页正文）。结果原样灌进历史，
-/// 一轮就能把命中率从 98% 压到 80% 以下 —— 省它比省任何东西都值。
-/// 全量不丢：需要细节就让模型用 output_read 读回。
+/// 工具结果进入上下文前的预算。
 ///
-/// 按 token 而不是字符计预算：中文一个字约 1 token，按字符封顶会让中文输出
-/// 比英文大一倍，命中率也就跟着掉。260 token 对 16K 左右的前缀约等于 1.6% 的 Δ，
-/// 是 98.5% 目标的边界值；头部给 60%，尾部给 40%。
-const TOOL_RESULT_TOKENS: usize = 260;
+/// 原来的 260-token 一刀切会把串口帧和示波器读数截在关键字段中间。这里按
+/// “工具类型 × 当前上下文大小”分配预算：小上下文模型收紧，大上下文模型留足
+/// 本工具真正要用的细节。无论最终预算多少，全文都会落盘并可 output_read 回查。
+#[derive(Debug, Clone, Copy)]
+struct ToolResultBudget {
+    tokens: usize,
+    head_pct: usize,
+    error_lines: bool,
+}
 
-/// 有些工具的结果本身就是"按需读的一段正文"，给它们单独的预算：
-/// output_read 也封顶（它按 offset/limit 分段读，不能把整份日志灌回来）；
-/// skill_read 要留足正文，否则模型只读到半条规则。
-fn tool_result_budget(tool: &str) -> Option<usize> {
+impl ToolResultBudget {
+    fn new(tokens: usize, head_pct: usize, error_lines: bool) -> Self {
+        Self { tokens, head_pct, error_lines }
+    }
+}
+
+fn tool_result_budget(tool: &str, context_tokens: usize) -> ToolResultBudget {
+    // 上下文压力系数：>=256K 用 100%，128K 约 88%，32K 约 62%，8K 降到 50%。
+    let pressure = (context_tokens as f64 / 256_000.0).clamp(0.5, 1.0);
+    let scaled = |base: usize| ((base as f64 * pressure).round() as usize).max(120);
     match tool {
-        // output_read 也封顶：它是"按需读一段"，不是把整份日志灌回上下文。
-        // 默认 limit 已收到 1200 字；大文件继续保持 offset 往后读。
-        "output_read" => Some(600),
-        "skill_read" => Some(1_600),
-        _ => Some(TOOL_RESULT_TOKENS),
+        "output_read" => ToolResultBudget::new(scaled(900), 70, false),
+        "skill_read" => ToolResultBudget::new(scaled(1_800), 80, false),
+        "link_read" | "port_read" => ToolResultBudget::new(scaled(720), 45, true),
+        "scope_measure" | "scope_waveform" => ToolResultBudget::new(scaled(520), 80, false),
+        other if other.starts_with("mcp__") => ToolResultBudget::new(scaled(480), 45, true),
+        // 逻辑分析仪本次不新增数据摘要，沿用原来的通用截断策略。
+        _ => ToolResultBudget::new(scaled(260), 60, false),
     }
 }
 
@@ -1485,12 +1503,8 @@ fn take_head_tokens(text: &str, budget: usize) -> String {
     for (i, c) in text.char_indices() {
         let a = ascii + usize::from(c.is_ascii());
         let w = wide + usize::from(!c.is_ascii());
-        if a.div_ceil(4) + w > budget {
-            break;
-        }
-        ascii = a;
-        wide = w;
-        end = i + c.len_utf8();
+        if a.div_ceil(4) + w > budget { break; }
+        ascii = a; wide = w; end = i + c.len_utf8();
     }
     text[..end].to_string()
 }
@@ -1503,44 +1517,63 @@ fn take_tail_tokens(text: &str, budget: usize) -> String {
     for (i, c) in text.char_indices().rev() {
         let a = ascii + usize::from(c.is_ascii());
         let w = wide + usize::from(!c.is_ascii());
-        if a.div_ceil(4) + w > budget {
-            break;
-        }
-        ascii = a;
-        wide = w;
-        start = i;
+        if a.div_ceil(4) + w > budget { break; }
+        ascii = a; wide = w; start = i;
     }
     text[start..].to_string()
 }
 
-/// 超长的工具结果：只把**头尾**放进上下文，全文落盘（opencode 也是这么干的：
-/// 截断 + 给路径 + 文件留 7 天），模型要看全量用 output_read 读。
-fn cap_tool_result(app: &AppHandle, tool: &str, text: &str) -> String {
-    let Some(budget) = tool_result_budget(tool) else {
-        return text.to_string();
-    };
-    let total = llm::estimate_tokens(text);
-    if total <= budget {
-        return text.to_string();
+/// 从长输出中间挑出真正影响调试结论的行：错误/超时/CRC/ACK/断言。
+fn take_signal_lines(text: &str, budget: usize) -> String {
+    if budget == 0 { return String::new(); }
+    let mut picked: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        let l = line.trim();
+        if l.is_empty() { continue; }
+        let low = l.to_ascii_lowercase();
+        let hit = ["error", "err", "fail", "failed", "timeout", "timed out", "crc",
+            "checksum", "nack", "nak", "reject", "panic", "assert", "exception",
+            "denied", "refused", "disconnect", "错误", "失败", "超时", "校验",
+            "异常", "拒绝", "断开"].iter().any(|k| low.contains(k));
+        if hit { picked.push(l); }
     }
+    if picked.is_empty() { return String::new(); }
+    let take_n = picked.len().min(12);
+    let start = picked.len() - take_n;
+    take_tail_tokens(&picked[start..].join("\n"), budget)
+}
+
+/// 超长的工具结果：按工具类型保留头/尾/关键错误行，全文落盘。
+fn cap_tool_result(app: &AppHandle, tool: &str, text: &str, context_tokens: usize) -> String {
+    let cfg = tool_result_budget(tool, context_tokens);
+    let total = llm::estimate_tokens(text);
+    if total <= cfg.tokens { return text.to_string(); }
     let saved = store::tool_output_write(app, tool, text).ok();
-    let head_budget = budget * 6 / 10;
-    let tail_budget = budget - head_budget;
+    let mut head_budget = cfg.tokens * cfg.head_pct / 100;
+    let mut tail_budget = cfg.tokens - head_budget;
+    let signal_budget = if cfg.error_lines { (cfg.tokens / 5).max(80) } else { 0 };
+    if signal_budget > 0 {
+        // 错误行从尾巴里拿额度，避免总预算悄悄膨胀。
+        tail_budget = tail_budget.saturating_sub(signal_budget).max(80);
+        head_budget = cfg.tokens.saturating_sub(tail_budget + signal_budget);
+    }
     let head = take_head_tokens(text, head_budget);
     let tail = take_tail_tokens(text, tail_budget);
+    let signals = take_signal_lines(text, signal_budget);
     let where_ = match &saved {
-        Some(p) => format!(
-            "全文已存到 {p}（可用 output_read 读；{} 天后自动清理）",
-            store::TOOL_OUTPUT_KEEP_DAYS
-        ),
+        Some(p) => format!("全文已存到 {p}（可用 output_read 分页读；{} 天后自动清理）", store::TOOL_OUTPUT_KEEP_DAYS),
         None => "全文没能落盘".to_string(),
     };
-    format!(
-        "{head}\n…（中间省略约 {} tokens，共约 {} tokens；{where_}。\n\
-         别整段重贴回对话 —— 那会让上下文和花费一起涨）…\n{tail}",
-        total.saturating_sub(budget),
-        total
-    )
+    let mut out = String::new();
+    out.push_str(&head);
+    out.push_str(&format!("\n…（中间省略约 {} tokens，共约 {} tokens；{where_}。不要整段重贴回对话）…\n", total.saturating_sub(cfg.tokens), total));
+    if !signals.trim().is_empty() {
+        out.push_str("关键错误 / 异常行：\n");
+        out.push_str(signals.trim());
+        out.push('\n');
+    }
+    out.push_str(&tail);
+    out
 }
 
 /// 把会话事件翻译成 OpenAI 的 messages。
@@ -2192,15 +2225,9 @@ fn run_turn(
         mcp::set_extra_roots(vec![ws.to_string_lossy().to_string()]);
         // 真实请求必须和统计面板用同一份冻结骨架：否则设置页关掉的工具、
         // 会话中途新增/变化的 MCP 工具都会混进来，前缀缓存和上下文账本都失真。
+        // 完整 schema 也按会话冻结。MCP 服务即使原地换了同名工具的 schema，
+        // 本会话发出去的 tools 前缀也保持不变；新工具/新版本到新会话再生效。
         let tools_schema = tools_schema_frozen(&app, &session_id);
-        let (mcp_schemas, mcp_refreshed) = mcp::all_tool_schemas_cached(&app);
-        if mcp_refreshed && !mcp_schemas.is_empty() {
-            emit(
-                &app,
-                "agent://log",
-                json!({ "text": format!("MCP 工具清单已刷新并缓存（{} 个）\n", mcp_schemas.len()) }),
-            );
-        }
         // 截断续写的次数（跨轮累计，别每轮清零 —— 不然就变成"无限续写"了）
         let mut trunc_continues = 0usize;
         for round in 0..MAX_ROUNDS {
@@ -2480,7 +2507,7 @@ fn run_turn(
                     Err(e) => (false, e),
                 };
                 CURRENT_STOP.with(|slot| *slot.borrow_mut() = None);
-                let text = cap_tool_result(&app, &call.name, &text);
+                let text = cap_tool_result(&app, &call.name, &text, provider.context_window as usize);
                 store::session_append(
                     &app,
                     &session_id,
@@ -2946,7 +2973,7 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
     let covered = store::summary_upto(&events).min(events.len());
     let summary = est(&store::summary_text(&events).unwrap_or_default());
 
-    let (mut user, mut assistant, mut tool, mut note) = (0usize, 0usize, 0usize, 0usize);
+    let (mut user, mut assistant, mut tool, mut note, mut mcp) = (0usize, 0usize, 0usize, 0usize, 0usize);
     let mut dropped = 0usize;
     for (i, e) in events.iter().enumerate() {
         let in_dropped = i < covered;
@@ -2966,6 +2993,8 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
         match e {
             Event::User { .. } => user += cost,
             Event::Assistant { .. } => assistant += cost,
+            Event::ToolCall { name, .. } if name.starts_with("mcp__") => mcp += cost,
+            Event::ToolResult { name, .. } if name.starts_with("mcp__") => mcp += cost,
             Event::ToolCall { .. } | Event::ToolResult { .. } => tool += cost,
             Event::Note { .. } | Event::State { .. } => note += cost,
             Event::Summary { .. } => {}
@@ -2977,7 +3006,7 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
     let ctx = prov.as_ref().map(|p| p.context_window).unwrap_or(0);
     let reserve = prov.as_ref().map(|p| p.reserve_output).unwrap_or(0);
     let budget = ctx.saturating_sub(reserve) as usize;
-    let used = sys + tools_tok + summary + user + assistant + tool;
+    let used = sys + tools_tok + summary + user + assistant + tool + mcp;
 
     json!({
         "system": sys,
@@ -2989,6 +3018,7 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
         "user": user,
         "assistant": assistant,
         "tool": tool,
+        "mcpTool": mcp,
         "note": note,
         "dropped": dropped,                 // 已被摘要顶掉、不再进请求的那部分
         "coveredEvents": covered,
@@ -3079,6 +3109,51 @@ mod tests {
         assert_eq!(kept.len(), messages.len());
     }
 
+    #[test]
+    fn tool_result_budget_scales_with_context_and_keeps_kind_specific_limits() {
+        let small = tool_result_budget("port_read", 8_000);
+        let large = tool_result_budget("port_read", 256_000);
+        assert!(large.tokens > small.tokens, "大上下文应允许保留更多工具结果");
+        assert!(small.error_lines && large.error_lines, "串口结果要优先保留错误行");
+
+        let scope = tool_result_budget("scope_measure", 128_000);
+        let mcp = tool_result_budget("mcp__filesystem__read_file", 128_000);
+        let la = tool_result_budget("la_read", 128_000);
+        assert!(scope.tokens > la.tokens, "示波器摘要应比通用工具多留余量");
+        assert!(mcp.tokens > la.tokens, "MCP 第三方结果应有独立预算");
+        assert!(mcp.error_lines, "MCP 长输出要保留错误行");
+        assert!(!la.error_lines, "本次不动逻辑分析仪的数据摘要策略");
+    }
+
+    #[test]
+    fn signal_lines_survive_long_output_truncation() {
+        let mut lines = Vec::new();
+        for i in 0..80 {
+            lines.push(format!("[{i:03}] RX normal frame {:04X}", i));
+        }
+        lines.insert(38, "[038] RX CRC mismatch seq=17".to_string());
+        lines.insert(64, "[064] RX timeout waiting for ACK".to_string());
+        let signals = take_signal_lines(&lines.join("\n"), 900);
+        assert!(signals.contains("CRC mismatch"), "CRC 错误不能被头尾截断吃掉");
+        assert!(signals.contains("timeout waiting for ACK"), "超时必须保留");
+        assert!(!signals.contains("normal frame 020"), "正常帧不应占关键行预算");
+    }
+
+    #[test]
+    fn full_tool_schema_snapshot_preserves_mcp_description_and_parameters() {
+        let first = json!([{ "type": "function", "function": {
+            "name": "mcp__demo__read", "description": "v1",
+            "parameters": {"type": "object", "properties": {}}
+        }}]);
+        let second = json!([{ "type": "function", "function": {
+            "name": "mcp__demo__read", "description": "v2",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}
+        }}]);
+        assert_ne!(first, second, "同名 MCP 工具升级时完整 schema 会变化");
+        // 会话保存的是第一次拿到的完整 JSON；旧实现只保存工具名，升级后会重建出 v2。
+        let encoded = serde_json::to_string(&first).unwrap();
+        assert!(encoded.contains("v1"));
+    }
     #[test]
     fn title_reply_accepts_plain_three_lines() {
         let got = parse_title_reply("RTSP 推流排查\n用户\n小卡").unwrap();

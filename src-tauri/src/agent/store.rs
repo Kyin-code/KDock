@@ -499,6 +499,23 @@ fn session_meta(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
     Ok(sessions_dir(app)?.join(format!("{}.meta.json", safe_id(id))))
 }
 
+fn session_tools_schema(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+    Ok(sessions_dir(app)?.join(format!("{}.tools.json", safe_id(id))))
+}
+
+/// 完整工具 schema 单独落一个会话文件：它只供请求与统计使用，不随 sessions_list
+/// 重复传给前端，避免会话多时刷新会话树被几十 KB 的 schema 拖慢。
+pub fn session_tool_schemas_get(app: &AppHandle, id: &str) -> Vec<serde_json::Value> {
+    session_tools_schema(app, id)
+        .ok()
+        .and_then(|p| read_json(&p))
+        .unwrap_or_default()
+}
+
+pub fn session_tool_schemas_save(app: &AppHandle, id: &str, schemas: &[serde_json::Value]) -> Result<(), String> {
+    write_json(&session_tools_schema(app, id)?, &schemas)
+}
+
 /// 只允许字母数字和 `-_.`，防止拿 id 拼路径时跑到外面去
 pub fn safe_id(id: &str) -> String {
     let s: String = id
@@ -679,6 +696,7 @@ pub fn session_read(app: &AppHandle, id: &str) -> Vec<Event> {
 pub fn session_delete(app: &AppHandle, id: &str) -> Result<(), String> {
     let _ = std::fs::remove_file(session_jsonl(app, id)?);
     let _ = std::fs::remove_file(session_meta(app, id)?);
+    let _ = std::fs::remove_file(session_tools_schema(app, id)?);
     Ok(())
 }
 

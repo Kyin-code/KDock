@@ -9058,7 +9058,8 @@ function agRenderBreakdown() {
     ["summary", "摘要", "#b388ff"],
     ["user", "用户消息", "#3ddc97"],
     ["assistant", "助手回复", "#ffc857"],
-    ["tool", "工具调用/结果", "#ff6b6b"],
+    ["tool", "内置工具结果", "#ff6b6b"],
+    ["mcpTool", "MCP 工具结果", "#d977ff"],
   ];
   const total = Math.max(1, (b.used || 0) + (b.free || 0));
   const bar = items
@@ -12033,7 +12034,7 @@ const EN = {
   "Token": "Tokens", "缓存命中": "Cache hit", "花费": "Cost",
   "输入": "in", "输出": "out", "补充": "Add",
   "上下文成分": "Context breakdown", "系统提示": "System", "工具定义": "Tools",
-  "摘要": "Summary", "用户消息": "User msgs", "助手回复": "Assistant", "工具调用/结果": "Tool calls/results",
+  "摘要": "Summary", "用户消息": "User msgs", "助手回复": "Assistant", "内置工具结果": "Built-in tool results", "MCP 工具结果": "MCP tool results",
   "剩余可用": "Free", "余额": "Balance", "已配置": "Configured", "接口格式": "API format",
   "本机估算": "local estimate", "模型上报": "provider-reported", "窗口预算": "budget",
   "已被摘要压掉": "compressed away by the summary", "回复完成时间": "replied at",
