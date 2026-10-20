@@ -140,7 +140,7 @@
 /* 关键：给元素设了 display 之后，hidden 属性会被盖掉（.workpane/.parampane 都中过招，
    表现为"所有页叠在一起、每块只有几十像素高"）。这条兜住所有 [hidden]。 */
 [hidden] { display: none !important; }
-html, body { height: 100%; }
+html, body { width: 100%; height: 100%; }
 body {
   /* 字体可在「设置 → 主题与配色」里换（--ui-font 由 JS 写；没设就用原来这一族） */
   font-family: var(--ui-font, "Segoe UI Variable", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif);
@@ -149,9 +149,16 @@ body {
   font-size: 13px; line-height: 1.5;
   color: hsl(var(--foreground));
   background: hsl(var(--background));   /* 类纯色：不要那两团光斑 */
-  display: flex; flex-direction: column; overflow: hidden;
+  display: block; overflow: hidden;
 }
 
+/* 页面缩放的根容器：zoom 会同时缩放文字、控件和间距；container-type 让响应式断点按缩放后的可用宽度生效。 */
+#ui-root {
+  width: 100%; height: 100%; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+  zoom: var(--ui-scale, 1);
+  container-type: size; container-name: app;
+}
 /* ── 分层 surface（层次靠底色差 + 柔和阴影，不靠粗边框） ── */
 .surface-shell, .surface-card, .surface-popover, .surface-control, .surface-sidebar {
   border: 1px solid hsl(var(--border) / 0.55);
@@ -284,16 +291,20 @@ html[data-fs="1"] .capbar { display: none; }
 .adbfound .btn { flex: 0 0 auto; height: 24px; padding: 0 9px; font-size: 11px; }
 /* ── 安卓 ADB 页：上面投屏、下面 shell 日志 ── */
 .adbpane { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
-.adbpane .adblog { flex: 0 1 28vh; min-height: 80px; max-height: 30vh; overflow: auto; }
+.adbpane > .trow { flex: 0 0 auto; min-height: 30px; }
+.adbpane .adblog { flex: 0 1 calc(var(--app-vh) * 28); min-height: 80px; max-height: calc(var(--app-vh) * 30); overflow: auto; }
 .adbpane .capview.grown { flex: 1 1 0; min-height: 120px; }
-@media (max-width: 980px) {
+@container app (max-width: 980px) {
   /* 小窗口优先保住投屏画面：工具栏压成一行，日志区限高，画面不被日志挤没 */
   .adbpane > .trow { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; }
-  .adbpane .adblog { flex: 0 0 12vh; min-height: 52px; max-height: 64px; }
+  .adbpane .adblog { flex: 0 0 calc(var(--app-vh) * 12); min-height: 52px; max-height: 64px; }
   .adbpane .capview.grown { min-height: 120px; }
 }
-@media (max-width: 760px) {
+@container app (max-width: 760px) {
   .adbpane .adblog { flex-basis: 52px; min-height: 52px; }
+  .adbpane #adb-mir-state,
+  .adbpane #adb-scrcpy,
+  .adbpane #adb-scrcpy-stop { display: none; }
   .adbpane .capview.grown { min-height: 100px; }
 }
 .placeholder {
@@ -302,7 +313,7 @@ html[data-fs="1"] .capbar { display: none; }
   border: 1px dashed hsl(var(--border)); border-radius: 12px;
 }
 .navitem > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 1200px) {
+@container app (max-width: 1200px) {
   .navitem > i { width: 14px; font-size: 13px; }
   .navitem { font-size: 12px; padding: 0 7px; gap: 7px; }
 }
@@ -568,7 +579,7 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 /* 「⋯」面板：把不常用的收进来，按分区竖排 */
 .panelbox {
   flex-direction: column; align-items: stretch; gap: 10px;
-  width: 470px; max-width: calc(100vw - 48px); max-height: 72vh; overflow: auto;
+  width: 470px; max-width: calc(calc(var(--app-vw) * 100) - 48px); max-height: calc(var(--app-vh) * 72); overflow: auto;
   white-space: normal; text-align: left;
 }
 /* 这一行本身在窗口下半部分，面板要**往上**开，否则会被窗口底边裁掉 */
@@ -627,13 +638,13 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
 /* 中窄窗（980~1180 布局 px）：**还是三栏**，只是把左右两栏收窄 —— 不往下面堆，
    这样窗口缩一点不会突然跳上去/跳下来（以前 1180 就跳，作者那套缩放下约等于物理 1480px）；
    用户自己拖过的宽度也尊重，只是在这段里加个上限，别把中间挤没。 */
-@media (max-width: 1180px) {
+@container app (max-width: 1180px) {
   .split { grid-template-columns: min(var(--nav-w, 152px), 15rem) 5px minmax(0, 1fr) 5px min(var(--param-w, 330px), 19rem); }
   .nav { padding: 6px 5px; }
 }
 
 /* 再窄（<=980）：右栏才整行挪到下面（这时三栏真的挤不下了） */
-@media (max-width: 980px) {
+@container app (max-width: 980px) {
   /* 窄窗口：左栏 + 工作区一行，参数区整行挪到下面。
      原来只改了列数没改行数，5 个子项会被挤成两行，而 grid-template-rows 只定义了第一行，
      结果中间工作区塌成 0 高（整个界面看着就"空"了）。 */
@@ -641,18 +652,18 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
     /* 这里必须用 --nav-w：JS 拖左栏写的就是它（以前写 --left-w，这个变量没人写，
        结果 ≤1180px 的窗口里拖左栏完全没反应） */
     grid-template-columns: var(--nav-w, 300px) 6px minmax(0, 1fr);
-    grid-template-rows: minmax(45vh, 1fr) auto;   /* 工作区（工具主体）至少留 45vh，别被下面那条挤没 */
+    grid-template-rows: minmax(45cqh, 1fr) auto;   /* 工作区（工具主体）至少留 calc(var(--app-vh) * 45)，别被下面那条挤没 */
   }
   .split > #gutter-r { display: none; }
-  /* 参数区这一行的高度：原来给到 42vh（600px 高的窗口就是 252px），把工作区挤到只剩 276px ——
+  /* 参数区这一行的高度：原来给到 calc(var(--app-vh) * 42)（600px 高的窗口就是 252px），把工作区挤到只剩 276px ——
      传输卡自己就要 255px 打底（头 32 + 工具行 81 + 输入 132 + 收口 10），输出区直接没地方，
-     最后输入框下半截被切到窗口外面（实测 card 276 / 溢出 75px）。压到 30vh 之后 900x600 实测是
+     最后输入框下半截被切到窗口外面（实测 card 276 / 溢出 75px）。压到 calc(var(--app-vh) * 30) 之后 900x600 实测是
      工作区 348px、参数区 180px（它自己会滚，内容 343px）：输出区停在 96px 下限、输入区 129px，
      两边都完整，谁都不裁。 */
-  /* 高度由 JS 按当前这一栏的内容量给（--param-max，夹在 30~55vh 之间）：内容少就矮、内容多就高一点，
-     免得所有页都固定 30vh、内容多的那几页非得在小窗口里滚。 */
-  .split > .params { grid-column: 1 / -1; grid-row: 2; max-height: min(45vh, var(--param-max, 30vh)); }
-  /* 这条横向很宽、只有 30vh 高：表单类面板折成两栏，一屏能看全；表格 / 列表 / 对话类保持单栏 */
+  /* 高度由 JS 按当前这一栏的内容量给（--param-max，夹在 30~calc(var(--app-vh) * 55) 之间）：内容少就矮、内容多就高一点，
+     免得所有页都固定 calc(var(--app-vh) * 30)、内容多的那几页非得在小窗口里滚。 */
+  .split > .params { grid-column: 1 / -1; grid-row: 2; max-height: min(45cqh, var(--param-max, 30cqh)); }
+  /* 这条横向很宽、只有 calc(var(--app-vh) * 30) 高：表单类面板折成两栏，一屏能看全；表格 / 列表 / 对话类保持单栏 */
   .params .parampane:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]):not([data-param="usb"]) {
     display: block; column-width: 20rem; column-gap: 18px;   /* 按宽度自动 2~3 栏，一屏能看全 */
     column-fill: balance;
@@ -673,7 +684,7 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
 /* 只有真的切到"参数区在下面"（<=980）时才用 3 列；
    以前写的是 1000 —— 于是 980~1000 这段里 .split 只有 3 列，而 split 有 5 个子项，
    参数区和右拖动条被挤进"隐式行"，实测工作区高度直接变 0、参数区只有 24px 宽。 */
-@media (max-width: 980px) {
+@container app (max-width: 980px) {
   .split { grid-template-columns: var(--nav-w, 260px) 6px minmax(0, 1fr); padding: 0 8px 8px; }
   .topbar { padding: 0 10px; height: 42px; }
   #status-chip { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -693,7 +704,7 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
 /* 右栏那块要占满整列（不然只按 min-height 160px 显示，对话页会很矮） */
 .parampane.kbpane { flex: 1 1 auto; min-height: 0; }
 /* 右栏本身是"按内容高度滚动"的容器，普通 flex:1 在这里长不起来 —— 直接按视口算一个稳的高 */
-.parampane.kbpane #kb-chat-host { flex: 1 1 auto; height: max(160px, calc(100vh - 300px)); }
+.parampane.kbpane #kb-chat-host { flex: 1 1 auto; height: max(160px, calc(calc(var(--app-vh) * 100) - 300px)); }
 /* 地址栏：一行只放"标签 + 输入框"（宽度全给输入框），按钮另起一行；
    整行高度按 1.5 倍放大，好点也好认。 */
 .kbaddrrow { padding: 8px 0 10px; gap: 10px; }
@@ -887,7 +898,7 @@ html.kb-focus[data-tab="kb"] .parampane.kbpane #kb-chat-host { height: auto; fle
 .ladevchans label { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; color: hsl(var(--muted-foreground)); }
 .ladevchans input { margin: 0; }
 #la-dev-state { color: hsl(var(--muted-foreground)); }
-@media (max-width: 900px) {
+@container app (max-width: 900px) {
   .ladevbar > .lb { display: none; }   /* 窄窗只留控件本身，别让一行撑成四行 */
 }
 .ladecrow input.num { width: 5.5rem; }
@@ -1216,7 +1227,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 /* ============ 传输页「更多」面板：分区 + 每行一句说明 ============ */
 .morebox {
   display: flex; flex-direction: column; gap: 4px;
-  min-width: 460px; max-width: min(560px, 92vw);
+  min-width: 460px; max-width: min(560px, calc(var(--app-vw) * 92));
   padding: 12px 14px 14px;
 }
 .morebox .msec { padding: 8px 0; border-top: 1px solid var(--surface-line-soft); }
@@ -1249,7 +1260,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   display: flex; align-items: center; justify-content: center;
 }
 .kdbox {
-  min-width: 380px; max-width: min(560px, 92vw); max-height: 80vh; overflow: auto;
+  min-width: 380px; max-width: min(560px, calc(var(--app-vw) * 92)); max-height: calc(var(--app-vh) * 80); overflow: auto;
   background: var(--surface-1); border: 1px solid var(--surface-line);
   border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow-2);
   display: flex; flex-direction: column; gap: 10px;
@@ -1263,7 +1274,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   border: 1px solid var(--surface-line); background: var(--surface-2);
 }
 .kdacts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
-.kdlist { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow: auto; }
+.kdlist { display: flex; flex-direction: column; gap: 6px; max-height: calc(var(--app-vh) * 46); overflow: auto; }
 .kditem {
   display: flex; gap: 8px; align-items: flex-start; cursor: pointer;
   padding: 8px 10px; border-radius: 10px;
@@ -1337,7 +1348,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   display: flex; flex-direction: column; align-items: center; gap: 10px;
 }
 .agwelcome .agwelcome-title {
-  font-size: clamp(24px, 3.2vw, 38px); font-weight: 680; letter-spacing: -0.7px;
+  font-size: clamp(24px, calc(var(--app-vw) * 3.2), 38px); font-weight: 680; letter-spacing: -0.7px;
   color: hsl(var(--foreground));
 }
 .agwelcome .agwelcome-sub { font-size: 13px; color: hsl(var(--muted-foreground)); }
@@ -1626,7 +1637,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .aghistwrap { position: relative; display: flex; align-items: center; gap: 4px; }
 .agpop {
   position: absolute; left: 0; top: 32px; z-index: 40;
-  width: 340px; max-height: 62vh; overflow: auto; padding: 10px;
+  width: 340px; max-height: calc(var(--app-vh) * 62); overflow: auto; padding: 10px;
   background: var(--surface-overlay); border: 1px solid var(--surface-line);
   border-radius: 12px; box-shadow: var(--shadow-2);
 }
@@ -1638,7 +1649,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   background: rgba(8, 12, 22, 0.45);
 }
 .modalbox {
-  width: min(880px, 92vw); height: min(640px, 88vh);
+  width: min(880px, calc(var(--app-vw) * 92)); height: min(640px, calc(var(--app-vh) * 88));
   display: flex; flex-direction: column;
   background: var(--surface-1); border: 1px solid var(--surface-line);
   border-radius: 14px; box-shadow: var(--shadow-2); overflow: hidden;
@@ -1662,8 +1673,39 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .modalcontent { overflow: auto; padding: 12px 16px 20px; }
 .setpane .cardtitle:first-child { margin-top: 2px; }
 
+/* 窄窗口里的设置弹窗：侧栏改成横向标签，把宽度完整让给内容 */
+@container app (max-width: 700px) {
+  #settings-modal .modalbody {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  #settings-modal .modalnav {
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--surface-line);
+  }
+  #settings-modal .modaltab {
+    flex: 0 0 auto;
+    height: 30px;
+    padding: 0 10px;
+    white-space: nowrap;
+  }
+  #settings-modal .modalcontent { min-width: 0; }
+}
+/* 设置内容里的长路径 / 长说明不能把弹窗撑宽 */
+.modalcontent .lb,
+.modalcontent code,
+.modalcontent .hint { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.modalcontent .trow > * { min-width: 0; }
+.modalcontent .agentlist .row .tag {
+  max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* 上下文帮助 */
-.helpbox { width: min(980px, 94vw); height: min(760px, 90vh); }
+.helpbox { width: min(980px, calc(var(--app-vw) * 94)); height: min(760px, calc(var(--app-vh) * 90)); }
 .helpnav { gap: 3px; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
 .helpnav .helpnav-page {
   margin: 9px 8px 3px; font-size: 10.5px; letter-spacing: .75px;
@@ -1727,7 +1769,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .tb-chip:hover { background: hsl(var(--primary) / 0.16); border-color: hsl(var(--primary) / 0.35); color: hsl(var(--foreground)); }
 .tbs-ico { font-size: 13px; line-height: 1; }
 
-.modalbox { width: min(1020px, 94vw); height: min(760px, 90vh); }
+.modalbox { width: min(1020px, calc(var(--app-vw) * 94)); height: min(760px, calc(var(--app-vh) * 90)); }
 .modalhead { padding: 10px 12px 10px 16px; }
 .modaltitle { font-size: 14px; }
 .modalbody { grid-template-columns: 186px minmax(0, 1fr); }
@@ -1889,7 +1931,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
    第五轮：自绘确认框、消息导航条（右边、不盖正文）、连续工具调用分组
    ========================================================================== */
 .dlgbox {
-  width: min(440px, 88vw); display: flex; flex-direction: column; gap: 10px;
+  width: min(440px, calc(var(--app-vw) * 88)); display: flex; flex-direction: column; gap: 10px;
   padding: 14px 16px 12px; background: var(--surface-1);
   border: 1px solid var(--surface-line); border-radius: 14px; box-shadow: var(--shadow-2);
 }
@@ -2140,13 +2182,13 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--surface-line); border-radius: 6px;
   background: var(--surface-1); color: hsl(var(--muted-foreground));
-  font-family: Consolas, "Cascadia Mono", monospace; font-size: clamp(12px, 1.8vh, 20px); font-weight: 600;
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: clamp(12px, calc(var(--app-vh) * 1.8), 20px); font-weight: 600;
 }
 .bitboard .bit:hover { border-color: hsl(var(--primary) / 0.6); background: var(--surface-2); }
 .bitboard .bit.on { background: hsl(var(--primary)); border-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
 .bitboard .bit.hot { outline: 2px solid hsl(var(--warning) / 0.45); outline-offset: 1px; }
 .bitidxgrp { display: grid; grid-template-columns: repeat(4, minmax(16px, 1fr)); gap: 2px; }
-.bitidxgrp .bi { text-align: center; font-size: clamp(9px, 1.2vh, 12px); color: hsl(var(--muted-foreground)); font-family: Consolas, monospace; }
+.bitidxgrp .bi { text-align: center; font-size: clamp(9px, calc(var(--app-vh) * 1.2), 12px); color: hsl(var(--muted-foreground)); font-family: Consolas, monospace; }
 .bithint { font-size: 11px; color: hsl(var(--muted-foreground)); margin: 6px 0 10px; line-height: 1.5; }
 
 /* 计算器这一页：每个功能块一张卡，别挤在一起 */
@@ -2221,7 +2263,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 /* 添加模型：models.dev 精简目录 */
 .mdgrid {
   display: grid; grid-template-columns: minmax(9rem, 0.34fr) minmax(0, 1fr);
-  gap: 8px; height: min(360px, 42vh); min-height: 220px;
+  gap: 8px; height: min(360px, calc(var(--app-vh) * 42)); min-height: 220px;
 }
 .mdproviders, .mdmodels {
   overflow: auto; border: 1px solid var(--surface-line); border-radius: 10px;
@@ -2251,8 +2293,8 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .mdpick-title { font-size: 13px; font-weight: 650; }
 .mdpick .field { margin-top: 8px; }
-@media (max-width: 720px) {
-  .mdgrid { grid-template-columns: 1fr; height: min(520px, 52vh); }
+@container app (max-width: 720px) {
+  .mdgrid { grid-template-columns: 1fr; height: min(520px, calc(var(--app-vh) * 52)); }
   .mdproviders { max-height: 150px; }
 }
 
@@ -2279,10 +2321,10 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 /* ==========================================================================
    指令表编辑器弹窗
    ========================================================================== */
-.kdbox.cmdedit { width: min(760px, 94vw); max-width: min(760px, 94vw); }
+.kdbox.cmdedit { width: min(760px, calc(var(--app-vw) * 94)); max-width: min(760px, calc(var(--app-vw) * 94)); }
 .cmdedit .hint { margin: 0; }
 .cmdedit .cmdbar { gap: 8px; }
-.cmdlistscroll { max-height: 58vh; overflow: auto; display: flex; flex-direction: column; gap: 3px; }
+.cmdlistscroll { max-height: calc(var(--app-vh) * 58); overflow: auto; display: flex; flex-direction: column; gap: 3px; }
 .cmdeditgrp {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 9px; margin-top: 6px;
@@ -2335,7 +2377,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
    ========================================================================== */
 .kdtip {
   position: fixed; z-index: 1000; pointer-events: none;
-  max-width: min(420px, 70vw);
+  max-width: min(420px, calc(var(--app-vw) * 70));
   padding: 4px 9px; border-radius: 8px;
   background: var(--surface-overlay);
   border: 1px solid var(--surface-line);
@@ -2399,7 +2441,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 /* ---------- 窄窗（≤1180px）：这两条必须写在文件最后 ----------
    媒体查询不加权重，同选择器谁在后面谁赢；"卡片里输出区 min-height:96px" 在文件靠后，
    所以窄窗这条放前面等于没写（实测：900x600 + 中间栏 420 时，卡片差 4px 装不下，收口条被顶出去）。 */
-@media (max-width: 1180px) {
+@container app (max-width: 1180px) {
   /* 输出区下限再低一点：先让它让位，输入区就能保住完整高度（98px 里装得下 textarea 的 44px） */
   .shellcard .outpane { min-height: 64px; }
 }
@@ -2445,7 +2487,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
    真放不下给省略号，绝不出框。 */
 .calcgrid button {
   font-family: inherit;                        /* 别再钉 Consolas：中文标签宽度不可控会把列顶宽 */
-  font-size: clamp(11px, 1.15vw, 17px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: clamp(11px, calc(var(--app-vw) * 1.15), 17px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   line-height: 1; padding: 0; min-height: 0;
   /* height 必须显式覆盖：上面那条老规则写死了 38px，行高压到 16px 时按钮就溢出到下一行外面（
      "退格键在外面"就是这么来的）。auto = 跟着格子走。 */
@@ -2453,7 +2495,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   min-width: 0;                                /* 默认 auto 会让长标签把整列顶宽，右边几列被挤出卡片 */
   max-width: 100%;
 }
-.calcgrid button.base, .calcgrid button.bit, .calcgrid button.hi { font-size: clamp(8.5px, 0.85vw, 13px); }
+.calcgrid button.base, .calcgrid button.bit, .calcgrid button.hi { font-size: clamp(8.5px, calc(var(--app-vw) * 0.85), 13px); }
 /* 最上面那排"进制显示 / 浮点"：单独高亮，别跟数字键长一样 */
 .calcgrid button.hi {
   background: hsl(var(--primary) / 0.12); border-color: hsl(var(--primary) / 0.35);
@@ -2482,7 +2524,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .calcprog .bithint { margin: 0; }
 
 /* 历史记录：标记过的行高亮 + ☆/★ */
-.calchist { max-height: 46vh; }
+.calchist { max-height: calc(var(--app-vh) * 46); }
 .calchist .r .star {
   flex: 0 0 auto; width: 16px; padding: 0; border: none; background: transparent; cursor: pointer;
   color: hsl(var(--muted-foreground) / 0.55); font-size: 12px; line-height: 1;
@@ -2640,13 +2682,13 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .calcexprctl .lb { font-size: 15px; flex: 0 0 auto; }
 .calcexprctl .calcexprin {
-  flex: 1 1 auto; height: clamp(3.1rem, 6.5vh, 4.2rem);  /* 32px → 50px 起 */
-  font-size: clamp(1.65rem, 3.2vh, 2.1rem);              /* 13.5px → 26px 起（2 倍） */
+  flex: 1 1 auto; height: clamp(3.1rem, calc(var(--app-vh) * 6.5), 4.2rem);  /* 32px → 50px 起 */
+  font-size: clamp(1.65rem, calc(var(--app-vh) * 3.2), 2.1rem);              /* 13.5px → 26px 起（2 倍） */
   padding: 0 0.9rem;
 }
 .calcexprctl #calc-go {
-  flex: 0 0 auto; height: clamp(3.1rem, 6.5vh, 4.2rem);  /* 跟输入框一样高 */
-  min-width: clamp(4.6rem, 9vw, 6rem); font-size: clamp(1.9rem, 4vh, 2.5rem);
+  flex: 0 0 auto; height: clamp(3.1rem, calc(var(--app-vh) * 6.5), 4.2rem);  /* 跟输入框一样高 */
+  min-width: clamp(4.6rem, calc(var(--app-vw) * 9), 6rem); font-size: clamp(1.9rem, calc(var(--app-vh) * 4), 2.5rem);
   font-weight: 600; padding: 0 1.2rem; border-radius: 12px;
 }
 
@@ -2742,28 +2784,28 @@ input.calcout {
 }
 /* ☰ 那个把五个菜单合起来的弹层：竖着排会超出窗口高度，分两栏 + 限高滚动 */
 .tb-menu-more .tb-menu-pop {
-  min-width: min(23rem, calc(100vw - 24px));
-  max-width: min(45rem, calc(100vw - 24px));
-  max-height: min(72vh, 620px); overflow: auto; columns: 2; column-gap: 8px;
+  min-width: min(23rem, calc(calc(var(--app-vw) * 100) - 24px));
+  max-width: min(45rem, calc(calc(var(--app-vw) * 100) - 24px));
+  max-height: min(calc(var(--app-vh) * 72), 620px); overflow: auto; columns: 2; column-gap: 8px;
 }
 .tb-menu-group { break-inside: avoid; }
-@media (max-width: 560px) { .tb-menu-more .tb-menu-pop { columns: 1; } }
+@container app (max-width: 560px) { .tb-menu-more .tb-menu-pop { columns: 1; } }
 /* 参数区折叠（标题栏那个按钮切 html.noparam）：列数要跟着从 5 条变 3 条，否则空轨道还在占宽度 */
 html.noparam .split { grid-template-columns: var(--nav-w, 152px) 5px minmax(0, 1fr); }
 html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; }
 #tb-params.on { color: hsl(var(--primary)); border-color: hsl(var(--primary) / 0.5); background: hsl(var(--primary) / 0.12); }
 
-@media (max-width: 1120px) {
+@container app (max-width: 1120px) {
   .tb-name { display: none; }                                   /* 只留 K 那个方块 logo */
   .tb-menu-root:not(.tb-menu-more) { display: none; }           /* 五个菜单折进 ☰ */
   .tb-menu-more { display: block; }
 }
-@media (max-width: 980px) {
+@container app (max-width: 980px) {
   .tb-page { display: none; }
   #status-chip { flex: 0 1 auto; min-width: 0; max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   html.noparam .split { grid-template-columns: var(--nav-w, 300px) 6px minmax(0, 1fr); }
 }
-@media (max-width: 860px) {
+@container app (max-width: 860px) {
   #tb-theme-btn { display: none; }
   /* 左导航：纯图标条 */
   .split { --nav-w: 54px; grid-template-columns: var(--nav-w) 6px minmax(0, 1fr); }
@@ -2782,7 +2824,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   html.railopen .navsub { display: flex; }
   html.railopen .navrow .navmini { display: inline-flex; }
 }
-@media (max-width: 720px) {
+@container app (max-width: 720px) {
   #tb-lang, #tb-settings { display: none; }                     /* 语言 / 设置：设置弹窗里都有 */
   .tb-right { gap: 5px; }
   #status-chip {
@@ -2809,7 +2851,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
        高级参数）收起来。
    收起来的东西不是没了：清屏 / 暂停 / 自动滚动 / 时间戳 / 行号 / 方向 / 显示用 HEX / 发送用 HEX
    都在标题栏「编辑」菜单里（窄窗下菜单折进 ☰，一样点得到）；窗口拉宽就全部回来。 */
-@media (max-width: 980px) {
+@container app (max-width: 980px) {
   .workpane.shell .toolbar { display: none; }
   .workpane.shell .inpane { display: flex; align-items: flex-start; gap: 8px; }
   .workpane.shell .inpane .trow { flex: 0 0 auto; margin: 0; padding-top: 7px; }
@@ -2847,7 +2889,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   .params .parampane[data-param="link"] .field:has(label[for="baud-custom-chk"]) { display: none; }
 }
 /* 再窄一档：把这条连接带的几个下拉再收一收，700px 上下也能一行塞下（不用横向滚） */
-@media (max-width: 760px) {
+@container app (max-width: 760px) {
   .params .parampane[data-param="link"]:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]) { gap: 6px; }
   /* 连标签一起收掉（下拉/输入框里的内容自己说明自己，悬停有提示），这样 700px 上下也能一行塞下 */
   .params .parampane[data-param="link"] .field > label { display: none; }
@@ -2860,7 +2902,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
 /* ============ 窄窗：升级页 / 烧录页的参数区也压平 ============
    跟传输页一条思路：整行挪到下面之后别再摊成好几栏，压成"一到两行"。
    收起来的东西（工具路径、命令预览、各种长提示）在宽窗口里都还在。 */
-@media (max-width: 980px) {
+@container app (max-width: 980px) {
   .params .parampane[data-param="upgrade"]:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]),
   .params .parampane[data-param="flash"]:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]) {
     display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 12px;
@@ -2897,7 +2939,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   .params .parampane[data-param="upgrade"] .state,
   .params .parampane[data-param="flash"] .state { flex: 0 0 auto; }
 }
-@media (max-width: 760px) {
+@container app (max-width: 760px) {
   .params .parampane[data-param="upgrade"] .field > label,
   .params .parampane[data-param="flash"] .field > label { display: none; }   /* 跟传输页一样：窄了连标签也收 */
   .params .parampane[data-param="upgrade"] input,
@@ -2910,7 +2952,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
      （这些在「算式」输入框里照样能打：<< >> & | ^ ~ ** %）；
    · 32 位板缩成 8 位（只留最低那个字节，位号 7..0 看得更清）。
    宽窗口一个字都不动。 */
-@media (max-width: 980px) {
+@container app (max-width: 980px) {
   #calc-pad [data-act="op:<<"],
   #calc-pad [data-act="op:>>"],
   #calc-pad [data-act="op:&"],
@@ -2934,7 +2976,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
 }
 
 /* ============ 窄窗第四轮：shell 面板（传输/升级共用）+ 文件管理 + 命令表 + 计算器 ============ */
-@media (max-width: 980px) {
+@container app (max-width: 980px) {
   /* 1) 发送那一行连"文本 / HEX"一起收掉（要切 HEX 走标题栏「编辑」菜单，窄窗菜单在 ☰ 里） */
   .workpane.shell .inpane { display: block; }
   .workpane.shell .inpane .trow { display: none; }
@@ -2981,7 +3023,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   .calcexprline { flex: 0 1 auto; min-width: 0; max-width: 46%; text-align: left; }
   .calcbigline { flex: 1 1 auto; min-width: 0; }
 }
-@media (max-width: 760px) {
+@container app (max-width: 760px) {
   .params .parampane[data-param="files"] .field > label { display: none; }
   .params .parampane[data-param="files"] input { max-width: 8rem; }
 }
@@ -2996,7 +3038,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
    · 中间：那一行工具（停下就刷新面板 / 刷新面板 / 清空）收掉，只留「调试控制台 + 状态点」；
      侧栏四块（断点 / 调用栈 / 局部变量 / 寄存器）从右侧 330px 挪到下面，改成一行两列；
    · 下面那条参数区：跟传输/烧录一样压平（分组标题收起、控件横排）。 */
-@media (max-width: 980px) {
+@container app (max-width: 980px) {
   .workpane.dbgpane > .trow:first-child > label.chk,
   .workpane.dbgpane > .trow:first-child > #dbg-refresh,
   .workpane.dbgpane > .trow:first-child > #dbg-clear { display: none; }
@@ -3025,7 +3067,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   }
   .params .parampane[data-param="debug"] input { max-width: 12rem; }
 }
-@media (max-width: 760px) {
+@container app (max-width: 760px) {
   .params .parampane[data-param="debug"] .field > label { display: none; }
   .params .parampane[data-param="debug"] input { max-width: 8.5rem; }
   .dbgpane .dbgside { grid-template-columns: minmax(0, 1fr); max-height: 40%; }
@@ -3071,7 +3113,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
 .envfilters .seg label { font-size: 12px; }
 
 /* 窄窗：环境页参数区也压平（跟传输/烧录一套），卡片一列 */
-@media (max-width: 980px) {
+@container app (max-width: 980px) {
   .envgrid { grid-template-columns: minmax(0, 1fr); }
   .params .parampane[data-param="env"]:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]) {
     display: block; column-width: 20rem; column-gap: 16px;
@@ -3135,12 +3177,12 @@ html[data-tab="usb"] .params {
 .usbrow.usbcom .nm { font-family: Consolas, "Cascadia Mono", monospace; font-weight: 600; }
 .usbrow.problem .nm { color: hsl(var(--destructive)); }
 
-@media (max-width: 1180px) and (min-width: 981px) {
+@container app (max-width: 1180px) and (min-width: 981px) {
   html[data-tab="usb"] .split {
     grid-template-columns: min(var(--nav-w, 152px), 15rem) 5px minmax(0, 1fr) 5px max(var(--param-w, 420px), 360px);
   }
 }
-@media (max-width: 980px) {
+@container app (max-width: 980px) {
   /* 窄窗：工具栏各压成一行（需要时横向滚动），把高度留给原始数据 */
   .usbpane > .trow { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; }
   .usbpane #usb-cap-target { min-width: 9rem; max-width: 15rem; }
@@ -3150,10 +3192,10 @@ html[data-tab="usb"] .params {
   .usbpane #usb-cap-open { display: none; }
   html[data-tab="usb"] .split {
     grid-template-columns: var(--nav-w, 260px) 6px minmax(0, 1fr);
-    grid-template-rows: minmax(45vh, 1fr) auto;
+    grid-template-rows: minmax(45cqh, 1fr) auto;
   }
   html[data-tab="usb"] .split > #gutter-r { display: none; }
-  html[data-tab="usb"] .split > .params { max-height: min(48vh, var(--param-max, 36vh)); }
+  html[data-tab="usb"] .split > .params { max-height: min(48cqh, var(--param-max, 36cqh)); }
   html[data-tab="usb"] .params .parampane[data-param="usb"] {
     display: flex; flex-direction: column; column-width: auto; flex: 1; min-height: 0;
   }

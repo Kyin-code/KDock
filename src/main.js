@@ -1455,13 +1455,16 @@ const WORK_OF = {
 /** 窄窗时参数区是「整行挪到下面」的一条：按当前这张面板的内容量决定它多高（30~55vh 之间），
     内容少就不占地方、内容多也别逼着用户在小窗口里滚。宽窗（右栏模式）下这条不起作用。 */
 function syncParamStrip() {
-  if (!window.matchMedia('(max-width: 1180px)').matches) { document.documentElement.style.removeProperty('--param-max'); return; }
+  const scale = uiScaleValue();
+  const layoutW = window.innerWidth / scale;
+  if (layoutW > 1180) { document.documentElement.style.removeProperty('--param-max'); return; }
   const box = document.querySelector('.params');
   if (!box) return;
   const pane = [...box.querySelectorAll('[data-param]')].find((p) => !p.hidden);
   if (!pane) { document.documentElement.style.removeProperty('--param-max'); return; }
   const need = pane.scrollHeight + 24;                    // 上下留点缝
-  const lo = Math.round(innerHeight * 0.3), hi = Math.round(innerHeight * 0.45);   // 上限跟 CSS 的 45vh 一致：工作区得留得住
+  const layoutH = root ? root.clientHeight : window.innerHeight / scale;
+  const lo = Math.round(layoutH * 0.3), hi = Math.round(layoutH * 0.45);   // 上限跟容器查询里的 45cqh 一致：工作区得留得住
   document.documentElement.style.setProperty('--param-max', Math.min(hi, Math.max(lo, need)) + 'px');
 }
 
@@ -6579,8 +6582,8 @@ function applyTheme(mode) {
 }
 
 // ── 字号 / 放大 / 字体 ─────────────────────────────────────────────
-// 缩放用 WebView 自己的"页面缩放"：它会**叠加**在系统显示缩放（DPI）之上，所以控件、文本、字号
-// 一起按倍数变化，而不是只动文本。字号是其中一档（和放大倍数相乘），字体只替换正文那一族。
+// 字号是 UI 逻辑尺寸的一档，放大倍数是第二档；两者相乘后写到 #ui-root 的 zoom，
+// 所以控件、文字、间距和布局会一起变化，而不是只改字号。
 const UI_FONT_STEPS = [["small", "小", 0.9], ["normal", "标准", 1.0], ["large", "大", 1.12], ["xlarge", "特大", 1.25]];
 const UI_ZOOM_STEPS = [["0.8", "80%"], ["0.9", "90%"], ["1", "100%"], ["1.1", "110%"], ["1.25", "125%"], ["1.4", "140%"], ["1.6", "160%"]];
 const UI_FONTS = [
@@ -6596,11 +6599,19 @@ function uiScaleValue() {
   return Math.min(3, Math.max(0.5, Math.round(f * z * 1000) / 1000));
 }
 function applyUiScale() {
-  invoke("window_set_zoom", { scale: uiScaleValue() }).catch(() => {});
+  const scale = uiScaleValue();
+  const root = document.documentElement;
+  // 用 CSS zoom 缩放整个工作台，而不是 WebView2 的页面 zoom：后者在当前 WebView2 版本里
+  // 返回成功但不会改变布局。container query 会按缩放后的逻辑宽度触发响应式断点。
+  root.style.setProperty("--ui-scale", String(scale));
+  root.style.setProperty("--app-vw", (window.innerWidth / scale / 100) + "px");
+  root.style.setProperty("--app-vh", (window.innerHeight / scale / 100) + "px");
+  root.dataset.uiScale = scale.toFixed(3);
   const id = localStorage.getItem("kdock_ui_font") || "system";
   const fam = (UI_FONTS.find((x) => x[0] === id) || UI_FONTS[0])[2];
-  if (fam) document.documentElement.style.setProperty("--ui-font", fam);
-  else document.documentElement.style.removeProperty("--ui-font");
+  if (fam) root.style.setProperty("--ui-font", fam);
+  else root.style.removeProperty("--ui-font");
+  syncParamStrip();
 }
 function syncUiScaleControls() {
   const set = (id, v) => { const s = $(id); if (s && v != null) s.value = String(v); };
