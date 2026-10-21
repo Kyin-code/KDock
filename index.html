@@ -298,10 +298,10 @@
               <div class="cardtitle">公网 IP 归属</div>
               <div id="netip-summary" class="aginfo"></div>
               <p class="hint">顶栏只显示国家/地区，不显示实际公网 IP；软件也不会持久化公网 IP。
-                只有网卡地址、默认路由或代理配置发生变化时才访问 ipinfo.io。</p>
+                由 Windows 网络变化事件唤醒，仅在网卡、默认路由或代理配置变化后探测；界面始终先显示缓存。</p>
               <div class="cardtitle">请求预算</div>
               <div id="netip-budget" class="aginfo"></div>
-              <p class="hint">每日总计最多 100 次，跨软件重启累计；达到上限后当天不再访问 ipinfo.io。</p>
+              <p class="hint">每日总计最多 100 次，跨软件重启累计；达到上限后当天不再进行归属地探测。</p>
               <div class="cardtitle">触发与重试</div>
               <div class="trow">
                 <label class="lb" for="netip-retry">断网重试次数</label>
@@ -315,7 +315,7 @@
                 <span class="grow"></span>
                 <span id="netip-state" class="lb"></span>
               </div>
-              <p class="hint">重试次数最多 10 次；防抖只延迟真正请求，本地网络指纹检查不会消耗 ipinfo 次数。</p>
+              <p class="hint">重试次数最多 10 次，仅用于手动刷新；自动探测采用 5s / 15s / 60s / 180s / 300s 指数退避，本地网络检查不消耗额度。</p>
             </div>
             <div class="setpane" data-setpane="cache" hidden>
               <div class="cardtitle">持久化数据（缓存）

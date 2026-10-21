@@ -773,7 +773,15 @@ function netipPaint(st) {
       `<div class="agctx-bar"><i style="width:${pct}%;background:hsl(var(--primary));display:block;height:100%"></i></div>` +
       (b.blocked ? `<div class="sub" style="color:hsl(var(--destructive))">${en("今日额度已用完，明天自动恢复。")}</div>` : "");
   }
-  if (b.lastError && $("netip-state")) $("netip-state").textContent = b.lastError;
+  const stateEl = $("netip-state");
+  if (stateEl) {
+    if (b.refreshing) stateEl.textContent = en("后台更新中…");
+    else if (b.nextRetryAt && Number(b.nextRetryAt) > Date.now()) {
+      const sec = Math.max(1, Math.ceil((Number(b.nextRetryAt) - Date.now()) / 1000));
+      stateEl.textContent = `${en("等待重试")} · ${sec}s`;
+    } else if (b.lastError) stateEl.textContent = b.lastError;
+    else if (b.updatedAt) stateEl.textContent = en("已刷新");
+  }
   if ($("netip-retry") && b.retryCount != null) $("netip-retry").value = String(b.retryCount);
   if ($("netip-debounce") && b.debounceMs != null) $("netip-debounce").value = String(b.debounceMs);
 }
@@ -12151,6 +12159,7 @@ const EN = {
   "当前：": "Current: ", "未知": "Unknown", "公网 IP 归属地": "Public IP location", "归属地": "Location", "城市 / 地区": "City / region",
   "网络组织": "Network organization", "最后更新": "Last updated", "今日已请求": "Requests today",
   "剩余": "remaining", "统计日期": "Statistics date", "今日额度已用完，明天自动恢复。": "Today's quota is exhausted; it resets tomorrow.",
+  "后台更新中…": "Refreshing in background…", "等待重试": "Retry in",
   "摘要": "Summary", "用户消息": "User msgs", "助手回复": "Assistant", "内置工具结果": "Built-in tool results", "MCP 工具结果": "MCP tool results",
   "剩余可用": "Free", "余额": "Balance", "已配置": "Configured", "接口格式": "API format",
   "本机估算": "local estimate", "模型上报": "provider-reported", "窗口预算": "budget",
