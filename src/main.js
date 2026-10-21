@@ -1523,7 +1523,10 @@ const WORK_OF = {
     内容少就不占地方、内容多也别逼着用户在小窗口里滚。宽窗（右栏模式）下这条不起作用。 */
 function syncParamStrip() {
   const scale = uiScaleValue();
-  const layoutW = window.innerWidth / scale;
+  // 用 UI 根节点的逻辑尺寸，而不是窗口像素 / scale；前者在 CSS zoom 和系统 DPI
+  // 叠加时才是真正参与布局的尺寸。
+  const root = document.getElementById("ui-root");
+  const layoutW = root ? root.clientWidth : window.innerWidth / scale;
   if (layoutW > 1180) { document.documentElement.style.removeProperty('--param-max'); return; }
   const box = document.querySelector('.params');
   if (!box) return;
