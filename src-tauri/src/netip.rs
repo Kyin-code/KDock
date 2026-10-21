@@ -29,6 +29,7 @@ static MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Location {
     pub country: String,
+    #[serde(default)]
     pub label: String,
     pub city: String,
     pub region: String,
@@ -95,37 +96,13 @@ fn save(app: &AppHandle, s: &Stored) -> Result<(), String> {
     std::fs::rename(&tmp, &path).map_err(|e| format!("改名到 {} 失败: {e}", path.display()))
 }
 
-fn country_label(code: &str) -> String {
-    match code.trim().to_ascii_uppercase().as_str() {
-        "CN" => "中国", "HK" => "中国香港", "MO" => "中国澳门", "TW" => "中国台湾",
-        "US" => "美国", "JP" => "日本", "KR" => "韩国", "SG" => "新加坡",
-        "MY" => "马来西亚", "TH" => "泰国", "VN" => "越南", "PH" => "菲律宾",
-        "ID" => "印度尼西亚", "IN" => "印度", "AU" => "澳大利亚", "NZ" => "新西兰",
-        "GB" => "英国", "IE" => "爱尔兰", "DE" => "德国", "FR" => "法国",
-        "NL" => "荷兰", "BE" => "比利时", "CH" => "瑞士", "AT" => "奥地利",
-        "SE" => "瑞典", "NO" => "挪威", "DK" => "丹麦", "FI" => "芬兰",
-        "PL" => "波兰", "CZ" => "捷克", "ES" => "西班牙", "PT" => "葡萄牙",
-        "IT" => "意大利", "GR" => "希腊", "TR" => "土耳其", "RU" => "俄罗斯",
-        "UA" => "乌克兰", "CA" => "加拿大", "MX" => "墨西哥", "BR" => "巴西",
-        "AR" => "阿根廷", "CL" => "智利", "ZA" => "南非", "AE" => "阿联酋",
-        "SA" => "沙特阿拉伯", "IL" => "以色列", "EG" => "埃及", "NG" => "尼日利亚",
-        "PK" => "巴基斯坦", "BD" => "孟加拉国", "LK" => "斯里兰卡", "NP" => "尼泊尔",
-        "KH" => "柬埔寨", "LA" => "老挝", "MM" => "缅甸", "MN" => "蒙古",
-        "KZ" => "哈萨克斯坦", "IR" => "伊朗", "IQ" => "伊拉克", "QA" => "卡塔尔",
-        "KW" => "科威特", "BH" => "巴林", "OM" => "阿曼", "JO" => "约旦",
-        "LB" => "黎巴嫩", "HU" => "匈牙利", "RO" => "罗马尼亚", "BG" => "保加利亚",
-        "HR" => "克罗地亚", "RS" => "塞尔维亚", "SK" => "斯洛伐克", "SI" => "斯洛文尼亚",
-        "" => "未知",
-        other => other,
-    }.to_string()
-}
-
 fn status_value(s: &Stored) -> Value {
     let remaining = DAILY_LIMIT.saturating_sub(s.requests);
     let loc = s.location.as_ref();
     json!({
         "country": loc.map(|l| l.country.clone()).unwrap_or_default(),
-        "label": loc.map(|l| l.label.clone()).unwrap_or_else(|| "未知".into()),
+        // label 仅为旧版 netip.json 的兼容字段；界面按 country code 本地化，不再依赖它。
+        "label": loc.map(|l| l.label.clone()).unwrap_or_default(),
         "city": loc.map(|l| l.city.clone()).unwrap_or_default(),
         "region": loc.map(|l| l.region.clone()).unwrap_or_default(),
         "org": loc.map(|l| l.org.clone()).unwrap_or_default(),
@@ -216,7 +193,8 @@ fn request_ipinfo() -> Result<Location, String> {
     let v = resp.into_json::<Value>().map_err(|e| format!("ipinfo 响应不是 JSON: {e}"))?;
     let country = v.get("country").and_then(|x| x.as_str()).unwrap_or("").to_string();
     Ok(Location {
-        label: country_label(&country), country,
+        // 只持久化稳定的国家代码；显示名称由前端按当前语言生成。
+        label: String::new(), country,
         city: v.get("city").and_then(|x| x.as_str()).unwrap_or("").to_string(),
         region: v.get("region").and_then(|x| x.as_str()).unwrap_or("").to_string(),
         org: v.get("org").and_then(|x| x.as_str()).unwrap_or("").to_string(),
@@ -308,21 +286,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn country_labels_cover_expected_regions() {
-        assert_eq!(country_label("CN"), "中国");
-        assert_eq!(country_label("hk"), "中国香港");
-        assert_eq!(country_label("US"), "美国");
-        assert_eq!(country_label(""), "未知");
-    }
-
-    #[test]
     fn status_never_contains_public_ip_field() {
         let s = Stored {
-            location: Some(Location { country: "HK".into(), label: "中国香港".into(), city: "Hong Kong".into(), region: "HK".into(), org: "ISP".into() }),
+            location: Some(Location { country: "HK".into(), label: String::new(), city: "Hong Kong".into(), region: "HK".into(), org: "ISP".into() }),
             ..Stored::default()
         };
         let text = serde_json::to_string(&status_value(&s)).unwrap();
-        assert!(text.contains("中国香港"));
+        assert!(text.contains("\"country\":\"HK\""));
         assert!(!text.contains("\"ip\""));
     }
 }

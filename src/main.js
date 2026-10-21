@@ -715,10 +715,37 @@ function chipSet(text, ok) {
 
 /* ── 公网 IP 归属地：后端只回国家/地区，顶栏绝不显示或保存公网 IP ── */
 let agNetip = null;
+// 国家/地区名不进后端持久化：只保存 country code，按当前界面语言现场生成。
+// 这样切语言时不会残留上一次语言的国家名，也不会把中文写死进 netip.json。
+const NETIP_REGION_ZH = {
+  CN: "中国", HK: "中国香港", MO: "中国澳门", TW: "中国台湾",
+  US: "美国", JP: "日本", KR: "韩国", SG: "新加坡", MY: "马来西亚", TH: "泰国",
+  VN: "越南", PH: "菲律宾", ID: "印度尼西亚", IN: "印度", AU: "澳大利亚", NZ: "新西兰",
+  GB: "英国", IE: "爱尔兰", DE: "德国", FR: "法国", NL: "荷兰", BE: "比利时", CH: "瑞士",
+  AT: "奥地利", SE: "瑞典", NO: "挪威", DK: "丹麦", FI: "芬兰", PL: "波兰", CZ: "捷克",
+  ES: "西班牙", PT: "葡萄牙", IT: "意大利", GR: "希腊", TR: "土耳其", RU: "俄罗斯", UA: "乌克兰",
+  CA: "加拿大", MX: "墨西哥", BR: "巴西", AR: "阿根廷", CL: "智利", ZA: "南非", AE: "阿联酋",
+  SA: "沙特阿拉伯", IL: "以色列", EG: "埃及", NG: "尼日利亚", PK: "巴基斯坦", BD: "孟加拉国",
+  LK: "斯里兰卡", NP: "尼泊尔", KH: "柬埔寨", LA: "老挝", MM: "缅甸", MN: "蒙古",
+  KZ: "哈萨克斯坦", IR: "伊朗", IQ: "伊拉克", QA: "卡塔尔", KW: "科威特", BH: "巴林",
+  OM: "阿曼", JO: "约旦", LB: "黎巴嫩", HU: "匈牙利", RO: "罗马尼亚", BG: "保加利亚",
+  HR: "克罗地亚", RS: "塞尔维亚", SK: "斯洛伐克", SI: "斯洛文尼亚",
+};
+function netipCountryLabel(code) {
+  const cc = String(code || "").trim().toUpperCase();
+  if (!cc) return en("未知");
+  if (LANG === "zh") return NETIP_REGION_ZH[cc] || cc;
+  try {
+    const names = new Intl.DisplayNames(["en"], { type: "region" });
+    return names.of(cc) || cc;
+  } catch (_) {
+    return cc;
+  }
+}
 function netipPaint(st) {
   if (st) agNetip = st;
   const b = agNetip || {};
-  const label = b.label || "未知";
+  const label = netipCountryLabel(b.country);
   const chip = $("ip-location-chip");
   if (chip) {
     chip.textContent = `${en("当前：")}${label}`;
@@ -733,7 +760,7 @@ function netipPaint(st) {
       `<div class="row"><span class="k">${en("归属地")}</span><span class="v">${label}</span></div>` +
       `<div class="row"><span class="k">${en("城市 / 地区")}</span><span class="v">${[b.city, b.region].filter(Boolean).join(" / ") || "—"}</span></div>` +
       `<div class="row"><span class="k">${en("网络组织")}</span><span class="v wrap">${b.org || "—"}</span></div>` +
-      `<div class="row"><span class="k">${en("最后更新")}</span><span class="v">${b.updatedAt ? new Date(b.updatedAt).toLocaleString() : "—"}</span></div>`;
+      `<div class="row"><span class="k">${en("最后更新")}</span><span class="v">${b.updatedAt ? new Date(b.updatedAt).toLocaleString(LANG === "zh" ? "zh-CN" : "en-US") : "—"}</span></div>`;
   }
   const budget = $("netip-budget");
   if (budget) {
@@ -840,15 +867,15 @@ async function doClose() {
   }
 }
 
+/** 发送与输出共用同一个“显示”模式：不再维护第二套 文本/HEX 开关。 */
 function txMode() {
-  return document.querySelector('input[name="tx-mode"]:checked').value;
+  return rxMode === "hex" ? "hex" : "text";
 }
-
 async function doSend() {
   const payload = $("tx").value;
   const txm = txMode();
   const le = $("line-ending").value;
-  if (!payload && txm === "text") return toast("没有可发送的内容");
+  if (!payload.trim()) return toast(en("没有可发送的内容"));
   try {
     // 后端返回真正写到线上的字节，TX 行直接用它渲染
     const ack = await invoke("write_data", { payload, mode: txm, lineEnding: le });
@@ -868,7 +895,7 @@ async function doSend() {
         sel.appendChild(o);
       });
     }
-    toast(`已发送 ${ack.bytes} B`);
+    toast(`${en("已发送")} ${ack.bytes} B`);
   } catch (e) {
     toast(String(e));
   }
@@ -3870,7 +3897,7 @@ function bindOutHead() {
 /** 输入区能长到多高：整张卡的高度刨掉"固定的那几块"，再给输出区留出它的最小高度。
  *  OUT_MIN 必须跟 styles.css 里 .shellcard .outpane 的 min-height 一致（96px）—— 对不上的话，
  *  窗口一矮 / 工具行一换行，输出区就会被挤到 min-height 以下、整张卡溢出、输入框被裁。 */
-const INPANE_MIN = 98;      // 跟 styles.css 里 .shellcard .inpane 的 min-height 一致
+const INPANE_MIN = 72;      // 跟 styles.css 里 .shellcard .inpane.txpane 的 min-height 一致
 const OUTPANE_MIN = 96;      // 跟 .shellcard .outpane 的 min-height 一致（窄窗那个 64 是更松的下限）
 function inpaneMaxH(box) {
   const card = box.parentElement;
@@ -3896,7 +3923,7 @@ function bindInpaneResize() {
     if (cur > max) box.style.height = max + "px";
   };
   const saved = Number(localStorage.getItem("kdock_inpane_h") || 0);
-  if (saved > 60) box.style.height = saved + "px";
+  if (saved > 50) box.style.height = saved + "px";
   clamp();
   if (window.ResizeObserver) new ResizeObserver(clamp).observe(box.parentElement);
   else window.addEventListener("resize", clamp);
@@ -11995,6 +12022,8 @@ const EN = {
   "搜型号，如 stm32f4 / nrf52 / rp2040": "Search a model, e.g. stm32f4 / nrf52 / rp2040",
   "搜索命令 / 说明": "Search command / description",
   "文本直接输入；HEX 形如 41 54 0D 0A（Enter 发送 / Shift+Enter 换行）": "Plain text, or HEX like 41 54 0D 0A (Enter to send / Shift+Enter for newline)",
+  "文本直接输入（Enter 发送 / Shift+Enter 换行）": "Plain text (Enter to send / Shift+Enter for newline)",
+  "HEX 模式：41 54 0D 0A（Enter 发送 / Shift+Enter 换行）": "HEX mode: 41 54 0D 0A (Enter to send / Shift+Enter for newline)",
   "本机目录": "Local folder", "没找到就手动选 openocd.exe": "Pick openocd.exe manually if not found",
   "目录或 .fw 地址": "Directory or .fw path", "要发送的内容": "Payload",
   "选文件后自动填": "Filled after picking a file", "默认目录": "Default folder",
@@ -12109,7 +12138,7 @@ const EN = {
   "出口：成功 / 失败(发送错) / 超时(等不到)。": "Exits: ok / fail(send error) / timeout(no data).",
   // 编排：期待匹配
   // 设置弹窗
-  "设置": "Settings", "通用": "General", "主题与配色": "Theme & accent",
+  "设置": "Settings", "通用": "General", "主题与配色": "Theme & accent", "网络与代理": "Network & proxy",
   "模型与供应商": "Model & provider", "关于与数据": "About & data", "界面": "Appearance",
   "行为": "Behaviour", "数据目录": "Data folder", "主题": "Theme", "配色": "Accent",
   "agent 能用的工具": "Tools the agent can use", "当前": "Current",
@@ -12119,7 +12148,7 @@ const EN = {
   "Token": "Tokens", "缓存命中": "Cache hit", "花费": "Cost",
   "输入": "in", "输出": "out", "补充": "Add",
   "上下文成分": "Context breakdown", "系统提示": "System", "工具定义": "Tools",
-  "当前：": "Current: ", "公网 IP 归属地": "Public IP location", "归属地": "Location", "城市 / 地区": "City / region",
+  "当前：": "Current: ", "未知": "Unknown", "公网 IP 归属地": "Public IP location", "归属地": "Location", "城市 / 地区": "City / region",
   "网络组织": "Network organization", "最后更新": "Last updated", "今日已请求": "Requests today",
   "剩余": "remaining", "统计日期": "Statistics date", "今日额度已用完，明天自动恢复。": "Today's quota is exhausted; it resets tomorrow.",
   "摘要": "Summary", "用户消息": "User msgs", "助手回复": "Assistant", "内置工具结果": "Built-in tool results", "MCP 工具结果": "MCP tool results",
@@ -12392,7 +12421,7 @@ const EN = {
   "J-Link 器件库：没找到 JLinkDevices.xml": "J-Link device DB: JLinkDevices.xml not found",
   "还没有器件库，点右上角「↻ 刷新」。": "No device DB yet — click ↻ Refresh.",
   " 行": " lines", " 字": " chars", " 通道 / ": " channels / ", " 点": " points",
-  "接收": "RX", "发送": "TX", "字符": "chars", "日志": "log",
+  "接收": "Receive", "发送": "Transmit", "字符": "chars", "日志": "log",
   "（还没有技能）": "(no skills)",
   "监听中（等对端接入）": "listening (waiting for peer)", "监听中": "listening",
 
@@ -13066,8 +13095,8 @@ const EN = {
   // ── 补齐（英文模式全站扫漏出来的：调试页 / 设置 / 数据计算 / 快捷发送 / 拖动手柄 等）──
   "清空输出": "Clear output",
   "行号（序号）": "Line numbers",
-  "显示用 HEX": "Display as HEX",
-  "发送用 HEX": "Send as HEX",
+  "显示 / 发送用 HEX": "Display / send as HEX",
+  "没有可发送的内容": "Nothing to send", "已发送": "Sent",
   "设置…": "Settings…",
   "✎ 编辑": "✎ Edit",
   "打开快捷发送编辑器：新增 / 改 / 删": "Open the quick-send editor: add / edit / delete",
@@ -13697,6 +13726,7 @@ function applyLang(lang) {
     safe(outHeadRefresh, "outHeadRefresh");
     safe(outClockTick, "outClockTick");
     safe(sqRender, "sqRender");            // 画布节点正文 + 右侧配置面板，都是运行时拼的
+    safe(netipPaint, "netipPaint"); // 顶栏归属地 / 设置摘要按当前语言重画
     safe(buildCmdTable, "buildCmdTable");  // 命令表（说明文字按当前语言重画）
     safe(agRenderTree, "agRenderTree");    // 工作区/会话树里的固定文案
     safe(agRenderInfo, "agRenderInfo");    // Agent 信息面板
@@ -13771,8 +13801,7 @@ function tbMenuDefs() {
       { t: "时间戳", chk: () => $("show-ts") && $("show-ts").checked, run: () => tbToggle("show-ts") },
       { t: "行号（序号）", chk: () => $("show-no") && $("show-no").checked, run: () => tbToggle("show-no") },
       { t: "方向标记", chk: () => $("show-dir") && $("show-dir").checked, run: () => tbToggle("show-dir") },
-      { t: "显示用 HEX", chk: () => rxMode === "hex", run: () => tbSetRadio("rx-mode", rxMode === "hex" ? "text" : "hex") },
-      { t: "发送用 HEX", chk: () => txMode() === "hex", run: () => tbSetRadio("tx-mode", txMode() === "hex" ? "text" : "hex") },
+      { t: "显示 / 发送用 HEX", chk: () => rxMode === "hex", run: () => tbSetRadio("rx-mode", rxMode === "hex" ? "text" : "hex") },
     ]},
     { label: "视图", items: [
       ...TB_PAGES.map((p) => ({ t: p[1], run: () => tbShow(p[0]) })),
@@ -14088,13 +14117,13 @@ async function main() {
     r.addEventListener("change", () => {
       rxMode = r.value;
       redrawRx();
+      // 显示模式也是发送模式：这里同步输入提示，避免用户以为还要再切一次。
+      if ($("tx")) $("tx").placeholder = rxMode === "hex"
+        ? en("HEX 模式：41 54 0D 0A（Enter 发送 / Shift+Enter 换行）")
+        : en("文本直接输入（Enter 发送 / Shift+Enter 换行）");
     })
   );
-  document.querySelectorAll('input[name="tx-mode"]').forEach((r) =>
-    r.addEventListener("change", () => {
-      $("tx").placeholder = txMode() === "hex" ? "HEX 模式：41 54 0D 0A" : "文本模式直接输入";
-    })
-  );
+
 
   // 会话：保存/加载/导出 —— 都用系统原生对话框选路径（目录输入框只当"默认目录"）
   const sessFile = (name) => joinFile($("sess-dir").value.trim() || $("fl-save-dir").value.trim(), name);

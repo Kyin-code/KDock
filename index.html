@@ -672,17 +672,9 @@
             </div>
           </div>
 
-          <div class="inpane">
-            <div class="trow">
-              <span class="lb">发送</span>
-              <div class="seg">
-                <label><input type="radio" name="tx-mode" value="text" checked /> 文本</label>
-                <label><input type="radio" name="tx-mode" value="hex" /> HEX</label>
-              </div>
-              <span class="grow"></span>
-              <button id="send" class="btn primary">发送</button>
-            </div>
+          <div class="inpane txpane">
             <textarea id="tx" rows="3" placeholder="文本直接输入；HEX 形如 41 54 0D 0A（Enter 发送 / Shift+Enter 换行）"></textarea>
+            <button id="send" class="btn primary send-inline" title="发送输入框内容">发送</button>
           </div>
           <div class="outfoot"></div>
           </div>

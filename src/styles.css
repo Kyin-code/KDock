@@ -1186,12 +1186,13 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   flex: 0 0 auto; height: 10px; border-radius: 0;
   background: var(--surface-1); border-top: 1px solid var(--surface-line);
 }
-/* 输入区：给它的下限是"装得下自己"的那个高度（98px = 上下内边距 20 + 工具行 26 + 间距 6 +
-   textarea 最小 44），不是随便一个 78px —— 78px 装不下里面的内容，窗口一挤输入框下半截就被裁掉。
-   空间不够时它才让位（flex:0 1 auto），顺序是：先输出区（flex-basis 0 的那个），再输入区，
-   但都停在装得下自己的高度上，谁的内容都不会被切。拖动上限见 main.js 的 inpaneMaxH()。 */
-.shellcard .inpane { flex: 0 1 auto; min-height: 98px; }
-.shellcard .inpane > #tx { flex: 1 1 auto; min-height: 44px; }
+/* 输入区：发送按钮与 textarea 同一行；TX 模式完全跟随上方“显示”的文本/HEX。 */
+.shellcard .inpane.txpane {
+  flex: 0 1 auto; min-height: 72px; display: flex; flex-direction: row; align-items: stretch; gap: 8px;
+  padding: 8px 10px;
+}
+.shellcard .inpane.txpane > #tx { flex: 1 1 auto; min-width: 0; min-height: 44px; }
+.shellcard .inpane.txpane > #send { flex: 0 0 auto; align-self: stretch; min-width: 72px; }
 
 /* ==========================================================================
    最终布局：左 / 中 / 右 三栏拼成一整块
@@ -2851,20 +2852,13 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
 /* ============ 传输页在"参数区已挪到下面"的窄窗状态下再省一层 ============
    同事反馈：小窗口里中间那两行工具（显示 / 行尾 / 历史 / 循环 / 清屏 / 时间戳 / 序号 / 方向 / 更多，
    再加"发送"那一行）纯属占地；右边那条"连接"整行挪下来之后又太高（快捷发送 + 高级太占地方）。
-   所以缩到这一档时：
-     · 中间：上面那行工具整行收掉；"发送"那一行只留「文本 / HEX」这个开关（贴到输入框左边，不占一整行）；
-     · 下面：连接那条压成一行 —— 方式 / 串口 / 波特率 / 自定义 / 连接·断开，其余（统计、快捷发送、
-       高级参数）收起来。
-   收起来的东西不是没了：清屏 / 暂停 / 自动滚动 / 时间戳 / 行号 / 方向 / 显示用 HEX / 发送用 HEX
+   所以缩到这一档时：上面那行工具收掉；输入框和发送按钮仍保持同一行，TX 模式跟随“显示”。
+   收起来的东西不是没了：清屏 / 暂停 / 自动滚动 / 时间戳 / 行号 / 方向 / 显示（同时也是发送）HEX
    都在标题栏「编辑」菜单里（窄窗下菜单折进 ☰，一样点得到）；窗口拉宽就全部回来。 */
 @container app (max-width: 980px) {
-  .workpane.shell .toolbar { display: none; }
-  .workpane.shell .inpane { display: flex; align-items: flex-start; gap: 8px; }
-  .workpane.shell .inpane .trow { flex: 0 0 auto; margin: 0; padding-top: 7px; }
-  .workpane.shell .inpane .trow > .lb,
-  .workpane.shell .inpane .trow > .grow,
-  .workpane.shell .inpane .trow > #send { display: none; }
-  .workpane.shell .inpane #tx { flex: 1 1 auto; min-width: 0; }
+  .workpane.shell .inpane.txpane { display: flex; align-items: stretch; gap: 8px; }
+  .workpane.shell .inpane.txpane > #tx { flex: 1 1 auto; min-width: 0; }
+  .workpane.shell .inpane.txpane > #send { flex: 0 0 auto; }
 
   .params .parampane[data-param="link"]:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]) {
     display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 10px;
@@ -2983,10 +2977,10 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
 
 /* ============ 窄窗第四轮：shell 面板（传输/升级共用）+ 文件管理 + 命令表 + 计算器 ============ */
 @container app (max-width: 980px) {
-  /* 1) 发送那一行连"文本 / HEX"一起收掉（要切 HEX 走标题栏「编辑」菜单，窄窗菜单在 ☰ 里） */
-  .workpane.shell .inpane { display: block; }
-  .workpane.shell .inpane .trow { display: none; }
-  .workpane.shell .inpane #tx { width: 100%; }
+  /* 1) 发送框与右侧按钮保持一行；文本/HEX 统一由上方“显示”控制。 */
+  .workpane.shell .inpane.txpane { display: flex; flex-direction: row; align-items: stretch; }
+  .workpane.shell .inpane.txpane > #tx { width: auto; flex: 1 1 auto; }
+  .workpane.shell .inpane:not(.txpane) #tx { width: 100%; }
 
   /* 2) 文件管理页：跟升级 / 烧录一样压平成一到几行 */
   .params .parampane[data-param="files"]:not([data-param="cmds"]):not([data-param="agent"]):not([data-param="kb"]):not([data-param="batch"]) {
