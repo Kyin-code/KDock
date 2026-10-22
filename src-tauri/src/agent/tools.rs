@@ -2174,7 +2174,12 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
             store::tool_output_read(ctx.app, &path, off, lim)
         }
         "skill_list" => {
-            let list = store::skills_list(ctx.app);
+            // 只报**启用**的：skills_list() 会把 skills-off/ 里的也扫出来（enabled=false），
+            // 那是给界面画开关用的。技能关闭 = 用户明确表示"别用它"，这里再报出来等于把开关架空。
+            let list: Vec<_> = store::skills_list(ctx.app)
+                .into_iter()
+                .filter(|s| s.enabled)
+                .collect();
             let local = store::workspace_skills(&ctx.workspace);
             let mut out = String::new();
             out.push_str("全局技能（用户级）：\n");

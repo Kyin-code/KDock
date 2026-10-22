@@ -18,6 +18,35 @@
 ## [未发布]
 
 ### 新增
+- **环境配置扩到 60+ 项**，补上嵌入式常用但之前缺的一大块：
+  · **Rust 工具链**：rustup + cargo（winget 一键）、**MSVC 生成工具**（Build Tools 2022，用 `--override`
+    显式带上 VCTools 工作负载，否则装完没有 `cl.exe`）、**probe-rs**（`cargo install probe-rs-tools`）。
+  · **嵌入式 GUI**：**LVGL**（Clone `lv_port_win_visual_studio`，`--recursive` 拉 lvgl / freetype 子模块 ——
+    只 clone 主仓库会得到空壳工程）、SquareLine Studio、SEGGER AppWizard（emWin）、TouchGFX Designer、
+    NXP GUI Guider。后四个都要账号/填表，只给官网入口。
+  · **MQTT**：Eclipse Mosquitto（本机 broker）、MQTTX（MQTT 5.0 客户端）、MQTT Explorer（主题树）、
+    paho-mqtt（Python 库）。
+  · **CAN / CAN FD / Modbus**：PEAK PCAN 驱动与工具（PCAN-View + PCAN-Basic，含 CAN FD）、
+    Cangaroo（candleLight 开源分析仪）、python-can + cantools（DBC 解析）、ModbusTool（主站 / 从站）、
+    pymodbus。
+- **两种新的检测 / 安装方式**：`Kind::Pip`（`pip list --format=freeze` 全量一次取回再内存查，
+  比逐个 `pip show` 少十几次进程启动；实测 101 个包 0.53 s，装完会同时失效这份缓存）；
+  `Plan::GitSub`（`git clone --recursive`，给 LVGL 那种带嵌套子模块的工程）与
+  `Plan::Cargo`（`cargo install --locked`，没装 Rust 时给明确提示而不是报命令不存在）。
+- **清单防回归测试**：组件 id 唯一、每条至少一个检测规则、pip 规则必须有包名、只能手动装的必须给官网地址。
+
+### 修复
+- **停用的技能对 agent 真正不可见**：`skill_list` 不再把 `skills-off/` 里的技能报出来（那个工具原来直接
+  全量打印，等于把开关架空）；`skill_dir_of_in()` 读正文时也不再回退到 `skills-off/` —— 猜得到 slug 也读不到。
+  读不到时回一句「不存在或已被用户停用，请让用户在设置里启用」，而不是静默失败。
+  界面编辑器走的 `skill_dir_of()` 保持原样（必须能打开停用的技能，否则关掉就改不回来了）。
+  新增测试 `agent_skill_lookup_never_falls_back_to_disabled_dir` 守住这条边界。
+- **Agent 欢迎页改为只认消息**：原来还看输入框有没有内容，打字打到一半欢迎页就消失、删光又冒回来。
+- **第一轮对话消息顺序错位**：`agSend()` 原来是「先 `invoke` 再上屏」，而后端一进 `run_turn` 就推
+  `agent://state`、前端 `agThinkEnsure()` 直接 append 到对话底部 —— 等 Promise 回来时思考块已经在上面了，
+  于是第一轮稳定看到「agent 在上、用户提问在下」。改成**先上屏再发送**，失败回滚那一条；
+  「边跑边补充」的分支也改成只给已有气泡打 `queued` 标记，不会再出现两条。
+
 - **ADB 已配对设备列表**：打开 ADB 页会自动扫描 `adb mdns services`，把已配对/可连接的无线调试设备列出来，带「已配对 / 已连接 / 直接连接」状态和一键连接/断开；配对 GUID 会记住，地址/端口变化后仍能识别，不需要重复配对。
 - **首次配对折叠**：手动地址、配对码和连接按钮收进「首次配对 / 手动连接（只做一次）」，重复配对错误会提示直接连接。
 - **scrcpy 说明**：scrcpy 使用自己的 SDL 外置窗口；KDock 内置抓屏仍是内嵌的抓屏轮询，按钮和提示已明确标注。

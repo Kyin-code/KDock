@@ -21,6 +21,7 @@ pub enum Kind {
     Reg,      // 注册表值（路径, 值名）
     Device,   // 当前已正常枚举的 USB/PnP 设备（按 Instance ID 或友好名匹配）
     PyOcd,    // 通过 pyOCD 枚举探针（跨厂商、跨 VID/PID）
+    Pip,      // `python -m pip show <包名>` 能不能查到（纯库类组件没有自己的 exe）
     #[allow(dead_code)]
     Manual,   // 只能人工确认（例如某个需要登录/授权下载的工具）
 }
@@ -57,6 +58,10 @@ const fn device(a: &'static str) -> Rule {
 const fn pyocd_probe() -> Rule {
     Rule { kind: Kind::PyOcd, a: "", b: "", ver_args: "", ver_match: "" }
 }
+/// pip 包检测：a = 包名（用 `python -m pip show` 查）
+const fn pip(a: &'static str) -> Rule {
+    Rule { kind: Kind::Pip, a, b: "", ver_args: "", ver_match: "" }
+}
 
 #[derive(Clone, Copy)]
 #[allow(dead_code)]   // Download/Zip 先留着：把安装包丢进 drivers\<id>\ 走的是内置那条路，这两个以后接直链用
@@ -71,10 +76,18 @@ pub enum Plan {
     FwSet { base: &'static str, files: &'static [(&'static str, &'static str)] },
     /// 装 Python 包（python -m pip install --user --upgrade）
     Pip { packages: &'static str },
+    /// cargo install --locked（Rust 写的命令行工具：probe-rs 这类），需要先装 Rust
+    Cargo { package: &'static str },
     /// git clone 到安装目录（RT-Thread Env）
     Git { repo: &'static str },
+    /// git clone 并递归拉 submodule（LVGL 的 Windows 模拟器工程就是这么组织的：
+    /// lvgl / freetype 都在 .gitmodules 里，只 clone 主仓库会得到一个空壳工程）
+    GitSub { repo: &'static str },
     /// 走 winget（微软包管理器）：有官方包的直接一键，不用我们猜直链
     Winget { id: &'static str },
+    /// 走 winget，但安装器的参数要自己给（`--override`）。
+    /// 典型是 VS Build Tools：必须显式指定 C++ 工作负载，否则装完没有 cl.exe / link.exe。
+    WingetOverride { id: &'static str, extra: &'static str },
     /// 走 Windows 可选组件（DISM Add-Capability）：OpenSSH 这类系统自带组件的正道
     /// service 非空 = 装完把服务设成自动并启动；post = 装完要补跑的命令
     Capability { cap: &'static str, service: &'static str, post: &'static [&'static str] },
@@ -905,6 +918,267 @@ pub static ITEMS: &[Item] = &[
         ],
         plan: Plan::Manual,
     },
+    // ── Rust 工具链（嵌入式 Rust：probe-rs / embassy / RTIC 都要它）──
+    Item {
+        id: "rustup",
+        name: "Rust 工具链（rustup + cargo）",
+        kind_cn: "工具链",
+        desc: "Rust 编译器与包管理器。装嵌入式 Rust 时用它加目标架构（rustup target add thumbv7em-none-eabihf）。默认用 MSVC 链接器，所以 MSVC 生成工具也要装。",
+        url: "https://rustup.rs/",
+        required: false,
+        min_version: None,
+        size_mb: 500.0,
+        rules: &[
+            exe("cargo.exe", "", "--version", ""),
+            glob("%USERPROFILE%\\.cargo\\bin\\cargo.exe", "--version", ""),
+        ],
+        plan: Plan::Winget { id: "Rustlang.Rustup" },
+    },
+    Item {
+        id: "msvc_buildtools",
+        name: "MSVC 生成工具（Visual Studio Build Tools 2022）",
+        kind_cn: "工具链",
+        desc: "微软的 C/C++ 编译器与链接器（cl.exe / link.exe）。Rust 的 MSVC 目标、部分 SDK 和 CMake 工程都要它；只装 Build Tools，不装整个 VS IDE。",
+        url: "https://visualstudio.microsoft.com/downloads/",
+        required: false,
+        min_version: None,
+        size_mb: 2500.0,
+        rules: &[
+            glob("*:\\Program Files*\\Microsoft Visual Studio\\2022\\*\\VC\\Tools\\MSVC\\*\\bin\\Hostx64\\x64\\cl.exe", "", ""),
+            glob("*:\\Program Files*\\Microsoft Visual Studio\\2022\\*\\VC\\Tools\\MSVC\\*\\bin\\Hostx86\\x64\\cl.exe", "", ""),
+        ],
+        // 必须显式带 VCTools 工作负载，否则装完只有空壳、没有 cl.exe
+        plan: Plan::WingetOverride {
+            id: "Microsoft.VisualStudio.2022.BuildTools",
+            extra: "--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended",
+        },
+    },
+    Item {
+        id: "probe_rs",
+        name: "probe-rs（嵌入式 Rust 烧录 / 调试）",
+        kind_cn: "烧录",
+        desc: "Rust 生态的通用烧录与调试器：一条命令烧 .elf、开 RTT 日志、起 GDB Server。支持 CMSIS-DAP / J-Link / ST-Link / ESP32 等。用 cargo install 装（需要先装 Rust）。",
+        url: "https://probe.rs/",
+        required: false,
+        min_version: None,
+        size_mb: 80.0,
+        rules: &[
+            exe("probe-rs.exe", "", "--version", ""),
+            glob("%USERPROFILE%\\.cargo\\bin\\probe-rs.exe", "--version", ""),
+        ],
+        plan: Plan::Cargo { package: "probe-rs-tools" },
+    },
+    // ── 嵌入式 GUI（LVGL / emWin / TouchGFX / GUI Guider）──
+    Item {
+        id: "lvgl",
+        name: "LVGL（含 Windows 模拟器工程）",
+        kind_cn: "GUI",
+        desc: "开源嵌入式图形库，配 lv_port_win_visual_studio 能在 Windows 上直接跑模拟器调界面，不用先上板。装完到安装目录打开 LvglWindowsSimulator，用 Visual Studio 编译（需要 MSVC 生成工具）。",
+        url: "https://lvgl.io/",
+        required: false,
+        min_version: None,
+        size_mb: 60.0,
+        rules: &[
+            glob("%ENVDIR%\\lvgl\\*.sln", "", ""),
+            glob("%ENVDIR%\\lvgl\\*.slnx", "", ""),
+            glob("%ENVDIR%\\lvgl\\LvglPlatform\\lvgl\\lvgl.h", "", ""),
+        ],
+        plan: Plan::GitSub { repo: "https://github.com/lvgl/lv_port_win_visual_studio.git" },
+    },
+    Item {
+        id: "squareline",
+        name: "SquareLine Studio（LVGL 可视化设计器）",
+        kind_cn: "GUI",
+        desc: "LVGL 官方向导式拖拽设计器：画好界面直接导出 C 代码。个人试用免费，但下载要注册账号，所以这里只给官网入口。",
+        url: "https://squareline.io/downloads",
+        required: false,
+        min_version: None,
+        size_mb: 200.0,
+        rules: &[
+            glob("*:\\Program Files\\SquareLine Studio*\\SquareLine Studio.exe", "", ""),
+            glob("*:\\Users\\*\\AppData\\Local\\Programs\\SquareLine Studio*\\SquareLine Studio.exe", "", ""),
+            glob("*:\\Users\\*\\AppData\\Local\\squareline*\\SquareLine Studio.exe", "", ""),
+        ],
+        plan: Plan::Manual,
+    },
+    Item {
+        id: "appwizard",
+        name: "SEGGER AppWizard（emWin 界面设计器）",
+        kind_cn: "GUI",
+        desc: "SEGGER emWin 的官方可视化设计器，生成 emWin 代码。试用版免费但要填表下载，官网入口在这里。",
+        url: "https://www.segger.com/products/user-interface/emwin/",
+        required: false,
+        min_version: None,
+        size_mb: 300.0,
+        rules: &[
+            glob("*:\\Program Files\\SEGGER\\AppWizard*\\AppWizard.exe", "", ""),
+            glob("*:\\Program Files (x86)\\SEGGER\\AppWizard*\\AppWizard.exe", "", ""),
+            glob("*:\\Program Files\\SEGGER\\emWin*\\AppWizard.exe", "", ""),
+        ],
+        plan: Plan::Manual,
+    },
+    Item {
+        id: "touchgfx",
+        name: "TouchGFX Designer（ST 图形框架）",
+        kind_cn: "GUI",
+        desc: "ST 的 MCU 图形框架与设计器，配 STM32 + LTDC / Chrom-ART 用。随 STM32CubeMX 或 X-CUBE-TOUCHGFX 包分发，要先有 ST 账号。",
+        url: "https://www.st.com/en/development-tools/touchgfxdesigner.html",
+        required: false,
+        min_version: None,
+        size_mb: 400.0,
+        rules: &[
+            glob("*:\\Program Files\\TouchGFX*\\TouchGFX Designer.exe", "", ""),
+            glob("*:\\ST\\*TouchGFX*\\TouchGFX Designer.exe", "", ""),
+            glob("*:\\Users\\*\\STM32Cube\\*TouchGFX*\\TouchGFX Designer.exe", "", ""),
+        ],
+        plan: Plan::Manual,
+    },
+    Item {
+        id: "gui_guider",
+        name: "NXP GUI Guider（LVGL 设计器）",
+        kind_cn: "GUI",
+        desc: "NXP 免费提供的 LVGL 图形界面设计器，支持多家芯片（不只 NXP）。导出 LVGL 代码，带模拟器预览。下载需要 NXP 账号。",
+        url: "https://www.nxp.com/design/design-center/software/development-software/gui-guider:GUI-GUIDER",
+        required: false,
+        min_version: None,
+        size_mb: 600.0,
+        rules: &[
+            glob("*:\\NXP\\GUI Guider*\\GUI Guider.exe", "", ""),
+            glob("*:\\Program Files\\NXP\\GUI Guider*\\GUI Guider.exe", "", ""),
+            glob("*:\\Users\\*\\AppData\\Local\\Programs\\GUI Guider*\\GUI Guider.exe", "", ""),
+        ],
+        plan: Plan::Manual,
+    },
+    // ── MQTT / 物联网协议 ──
+    Item {
+        id: "mosquitto",
+        name: "Eclipse Mosquitto（MQTT Broker）",
+        kind_cn: "MQTT",
+        desc: "最常用的开源 MQTT broker：本机起一个就能让设备连上来联调，不用连公网服务器。装完到服务里启动 mosquitto。",
+        url: "https://mosquitto.org/download/",
+        required: false,
+        min_version: None,
+        size_mb: 15.0,
+        rules: &[
+            exe("mosquitto.exe", "C:\\Program Files\\mosquitto;F:\\ENV;D:\\ENV", "-h", ""),
+            glob("*:\\Program Files\\mosquitto\\mosquitto.exe", "-h", ""),
+        ],
+        plan: Plan::Winget { id: "EclipseFoundation.Mosquitto" },
+    },
+    Item {
+        id: "mqttx",
+        name: "MQTTX（MQTT 5.0 客户端）",
+        kind_cn: "MQTT",
+        desc: "EMQ 出的 MQTT 客户端：多连接、订阅发布、看消息流、支持 MQTT 5.0 属性，调设备上报和下发很顺手。",
+        url: "https://mqttx.app/",
+        required: false,
+        min_version: None,
+        size_mb: 150.0,
+        rules: &[
+            glob("*:\\Users\\*\\AppData\\Local\\Programs\\MQTTX\\MQTTX.exe", "", ""),
+            glob("*:\\Program Files\\MQTTX\\MQTTX.exe", "", ""),
+        ],
+        plan: Plan::Winget { id: "EMQ.MQTTX" },
+    },
+    Item {
+        id: "mqtt_explorer",
+        name: "MQTT Explorer（MQTT 拓扑浏览）",
+        kind_cn: "MQTT",
+        desc: "按主题树浏览 MQTT 上的全部消息，适合排查「设备到底发到哪个 topic 了」。比纯客户端更适合摸清别人的 broker。",
+        url: "https://mqtt-explorer.com/",
+        required: false,
+        min_version: None,
+        size_mb: 120.0,
+        rules: &[
+            glob("*:\\Users\\*\\AppData\\Local\\Programs\\MQTT Explorer\\MQTT Explorer.exe", "", ""),
+            glob("*:\\Program Files\\MQTT Explorer\\MQTT Explorer.exe", "", ""),
+        ],
+        plan: Plan::Winget { id: "thomasnordquist.MQTT-Explorer" },
+    },
+    Item {
+        id: "paho_mqtt",
+        name: "paho-mqtt（Python MQTT 库）",
+        kind_cn: "MQTT",
+        desc: "Python 的 MQTT 客户端库，写自动化测试脚本、批量造数据时用。装完 import paho.mqtt.client 可用。",
+        url: "https://pypi.org/project/paho-mqtt/",
+        required: false,
+        min_version: None,
+        size_mb: 1.0,
+        rules: &[pip("paho-mqtt")],
+        plan: Plan::Pip { packages: "paho-mqtt" },
+    },
+    // ── CAN / CAN FD / Modbus ──
+    Item {
+        id: "pcan",
+        name: "PEAK PCAN 驱动与工具（CAN / CAN FD）",
+        kind_cn: "总线",
+        desc: "PEAK-System 的 PCAN 系列驱动包：USB 转 CAN / CAN FD 适配器的驱动、PCAN-View 收发工具、PCAN-Basic API（含 CAN FD）。C++ / Python 调 PCAN-Basic 都要先装它。",
+        url: "https://www.peak-system.com/Drivers.523.0.html",
+        required: false,
+        min_version: None,
+        size_mb: 40.0,
+        rules: &[
+            inf("pcan_usb.inf"),
+            inf("pcan_usb_fd.inf"),
+            glob("*:\\Program Files\\PEAK-System\\PCAN-View\\PCAN-View.exe", "", ""),
+            glob("*:\\Program Files (x86)\\PEAK-System\\PCAN-View\\PCAN-View.exe", "", ""),
+        ],
+        plan: Plan::Winget { id: "PEAKSystem.PEAKDrivers" },
+    },
+    Item {
+        id: "cangaroo",
+        name: "Cangaroo（开源 CAN / CAN FD 分析仪）",
+        kind_cn: "总线",
+        desc: "开源 CAN 分析工具：支持 candleLight（CANable / CANable2 这类廉价适配器）、SocketCAN，带 DBC 解析、报文时间差视图。Windows 版在 GitHub Releases，需要自己下。",
+        url: "https://github.com/HubertD/cangaroo/releases",
+        required: false,
+        min_version: None,
+        size_mb: 60.0,
+        rules: &[
+            glob("*:\\Program Files\\cangaroo*\\cangaroo.exe", "", ""),
+            glob("%ENVDIR%\\cangaroo\\cangaroo.exe", "", ""),
+        ],
+        plan: Plan::Manual,
+    },
+    Item {
+        id: "python_can",
+        name: "python-can + cantools（CAN 脚本与 DBC 解析）",
+        kind_cn: "总线",
+        desc: "python-can 提供统一接口（PCAN / Vector / SocketCAN / SLCAN 都能接），cantools 解析 .dbc 报文定义。写 CAN / CAN FD 自动化测试最常用的两个库。",
+        url: "https://pypi.org/project/python-can/",
+        required: false,
+        min_version: None,
+        size_mb: 8.0,
+        rules: &[pip("python-can"), pip("cantools")],
+        plan: Plan::Pip { packages: "python-can cantools" },
+    },
+    Item {
+        id: "modbus_tool",
+        name: "ModbusTool（Modbus 主站 / 从站调试）",
+        kind_cn: "总线",
+        desc: "开源 Modbus 主站和从站模拟器，支持 TCP / UDP / RTU，能导入导出寄存器表。测 Modbus RTU 从机（485）和 TCP 服务端都用它。",
+        url: "https://github.com/ClassicDIY/ModbusTool",
+        required: false,
+        min_version: None,
+        size_mb: 20.0,
+        rules: &[
+            glob("*:\\Users\\*\\AppData\\Local\\Programs\\ModbusTool*\\ModbusTool.exe", "", ""),
+            glob("*:\\Program Files\\ModbusTool*\\ModbusTool.exe", "", ""),
+        ],
+        plan: Plan::Winget { id: "ClassicDIY.ModbusTool" },
+    },
+    Item {
+        id: "pymodbus",
+        name: "pymodbus（Python Modbus 库）",
+        kind_cn: "总线",
+        desc: "Python 的 Modbus 客户端 / 服务端库，支持串口 RTU 与 TCP。做寄存器扫描、批量读写、自动化回归时用。",
+        url: "https://pypi.org/project/pymodbus/",
+        required: false,
+        min_version: None,
+        size_mb: 2.0,
+        rules: &[pip("pymodbus")],
+        plan: Plan::Pip { packages: "pymodbus" },
+    },
 ];
 
 /* ───────────────────────── 检测 ───────────────────────── */
@@ -1131,6 +1405,49 @@ fn reg_query(key: &str, value: &str) -> Option<String> {
     None
 }
 
+/// 整个 pip 环境一次取完（包名小写 → 版本）。
+///
+/// 为什么不逐个 `pip show`：一次扫描里有 5 个 pip 组件，每个组件还要试 3 个解释器，
+/// 最坏情况是 15 次进程启动（每次 100~300ms），扫描就直接多出好几秒。
+/// `pip list --format=freeze` 一次拿到全量，之后全是内存查找。
+static PIP_CACHE: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> =
+    std::sync::Mutex::new(None);
+
+fn pip_inventory() -> std::collections::HashMap<String, String> {
+    if let Ok(g) = PIP_CACHE.lock() {
+        if let Some(m) = g.as_ref() {
+            return m.clone();
+        }
+    }
+    let mut out = std::collections::HashMap::new();
+    // 三种解释器都试：python（装进 PATH 的）、py -3（官方启动器）、python3
+    for (prog, pre) in [("python.exe", &[][..]), ("py.exe", &["-3"][..]), ("python3.exe", &[][..])] {
+        let mut args: Vec<&str> = pre.to_vec();
+        args.extend(["-m", "pip", "list", "--format=freeze", "--disable-pip-version-check"]);
+        let Some(t) = run_out(prog, &args) else { continue };
+        // freeze 每行形如 `包名==版本`；没有 `==` 的行（警告、提示）直接跳过
+        for line in t.lines() {
+            if let Some((name, v)) = line.trim().split_once("==") {
+                let k = name.trim().to_lowercase().replace('_', "-");
+                if !k.is_empty() {
+                    out.insert(k, v.trim().to_string());
+                }
+            }
+        }
+        break;   // 第一个能跑通 pip 的解释器就够了
+    }
+    if let Ok(mut g) = PIP_CACHE.lock() {
+        *g = Some(out.clone());
+    }
+    out
+}
+
+/// 查一个 pip 包装没装，装了返回版本号（没装返回 None）
+fn pip_show(pkg: &str) -> Option<String> {
+    let key = pkg.trim().to_lowercase().replace('_', "-");
+    pip_inventory().get(&key).cloned()
+}
+
 pub fn scan_one(it: &Item, infs: &str) -> Value {
     let mut path: Option<PathBuf> = None;
     let mut version: Option<String> = None;
@@ -1160,6 +1477,16 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
                 if let Some(v) = crate::usb::cmsis_dap_detail() {
                     installed = true;
                     detail = v;
+                    break;
+                }
+            }
+            Kind::Pip => {
+                // 纯库组件（python-can / cantools / pymodbus）没有自己的 exe，只能问 pip。
+                // 用 `pip show` 而不是 import：import 会真的把库加载一遍（慢、还可能报错）。
+                if let Some(v) = pip_show(r.a) {
+                    installed = true;
+                    version = Some(v.clone());
+                    detail = format!("pip {}", r.a);
                     break;
                 }
             }
@@ -1257,6 +1584,11 @@ pub async fn env_scan(force: Option<bool>, dir: Option<String>) -> Result<Value,
 
 fn env_scan_now() -> Result<Value, String> {
     let infs = pnputil_infs();
+    // pip 包清单先一次性取好：清单里有 5 个 pip 组件，逐个 `pip show` 会重复启动进程
+    // （每次 100~300ms），这里是唯一会用到它的地方，提前预热后 scan_one 里全是内存查找。
+    if ITEMS.iter().any(|it| it.rules.iter().any(|r| r.kind == Kind::Pip)) {
+        let _ = pip_inventory();
+    }
     let list: Vec<Value> = ITEMS.iter().map(|it| scan_one(it, &infs)).collect();
     let missing: Vec<&str> = list.iter().filter(|x| x["required"] == json!(true) && x["installed"] == json!(false)).filter_map(|x| x["id"].as_str()).collect();
     let outdated: Vec<&str> = list.iter().filter(|x| x["outdated"] == json!(true)).filter_map(|x| x["id"].as_str()).collect();
@@ -1449,6 +1781,39 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
                 }
             }
         }
+        Plan::GitSub { repo } => {
+            // 带 submodule 的仓库：--recursive 必须**在 clone 时就给**。
+            // 先普通 clone 再 submodule update 也行，但 LVGL 那个工程里 freetype 还要再嵌一层，
+            // --recursive 会把嵌套的一起拉下来；--depth 1 跟 submodule 一起用会在老 git 上报错，
+            // 所以这里不浅克隆（工程不大，稳比快重要）。
+            let dst = Path::new(&target).join(it.id);
+            if dst.join(".git").is_dir() {
+                emit(&app, it.id, "install", 70, "已有仓库，执行 git pull + submodule update");
+                if dry {
+                    format!("（模拟）会在 {} 里跑 git pull && git submodule update --init --recursive", dst.display())
+                } else {
+                    let a = run_out("git.exe", &["-C", &dst.to_string_lossy(), "pull", "--ff-only"]).unwrap_or_default();
+                    let b = run_out(
+                        "git.exe",
+                        &["-C", &dst.to_string_lossy(), "submodule", "update", "--init", "--recursive"],
+                    )
+                    .unwrap_or_default();
+                    format!("{a}\n{b}")
+                }
+            } else {
+                std::fs::create_dir_all(Path::new(&target)).map_err(|e| e.to_string())?;
+                if dry {
+                    format!("（模拟）会 git clone --recursive {} {}", repo, dst.display())
+                } else {
+                    emit(&app, it.id, "install", 60, "克隆仓库（含 submodule，可能要几分钟）…");
+                    run_out(
+                        "git.exe",
+                        &["clone", "--recursive", repo, &dst.to_string_lossy()],
+                    )
+                    .ok_or_else(|| "git clone 失败（PATH 里有 git 吗？）".to_string())?
+                }
+            }
+        }
         Plan::Zip { url, strip } => {
             let zip = download(&app, it.id, url, &format!("{}.zip", it.id))?;
             let dst = Path::new(&target).join(it.id);
@@ -1506,6 +1871,21 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
                 ), false)?
             }
         }
+        Plan::WingetOverride { id: wid, extra } => {
+            if run_out("winget.exe", &["--version"]).is_none() {
+                return Ok(format!(
+                    "这台机器上没有 winget（应用安装程序），装不了「{}」。请到官网下载安装：{}",
+                    it.name, it.url
+                ));
+            }
+            if dry { format!("（模拟）会跑 winget install --id {} --override \"{}\"", wid, extra) }
+            else {
+                // --override 会把安装器参数整串替掉，所以这里必须一次给全（含静默开关）
+                run_powershell(&app, it.id, &format!(
+                    "winget install --id {wid} --override \"{extra}\" --accept-package-agreements --accept-source-agreements --disable-interactivity; exit $LASTEXITCODE"
+                ), false)?
+            }
+        }
         Plan::Pip { packages } => {
             let py = if run_out("python.exe", &["--version"]).is_some() {
                 "python"
@@ -1523,6 +1903,22 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
                 run_powershell(&app, it.id, &format!(
                     "$env:NO_PROXY='*'; $env:no_proxy='*'; $env:HTTPS_PROXY=''; $env:HTTP_PROXY=''; \
                      {py} -m pip install --user --upgrade {packages}; exit $LASTEXITCODE"
+                ), false)?
+            }
+        }
+        Plan::Cargo { package } => {
+            // Rust 工具链是 cargo 的来源；没有就先让用户装 Rust（清单里上一项），别去猜 rustup 直链
+            if run_out("cargo.exe", &["--version"]).is_none() {
+                return Ok(format!(
+                    "没找到 cargo。先装「{}」，或者到 https://rustup.rs 装 Rust 工具链后重试。",
+                    "Rust 工具链（rustup）"
+                ));
+            }
+            if dry {
+                format!("（模拟）会跑 cargo install --locked {package}")
+            } else {
+                run_powershell(&app, it.id, &format!(
+                    "cargo install --locked {package}; exit $LASTEXITCODE"
                 ), false)?
             }
         }
@@ -1652,6 +2048,7 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
         }
     };
     if let Ok(mut g) = SCAN_CACHE.lock() { *g = None; }   // 装完让下次扫描重新跑
+    if let Ok(mut g) = PIP_CACHE.lock() { *g = None; }    // pip 包清单也要重取（刚装完的包才会出现）
     emit(&app, it.id, "done", 100, "完成");
     Ok(log)
 }
@@ -1741,6 +2138,28 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 mod tests {
     use super::*;
 
+    /// 清单是手写的长数组，最容易犯的错是复制粘贴留下重复 id（装的时候按 id 查，重复就永远命中最前面那条）。
+    /// 顺手把几个"性质"也钉住：每条至少一个检测规则、pip 规则必须有包名。
+    #[test]
+    fn item_ids_are_unique_and_every_item_is_scannable() {
+        let mut seen = std::collections::HashSet::new();
+        for it in ITEMS {
+            assert!(seen.insert(it.id), "重复的组件 id：{}", it.id);
+            assert!(!it.name.trim().is_empty(), "{} 没有名字", it.id);
+            assert!(!it.desc.trim().is_empty(), "{} 没有说明", it.id);
+            assert!(!it.rules.is_empty(), "{} 没有任何检测规则", it.id);
+            for r in it.rules {
+                if r.kind == Kind::Pip {
+                    assert!(!r.a.trim().is_empty(), "{} 的 pip 规则缺包名", it.id);
+                }
+            }
+            // 有自动安装方式的才能"一键装"；Manual 的卡片上只给官网
+            if matches!(it.plan, Plan::Manual) {
+                assert!(!it.url.trim().is_empty(), "{} 只能手动装，必须给官网地址", it.id);
+            }
+        }
+    }
+
     #[test]
     fn winusb_inf_binds_each_probe_interface() {
         let t = winusb_inf_text(
@@ -1816,4 +2235,18 @@ mod tests {
         let got = scan_one(item, "");
         assert_eq!(got["installed"], json!(true), "{}", got["detail"]);
     }
+
+    /// pip 类组件的检测走的是「一次 pip list 全量拿，再内存查」，这里验证那条链路真的通。
+    #[test]
+    #[ignore = "manual: needs Python with pip on this machine"]
+    fn pip_inventory_finds_installed_packages() {
+        let inv = pip_inventory();
+        assert!(inv.len() > 5, "pip 清单应当有内容，实际 {} 条", inv.len());
+        assert!(
+            pip_show("pip").is_some(),
+            "pip 自己一定在清单里（扫描链路可能没走通）"
+        );
+        assert!(pip_show("definitely-not-a-real-package-xyz").is_none());
+    }
 }
+

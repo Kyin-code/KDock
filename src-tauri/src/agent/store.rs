@@ -1498,28 +1498,44 @@ pub fn skills_index_workspace(ws: &std::path::Path) -> String {
     out
 }
 
-/// 技能在哪儿（含工作区技能）：先工作区、再全局启用、最后全局停用
-pub fn skill_dir_of_in(app: &AppHandle, ws: &std::path::Path, slug: &str) -> PathBuf {
+/// 技能路径解析的纯函数版（不碰 AppHandle，好测）：
+/// 工作区技能优先，否则就是**全局启用目录**下的那个 slug。
+///
+/// 刻意不接受"停用目录"这个参数 —— 停用对 agent 就是不存在，这是那个开关的全部意义。
+fn resolve_skill_dir(ws: &std::path::Path, enabled_dir: &std::path::Path, slug: &str) -> PathBuf {
     let s = slugify(slug);
     let local = ws.join(WORKSPACE_SKILL_DIR).join(&s);
     if local.is_dir() {
         return local;
     }
-    let g = skills_dir(app).map(|d| d.join(&s)).unwrap_or_default();
-    if g.is_dir() {
-        return g;
-    }
-    let off = skills_off_dir(app).map(|d| d.join(&s)).unwrap_or_default();
-    if off.is_dir() {
-        return off;
-    }
-    g
+    enabled_dir.join(&s)
 }
 
-/// 读技能正文（工作区优先）——模型走这条路，所以它能读到项目技能
+/// 技能在哪儿（**agent 读正文走这条**）：先工作区、再全局**已启用**的。
+///
+/// 这里**不回退到 `skills-off/`**：停用的技能对 agent 就等于不存在 —— 那是那个开关的全部意义。
+/// 找不到时返回"全局启用目录下的路径"（不存在），交给调用方报错。
+///
+/// 注意别跟 `skill_dir_of()` 搞混：那个是**给界面编辑器用的**（设置 → 技能里点一行读进编辑框），
+/// 它必须能读到停用的技能，否则用户关掉之后就再也打不开、改不回来了。
+pub fn skill_dir_of_in(app: &AppHandle, ws: &std::path::Path, slug: &str) -> PathBuf {
+    let enabled = skills_dir(app).unwrap_or_default();
+    resolve_skill_dir(ws, &enabled, slug)
+}
+
+/// 读技能正文（工作区优先）——模型走这条路，所以它能读到项目技能。
+/// 读不到时给一句能指导下一步的话：技能不存在，或**已被用户停用**（不告诉他停用的文件在哪，
+/// 只告诉他"要让用户启用"—— 路径本身就是我们不想递给它的东西）。
 pub fn skill_read_in(app: &AppHandle, ws: &std::path::Path, slug: &str) -> Result<String, String> {
     let p = skill_dir_of_in(app, ws, slug).join("SKILL.md");
-    std::fs::read_to_string(&p).map_err(|e| format!("读不到 {}: {e}", p.display()))
+    if !p.is_file() {
+        return Err(format!(
+            "没有可用的技能「{}」：它不存在，或者已经被用户停用了。\
+             如果这次任务确实需要它，请让用户在「设置 → 技能」里启用，而不是绕开这个技能。",
+            slug
+        ));
+    }
+    std::fs::read_to_string(&p).map_err(|e| format!("读 {} 失败: {e}", p.display()))
 }
 
 /// 写技能：scope = global（默认）或 workspace
@@ -1612,5 +1628,41 @@ mod tests {
         assert_eq!(list[0].scope, "workspace");
         assert!(list[0].enabled, "项目技能存在即生效");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// 停用的技能**对 agent 就是不存在**：读正文那条路不能回退到 skills-off/。
+    /// 这个测试是那个开关的守门人 —— 谁要是又把 off 目录加回候选里，这里会红。
+    #[test]
+    fn agent_skill_lookup_never_falls_back_to_disabled_dir() {
+        let base = tmp_dir("skilloff");
+        let enabled = base.join("skills");
+        let disabled = base.join("skills-off");
+        let ws = base.join("workspace");
+        for d in [&enabled, &disabled, &ws] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        // 同一个 slug 只存在于"停用"目录里
+        std::fs::create_dir_all(disabled.join("secret")).unwrap();
+        std::fs::write(disabled.join("secret").join("SKILL.md"), "停用的内容").unwrap();
+
+        // 1) 停用目录里的技能解析不到 off 路径
+        let got = resolve_skill_dir(&ws, &enabled, "secret");
+        assert_eq!(got, enabled.join("secret"), "不能解析到 skills-off 里");
+        assert!(!got.join("SKILL.md").is_file(), "解析出来的路径不该有文件");
+
+        // 2) 启用的能正常解析
+        std::fs::create_dir_all(enabled.join("active")).unwrap();
+        std::fs::write(enabled.join("active").join("SKILL.md"), "启用的内容").unwrap();
+        let got = resolve_skill_dir(&ws, &enabled, "active");
+        assert_eq!(got, enabled.join("active"));
+
+        // 3) 工作区技能优先于全局同名的
+        let wsdir = ensure_workspace_skill_dir(&ws).join("active");
+        std::fs::create_dir_all(&wsdir).unwrap();
+        std::fs::write(wsdir.join("SKILL.md"), "项目里的同名技能").unwrap();
+        let got = resolve_skill_dir(&ws, &enabled, "active");
+        assert_eq!(got, wsdir, "工作区技能要盖过全局的");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -70,7 +70,7 @@ CI 就会重建一次，这个链接永远指向最新那份，GitHub 上标着 
 | **监听** | **本机 USB**：USBPcap 原始传输（控制 / 批量 / 中断，HEX + ASCII，只看控制传输、保存）+ 设备列表 / 端口 / 描述符 / 热插拔；**网络**：tshark 实时抓包（源/目的/协议/长度/信息）。两路都支持自动滚动 / 清空 / 保存 |
 | **固件** | `.fw` 升级包解析与校验、**串口在线升级（YMODEM）**、**网口在线升级（服务通道）**、从 HTTP 服务器拉取版本清单 |
 | **烧录** | 调用外部烧录器（OpenOCD / J-Link / STM32CubeProgrammer）完成烧录、擦除、校验、复位 |
-| **环境配置** | 驱动 / 工具链的一键检测与安装（CH34x · FTDI · J-Link+JFlash · arm-none-eabi-gcc · OpenOCD · PulseView(sigrok) · RT-Thread Env · ST-Link · Zadig）：只读扫描本机（PATH / 注册表 / pnputil / 各盘常见目录）、内置安装包优先、winget / git 一键装、首次运行检查必需驱动 |
+| **环境配置** | 驱动 / 工具链的一键检测与安装（CH34x · FTDI · J-Link+JFlash · arm-none-eabi-gcc · OpenOCD · PulseView(sigrok) · RT-Thread Env · ST-Link · Zadig · **Rust/rustup** · **MSVC Build Tools** · **probe-rs** · **LVGL/SquareLine/AppWizard/TouchGFX/GUI Guider** · **Mosquitto/MQTTX/MQTT Explorer** · **PCAN/Cangaroo/python-can/ModbusTool** 等 60+ 项）：只读扫描本机（PATH / 注册表 / pnputil / pip list / 各盘常见目录）、内置安装包优先、winget / pip / cargo / git 一键装、首次运行检查必需驱动 |
 | **设备文件** | 列目录、取回/下发文件、CRC 核对（串口走 base64，网口走服务通道按偏移读写） |
 | **可视化** | 实时图表（多通道曲线）、屏幕捕获、**示波器**（RIGOL DS1000Z 系 SCPI：状态 / 13 项自动测量 / 多通道波形 / 截屏 / 时基触发控制）、**逻辑分析仪**（波形查看 / **19 种协议解码** / 光标测量 / 导入 VCD·CSV·原始二进制 / 导出 CSV·VCD） |
 | **中控编排** | 把「本机命令 / TCP / UDP / 串口」串成带条件分支的时序流程，一键跑 |
@@ -295,20 +295,34 @@ CI 就会重建一次，这个链接永远指向最新那份，GitHub 上标着 
 
 左导航「环境」分组下的 **环境配置**：驱动和工具链不用再挨个官网翻，页面上一次扫完、缺什么装什么。
 
-**认这 9 项**：CH34x / CH340 串口驱动、FTDI FT2232 / D2XX、SEGGER J-Link（含 JFlash / GDB Server / RTT）、
+**驱动七件套**：CH34x / CH340 串口驱动、FTDI FT2232 / D2XX、SEGGER J-Link（含 JFlash / GDB Server / RTT）、
 GNU Arm Embedded Toolchain（arm-none-eabi-gcc）、OpenOCD、逻辑分析仪（PulseView / sigrok）、RT-Thread Env、
 ST-Link USB 驱动、Zadig（给 FX2 逻辑分析仪装 WinUSB）。
 
+**之外还有**（按类别分）：
+
+| 类别 | 组件 |
+| --- | --- |
+| 工具链 | Rust 工具链（rustup + cargo）、MSVC 生成工具（Build Tools 2022，只装 C++ 工作负载）、LLVM / Clang、Python 3、ESP-IDF |
+| 烧录 / 调试 | probe-rs（嵌入式 Rust）、pyOCD、esptool、wlink、nRF Util、各厂商探针驱动（J-Link · CMSIS-DAP · ST-Link · WCH-Link · XDS110 · Infineon DAS） |
+| GUI | LVGL（含 Windows 模拟器工程，自动递归拉 submodule）、SquareLine Studio、SEGGER AppWizard（emWin）、TouchGFX Designer、NXP GUI Guider |
+| MQTT | Eclipse Mosquitto（本机 broker）、MQTTX（MQTT 5.0 客户端）、MQTT Explorer（主题树浏览）、paho-mqtt（Python） |
+| 总线（CAN / Modbus） | PEAK PCAN 驱动与工具（CAN / CAN FD）、Cangaroo（candleLight 开源分析仪）、python-can + cantools（DBC 解析）、ModbusTool（主站 / 从站）、pymodbus |
+| 网络 | Wireshark / tshark + Npcap、MobaXterm、OpenSSH（客户端 / 服务端）、PuTTY plink、Tftpd64 |
+| 其他 | CMake · Ninja · Meson · OpenSSL · QEMU · Renode · dtc · UsbDk · Git · 安卓 platform-tools · scrcpy · FFmpeg |
+
 **扫描**是只读的，不动你的机器：看 PATH 与几个额外根目录、`pnputil /enum-drivers` 的驱动列表
-（CH34x / FTDI / ST-Link 这类就靠它认）、注册表（J-Link 的版本）、以及各盘常见目录（按模式定向扫，
-不是整盘乱翻）。9 项一起扫**实测 0.3 秒**，结果缓存 15 分钟，点「重新扫描」强制刷新。
+（CH34x / FTDI / ST-Link 这类就靠它认）、注册表（J-Link 的版本）、`pip list`（一次取全量，几秒内完成）、
+以及各盘常见目录（按模式定向扫，不是整盘乱翻）。整份清单一起扫**秒级**，结果缓存 15 分钟，
+点「重新扫描」强制刷新。
 
 **安装**按这个顺序来：
 
 1. `<exe 同目录>\drivers\<组件id>\` 里有没有内置安装包（`.exe` / `.msi` / `.inf` 都认）—— 有就直接用，
    **不走网络**。几 MB 的小驱动（CH340 / FTDI 这种官网要登录的）可以这样跟软件一起分发。
-2. 再按清单走：winget（Arm 工具链 / OpenOCD / PulseView / Zadig 都有官方包）、git clone（RT-Thread Env）、
-   下载到"下载"文件夹再跑安装器。
+2. 再按清单走：winget（Arm 工具链 / OpenOCD / PulseView / Zadig / Mosquitto / MQTTX / PCAN / Rust 都有官方包）、
+   `pip install`（pyOCD / esptool / python-can / cantools / pymodbus / paho-mqtt）、
+   `cargo install`（probe-rs）、git clone（RT-Thread Env / LVGL 模拟器工程）、下载到"下载"文件夹再跑安装器。
 3. 装 USB 驱动会弹**一次 UAC**（`Start-Process -Verb RunAs`）—— 驱动必须提权，软件不做静默绕过。
 
 WCH / FTDI / SEGGER / ST 官网的下载要点勾选同意或登录，拿不到稳定直链，所以这几项只给「打开官网」+

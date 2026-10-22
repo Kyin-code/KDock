@@ -8687,12 +8687,13 @@ function agWelcomeHide() {
   box.querySelectorAll(".agwelcome").forEach((n) => n.remove());
 }
 
-/** 欢迎页只在“没有消息，而且输入框也是空的”时出现。 */
+/** 欢迎页只在“这个会话还没有任何消息”时出现。
+ *  以前还看输入框有没有内容：打字打到一半欢迎页就没了，删光又冒回来 —— 那是抖的。
+ *  现在只认消息本身：第一条消息发出去（agEvents 有内容）才收起来。 */
 function agSyncWelcome() {
   const box = agEl("ag-chat") || agChatEl;
   if (!box) return;
-  const typing = !!((agEl("ag-input") && agEl("ag-input").value) || "").trim();
-  if (!agEvents.length && !typing) {
+  if (!agEvents.length) {
     if (!box.querySelector(".agwelcome")) box.appendChild(agWelcomeNode());
   } else {
     agWelcomeHide();
@@ -9532,28 +9533,36 @@ async function agSend() {
   }
   const backup = box.value;
   box.value = "";
-  agWelcomeHide();
+  // **先把用户这条上屏，再发**：后端一进 run_turn 就会推 agent://state / agent://reason，
+  // 那个"思考中"块是直接 append 到对话底部的；以前是先 invoke 再上屏，等 Promise 回来时
+  // 思考块已经在了 —— 第一轮就会看到「agent 在上面、用户的提问在下面」的错位（实测）。
+  // 被拒时不能让用户的话丢掉，所以下面 catch 里回滚这一条。
+  agEvents.push({ type: "user", text, ts: Date.now() });
+  agAppendEvent({ type: "user", text });
+  agUpdateHeader();
   try {
-    // **先发再上屏**：被拒的时候不要把用户的话弄丢
+    // 先发再上屏的老顾虑（被拒时话丢了）靠上面的回滚兜住
     const r = await invoke("agent_send", { sessionId: agMeta.id, text, providerId: agCfg ? agCfg.activeId : null });
     if (r && r.queued) {
-      // 边跑边补充：先挂一个"排队中"的气泡；后端把它并进对话后会发 agent://user 换成正式的
-      agEvents.push({ type: "user", text, queued: true });
-      agAppendEvent({ type: "user", text, queued: true });
-      agUpdateHeader();
+      // 边跑边补充：这条已经在屏上了，只把它标成"排队中"；后端并进对话后会发
+      // agent://user 把它换成正式的（见那个监听）。
+      const last = agEvents[agEvents.length - 1];
+      if (last && last.type === "user" && last.text === text) last.queued = true;
+      agRender();
       return;
     }
   } catch (e) {
+    // 回滚刚上屏的那一条
+    const i = agEvents.length - 1;
+    if (i >= 0 && agEvents[i].type === "user" && agEvents[i].text === text) agEvents.splice(i, 1);
+    agRender();
     box.value = backup;
-    agSyncWelcome();
     agRunning = false;
     agState("空闲");
     agSyncRunning();
     toast(String(e));
     return;
   }
-  agEvents.push({ type: "user", text, ts: Date.now() });
-  agAppendEvent({ type: "user", text });
   agStreamText = "";
   agStreamNode = null;
   agRunning = true;
@@ -13539,6 +13548,63 @@ const EN = {
   "调试器": "Debugger",
   "工具链": "Toolchain",
   "运行时": "Runtime",
+  // 本轮新增的类别（环境配置页的分类按钮）
+  "GUI": "GUI", "MQTT": "MQTT", "总线": "Fieldbus",
+  // Rust 工具链 / MSVC / probe-rs
+  "Rust 工具链（rustup + cargo）": "Rust toolchain (rustup + cargo)",
+  "Rust 编译器与包管理器。装嵌入式 Rust 时用它加目标架构（rustup target add thumbv7em-none-eabihf）。默认用 MSVC 链接器，所以 MSVC 生成工具也要装。":
+    "The Rust compiler and package manager. For embedded Rust you add a target with rustup target add thumbv7em-none-eabihf. It links with MSVC by default, so the MSVC build tools are needed too.",
+  "MSVC 生成工具（Visual Studio Build Tools 2022）": "MSVC build tools (Visual Studio Build Tools 2022)",
+  "微软的 C/C++ 编译器与链接器（cl.exe / link.exe）。Rust 的 MSVC 目标、部分 SDK 和 CMake 工程都要它；只装 Build Tools，不装整个 VS IDE。":
+    "Microsoft's C/C++ compiler and linker (cl.exe / link.exe). Needed by Rust's MSVC target, some SDKs and CMake projects. Installs only the Build Tools, not the whole VS IDE.",
+  "probe-rs（嵌入式 Rust 烧录 / 调试）": "probe-rs (embedded Rust flashing / debugging)",
+  "Rust 生态的通用烧录与调试器：一条命令烧 .elf、开 RTT 日志、起 GDB Server。支持 CMSIS-DAP / J-Link / ST-Link / ESP32 等。用 cargo install 装（需要先装 Rust）。":
+    "The general-purpose flasher and debugger of the Rust ecosystem: flash an .elf, stream RTT logs and start a GDB server with one command. Supports CMSIS-DAP / J-Link / ST-Link / ESP32. Installed via cargo install (Rust required first).",
+  // GUI
+  "LVGL（含 Windows 模拟器工程）": "LVGL (with Windows simulator project)",
+  "开源嵌入式图形库，配 lv_port_win_visual_studio 能在 Windows 上直接跑模拟器调界面，不用先上板。装完到安装目录打开 LvglWindowsSimulator，用 Visual Studio 编译（需要 MSVC 生成工具）。":
+    "Open-source embedded graphics library. With lv_port_win_visual_studio you can run the simulator on Windows and tune the UI without touching the board. After installing, open LvglWindowsSimulator in the install folder and build it with Visual Studio (MSVC build tools required).",
+  "SquareLine Studio（LVGL 可视化设计器）": "SquareLine Studio (LVGL visual designer)",
+  "LVGL 官方向导式拖拽设计器：画好界面直接导出 C 代码。个人试用免费，但下载要注册账号，所以这里只给官网入口。":
+    "The LVGL drag-and-drop designer: draw the UI and export C code. The personal trial is free, but the download requires an account, so this entry only links to the official site.",
+  "SEGGER AppWizard（emWin 界面设计器）": "SEGGER AppWizard (emWin UI designer)",
+  "SEGGER emWin 的官方可视化设计器，生成 emWin 代码。试用版免费但要填表下载，官网入口在这里。":
+    "SEGGER's official visual designer for emWin that generates emWin code. The trial is free but requires a form, so this entry links to the official site.",
+  "TouchGFX Designer（ST 图形框架）": "TouchGFX Designer (ST graphics framework)",
+  "ST 的 MCU 图形框架与设计器，配 STM32 + LTDC / Chrom-ART 用。随 STM32CubeMX 或 X-CUBE-TOUCHGFX 包分发，要先有 ST 账号。":
+    "ST's MCU graphics framework and designer for STM32 with LTDC / Chrom-ART. Distributed with STM32CubeMX or the X-CUBE-TOUCHGFX package and requires an ST account.",
+  "NXP GUI Guider（LVGL 设计器）": "NXP GUI Guider (LVGL designer)",
+  "NXP 免费提供的 LVGL 图形界面设计器，支持多家芯片（不只 NXP）。导出 LVGL 代码，带模拟器预览。下载需要 NXP 账号。":
+    "NXP's free LVGL UI designer that also supports other vendors' chips. Exports LVGL code and includes a simulator preview. The download requires an NXP account.",
+  // MQTT
+  "Eclipse Mosquitto（MQTT Broker）": "Eclipse Mosquitto (MQTT broker)",
+  "最常用的开源 MQTT broker：本机起一个就能让设备连上来联调，不用连公网服务器。装完到服务里启动 mosquitto。":
+    "The most widely used open-source MQTT broker: run one locally and let the device connect to it instead of a public server. Start the mosquitto service after installing.",
+  "MQTTX（MQTT 5.0 客户端）": "MQTTX (MQTT 5.0 client)",
+  "EMQ 出的 MQTT 客户端：多连接、订阅发布、看消息流、支持 MQTT 5.0 属性，调设备上报和下发很顺手。":
+    "The MQTT client by EMQ: multiple connections, subscribe/publish, message stream, MQTT 5.0 properties. Handy for testing what a device reports and receives.",
+  "MQTT Explorer（MQTT 拓扑浏览）": "MQTT Explorer (MQTT topic browser)",
+  "按主题树浏览 MQTT 上的全部消息，适合排查「设备到底发到哪个 topic 了」。比纯客户端更适合摸清别人的 broker。":
+    "Browse every message on a broker as a topic tree. Good for finding out which topic a device actually publishes to, and for exploring a broker you did not set up.",
+  "paho-mqtt（Python MQTT 库）": "paho-mqtt (Python MQTT library)",
+  "Python 的 MQTT 客户端库，写自动化测试脚本、批量造数据时用。装完 import paho.mqtt.client 可用。":
+    "The Python MQTT client library, for automation scripts and generating test traffic. After installing, import paho.mqtt.client works.",
+  // CAN / Modbus
+  "PEAK PCAN 驱动与工具（CAN / CAN FD）": "PEAK PCAN drivers and tools (CAN / CAN FD)",
+  "PEAK-System 的 PCAN 系列驱动包：USB 转 CAN / CAN FD 适配器的驱动、PCAN-View 收发工具、PCAN-Basic API（含 CAN FD）。C++ / Python 调 PCAN-Basic 都要先装它。":
+    "PEAK-System's PCAN driver pack: drivers for USB-to-CAN / CAN FD adapters, the PCAN-View send/receive tool and the PCAN-Basic API (CAN FD included). Required before calling PCAN-Basic from C++ or Python.",
+  "Cangaroo（开源 CAN / CAN FD 分析仪）": "Cangaroo (open-source CAN / CAN FD analyzer)",
+  "开源 CAN 分析工具：支持 candleLight（CANable / CANable2 这类廉价适配器）、SocketCAN，带 DBC 解析、报文时间差视图。Windows 版在 GitHub Releases，需要自己下。":
+    "Open-source CAN analysis tool supporting candleLight (cheap adapters like CANable / CANable2) and SocketCAN, with DBC parsing and a time-delta view. The Windows build is on GitHub Releases, so download it yourself.",
+  "python-can + cantools（CAN 脚本与 DBC 解析）": "python-can + cantools (CAN scripting and DBC parsing)",
+  "python-can 提供统一接口（PCAN / Vector / SocketCAN / SLCAN 都能接），cantools 解析 .dbc 报文定义。写 CAN / CAN FD 自动化测试最常用的两个库。":
+    "python-can gives one interface over PCAN / Vector / SocketCAN / SLCAN, and cantools parses .dbc message definitions. The two libraries most used for CAN / CAN FD test automation.",
+  "ModbusTool（Modbus 主站 / 从站调试）": "ModbusTool (Modbus master / slave testing)",
+  "开源 Modbus 主站和从站模拟器，支持 TCP / UDP / RTU，能导入导出寄存器表。测 Modbus RTU 从机（485）和 TCP 服务端都用它。":
+    "Open-source Modbus master and slave simulator supporting TCP / UDP / RTU, with register-table import and export. Used for testing Modbus RTU slaves (RS-485) and TCP servers alike.",
+  "pymodbus（Python Modbus 库）": "pymodbus (Python Modbus library)",
+  "Python 的 Modbus 客户端 / 服务端库，支持串口 RTU 与 TCP。做寄存器扫描、批量读写、自动化回归时用。":
+    "The Python Modbus client and server library for serial RTU and TCP. Used for register scanning, bulk reads and automated regressions.",
   "CH34x / CH340 串口驱动": "CH34x / CH340 serial driver",
   "FTDI FT2232 / D2XX 驱动": "FTDI FT2232 / D2XX driver",
   "SEGGER J-Link（含 JFlash / GDB Server / RTT）": "SEGGER J-Link (JFlash / GDB Server / RTT included)",
