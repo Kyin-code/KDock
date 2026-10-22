@@ -196,6 +196,23 @@ mod tests {
         assert_eq!(u.cache_hit_tokens + u.cache_miss_tokens, u.prompt_tokens);
         assert_eq!(u.completion_tokens, 30);
     }
+
+    #[test]
+    fn thinking_effort_maps_to_anthropic_budget() {
+        let mut provider: crate::agent::store::Provider = serde_json::from_value(json!({
+            "id": "t", "name": "t", "endpoint": "https://example.invalid",
+            "model": "claude-x", "reserve_output": 8192, "reasoning_effort": "high"
+        }))
+        .unwrap();
+        let body = request_body(&provider, &[json!({"role": "user", "content": "hi"})], &[], false);
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["budget_tokens"], 7168);
+        assert_eq!(body["temperature"], 1.0);
+
+        provider.reasoning_effort = "none".into();
+        let body = request_body(&provider, &[json!({"role": "user", "content": "hi"})], &[], false);
+        assert!(body.get("thinking").is_none());
+    }
 }
 
 pub fn request_body(
@@ -205,13 +222,19 @@ pub fn request_body(
     stream: bool,
 ) -> Value {
     let (system, msgs) = to_anthropic_messages(messages);
+    let max_tokens = if provider.reserve_output > 0 { provider.reserve_output } else { 4096 };
     let mut body = json!({
         "model": provider.model,
-        "max_tokens": if provider.reserve_output > 0 { provider.reserve_output } else { 4096 },
+        "max_tokens": max_tokens,
         "temperature": provider.temperature,
         "messages": msgs,
         "stream": stream,
     });
+    if let Some(budget) = provider.anthropic_thinking_budget() {
+        body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget });
+        // Anthropic 的 extended thinking 要求 temperature=1（或不传）。
+        body["temperature"] = json!(1.0);
+    }
     // ── 前缀缓存（prompt caching）────────────────────────────────────────
     // Anthropic 不做隐式缓存：**不打 cache_control 命中率就是 0**。所以这里显式打点，而且只打在
     // "每次都一样"的地方：system（人设 + 技能索引 + AGENTS.md）、最后一个工具定义、以及最后一条

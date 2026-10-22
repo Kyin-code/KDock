@@ -385,7 +385,7 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
         json!({"type":"object","properties":{}}),
         false,
     );
-    push("skill_read", "读一个技能的完整 SKILL.md。**只在用户的话明确落到某个技能的用途上时**才读（例如点名要它、或任务明显属于它描述的场景）；只为闲聊、打招呼、介绍自己而去翻技能是不对的。名字写错会提示你去 skill_list 核对；如果技能被用户停用了，会明确告诉你「需要用户启用」——不要绕过它。",
+    push("skill_read", "按名字读一个技能的完整 SKILL.md。停用技能不会出现在 skill_list 或系统提示里；只有用户明确点名某个技能时才按名字读取，不要自行猜测停用技能的存在。",
         json!({"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}), false);
     push(
         "skill_create",
@@ -3192,11 +3192,11 @@ fn flash(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         "flash://log",
         format!("\n[agent] $ {} {}\n", exe, argv.join(" ")),
     );
-    let mut child = std::process::Command::new(&exe)
-        .args(&argv)
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.args(&argv)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+        .stderr(std::process::Stdio::piped());
+    let mut child = crate::process_guard::spawn(&mut cmd)
         .map_err(|e| format!("起 {exe} 失败: {e}"))?;
     let start = Instant::now();
     let timeout = Duration::from_millis(180_000);

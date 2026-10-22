@@ -3997,6 +3997,9 @@ function sqOuts(n) {
   if (n.type === "end" || n.type === "fail") return [["out", "继续 / 回流"]];
   return [];
 }
+function sqHasOut(n, port) {
+  return !!n && sqOuts(n).some((o) => o[0] === port);
+}
 const sqSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sqNewId = () => "n" + (sqSeq++);
 const sqNode = (id) => sqGraph.nodes.find((n) => n.id === id);
@@ -4020,7 +4023,11 @@ function sqSanitize() {
     ok.add(n.id);
     return true;
   });
-  sqGraph.edges = (sqGraph.edges || []).filter((e) => e && ok.has(e.from) && ok.has(e.to));
+  sqGraph.edges = (sqGraph.edges || []).filter((e) =>
+    e && ok.has(e.from) && ok.has(e.to) && sqHasOut(sqNode(e.from), e.port)
+  );
+  if (sqSel && sqSel.kind === "node" && !ok.has(sqSel.id)) sqSel = null;
+  if (sqSel && sqSel.kind === "edge" && !sqGraph.edges.some((e) => sqKey(e) === sqSel.id)) sqSel = null;
 }
 function sqLoadCfg() {
   try {
@@ -4114,17 +4121,22 @@ function sqDeleteEdge(key) {
   sqSave(); sqRender();
 }
 function sqConnect(from, port, to) {
-  if (from === to) return toast("不能连到自己");
+  if (from === to) { toast("不能连到自己"); return false; }
   const fn = sqNode(from);
-  if (!fn || !sqOuts(fn).some((o) => o[0] === port)) return;
+  if (!fn || !sqHasOut(fn, port)) return false;
   const toNode = sqNode(to);
-  if (!toNode || !SQ_KINDS[toNode.type].ins) return toast("这个节点没有输入口");
+  if (!toNode || !SQ_KINDS[toNode.type].ins) { toast("这个节点没有输入口"); return false; }
   // 一个节点可以像函数一样被多处调用（多入边）；一个出口也可以连多条线（扇出）
   if (sqGraph.edges.some((e) => e.from === from && e.port === port && e.to === to)) {
-    return toast("这条线已经有了");
+    toast("这条线已经有了");
+    return false;
   }
-  sqGraph.edges.push({ from, port, to });
+  const edge = { from, port, to };
+  sqGraph.edges.push(edge);
+  // 新连线立即成为选中项：右侧直接显示两端，用户不用再回头点线。
+  sqSel = { kind: "edge", id: sqKey(edge) };
   sqSave(); sqRender();
+  return true;
 }
 
 // ---------- 视图 ----------
@@ -4232,6 +4244,20 @@ function sqNodeLabel(n) {
   const idx = sqGraph.nodes.filter((x) => x.type === "step").indexOf(n) + 1;
   return (idx ? idx + " " : "") + en(SQ_KINDS[n.type].name);
 }
+/** 在鼠标附近找端口；缩放后圆点很小，不能只依赖 e.target。 */
+function sqPortHitAt(x, y, selector) {
+  const cv = $("sq-canvas");
+  let best = null;
+  for (const el of cv.querySelectorAll(selector)) {
+    const r = el.getBoundingClientRect();
+    const d = Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2));
+    const pad = Math.max(8, r.width / 2 + 5);
+    if (d <= pad && (!best || d < best.d)) {
+      best = { el, nodeEl: el.closest(".seqnode"), d };
+    }
+  }
+  return best;
+}
 /** 把某个节点挪到画布正中间（点连线两端的筹码时用） */
 function sqCenterOn(id) {
   const n = sqNode(id), cv = $("sq-canvas");
@@ -4337,7 +4363,17 @@ function sqNodeEl(n) {
 function sqRefreshNode(id) {
   const n = sqNode(id);
   const old = document.querySelector(".seqnode[data-id=\"" + id + "\"]");
-  if (n && old) { old.replaceWith(sqNodeEl(n)); sqRedrawEdges(); }
+  if (n && old) {
+    const before = sqGraph.edges.length;
+    sqSanitize();
+    if (sqGraph.edges.length !== before) {
+      sqSave();
+      sqRender();
+      return;
+    }
+    old.replaceWith(sqNodeEl(n));
+    sqRedrawEdges();
+  }
 }
 function sqRender() {
   const wrap = $("sq-nodes");
@@ -4585,14 +4621,17 @@ function sqBindCanvas() {
   }, { passive: false });
 
   cv.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
     const c0 = cv.getBoundingClientRect();
     const port = e.target.closest ? e.target.closest(".seqport.out") : null;
     const nodeEl = e.target.closest ? e.target.closest(".seqnode") : null;
     const pathEl = e.target.closest ? e.target.closest(".seqedgegrp") : null;
-    if (port && nodeEl) {
-      sqSel = { kind: "node", id: nodeEl.dataset.id };
-      const a = sqPortPos(nodeEl.dataset.id, port.dataset.port);
-      sqTemp = { from: nodeEl.dataset.id, port: port.dataset.port, a: a, b: a };
+    const portHit = (port && nodeEl) ? { el: port, nodeEl } : sqPortHitAt(e.clientX, e.clientY, ".seqport.out");
+    if (portHit && portHit.nodeEl) {
+      const outPort = portHit.el;
+      sqSel = { kind: "node", id: portHit.nodeEl.dataset.id };
+      const a = sqPortPos(portHit.nodeEl.dataset.id, outPort.dataset.port);
+      sqTemp = { from: portHit.nodeEl.dataset.id, port: outPort.dataset.port, a: a, b: a };
       sqDrag = { mode: "link" };
       cv.classList.add("linking");
       try { cv.setPointerCapture(e.pointerId); } catch (_) {}
@@ -4650,7 +4689,9 @@ function sqBindCanvas() {
     cv.classList.remove("panning", "linking");
     if (sqDrag && sqDrag.mode === "link" && sqTemp) {
       const under = document.elementFromPoint(e.clientX, e.clientY);
-      const target = under && under.closest ? under.closest(".seqnode") : null;
+      const target = (under && under.closest ? under.closest(".seqnode") : null)
+        || (sqPortHitAt(e.clientX, e.clientY, ".seqport.in") || {}).nodeEl
+        || null;
       if (target && target.dataset.id !== sqTemp.from) sqConnect(sqTemp.from, sqTemp.port, target.dataset.id);
     }
     if (sqDrag && sqDrag.mode === "node") sqSave();
@@ -8145,6 +8186,7 @@ async function mdAddModel() {
     model: m.id,
     api_key_ref: id,
     temperature: 0.2,
+    reasoning_effort: m.reasoning ? "medium" : "",
     context_window: m.ctx,
     reserve_output: Math.max(1024, Math.min(m.out || 8192, 65536)),
     max_messages: 40,
@@ -9989,6 +10031,7 @@ function agFormProvider() {
     model: agEl("ag-p-model").value.trim(),
     api_key_ref: (agEl("ag-p-id").value || "").trim(),
     temperature: Number(agEl("ag-p-temp").value) || 0.2,
+    reasoning_effort: agEl("ag-p-reasoning") ? agEl("ag-p-reasoning").value : "",
     context_window: Number(agEl("ag-p-ctx").value) || 128000,
     reserve_output: Number(agEl("ag-p-res").value) || 8192,
     max_messages: 40,
@@ -10062,6 +10105,11 @@ function agTrName(name) {
 /** 出字速度：每个 profile 一条 {last, avg, tokens, ms, samples} */
 let agSpeed = {};
 const fmtTps = (v) => (v > 0 ? (v >= 100 ? Math.round(v) : v.toFixed(1)) + " tok/s" : "");
+const AG_REASONING_NAMES = {
+  none: "关闭思考", minimal: "极低", low: "低", medium: "中",
+  high: "高", xhigh: "极高", max: "最大", ultra: "超强",
+};
+const agReasoningName = (v) => AG_REASONING_NAMES[String(v || "")] || "";
 
 /** 模型名 → 那一行的状态短标签（只有 AMD 的模型有；其它厂商没有状态可查） */
 function agModelStatus(p) {
@@ -10081,6 +10129,8 @@ function agModelOptionText(p) {
   if (st) bits.push(st);
   const tps = fmtTps((agSpeed[p.id] || {}).last);
   if (tps) bits.push(tps);
+  const reasoning = agReasoningName(p.reasoning_effort);
+  if (reasoning) bits.push(reasoning);
   return bits.join(" · ");
 }
 
@@ -10139,6 +10189,7 @@ function agFillProvider(id) {
   agEl("ag-p-ctx").value = p.context_window;
   agEl("ag-p-res").value = p.reserve_output;
   agEl("ag-p-temp").value = p.temperature;
+  if (agEl("ag-p-reasoning")) agEl("ag-p-reasoning").value = p.reasoning_effort || "";
   agEl("ag-p-tools").checked = !!p.supports_tools;
   agEl("ag-p-stream").checked = !!p.supports_stream;
   agFillPricingForm(agEffectivePricing(p));
@@ -10162,6 +10213,7 @@ async function agSaveProvider() {
     model: agEl("ag-p-model").value.trim(),
     api_key_ref: id,
     temperature: Number(agEl("ag-p-temp").value) || 0.2,
+    reasoning_effort: agEl("ag-p-reasoning") ? agEl("ag-p-reasoning").value : "",
     context_window: Number(agEl("ag-p-ctx").value) || 128000,
     reserve_output: Number(agEl("ag-p-res").value) || 8192,
     max_messages: 40,
@@ -10199,7 +10251,8 @@ function agProvRow(p, secrets) {
   const meta = document.createElement("span");
   meta.className = "meta";
   const hasKey = secrets.includes(p.api_key_ref || p.id);
-  meta.textContent = `${p.model} · ${p.endpoint}${hasKey ? "" : " · " + en("⚠ 没密钥")}`;
+  const reasoning = agReasoningName(p.reasoning_effort);
+  meta.textContent = `${p.model}${reasoning ? " · " + reasoning : ""} · ${p.endpoint}${hasKey ? "" : " · " + en("⚠ 没密钥")}`;
   meta.title = meta.textContent;
   const mk = (label, title, fn) => {
     const b = document.createElement("button");
@@ -10323,7 +10376,7 @@ function agRenderSkillTable() {
     sz.className = "sz"; sz.textContent = (s.size / 1024).toFixed(1) + " KB";
     const sw = document.createElement("input");
     sw.type = "checkbox"; sw.className = "sw"; sw.checked = !!s.enabled;
-    sw.title = en(s.enabled ? "已启用（关掉=不进口令索引）" : "已停用");
+    sw.title = en(s.enabled ? "已启用（关掉后不进索引，只能由你点名读取）" : "已停用（不进索引，可点名读取）");
     sw.onchange = async () => {
       try {
         await invoke("agent_skill_set_enabled", { name: s.slug, on: sw.checked });
@@ -11522,11 +11575,13 @@ const AG_HOST = {
     const out = {};
     for (const [k, v] of Object.entries(SQ_KINDS || {})) {
       if (!v) continue;
-      const name = (x) => (typeof x === "string" ? x : Array.isArray(x) ? x[0] : String(x));
+      // step 的 timeout 口只有勾了“发送后等待”才存在，所以这里给全量端口，
+      // 让模型能一次看清所有可连的输出。
+      const sample = { type: k, wait: true };
       out[k] = {
         label: v.label || v.name || k,
-        ins: (Array.isArray(v.ins) ? v.ins : []).map(name),
-        outs: (Array.isArray(v.outs) ? v.outs : []).map(name),
+        ins: v.ins ? ["in"] : [],
+        outs: sqOuts(sample).map((x) => x[0]),
       };
     }
     return out;
@@ -11545,8 +11600,8 @@ const AG_HOST = {
     sqGraph = { nodes: g.nodes, edges: Array.isArray(g.edges) ? g.edges : [] };
     sqSanitize();                                  // 已有体检：丢掉不认识的类型、重复 id、悬空连线
     if (!sqGraph.nodes.length) { sqGraph = before; return "导入失败：没有一个节点是认识的类型（可以先 flow_get 看 kinds）"; }
-    sqSave(); sqRender(); sqFitView && sqFitView();
     showPane("seq");
+    sqSave(); sqRender(); sqFit();
     return `已导入画布：${sqGraph.nodes.length} 个节点 / ${sqGraph.edges.length} 条连线（不认识的类型和悬空连线已丢掉），已经切到「中控编排」页，用户可以直接改或跑。`;
   },
   async flow_add_node(a) {
@@ -11559,6 +11614,7 @@ const AG_HOST = {
     n.y = Math.round(a && a.y != null ? Number(a.y) : 60);
     if (a && a.params && typeof a.params === "object") Object.assign(n, a.params);
     sqGraph.nodes.push(n);
+    sqSel = { kind: "node", id: n.id };
     sqSave(); sqRender(); showPane("seq");
     return `已新增节点 ${n.id}（type=${type}）坐标 ${n.x},${n.y}；连它用 flow_connect(from/port/to)`;
   },
@@ -11573,7 +11629,9 @@ const AG_HOST = {
     const outs = sqOuts(fn).map((o) => o[0]);
     if (!outs.includes(port)) return `节点 ${from} 没有输出端口「${port}」（它有：${outs.join(" / ") || "无"}）`;
     if (sqGraph.edges.some((e) => e.from === from && e.port === port && e.to === to)) return "这条线已经存在（没重复加）";
-    sqGraph.edges.push({ from, port, to });
+    const edge = { from, port, to };
+    sqGraph.edges.push(edge);
+    sqSel = { kind: "edge", id: sqKey(edge) };
     sqSanitize(); sqSave(); sqRender(); showPane("seq");
     return `已连上：${from}.${port} → ${to}`;
   },
@@ -12327,13 +12385,18 @@ const EN = {
   "📎 文件": "📎 File",
   "agent 的权限：只读 / 危险动作先问 / 全自动": "Agent permission: read-only / ask before risky actions / fully automatic",
   "只读": "Read-only", "需要批准": "Ask", "自动": "Auto",
+  "思考强度": "Reasoning effort", "跟随模型默认": "Use model default",
+  "关闭思考": "Disable thinking", "极低": "Minimal", "低": "Low", "中": "Medium",
+  "高": "High", "极高": "Extra high", "最大": "Max", "超强": "Ultra",
+  "OpenAI 兼容发 reasoning_effort；Anthropic 转成 thinking budget":
+    "OpenAI-compatible providers receive reasoning_effort; Anthropic maps it to a thinking budget",
   "正在取模型状态（AMD 那边约 20 秒）": "Fetching model status (takes ~20 s for AMD)",
   "这轮用哪个模型（参数去设置里改）": "Model to use (edit parameters in Settings)",
   "＋ 新增/编辑…": "＋ Add / edit…", "取状态中…": "fetching status…",
   "状态未知": "status unknown", "满载": "full", "繁忙": "busy",
   "（还没有技能）· 去「设置 → 技能」导入": "(no skills yet) · import one in Settings → Skills",
   "（还没有 MCP 服务）· 去「设置 → MCP」新增": "(no MCP servers yet) · add one in Settings → MCP",
-  "这里只管**开关**（关掉的技能不进口令索引，agent 也看不到）。": "This page only shows toggles (a disabled skill is not indexed and stays invisible to the agent).",
+  "这里只管**开关**（关掉的技能不进口令索引，也不会被主动提及）。": "This page only shows toggles (disabled skills are not indexed or suggested automatically).",
   "路径 / 导入 / 编辑都在": "Paths, import and editing live in",
   "设置 → 技能": "Settings → Skills",
   "这里只管**开关**。新增 / 参数 / 测试都在": "This page only shows toggles. Adding, parameters and tests live in",
@@ -12480,8 +12543,8 @@ const EN = {
   "（agent 打开网页后这里会同步显示；也可以自己填网址打开）":
     "(pages the agent opens show up here; you can also type a URL yourself)",
   "在中间点一下节点或连线，这里改参数。": "Click a node or an edge in the middle to edit its parameters here.",
-  "这里只管**开关**（关掉的技能不进口令索引，agent 也看不到）。 路径 / 导入 / 编辑都在":
-    "This page only shows toggles (a disabled skill is not indexed and stays invisible to the agent). Paths, import and editing live in",
+  "这里只管**开关**（关掉的技能不进口令索引，也不会被主动提及）。 路径 / 导入 / 编辑都在":
+    "This page only shows toggles (disabled skills are not indexed or suggested automatically). Paths, import and editing live in",
   "例：^(\\w+)=(\\d+)$": "e.g. ^(\\w+)=(\\d+)$",
   "例：$1 -> $2": "e.g. $1 -> $2",
   "思考中…": "thinking…", "思考中": "thinking",
@@ -12729,7 +12792,8 @@ const EN = {
   "删除供应商": "Delete provider", "确定删掉": "Delete",
   "它的 API Key 也一起删。": "Its API key is deleted as well.",
   "已启用": "enabled", "已停用": "disabled",
-  "已启用（关掉=不进口令索引）": "enabled (turn off = not indexed)",
+  "已启用（关掉后不进索引，只能由你点名读取）": "enabled (turn off = not indexed; read only when named by you)",
+  "已停用（不进索引，可点名读取）": "disabled (not indexed; can be read when named)",
   "已启用（工具会挂给 agent）": "enabled (tools are exposed to the agent)",
   "失败": "failed", "完成": "done", "执行中…": "running…",
   "参数：": "args: ",

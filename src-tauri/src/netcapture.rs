@@ -63,7 +63,8 @@ pub async fn tshark_info() -> Result<Value, String> {
 pub async fn tshark_start(app: tauri::AppHandle, iface: String) -> Result<Value, String> {
     let _ = tshark_stop();
     let cmd = find_tshark().ok_or_else(|| "没装 Wireshark / tshark —— 到「环境配置」里装一下".to_string())?;
-    let mut child = Command::new(&cmd)
+    let mut child_cmd = Command::new(&cmd);
+    child_cmd
         .args([
             "-i", &iface, "-l", "-T", "ek",
             "-e", "frame.time_epoch", "-e", "frame.number", "-e", "frame.len",
@@ -72,8 +73,8 @@ pub async fn tshark_start(app: tauri::AppHandle, iface: String) -> Result<Value,
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::from(std::fs::File::create(std::env::temp_dir().join("kdock-tshark-err.log")).map_err(|e| e.to_string())?))
-        .creation_flags(0x0800_0000)
-        .spawn()
+        .creation_flags(0x0800_0000);
+    let mut child = crate::process_guard::spawn(&mut child_cmd)
         .map_err(|e| format!("启动 tshark 失败：{e}"))?;
     let stdout = child.stdout.take().ok_or("拿不到 tshark 输出")?;
     let stop = Arc::new(AtomicBool::new(false));

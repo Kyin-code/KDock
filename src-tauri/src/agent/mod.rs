@@ -273,6 +273,7 @@ fn amd_provider(model: &str) -> Provider {
         model: model.to_string(),
         api_key_ref: "amd".into(),
         temperature: 0.2,
+        reasoning_effort: String::new(),
         context_window: 128_000,
         reserve_output: 8192,
         max_messages: 40,
@@ -1205,7 +1206,10 @@ pub fn agent_migrate_always_skills(app: AppHandle) -> Value {
     }
     let list = store::skills_list(&app);
     let mut body = String::new();
-    for s in list.iter().filter(|s| slugs.contains(&s.slug)) {
+    for s in list
+        .iter()
+        .filter(|s| s.enabled && slugs.contains(&s.slug))
+    {
         let Ok(text) = std::fs::read_to_string(&s.path) else {
             continue;
         };
@@ -1230,7 +1234,7 @@ pub fn agent_migrate_always_skills(app: AppHandle) -> Value {
         let _ = std::fs::rename(&p, p.with_extension("json.migrated"));
     }
     json!({
-        "migrated": slugs.len(),
+        "migrated": body.lines().filter(|l| l.starts_with("## ")).count(),
         "slugs": slugs,
         "note": r.ok().unwrap_or_default(),
     })

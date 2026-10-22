@@ -103,6 +103,9 @@ pub struct Provider {
     pub api_key_ref: String,
     #[serde(default = "default_temperature")]
     pub temperature: f32,
+    /// 思考强度：空=不发送；none/minimal/low/medium/high/xhigh/max/ultra。
+    #[serde(default)]
+    pub reasoning_effort: String,
     #[serde(default = "default_context_window")]
     pub context_window: u32,
     #[serde(default = "default_reserve_output")]
@@ -133,6 +136,29 @@ impl Provider {
         let base = self.endpoint.trim().trim_end_matches('/');
         let cut = base.find("/chat/completions").unwrap_or(base.len());
         format!("{}/models", &base[..cut])
+    }
+    pub fn reasoning_effort(&self) -> Option<&str> {
+        let s = self.reasoning_effort.trim();
+        (!s.is_empty()).then_some(s)
+    }
+    /// Anthropic extended thinking 的预算（token）。none/空 表示不启用。
+    pub fn anthropic_thinking_budget(&self) -> Option<u32> {
+        let effort = self.reasoning_effort()?;
+        if effort == "none" {
+            return None;
+        }
+        let requested = match effort {
+            "minimal" => 1_024,
+            "low" => 2_048,
+            "medium" => 4_096,
+            "high" => 8_192,
+            "xhigh" => 16_384,
+            "max" => 24_576,
+            "ultra" => 32_768,
+            _ => 4_096,
+        };
+        let max_tokens = self.reserve_output.max(2_048);
+        Some(requested.min(max_tokens.saturating_sub(1_024)).max(1_024))
     }
 }
 
@@ -887,7 +913,7 @@ pub struct SkillInfo {
     pub description: String,
     pub path: String,
     pub size: u64,
-    /// 开关：关掉的技能会挪到 `skills-off/`，不进口令索引（agent 也看不到）
+    /// 开关：关掉的技能会挪到 `skills-off/`，不进口令索引，也不会被系统主动提及。
     pub enabled: bool,
     /// 哪一层的技能：global（用户级，agent/skills/） / workspace（项目级，<工作区>/.kdock_skill/）
     /// —— 界面按这个分三段显示，索引也分两段注入
@@ -1059,6 +1085,11 @@ pub fn skill_set_enabled(app: &AppHandle, slug: &str, on: bool) -> Result<String
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     std::fs::rename(&from, &to).map_err(|e| format!("切换失败: {e}"))?;
+    if !on {
+        // 老版本把「常驻技能」正文搬进了 AGENTS.md；技能后来被关掉时，
+        // 正文必须同步移除，否则 agent 每轮仍会在系统提示里看到它。
+        let _ = prune_disabled_migrated_guidance(app);
+    }
     Ok(to.to_string_lossy().to_string())
 }
 
@@ -1498,63 +1529,129 @@ pub fn skills_index_workspace(ws: &std::path::Path) -> String {
     out
 }
 
-/// 技能路径解析的纯函数版（不碰 AppHandle，好测）：
-/// 工作区技能优先，否则就是**全局启用目录**下的那个 slug。
-///
-/// 刻意不接受"停用目录"这个参数 —— 停用对 agent 就是不存在，这是那个开关的全部意义。
-fn resolve_skill_dir(ws: &std::path::Path, enabled_dir: &std::path::Path, slug: &str) -> PathBuf {
+/// 技能路径解析的纯函数版：工作区 > 全局启用 > 全局停用。
+fn resolve_skill_dir(
+    ws: &std::path::Path,
+    enabled_dir: &std::path::Path,
+    disabled_dir: &std::path::Path,
+    slug: &str,
+) -> PathBuf {
     let s = slugify(slug);
     let local = ws.join(WORKSPACE_SKILL_DIR).join(&s);
     if local.is_dir() {
         return local;
     }
-    enabled_dir.join(&s)
+    let enabled = enabled_dir.join(&s);
+    if enabled.is_dir() {
+        return enabled;
+    }
+    // 停用技能不进索引，也不会被系统提示提到；但用户明确点名时可以按名字读到。
+    let disabled = disabled_dir.join(&s);
+    if disabled.is_dir() {
+        return disabled;
+    }
+    enabled
 }
 
-/// 技能在哪儿（**agent 读正文走这条**）：先工作区、再全局**已启用**的。
-///
-/// 这里**不回退到 `skills-off/`**：停用的技能对 agent 就等于不存在 —— 那是那个开关的全部意义。
-/// 找不到时返回"全局启用目录下的路径"（不存在），交给调用方报错。
+/// 技能在哪儿（**agent 读正文走这条**）：先工作区、再全局启用、最后全局停用。
+/// 停用技能不会出现在索引里；只有用户明确说出名字、模型调用 `skill_read` 时才可能读到。
 ///
 /// 注意别跟 `skill_dir_of()` 搞混：那个是**给界面编辑器用的**（设置 → 技能里点一行读进编辑框），
 /// 它必须能读到停用的技能，否则用户关掉之后就再也打不开、改不回来了。
 pub fn skill_dir_of_in(app: &AppHandle, ws: &std::path::Path, slug: &str) -> PathBuf {
     let enabled = skills_dir(app).unwrap_or_default();
-    resolve_skill_dir(ws, &enabled, slug)
+    let disabled = skills_off_dir(app).unwrap_or_default();
+    resolve_skill_dir(ws, &enabled, &disabled, slug)
 }
 
-/// 读不到技能时的提示语（纯函数，好测）。
-/// `stopped` = 它其实躺在停用目录里 —— 这句必须明确说"停用"，并让模型请用户启用，
-/// 而不是像"不存在"那样让模型自己去核对名字。
-fn skill_read_error_text(slug: &str, stopped: bool) -> String {
-    if stopped {
-        format!(
-            "技能「{slug}」当前是**停用**状态（用户关掉了它），我不能自己读。\
-             请告诉用户：要用它需要在「设置 → 技能」里启用，启用后我就能读并照着做。\
-             不要改用别的方式绕过它。"
-        )
-    } else {
-        format!("没有名为「{slug}」的技能。名字可能写错了 —— 先用 skill_list 看看有哪些可用技能。")
-    }
+fn skill_read_error_text(slug: &str) -> String {
+    format!("没有名为「{slug}」的技能。名字可能写错了 —— 先用 skill_list 看看有哪些可用技能。")
 }
 
-/// 读技能正文（工作区优先）——模型走这条路，所以它能读到项目技能。
-///
-/// **读不到时要分清两种原因**，因为模型能做的事完全不同：
-/// - 不存在：可能是名字写错了，它应该去 `skill_list` 里核对；
-/// - **已被用户停用**：技能确实在那儿，但用户关掉了。这时它**不能**自己去读（不递路径），
-///   而要明确告诉用户「这个技能是停用的，需要你启用」—— 用户点了启用，下次就能用。
-///
-/// 停用目录只用来**判断状态**，它的路径永远不会出现在返回值里。
+/// 读技能正文（工作区优先）。停用技能不进口令索引，但用户明确点名时仍可按名读取。
 pub fn skill_read_in(app: &AppHandle, ws: &std::path::Path, slug: &str) -> Result<String, String> {
     let p = skill_dir_of_in(app, ws, slug).join("SKILL.md");
     if p.is_file() {
         return std::fs::read_to_string(&p).map_err(|e| format!("读 {} 失败: {e}", p.display()));
     }
-    // 启用的地方没有：看它是不是躺在停用目录里（只看"在不在"，不返回路径）
-    let s = slugify(slug);
-    let stopped = skills_off_dir(app).map(|d| d.join(&s).is_dir()).unwrap_or(false);
-    Err(skill_read_error_text(slug, stopped))
+    Err(skill_read_error_text(slug))
+}
+
+fn migrated_always_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(agent_dir(app)?.join("skills-always.json.migrated"))
+}
+
+/// 用停用技能的原始正文精确移除旧迁移段。
+/// 正文里可能自己就有 `## 1.` 这种标题，不能按“下一个 ##”粗暴截断。
+fn remove_migrated_body(text: &str, slug: &str, body: &str) -> String {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let text = text.as_str();
+    let body = body.trim();
+    let body = body.replace("\r\n", "\n").replace('\r', "\n");
+    let body = body.as_str();
+    if body.is_empty() {
+        return text.to_string();
+    }
+    let with_heading = format!("## {slug}\n{body}");
+    let mut joined = if text.contains(&with_heading) {
+        text.replace(&with_heading, "")
+    } else if text.contains(body) {
+        // 兼容已经删过 slug 标题、但正文仍在的中间版本。
+        text.replace(body, "")
+    } else if let Some(pos) = body.find("\n## ") {
+        // 兼容更早的中间版本：slug 标题和正文开头被误删，只剩正文里的后半段。
+        let tail = &body[pos + 1..];
+        if text.contains(tail) {
+            text.replace(tail, "")
+        } else {
+            text.to_string()
+        }
+    } else {
+        text.to_string()
+    };
+    while joined.contains("\n\n\n") {
+        joined = joined.replace("\n\n\n", "\n\n");
+    }
+    if joined.trim() == "# 全局指导（从常驻技能迁移而来）" {
+        String::new()
+    } else {
+        joined.trim().to_string()
+    }
+}
+
+/// 清理旧版“常驻技能 → AGENTS.md”迁移留下的已停用技能正文。
+/// 只处理迁移清单里记录过的 slug，不动用户手写的其它章节。
+pub fn prune_disabled_migrated_guidance(app: &AppHandle) -> Result<usize, String> {
+    let migrated = migrated_always_path(app)?;
+    let slugs = skills_always_read(&migrated);
+    if slugs.is_empty() {
+        return Ok(0);
+    }
+    let enabled = skills_dir(app)?;
+    let mut text = read_global_guidance(app);
+    if text.trim().is_empty() {
+        return Ok(0);
+    }
+    let mut removed = 0;
+    for slug in slugs {
+        if enabled.join(slugify(&slug)).is_dir() {
+            continue;
+        }
+        let md = skills_off_dir(app)?.join(slugify(&slug)).join("SKILL.md");
+        let Ok(source) = std::fs::read_to_string(md) else {
+            continue;
+        };
+        let (_, body) = parse_frontmatter(&source);
+        let next = remove_migrated_body(&text, &slug, &body);
+        if next != text {
+            text = next;
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        write_global_guidance(app, &text)?;
+    }
+    Ok(removed)
 }
 
 /// 写技能：scope = global（默认）或 workspace
@@ -1649,10 +1746,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// 停用的技能**对 agent 就是不存在**：读正文那条路不能回退到 skills-off/。
-    /// 这个测试是那个开关的守门人 —— 谁要是又把 off 目录加回候选里，这里会红。
+    /// 停用技能不进索引，但用户明确点名时仍能按名字读到正文。
     #[test]
-    fn agent_skill_lookup_never_falls_back_to_disabled_dir() {
+    fn disabled_skill_can_be_read_by_explicit_name_but_not_indexed() {
         let base = tmp_dir("skilloff");
         let enabled = base.join("skills");
         let disabled = base.join("skills-off");
@@ -1664,42 +1760,55 @@ mod tests {
         std::fs::create_dir_all(disabled.join("secret")).unwrap();
         std::fs::write(disabled.join("secret").join("SKILL.md"), "停用的内容").unwrap();
 
-        // 1) 停用目录里的技能解析不到 off 路径
-        let got = resolve_skill_dir(&ws, &enabled, "secret");
-        assert_eq!(got, enabled.join("secret"), "不能解析到 skills-off 里");
-        assert!(!got.join("SKILL.md").is_file(), "解析出来的路径不该有文件");
+        // 1) 按名读取会回退到停用目录
+        let got = resolve_skill_dir(&ws, &enabled, &disabled, "secret");
+        assert_eq!(got, disabled.join("secret"), "按名读取应回退到 skills-off");
+        assert_eq!(std::fs::read_to_string(got.join("SKILL.md")).unwrap(), "停用的内容");
 
         // 2) 启用的能正常解析
         std::fs::create_dir_all(enabled.join("active")).unwrap();
         std::fs::write(enabled.join("active").join("SKILL.md"), "启用的内容").unwrap();
-        let got = resolve_skill_dir(&ws, &enabled, "active");
+        let got = resolve_skill_dir(&ws, &enabled, &disabled, "active");
         assert_eq!(got, enabled.join("active"));
 
         // 3) 工作区技能优先于全局同名的
         let wsdir = ensure_workspace_skill_dir(&ws).join("active");
         std::fs::create_dir_all(&wsdir).unwrap();
         std::fs::write(wsdir.join("SKILL.md"), "项目里的同名技能").unwrap();
-        let got = resolve_skill_dir(&ws, &enabled, "active");
+        let got = resolve_skill_dir(&ws, &enabled, &disabled, "active");
         assert_eq!(got, wsdir, "工作区技能要盖过全局的");
 
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// 读不到时**必须能分清是"没这个名字"还是"被停用了"**：
-    /// 前者让模型去 skill_list 核对，后者让模型请求用户启用 —— 两句提示不一样，模型的动作也不一样。
-    /// 这里只测措辞分叉（真路径要 AppHandle，见上面那个测试）。
     #[test]
-    fn disabled_and_missing_skills_get_different_messages() {
-        let stopped = skill_read_error_text("kyin-identity", true);
-        assert!(stopped.contains("停用"), "要说清是停用：{stopped}");
-        assert!(stopped.contains("设置 → 技能"), "要给出启用入口：{stopped}");
-        assert!(stopped.contains("启用"), "要明确请用户启用：{stopped}");
-        assert!(!stopped.contains("skills-off"), "不能把停用目录的路径漏给模型");
-        assert!(!stopped.contains("没找到") && !stopped.contains("没有名为"), "不能说成不存在");
-
-        let missing = skill_read_error_text("no-such-skill", false);
+    fn missing_skill_message_points_to_list() {
+        let missing = skill_read_error_text("no-such-skill");
         assert!(missing.contains("没有名为"), "要说清是不存在：{missing}");
         assert!(missing.contains("skill_list"), "要引导它去核对名字：{missing}");
-        assert!(!missing.contains("停用"), "不能把不存在说成停用");
+    }
+
+    #[test]
+    fn migration_section_can_be_removed_without_touching_other_guidance() {
+        let body = "## 1. 身份\n秘密正文\n\n## 2. 其它\n更多正文";
+        let text = format!("# 全局指导（从常驻技能迁移而来）\n\n## kyin-identity\n{body}\n\n## keep\n用户手写\n");
+        let got = remove_migrated_body(&text, "kyin-identity", body);
+        assert!(!got.contains("秘密正文"));
+        assert!(!got.contains("更多正文"));
+        assert!(got.contains("## keep"));
+        assert!(got.contains("用户手写"));
+
+        // 中间版本曾只删掉第一段，只剩 `## 1.` 之后的正文。
+        let broken = format!("# 全局指导（从常驻技能迁移而来）\n\n## 1. 身份\n秘密正文\n\n## 2. 其它\n更多正文\n\n## keep\n用户手写\n");
+        let repaired = remove_migrated_body(&broken, "kyin-identity", body);
+        assert!(!repaired.contains("秘密正文"));
+        assert!(!repaired.contains("更多正文"));
+        assert!(repaired.contains("## keep"));
+
+        let crlf = text.replace('\n', "\r\n");
+        let crlf_body = body.replace('\n', "\r\n");
+        let normalized = remove_migrated_body(&crlf, "kyin-identity", &crlf_body);
+        assert!(!normalized.contains("秘密正文"));
+        assert!(normalized.contains("## keep"));
     }
 }

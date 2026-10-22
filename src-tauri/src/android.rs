@@ -45,7 +45,7 @@ fn adb_run(args: &[&str], timeout_ms: u64) -> Result<(i32, String, String), Stri
         use std::os::windows::process::CommandExt;
         c.creation_flags(0x0800_0000);
     }
-    let mut child = c.spawn().map_err(|e| format!("起 adb 失败: {e}"))?;
+    let mut child = crate::process_guard::spawn(&mut c).map_err(|e| format!("起 adb 失败: {e}"))?;
     // 简单超时：到点就杀（adb 自己也有超时，但 server 卡死时得有人管）
     let t0 = Instant::now();
     let out = child.stdout.take();
@@ -318,7 +318,7 @@ fn screencap(serial: &str, timeout_ms: u64) -> Result<Vec<u8>, String> {
         use std::os::windows::process::CommandExt;
         c.creation_flags(0x0800_0000);
     }
-    let mut child = c.spawn().map_err(|e| format!("起 adb 失败: {e}"))?;
+    let mut child = crate::process_guard::spawn(&mut c).map_err(|e| format!("起 adb 失败: {e}"))?;
     let mut so = child.stdout.take().ok_or("拿不到 adb 输出")?;
     let mut se = child.stderr.take().ok_or("拿不到 adb 错误输出")?;
     let h = std::thread::spawn(move || {
@@ -501,7 +501,7 @@ pub fn adb_scrcpy_run(serial: String, args: Option<String>) -> Result<Value, Str
             c.arg(x);
         }
     }
-    let child = c.spawn().map_err(|e| format!("起 scrcpy 失败: {e}"))?;
+    let child = crate::process_guard::spawn(&mut c).map_err(|e| format!("起 scrcpy 失败: {e}"))?;
     let pid = child.id();
     *SCRCPY.lock().expect("scrcpy mutex") = Some(child);
     Ok(json!({ "pid": pid, "exe": exe.to_string_lossy() }))

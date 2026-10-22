@@ -263,7 +263,8 @@ fn capture_blocking(device: &str, rate: u64, samples: u64, channels: &[String]) 
     c.stdout(Stdio::from(lf.try_clone().map_err(|e| e.to_string())?));
     c.stderr(Stdio::from(lf));
 
-    let mut child = c.spawn().map_err(|e| format!("启动采集失败：{e}"))?;
+    let mut child = crate::process_guard::spawn(&mut c)
+        .map_err(|e| format!("启动采集失败：{e}"))?;
     let timeout = Duration::from_secs(((n as f64 / rate as f64) + 30.0).min(600.0) as u64 + 1);
     let t0 = Instant::now();
     loop {

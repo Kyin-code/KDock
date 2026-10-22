@@ -241,6 +241,20 @@
                   <input id="ag-p-res" class="num" type="number" value="8192" title="单次回复最多多少 token" />
                   <span class="hint">留 2048~8192 就行</span>
                 </div>
+                <div class="field"><label for="ag-p-reasoning">思考强度</label>
+                  <select id="ag-p-reasoning">
+                    <option value="">跟随模型默认</option>
+                    <option value="none">关闭思考</option>
+                    <option value="minimal">极低</option>
+                    <option value="low">低</option>
+                    <option value="medium">中</option>
+                    <option value="high">高</option>
+                    <option value="xhigh">极高</option>
+                    <option value="max">最大</option>
+                    <option value="ultra">超强</option>
+                  </select>
+                  <span class="hint">OpenAI 兼容发 reasoning_effort；Anthropic 转成 thinking budget</span>
+                </div>
                 <div class="field"><label for="ag-p-price-cur">价格</label>
                   <select id="ag-p-price-cur" class="tight">
                     <option value="USD">美元 / 百万 token</option>

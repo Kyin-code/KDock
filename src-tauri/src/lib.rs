@@ -14,6 +14,7 @@ mod netcapture;
 mod netfs;
 mod netip;
 mod ocr;
+mod process_guard;
 mod remote_screen;
 mod scope;
 mod shell;
@@ -287,7 +288,8 @@ fn flash_run(app: AppHandle, exe: String, args: Vec<String>) -> Result<(), Strin
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：别弹黑框
     }
     cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("启动 {exe} 失败: {e}"))?;
+    let mut child = process_guard::spawn(&mut cmd)
+        .map_err(|e| format!("启动 {exe} 失败: {e}"))?;
     let out = child.stdout.take();
     let err = child.stderr.take();
     if let Some(o) = out {
@@ -928,7 +930,7 @@ fn run_capture(exe: &std::path::Path, args: &[&str], timeout_ms: u64) -> Option<
         use std::os::windows::process::CommandExt;
         c.creation_flags(0x0800_0000);
     }
-    let mut child = c.spawn().ok()?;
+    let mut child = process_guard::spawn(&mut c).ok()?;
     let t0 = std::time::Instant::now();
     loop {
         match child.try_wait() {
@@ -3550,6 +3552,9 @@ pub fn run() {
             if let Ok(d) = app.path().app_data_dir() {
                 transport::set_hostkey_cache(d.join("ssh_hostkeys.txt"));
             }
+            // 老版常驻技能迁移可能把后来被关闭的技能正文留在了 AGENTS.md。
+            // 启动时先清一次，保证新会话不会在系统提示里看到已停用技能。
+            let _ = agent::store::prune_disabled_migrated_guidance(app.handle());
             // 它内部要跑 PowerShell + WMI（好几秒），别挡着窗口显示 —— 丢后台线程慢慢补名字
             std::thread::spawn(refresh_friendly);
             agent::schedule::start(app.handle().clone());
@@ -3887,6 +3892,7 @@ pub fn run() {
         .run(|_app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 agent::mcp::shutdown_all();
+                process_guard::cleanup_all();
             }
         });
 }

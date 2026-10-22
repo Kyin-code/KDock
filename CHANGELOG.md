@@ -18,6 +18,12 @@
 ## [未发布]
 
 ### 新增
+- **统一进程树回收**：Windows 上所有外部子进程（ADB server、tshark、USBPcap、sigrok、
+  FFmpeg、SSH、GDB、MCP 等）统一登记到 kill-on-close Job Object。正常退出和强制结束 KDock
+  都会回收整棵进程树，避免 portable 目录里的 exe/dll 被残留进程锁住。
+- **模型思考强度**：供应商配置新增 `reasoning_effort`，可选跟随默认 / 关闭 / 极低 / 低 / 中 /
+  高 / 极高 / 最大 / 超强；OpenAI 兼容请求发 `reasoning_effort`，Anthropic 自动换算为
+  extended-thinking budget。
 - **环境配置扩到 60+ 项**，补上嵌入式常用但之前缺的一大块：
   · **Rust 工具链**：rustup + cargo（winget 一键）、**MSVC 生成工具**（Build Tools 2022，用 `--override`
     显式带上 VCTools 工作负载，否则装完没有 `cl.exe`）、**probe-rs**（`cargo install probe-rs-tools`）。
@@ -36,16 +42,14 @@
 - **清单防回归测试**：组件 id 唯一、每条至少一个检测规则、pip 规则必须有包名、只能手动装的必须给官网地址。
 
 ### 修复
-- **停用的技能对 agent 真正不可见**：`skill_list` 不再把 `skills-off/` 里的技能报出来（那个工具原来直接
-  全量打印，等于把开关架空）；`skill_dir_of_in()` 读正文时也不再回退到 `skills-off/` —— 猜得到 slug 也读不到。
-  界面编辑器走的 `skill_dir_of()` **保持原样**（必须能打开停用的技能，否则关掉就改不回来了）。
-  · 读不到时**分两种情况说话**，因为模型能做的事完全不同：
-    不存在 → 「先用 skill_list 核对名字」；**已停用** → 「这是停用的，需要用户去 设置 → 技能 里启用，
-    不要绕过它」。停用目录只用来判断状态，它的路径永远不出现在返回值里。
-  · `skill_read` 的工具描述也一起改了：原来写着「包括身份、口吻、自我介绍、闲聊这类问题都该先读技能」，
-    那等于鼓励它没事就去翻技能；现在明确「只在用户的话落到某个技能的用途上时才读」。
-  · 新增测试 `agent_skill_lookup_never_falls_back_to_disabled_dir`、
-    `disabled_and_missing_skills_get_different_messages` 守住这条边界。
+- **停用技能不再被主动提示**：`skill_list` 和系统提示只包含启用技能；但用户明确点名时，
+  `skill_read` 可以按名字读取停用目录里的正文，符合“用户指定才读”的边界。
+  同时修复旧版“常驻技能 → AGENTS.md”迁移残留：技能关闭后会按原始正文精确移除，
+  避免新会话每轮仍看到已停用的身份技能内容。
+- **编排连线**：新建连线立即进入选中态；端口因配置变化消失时同步清理悬空连线；
+  host 工具调用保留 `this`，`flow_get` 不再丢画布上下文。
+- **ADB / 其它外部工具退出锁目录**：关闭或强制结束 KDock 时集中回收子进程树，
+  不再需要手工结束 `adb.exe` 才能移动 portable 目录。
 - **Agent 欢迎页改为只认消息**：原来还看输入框有没有内容，打字打到一半欢迎页就消失、删光又冒回来。
 - **第一轮对话消息顺序错位**：`agSend()` 原来是「先 `invoke` 再上屏」，而后端一进 `run_turn` 就推
   `agent://state`、前端 `agThinkEnsure()` 直接 append 到对话底部 —— 等 Promise 回来时思考块已经在上面了，

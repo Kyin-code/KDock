@@ -823,14 +823,14 @@ html.kb-focus[data-tab="kb"] .parampane.kbpane #kb-chat-host { height: auto; fle
 .seqnode .nbd .kv b { font-weight: 500; opacity: .72; min-width: 30px; }
 .seqnode .nbd .pv { font-family: Consolas, monospace; color: hsl(var(--foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seqport {
-  position: absolute; width: 11px; height: 11px; border-radius: 50%;
+  position: absolute; width: 15px; height: 15px; border-radius: 50%;
   background: hsl(var(--card)); border: 2px solid hsl(var(--muted-foreground));
-  cursor: crosshair; z-index: 2;
+  cursor: crosshair; z-index: 4;
 }
 .seqport:hover { border-color: hsl(var(--primary)); transform: scale(1.15); }
-.seqport.in { top: -7px; left: calc(50% - 5px); }
-.seqport.out { bottom: -7px; }
-.seqport-lb { position: absolute; bottom: -20px; font-size: 9.5px; color: hsl(var(--muted-foreground)); white-space: nowrap; }
+.seqport.in { top: -9px; left: calc(50% - 7.5px); }
+.seqport.out { bottom: -9px; }
+.seqport-lb { position: absolute; bottom: -24px; font-size: 9.5px; color: hsl(var(--muted-foreground)); white-space: nowrap; }
 .seqhint {
   position: absolute; left: 10px; bottom: 8px; right: 10px;
   font-size: 10.5px; color: hsl(var(--muted-foreground) / 0.85); pointer-events: none;

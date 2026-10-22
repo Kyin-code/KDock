@@ -70,7 +70,8 @@ pub fn debug_gdb_start(
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：别弹黑框
     }
-    let mut child = cmd.spawn().map_err(|e| format!("起 gdb 失败（{exe}）：{e}"))?;
+    let mut child = crate::process_guard::spawn(&mut cmd)
+        .map_err(|e| format!("起 gdb 失败（{exe}）：{e}"))?;
     let stdin = child.stdin.take().ok_or("拿不到 gdb 的 stdin")?;
     if let Some(out) = child.stdout.take() {
         spawn_reader(app.clone(), out, "debug://gdb");
@@ -149,7 +150,8 @@ pub fn debug_server_start(
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
-    let mut child = cmd.spawn().map_err(|e| format!("起 {} 失败: {e}", program.trim()))?;
+    let mut child = crate::process_guard::spawn(&mut cmd)
+        .map_err(|e| format!("起 {} 失败: {e}", program.trim()))?;
     if let Some(out) = child.stdout.take() {
         spawn_reader(app.clone(), out, "debug://server");
     }

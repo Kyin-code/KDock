@@ -268,7 +268,7 @@ fn plink_run(exe: &PathBuf, args: &[String], timeout: Duration) -> Option<(i32, 
         use std::os::windows::process::CommandExt;
         c.creation_flags(0x0800_0000);
     }
-    let mut child = c.spawn().ok()?;
+    let mut child = crate::process_guard::spawn(&mut c).ok()?;
     let t0 = std::time::Instant::now();
     loop {
         match child.try_wait() {
@@ -355,7 +355,8 @@ pub fn ssh_run_once(
         use std::os::windows::process::CommandExt;
         c.creation_flags(0x0800_0000);
     }
-    let mut child = c.spawn().map_err(|e| format!("起 ssh 进程失败: {e}"))?;
+    let mut child = crate::process_guard::spawn(&mut c)
+        .map_err(|e| format!("起 ssh 进程失败: {e}"))?;
     let t0 = std::time::Instant::now();
     loop {
         match child.try_wait().map_err(|e| e.to_string())? {
@@ -439,7 +440,8 @@ impl SshConn {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：ssh 自己不许弹黑框
         }
-        let mut child = cmd.spawn().map_err(|e| format!("起 ssh.exe 失败: {e}"))?;
+        let mut child = crate::process_guard::spawn(&mut cmd)
+            .map_err(|e| format!("起 ssh.exe 失败: {e}"))?;
         let stdin: Option<Box<dyn Write + Send>> = child.stdin.take().map(|s| Box::new(s) as Box<dyn Write + Send>);
         let stdout: Option<Box<dyn Read + Send>> = child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>);
         let stderr: Option<Box<dyn Read + Send>> = child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>);

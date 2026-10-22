@@ -317,18 +317,7 @@ fn chat_once_openai(
     sink: &mut dyn ChatSink,
 ) -> Result<ChatOut, (String, bool)> {
     let url = provider.chat_url();
-    let mut body = json!({
-        "model": provider.model,
-        "messages": messages,
-        "temperature": provider.temperature,
-    });
-    if provider.reserve_output > 0 {
-        body["max_tokens"] = json!(provider.reserve_output);
-    }
-    if !tools.is_empty() && provider.supports_tools {
-        body["tools"] = json!(tools);
-        body["tool_choice"] = json!("auto");
-    }
+    let mut body = openai_body(provider, messages, tools);
     let stream = provider.supports_stream;
     body["stream"] = json!(stream);
     if stream {
@@ -547,6 +536,27 @@ fn read_sse(
     Ok(out)
 }
 
+fn openai_body(provider: &Provider, messages: &[Value], tools: &[Value]) -> Value {
+    let mut body = json!({
+        "model": provider.model,
+        "messages": messages,
+        "temperature": provider.temperature,
+    });
+    if provider.reserve_output > 0 {
+        body["max_tokens"] = json!(provider.reserve_output);
+    }
+    if !tools.is_empty() && provider.supports_tools {
+        body["tools"] = json!(tools);
+        body["tool_choice"] = json!("auto");
+    }
+    if let Some(effort) = provider.reasoning_effort() {
+        // OpenAI-compatible 生态普遍接受这个字段；不支持的服务通常会忽略。
+        // 空字符串表示完全不发送，保留各家的默认思考行为。
+        body["reasoning_effort"] = json!(effort);
+    }
+    body
+}
+
 fn parse_plain(text: &str) -> Result<ChatOut, String> {
     let v: Value = serde_json::from_str(text).map_err(|e| format!("响应不是 JSON: {e}"))?;
     if let Some(err) = v.get("error") {
@@ -665,5 +675,19 @@ mod tests {
         assert_eq!(out.response_model, "deepseek-flash");
         assert_eq!(out.response_id, "chatcmpl-test");
         assert_eq!(out.system_fingerprint, "fp_backend");
+    }
+
+    #[test]
+    fn reasoning_effort_is_omitted_by_default_and_sent_when_selected() {
+        let mut provider: Provider = serde_json::from_value(json!({
+            "id": "p", "name": "p", "endpoint": "https://api.example.com/v1", "model": "m"
+        }))
+        .unwrap();
+        let msgs = vec![json!({"role": "user", "content": "hi"})];
+        assert!(openai_body(&provider, &msgs, &[]).get("reasoning_effort").is_none());
+
+        provider.reasoning_effort = "high".into();
+        let body = openai_body(&provider, &msgs, &[]);
+        assert_eq!(body["reasoning_effort"], "high");
     }
 }

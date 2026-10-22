@@ -647,7 +647,7 @@ fn ffmpeg_thread(
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
-    let mut child = match cmd.spawn() {
+    let mut child = match crate::process_guard::spawn(&mut cmd) {
         Ok(c) => c,
         Err(e) => {
             emit_error(&app, session, &format!("起 ffmpeg 失败: {e}"));

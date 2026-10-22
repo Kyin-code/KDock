@@ -272,7 +272,8 @@ impl Client {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        let mut child = cmd.spawn().map_err(|e| format!("起 {} 失败: {e}", srv.command))?;
+        let mut child = crate::process_guard::spawn(&mut cmd)
+            .map_err(|e| format!("起 {} 失败: {e}", srv.command))?;
         let stdin = child.stdin.take().ok_or("拿不到 stdin")?;
         let stdout = child.stdout.take().ok_or("拿不到 stdout")?;
         let stderr = child.stderr.take();

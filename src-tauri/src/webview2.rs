@@ -206,7 +206,9 @@ fn install_runtime() -> bool {
         return false;
     }
     for args in [["/passive", "/install"], ["/silent", "/install"]] {
-        if let Ok(mut child) = std::process::Command::new(&exe).args(args).spawn() {
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.args(args);
+        if let Ok(mut child) = crate::process_guard::spawn(&mut cmd) {
             let _ = child.wait();
         }
         if runtime_installed() {

@@ -87,8 +87,8 @@ pub fn spawn_in(cmd: &str, cwd: Option<&std::path::Path>) -> std::io::Result<std
     }
     c.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+        .stderr(std::process::Stdio::piped());
+    crate::process_guard::spawn(&mut c)
 }
 
 /// 跑命令前先把几个目录塞到 PATH 最前面。
