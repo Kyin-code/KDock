@@ -38,9 +38,14 @@
 ### 修复
 - **停用的技能对 agent 真正不可见**：`skill_list` 不再把 `skills-off/` 里的技能报出来（那个工具原来直接
   全量打印，等于把开关架空）；`skill_dir_of_in()` 读正文时也不再回退到 `skills-off/` —— 猜得到 slug 也读不到。
-  读不到时回一句「不存在或已被用户停用，请让用户在设置里启用」，而不是静默失败。
-  界面编辑器走的 `skill_dir_of()` 保持原样（必须能打开停用的技能，否则关掉就改不回来了）。
-  新增测试 `agent_skill_lookup_never_falls_back_to_disabled_dir` 守住这条边界。
+  界面编辑器走的 `skill_dir_of()` **保持原样**（必须能打开停用的技能，否则关掉就改不回来了）。
+  · 读不到时**分两种情况说话**，因为模型能做的事完全不同：
+    不存在 → 「先用 skill_list 核对名字」；**已停用** → 「这是停用的，需要用户去 设置 → 技能 里启用，
+    不要绕过它」。停用目录只用来判断状态，它的路径永远不出现在返回值里。
+  · `skill_read` 的工具描述也一起改了：原来写着「包括身份、口吻、自我介绍、闲聊这类问题都该先读技能」，
+    那等于鼓励它没事就去翻技能；现在明确「只在用户的话落到某个技能的用途上时才读」。
+  · 新增测试 `agent_skill_lookup_never_falls_back_to_disabled_dir`、
+    `disabled_and_missing_skills_get_different_messages` 守住这条边界。
 - **Agent 欢迎页改为只认消息**：原来还看输入框有没有内容，打字打到一半欢迎页就消失、删光又冒回来。
 - **第一轮对话消息顺序错位**：`agSend()` 原来是「先 `invoke` 再上屏」，而后端一进 `run_turn` 就推
   `agent://state`、前端 `agThinkEnsure()` 直接 append 到对话底部 —— 等 Promise 回来时思考块已经在上面了，

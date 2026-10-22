@@ -1523,19 +1523,38 @@ pub fn skill_dir_of_in(app: &AppHandle, ws: &std::path::Path, slug: &str) -> Pat
     resolve_skill_dir(ws, &enabled, slug)
 }
 
+/// 读不到技能时的提示语（纯函数，好测）。
+/// `stopped` = 它其实躺在停用目录里 —— 这句必须明确说"停用"，并让模型请用户启用，
+/// 而不是像"不存在"那样让模型自己去核对名字。
+fn skill_read_error_text(slug: &str, stopped: bool) -> String {
+    if stopped {
+        format!(
+            "技能「{slug}」当前是**停用**状态（用户关掉了它），我不能自己读。\
+             请告诉用户：要用它需要在「设置 → 技能」里启用，启用后我就能读并照着做。\
+             不要改用别的方式绕过它。"
+        )
+    } else {
+        format!("没有名为「{slug}」的技能。名字可能写错了 —— 先用 skill_list 看看有哪些可用技能。")
+    }
+}
+
 /// 读技能正文（工作区优先）——模型走这条路，所以它能读到项目技能。
-/// 读不到时给一句能指导下一步的话：技能不存在，或**已被用户停用**（不告诉他停用的文件在哪，
-/// 只告诉他"要让用户启用"—— 路径本身就是我们不想递给它的东西）。
+///
+/// **读不到时要分清两种原因**，因为模型能做的事完全不同：
+/// - 不存在：可能是名字写错了，它应该去 `skill_list` 里核对；
+/// - **已被用户停用**：技能确实在那儿，但用户关掉了。这时它**不能**自己去读（不递路径），
+///   而要明确告诉用户「这个技能是停用的，需要你启用」—— 用户点了启用，下次就能用。
+///
+/// 停用目录只用来**判断状态**，它的路径永远不会出现在返回值里。
 pub fn skill_read_in(app: &AppHandle, ws: &std::path::Path, slug: &str) -> Result<String, String> {
     let p = skill_dir_of_in(app, ws, slug).join("SKILL.md");
-    if !p.is_file() {
-        return Err(format!(
-            "没有可用的技能「{}」：它不存在，或者已经被用户停用了。\
-             如果这次任务确实需要它，请让用户在「设置 → 技能」里启用，而不是绕开这个技能。",
-            slug
-        ));
+    if p.is_file() {
+        return std::fs::read_to_string(&p).map_err(|e| format!("读 {} 失败: {e}", p.display()));
     }
-    std::fs::read_to_string(&p).map_err(|e| format!("读 {} 失败: {e}", p.display()))
+    // 启用的地方没有：看它是不是躺在停用目录里（只看"在不在"，不返回路径）
+    let s = slugify(slug);
+    let stopped = skills_off_dir(app).map(|d| d.join(&s).is_dir()).unwrap_or(false);
+    Err(skill_read_error_text(slug, stopped))
 }
 
 /// 写技能：scope = global（默认）或 workspace
@@ -1664,5 +1683,23 @@ mod tests {
         assert_eq!(got, wsdir, "工作区技能要盖过全局的");
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 读不到时**必须能分清是"没这个名字"还是"被停用了"**：
+    /// 前者让模型去 skill_list 核对，后者让模型请求用户启用 —— 两句提示不一样，模型的动作也不一样。
+    /// 这里只测措辞分叉（真路径要 AppHandle，见上面那个测试）。
+    #[test]
+    fn disabled_and_missing_skills_get_different_messages() {
+        let stopped = skill_read_error_text("kyin-identity", true);
+        assert!(stopped.contains("停用"), "要说清是停用：{stopped}");
+        assert!(stopped.contains("设置 → 技能"), "要给出启用入口：{stopped}");
+        assert!(stopped.contains("启用"), "要明确请用户启用：{stopped}");
+        assert!(!stopped.contains("skills-off"), "不能把停用目录的路径漏给模型");
+        assert!(!stopped.contains("没找到") && !stopped.contains("没有名为"), "不能说成不存在");
+
+        let missing = skill_read_error_text("no-such-skill", false);
+        assert!(missing.contains("没有名为"), "要说清是不存在：{missing}");
+        assert!(missing.contains("skill_list"), "要引导它去核对名字：{missing}");
+        assert!(!missing.contains("停用"), "不能把不存在说成停用");
     }
 }
