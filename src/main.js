@@ -11658,7 +11658,9 @@ async function agHostCall(p) {
     return;
   }
   try {
-    const r = await fn(p.args || {});
+    // host 工具是 AG_HOST 上的方法；先取出来再 fn(...) 会丢失 this，
+    // flow_get 这类用 this 复用其它方法的工具会直接抛 TypeError。
+    const r = await fn.call(AG_HOST, p.args || {});
     await invoke("agent_host_result", { id: p.id, ok: true, result: String(r == null ? "ok" : r) });
   } catch (e) {
     await invoke("agent_host_result", { id: p.id, ok: false, result: String(e) }).catch(() => {});
