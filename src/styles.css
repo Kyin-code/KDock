@@ -828,6 +828,14 @@ html.kb-focus[data-tab="kb"] .parampane.kbpane #kb-chat-host { height: auto; fle
   cursor: crosshair; z-index: 4;
 }
 .seqport:hover { border-color: hsl(var(--primary)); transform: scale(1.15); }
+.seqport.snap {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.16);
+  outline: 2px dashed hsl(var(--primary) / 0.95);
+  outline-offset: 4px;
+  box-shadow: 0 0 0 5px hsl(var(--primary) / 0.12), 0 0 12px hsl(var(--primary) / 0.55);
+  transform: scale(1.18);
+}
 .seqport.in { top: -9px; left: calc(50% - 7.5px); }
 .seqport.out { bottom: -9px; }
 .seqport-lb { position: absolute; bottom: -24px; font-size: 9.5px; color: hsl(var(--muted-foreground)); white-space: nowrap; }

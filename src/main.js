@@ -3971,7 +3971,7 @@ let sqSel = null;
 let sqView = { x: 60, y: 34, k: 1 };
 let sqRunning = false, sqStop = false;
 let sqSeq = 1;
-let sqTemp = null, sqRunNode = null, sqDrag = null;
+let sqTemp = null, sqRunNode = null, sqDrag = null, sqSnap = null;
 let sqRunConns = {};                    // 运行时临时开的 TCP 连接 {"host:port": id}
 const sqRx = [];                        // 各连接收到的文本 {id,text}
 
@@ -4255,18 +4255,36 @@ function sqNodeLabel(n) {
   return (idx ? idx + " " : "") + en(SQ_KINDS[n.type].name);
 }
 /** 在鼠标附近找端口；缩放后圆点很小，不能只依赖 e.target。 */
-function sqPortHitAt(x, y, selector) {
+function sqPortHitAt(x, y, selector, extraPad = 5) {
   const cv = $("sq-canvas");
   let best = null;
   for (const el of cv.querySelectorAll(selector)) {
     const r = el.getBoundingClientRect();
     const d = Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2));
-    const pad = Math.max(8, r.width / 2 + 5);
+    const pad = Math.max(10, r.width / 2 + extraPad);
     if (d <= pad && (!best || d < best.d)) {
       best = { el, nodeEl: el.closest(".seqnode"), d };
     }
   }
   return best;
+}
+function sqClearSnap() {
+  document.querySelectorAll(".seqport.snap").forEach((el) => el.classList.remove("snap"));
+  sqSnap = null;
+}
+/** 高亮鼠标附近可用的端口，作为“松手即连接”的可视提示。 */
+function sqSetSnap(x, y, selector, excludeNode, extraPad) {
+  const hit = sqPortHitAt(x, y, selector, extraPad);
+  if (!hit || (excludeNode && hit.nodeEl?.dataset.id === excludeNode)) {
+    sqClearSnap();
+    return null;
+  }
+  if (sqSnap?.el !== hit.el) {
+    sqClearSnap();
+    hit.el.classList.add("snap");
+    sqSnap = hit;
+  }
+  return sqSnap;
 }
 /** 把某个节点挪到画布正中间（点连线两端的筹码时用） */
 function sqCenterOn(id) {
@@ -4674,7 +4692,10 @@ function sqBindCanvas() {
   });
 
   cv.addEventListener("pointermove", (e) => {
-    if (!sqDrag) return;
+    if (!sqDrag) {
+      sqSetSnap(e.clientX, e.clientY, ".seqport.out", null, 10);
+      return;
+    }
     if (sqDrag.mode === "pan") {
       const ui = uiScaleValue();
       sqView.x += (e.clientX - sqDrag.lastX) / ui;
@@ -4692,22 +4713,32 @@ function sqBindCanvas() {
       if (el) { el.style.left = n.x + "px"; el.style.top = n.y + "px"; }
       sqRedrawEdges();
     } else if (sqDrag.mode === "link" && sqTemp) {
-      sqTemp.b = sqScreenToWorld(e.clientX, e.clientY);
+      const snap = sqSetSnap(e.clientX, e.clientY, ".seqport.in", sqTemp.from, 12);
+      sqTemp.b = snap
+        ? sqPortPos(snap.nodeEl.dataset.id, "in")
+        : sqScreenToWorld(e.clientX, e.clientY);
       sqRedrawEdges();
     }
+  });
+
+  cv.addEventListener("pointerleave", () => {
+    if (!sqDrag) sqClearSnap();
   });
 
   const endDrag = (e) => {
     cv.classList.remove("panning", "linking");
     if (sqDrag && sqDrag.mode === "link" && sqTemp) {
       const under = document.elementFromPoint(e.clientX, e.clientY);
-      const target = (under && under.closest ? under.closest(".seqnode") : null)
+      const snapped = sqSetSnap(e.clientX, e.clientY, ".seqport.in", sqTemp.from, 12);
+      const target = snapped?.nodeEl
+        || (under && under.closest ? under.closest(".seqnode") : null)
         || (sqPortHitAt(e.clientX, e.clientY, ".seqport.in") || {}).nodeEl
         || null;
       if (target && target.dataset.id !== sqTemp.from) sqConnect(sqTemp.from, sqTemp.port, target.dataset.id);
     }
     if (sqDrag && sqDrag.mode === "node") sqSave();
     sqDrag = null; sqTemp = null;
+    sqClearSnap();
     sqRedrawEdges();
   };
   cv.addEventListener("pointerup", endDrag);
