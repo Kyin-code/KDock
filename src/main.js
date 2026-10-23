@@ -4144,6 +4144,16 @@ function sqApplyView() {
   $("sq-nodes").style.transform = "translate(" + sqView.x + "px, " + sqView.y + "px) scale(" + sqView.k + ")";
   $("sq-edges-g").setAttribute("transform", "translate(" + sqView.x + " " + sqView.y + ") scale(" + sqView.k + ")");
 }
+/** 屏幕坐标 → 画布世界坐标。CSS zoom 会先放大整个 #ui-root，必须一起除掉。 */
+function sqScreenToWorld(clientX, clientY) {
+  const cv = $("sq-canvas");
+  const r = cv.getBoundingClientRect();
+  const ui = uiScaleValue();
+  return {
+    x: ((clientX - r.left) / ui - sqView.x) / sqView.k,
+    y: ((clientY - r.top) / ui - sqView.y) / sqView.k,
+  };
+}
 function sqFit() {
   const cv = $("sq-canvas");
   if (!sqGraph.nodes.length) return;
@@ -4156,13 +4166,13 @@ function sqFit() {
   sqApplyView(); sqRedrawEdges();
 }
 function sqPortPos(id, port) {
+  const n = sqNode(id);
   const el = document.querySelector(".seqnode[data-id=\"" + id + "\"] .seqport[data-port=\"" + port + "\"]");
-  if (!el) return null;
-  const r = el.getBoundingClientRect();
-  const c = $("sq-canvas").getBoundingClientRect();
+  if (!n || !el) return null;
+  // 用节点的世界坐标 + 端口相对节点的布局坐标，避开 CSS zoom / DPI / 边框带来的误差。
   return {
-    x: (r.left + r.width / 2 - c.left - sqView.x) / sqView.k,
-    y: (r.top + r.height / 2 - c.top - sqView.y) / sqView.k,
+    x: n.x + el.offsetLeft + el.offsetWidth / 2,
+    y: n.y + el.offsetTop + el.offsetHeight / 2,
   };
 }
 /** 折线路由：正向(目标在下面)走 S 形；回流(目标在上方/同排)绕到侧面，避免糊成一团 */
@@ -4611,7 +4621,8 @@ function sqBindCanvas() {
   cv.addEventListener("wheel", (e) => {
     e.preventDefault();
     const r = cv.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const ui = uiScaleValue();
+    const mx = (e.clientX - r.left) / ui, my = (e.clientY - r.top) / ui;
     const k0 = sqView.k;
     const k = Math.min(1.8, Math.max(0.45, k0 * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
     sqView.x = mx - (mx - sqView.x) * (k / k0);
@@ -4622,7 +4633,6 @@ function sqBindCanvas() {
 
   cv.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
-    const c0 = cv.getBoundingClientRect();
     const port = e.target.closest ? e.target.closest(".seqport.out") : null;
     const nodeEl = e.target.closest ? e.target.closest(".seqnode") : null;
     const pathEl = e.target.closest ? e.target.closest(".seqedgegrp") : null;
@@ -4649,16 +4659,15 @@ function sqBindCanvas() {
       const n = sqNode(nodeEl.dataset.id);
       if (!n) return;
       sqSel = { kind: "node", id: n.id };
-      sqDrag = { mode: "node", id: n.id,
-        dx: (e.clientX - c0.left - sqView.x) / sqView.k - n.x,
-        dy: (e.clientY - c0.top - sqView.y) / sqView.k - n.y };
+      const w = sqScreenToWorld(e.clientX, e.clientY);
+      sqDrag = { mode: "node", id: n.id, dx: w.x - n.x, dy: w.y - n.y };
       try { cv.setPointerCapture(e.pointerId); } catch (_) {}
       sqRenderCfg(); sqRender();
       e.preventDefault();
       return;
     }
     sqSel = null;
-    sqDrag = { mode: "pan", sx: e.clientX - sqView.x, sy: e.clientY - sqView.y };
+    sqDrag = { mode: "pan", lastX: e.clientX, lastY: e.clientY };
     cv.classList.add("panning");
     try { cv.setPointerCapture(e.pointerId); } catch (_) {}
     sqRenderCfg(); sqRedrawEdges();
@@ -4666,21 +4675,24 @@ function sqBindCanvas() {
 
   cv.addEventListener("pointermove", (e) => {
     if (!sqDrag) return;
-    const c0 = cv.getBoundingClientRect();
     if (sqDrag.mode === "pan") {
-      sqView.x = e.clientX - sqDrag.sx;
-      sqView.y = e.clientY - sqDrag.sy;
+      const ui = uiScaleValue();
+      sqView.x += (e.clientX - sqDrag.lastX) / ui;
+      sqView.y += (e.clientY - sqDrag.lastY) / ui;
+      sqDrag.lastX = e.clientX;
+      sqDrag.lastY = e.clientY;
       sqApplyView(); sqRedrawEdges();
     } else if (sqDrag.mode === "node") {
       const n = sqNode(sqDrag.id);
       if (!n) return;
-      n.x = Math.round((e.clientX - c0.left - sqView.x) / sqView.k - sqDrag.dx);
-      n.y = Math.round((e.clientY - c0.top - sqView.y) / sqView.k - sqDrag.dy);
+      const w = sqScreenToWorld(e.clientX, e.clientY);
+      n.x = Math.round(w.x - sqDrag.dx);
+      n.y = Math.round(w.y - sqDrag.dy);
       const el = document.querySelector(".seqnode[data-id=\"" + n.id + "\"]");
       if (el) { el.style.left = n.x + "px"; el.style.top = n.y + "px"; }
       sqRedrawEdges();
     } else if (sqDrag.mode === "link" && sqTemp) {
-      sqTemp.b = { x: (e.clientX - c0.left - sqView.x) / sqView.k, y: (e.clientY - c0.top - sqView.y) / sqView.k };
+      sqTemp.b = sqScreenToWorld(e.clientX, e.clientY);
       sqRedrawEdges();
     }
   });
