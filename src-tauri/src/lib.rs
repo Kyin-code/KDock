@@ -3480,6 +3480,11 @@ fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) -> std::io::Result
 pub fn run() {
     // 先确认起得来：缺 WebView2 时 Tauri 在 windows 子系统里是静默失败（双击没反应、没提示），
     // 这里在建任何窗口之前查一次注册表，缺了就弹框 —— 可以直接帮用户装好。
+    // 统一进程回收：必须在任何 `Command::spawn()` 之前把 KDock 自己放进 Job Object。
+    // 只登记子进程不够 —— adb 在登记前 fork 的 server 会逃出 Job（实测会残留）。
+    if let Some(err) = process_guard::init() {
+        eprintln!("[process_guard] {err}");
+    }
     if !webview2::ensure() {
         return;
     }
