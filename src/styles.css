@@ -316,7 +316,7 @@ html[data-fs="1"] .capbar { display: none; }
 }
 .navitem > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @container app (max-width: 1200px) {
-  .navitem > i { width: 14px; font-size: 13px; }
+  .navitem > .navico { width: 14px; height: 14px; flex-basis: 14px; }
   .navitem { font-size: 12px; padding: 0 7px; gap: 7px; }
 }
 .gutter {
@@ -347,13 +347,20 @@ html[data-fs="1"] .capbar { display: none; }
   background: transparent; color: hsl(var(--muted-foreground));
   transition: background .16s ease, color .16s ease;
 }
-.navitem > i { font-style: normal; width: 20px; text-align: center; opacity: .85; font-size: 19px; }
+.nav-sprite { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
+.navico {
+  display: block; flex: 0 0 auto; width: 20px; height: 20px;
+  fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+  opacity: .85; pointer-events: none;
+}
+.navitem > .navico { flex-basis: 20px; }
 .navitem:hover { color: hsl(var(--foreground)); background: hsl(var(--accent) / 0.5); }
 .navitem.active {
   color: hsl(var(--primary-foreground)); background: hsl(var(--primary));
   box-shadow: 0 4px 12px hsl(var(--primary) / 0.28);
 }
-.navitem.active > i { opacity: 1; }
+.navitem.active > .navico { opacity: 1; }
 
 /* 命令表 */
 .cmdtable { display: flex; flex-direction: column; gap: 3px; }
@@ -1108,7 +1115,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 
 /* ========== 左栏二级菜单：紧凑一点 + 底部设置齿轮 ========== */
 .navitem { height: 30px; font-size: 13.5px; gap: 9px; padding: 0 12px; border-radius: 0 8px 8px 0; }
-.navitem > i { width: 17px; font-size: 15px; }
+.navitem > .navico { width: 17px; height: 17px; flex-basis: 17px; }
 .navgroup { font-size: 11px; padding: 8px 12px 3px; letter-spacing: .7px; }
 .navsec { margin-bottom: 4px; }
 .navfoot {
@@ -1617,7 +1624,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .navrow:has(.navitem.active) { background: hsl(var(--primary)); }
 .navrow:has(.navitem.active) .navitem,
 .navrow:has(.navitem.active) .navitem:hover { background: transparent; color: hsl(var(--primary-foreground)); box-shadow: none; }
-.navrow:has(.navitem.active) .navitem > i { opacity: 1; }
+.navrow:has(.navitem.active) .navitem > .navico { opacity: 1; }
 .navrow:has(.navitem.active) .navmini {
   /* 和 Agent 当成**同一块**：不再画成行里的小胶囊（原来的 18% 白底 + 圆角看着像另一个控件），
      整行同色，只在悬停时给一点点反馈 */
@@ -1887,6 +1894,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   letter-spacing: -0.5px;
 }
 .navmini:hover { border-color: hsl(var(--primary)); background: var(--surface-3); }
+.navmini .navico { width: 16px; height: 16px; }
 
 /* 工作区树 */
 .navsub .wsrow {
@@ -2874,6 +2882,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   background: var(--surface-2); color: hsl(var(--muted-foreground)); font: inherit; font-size: 14px;
 }
 .navbtn:hover { color: hsl(var(--foreground)); border-color: hsl(var(--primary) / 0.6); }
+.navbtn .navico { width: 17px; height: 17px; }
 
 /* ============ 传输页在"参数区已挪到下面"的窄窗状态下再省一层 ============
    同事反馈：小窗口里中间那两行工具（显示 / 行尾 / 历史 / 循环 / 清屏 / 时间戳 / 序号 / 方向 / 更多，
