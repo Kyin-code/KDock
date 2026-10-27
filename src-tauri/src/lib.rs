@@ -3857,6 +3857,7 @@ pub fn run() {
             // ── 三层上下文：内置指令 / 技能（全局·工作区） / 指导文件 / 工具开关 / 骨架 ──
             agent::agent_tools_list,
             agent::agent_tool_set,
+            agent::agent_tools_bulk_set,
             agent::agent_guidance_get,
             agent::agent_guidance_set,
             agent::agent_skills_workspace,

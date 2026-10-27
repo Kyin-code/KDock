@@ -746,7 +746,7 @@
             <input id="env-dir" class="dirinput envdir" placeholder="安装位置（留空 = 默认）" />
             <button id="env-dir-pick" class="btn small" title="选一个目录当统一安装位置">选目录</button>
             <label class="chk" title="扫描会读 PATH / 注册表 / pnputil 的驱动列表和各盘常见目录"><input type="checkbox" id="env-only-missing" /> 只看缺失</label>
-            <button id="env-scan" class="btn small primary">扫描本机</button>
+            <button id="env-scan" class="btn small primary" title="强制重新检测驱动 / 工具链并刷新列表">刷新同步</button>
           </div>
           <div class="trow envfilters">
             <span class="lb">类别</span>
@@ -1384,6 +1384,7 @@
                 <option value="-1">全部</option>
               </select>
               <button id="rt-chain-pick" class="btn small" title="用当前选中函数作为链路根；没有选中时使用 main">用选中函数拉链路</button>
+              <button id="rt-chain-back" class="btn small" title="回到全固件图；直接使用本地缓存，不重新分析">返回全固件</button>
             </span>
             <label class="chk" title="递归展开 main 可达调用"><input type="checkbox" id="rt-show-interrupts" /> 中断</label>
             <label class="chk" title="隐藏 HAL / CMSIS / C 库 / newlib 等系统调用"><input type="checkbox" id="rt-hide-lib" checked /> 折叠库函数</label>
@@ -1723,7 +1724,7 @@
           <div id="env-first" class="aginfo dcinfo"></div>
           <div class="btnrow">
             <button id="env-fix-required" class="btn primary">装齐必需项</button>
-            <button id="env-rescan" class="btn">重新扫描</button>
+            <button id="env-rescan" class="btn" title="强制重新检测驱动 / 工具链并刷新列表">刷新同步</button>
           </div>
           <p class="hint">「必需项」指的是认不出设备就没法干活的那几个（比如 CH340 串口驱动）。缺了会在启动后提示一次，随时可以在这里补。</p>
 

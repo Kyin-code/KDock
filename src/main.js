@@ -1609,6 +1609,8 @@ function showPane(tab) {
   if (tab === "calc") initCalc();
   if (tab === "datacalc") initCalc();          // 折叠区块的初始化在 initCalc 里（只有一次）
   if (tab === "logic") initLogic();
+  // 切页保持缓存，避免每次进入都重扫整套驱动/工具链；
+  // 外部安装或卸载驱动后，用页面上的「扫描本机 / 重新扫描」强制同步。
   if (tab === "env") envRefresh();
   if (tab === "usb") usbOnShow();
   if (tab === "scope") { scSetView(scView); scResizePlot(); }
@@ -6048,21 +6050,34 @@ async function usbCapInfo() {
   try {
     const d = await invoke("usbpcap_info");
     usbCapDevices = d.devices || [];
-    if (!d.installed) {
+    if (!d.commandInstalled && !d.installed) {
       usbCapState("bad", T("未安装 USBPcap"));
       if ($("usb-cap-start")) $("usb-cap-start").disabled = true;
       return;
     }
-    if (d.rebootPending) {
+    // 驱动是否加载要看设备节点，不要看系统级“有待重启的更新”：
+    // 那个标志与 USBPcap 无关，重启后也可能被别的更新重新种上。
+    if (!d.driverReady && d.driverState === "missing") {
       usbCapState("bad", T("已安装 · 需要重启一次"));
+      if ($("usb-cap-start")) $("usb-cap-start").disabled = true;
+      return;
+    }
+    if (!d.driverReady) {
+      usbCapState("bad", T("USBPcap 驱动状态未知，请重新插拔设备或重启电脑"));
       if ($("usb-cap-start")) $("usb-cap-start").disabled = true;
       return;
     }
     if (!usbCapDevices.length) {
       usbCapState("bad", T("没有可用的根 Hub"));
+      if ($("usb-cap-start")) $("usb-cap-start").disabled = true;
       return;
     }
     if ($("usb-cap-start")) $("usb-cap-start").disabled = false;
+    // elevation-required 是正常状态：控制设备存在，但当前进程没提权，
+    // 真正开始抓包时会弹一次 UAC。不要把它当成故障拦下来。
+    usbCapState("off", d.driverState === "elevation-required"
+      ? T("已就绪（开始抓包时会请求管理员权限）")
+      : T("已就绪"));
   } catch (e) {
     usbCapState("bad", String(e && e.message ? e.message : e));
   }
@@ -6464,16 +6479,20 @@ function envRenderGrid() {
     const card = envEl("div", "envcard" + (it.installed ? (it.outdated ? "" : " ok") : " bad"));
     const top = envEl("div", "ktop");
     top.appendChild(envEl("span", "kname", en(it.name)));
-    top.appendChild(envEl("span", "kbadge" + (it.installed ? (it.outdated ? " warn" : " ok") : ""),
-      it.installed ? (it.outdated ? en("可更新") : (it.version ? "v" + it.version : en("已装"))) : en("未安装")));
+    const issue = it.installed && !!it.warning;
+    top.appendChild(envEl("span", "kbadge" + (it.installed ? (it.outdated || issue ? " warn" : " ok") : ""),
+      it.installed
+        ? (issue ? en("已装") + " · " + en(it.warning) : (it.outdated ? en("可更新") : (it.version ? "v" + it.version : en("已装"))))
+        : en("未安装")));
     top.appendChild(envEl("span", "kbadge kind", en(it.kind)));
     card.appendChild(top);
     card.appendChild(envEl("div", "kmeta", it.path || envLogLine(it.detail || "")));
     card.appendChild(envEl("div", "kdesc", en(it.desc)));
     const acts = envEl("div", "kacts");
     if (it.autoInstall) {
+      const installedCheck = it.id === "usbpcap" && it.installed;
       const b = envEl("button", "btn small" + (it.installed ? "" : " primary"),
-        en(it.installed ? "更新 / 重装" : "一键安装"));
+        en(installedCheck ? "检查状态" : (it.installed ? "更新 / 重装" : "一键安装")));
       b.onclick = () => envInstall(it.id);
       acts.appendChild(b);
     } else {
@@ -6531,7 +6550,13 @@ async function envInstall(id, opts) {
   envProg(2, it ? en(it.name) : id);
   envLog(`=== ${en("开始")} ${it ? en(it.name) : id}${dry ? en("（模拟，不真装）") : ""} ===`);
   try {
-    const log = await invoke("env_install", { id, dir: envDirPref() || null, dry });
+    const log = await invoke("env_install", {
+      id,
+      dir: envDirPref() || null,
+      dry,
+      // USBPcap 永远先检测；只有“未安装”时后端才允许真正拉起安装器。
+      force: id !== "usbpcap" && !!(it && it.installed && !it.warning),
+    });
     if (log) envLog(String(log));
     envLog(en("完成，重新扫描…"));
     envData = null;
@@ -10711,27 +10736,63 @@ async function renderToolsPage() {
   for (const t of agToolRows) if (t.enabled) onBytes += t.bytes || 0;
   const sum = agEl("set-tool-sum");
   if (sum) sum.textContent = `${agToolRows.filter((x) => x.enabled).length}/${agToolRows.length} · ${(onBytes / 1024).toFixed(1)} KB`;
+  const order = ["通信", "工作区与执行", "设备与固件", "安卓调试", "仪器与固件分析", "屏幕与图像", "中控编排", "技能与环境", "界面与上下文", "其他"];
+  const groups = new Map();
   for (const t of rows) {
-    const row = document.createElement("div");
-    row.className = "row" + (t.enabled ? "" : " off");
-    const nm = document.createElement("span");
-    nm.className = "nm"; nm.textContent = t.name;
-    const tag = document.createElement("span");
-    tag.className = "tag";
-    tag.textContent = (t.host ? en("界面") + " · " : "") + (t.danger ? en("需批准") + " · " : "") + ((t.bytes || 0) / 1024).toFixed(1) + " KB";
-    row.title = (LANG === "en" && TOOL_DESC_EN[t.name]) || t.description || "";
-    const sw = document.createElement("input");
-    sw.type = "checkbox"; sw.className = "sw"; sw.checked = !!t.enabled;
-    sw.onchange = async () => {
-      try {
-        const r = await invoke("agent_tool_set", { name: t.name, on: sw.checked });
-        toast(String((r && r.note) || ""));
-        agToolRows = [];
-        renderToolsPage();
-      } catch (e) { toast(String(e)); sw.checked = !sw.checked; }
-    };
-    row.appendChild(nm); row.appendChild(tag); row.appendChild(sw);
-    box.appendChild(row);
+    const cat = t.category || "其他";
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(t);
+  }
+  const bulk = async (cat, on) => {
+    try {
+      const r = await invoke("agent_tools_bulk_set", { category: cat, on });
+      toast(String((r && r.note) || ""));
+      agToolRows = [];
+      renderToolsPage();
+    } catch (e) { toast(String(e)); }
+  };
+  for (const cat of [...order, ...groups.keys()].filter((v, i, a) => a.indexOf(v) === i)) {
+    const items = groups.get(cat);
+    if (!items || !items.length) continue;
+    const head = document.createElement("div");
+    head.className = "trow toolgrouphead";
+    const title = document.createElement("span");
+    title.className = "cardtitle";
+    title.textContent = en(cat);
+    const state = document.createElement("span");
+    state.className = "lb";
+    state.textContent = `${items.filter((x) => x.enabled).length}/${items.length}`;
+    const grow = document.createElement("span"); grow.className = "grow";
+    const allOn = document.createElement("button"); allOn.className = "btn small"; allOn.textContent = en("全开");
+    allOn.onclick = () => bulk(cat, true);
+    const allOff = document.createElement("button"); allOff.className = "btn small"; allOff.textContent = en("全关");
+    allOff.onclick = () => bulk(cat, false);
+    head.appendChild(title); head.appendChild(state); head.appendChild(grow); head.appendChild(allOn); head.appendChild(allOff);
+    box.appendChild(head);
+    for (const t of items) {
+      const row = document.createElement("div");
+      row.className = "row" + (t.enabled ? "" : " off") + (t.core ? " core" : "");
+      const nm = document.createElement("span");
+      nm.className = "nm"; nm.textContent = t.name;
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = (t.host ? en("界面") + " · " : "") + (t.danger ? en("需批准") + " · " : "") + ((t.bytes || 0) / 1024).toFixed(1) + " KB";
+      row.title = (LANG === "en" && TOOL_DESC_EN[t.name]) || t.description || "";
+      const sw = document.createElement("input");
+      sw.type = "checkbox"; sw.className = "sw"; sw.checked = !!t.enabled;
+      sw.disabled = !!t.core;
+      if (t.core) row.title += "\n" + en("基本工具，不可关闭");
+      sw.onchange = async () => {
+        try {
+          const r = await invoke("agent_tool_set", { name: t.name, on: sw.checked });
+          toast(String((r && r.note) || ""));
+          agToolRows = [];
+          renderToolsPage();
+        } catch (e) { toast(String(e)); sw.checked = !sw.checked; }
+      };
+      row.appendChild(nm); row.appendChild(tag); row.appendChild(sw);
+      box.appendChild(row);
+    }
   }
 }
 
@@ -10966,7 +11027,7 @@ const TOOL_DESC_EN = {
   browser_find: "Find a snippet in the current page text and return the surrounding context.",
   history_search: "Search this session's raw log by keyword (including parts already compacted away).",
   ui_show_text: "Show a block of text in the Text pane on the right.",
-  ui_goto: "Switch the UI to a page (transfer/upgrade/flash/files/chart/flow/capture/scope).",
+  ui_goto: "Switch the UI to a page (transfer/upgrade/flash/files/runtime/chart/flow/capture/scope).",
   flow_run: "Run the flow (the current canvas when no graph is given).",
   flow_status: "Check flow progress / the tail of its log.",
   flow_stop: "Stop the running flow.",
@@ -11670,13 +11731,13 @@ const AG_HOST = {
   },
   async ui_goto(a) {
     const map = { transfer: "link", firmware: "upgrade", flow: "seq", files: "files", flash: "flash",
-                  chart: "chart", capture: "capture", scope: "scope", logic: "logic", commands: "cmds",
+                  runtime: "runtime", chart: "chart", capture: "capture", scope: "scope", logic: "logic", commands: "cmds",
                   batch: "batch", calculator: "calc", datacalc: "datacalc", env: "env", kb: "kb",
                   knowledge: "kb", agent: "agent", debug: "debug" };
     const tab = map[a.page] || a.page;
     // 左导航里没有的（比如调试页被藏起来）就别切了，省得切到一片空白
     const btn = document.querySelector(`.navitem[data-tab="${tab}"]`);
-    if (!btn || btn.hidden) return `没有「${a.page}」这个页面（可用：传输/命令表/固件升级/烧录/文件管理/Agent/实时图表/中控编排/示波器/屏幕捕获/逻辑分析仪/批量文本/计算器/数据计算/环境配置/知识库）`;
+    if (!btn || btn.hidden) return `没有「${a.page}」这个页面（可用：传输/命令表/固件升级/烧录/文件管理/运行结构/Agent/实时图表/中控编排/示波器/屏幕捕获/逻辑分析仪/批量文本/计算器/数据计算/环境配置/知识库）`;
     showPane(tab);
     return "已切到「" + tab + "」页";
   },
@@ -13411,6 +13472,8 @@ const EN = {
   "扫描会读 PATH / 注册表 / pnputil 的驱动列表和各盘常见目录": "Reads PATH, the registry, pnputil driver list and common folders on each drive",
   "只看缺失": "Missing only",
   "扫描本机": "Scan this PC",
+  "刷新同步": "Refresh & sync",
+  "强制重新检测驱动 / 工具链并刷新列表": "Force rescan drivers/toolchains and refresh the list",
   "类别": "Category",
   "全部": "All",
   "小驱动可以内置：把安装包丢进 ": "Small drivers can be bundled: drop the installer into ",
@@ -13462,6 +13525,9 @@ const EN = {
   "没有可抓包的根 Hub": "No root hub available",
   "未安装 USBPcap": "USBPcap not installed",
   "需要重启一次（驱动刚装）": "Reboot once (driver just installed)",
+  "USBPcap 驱动状态未知，请重新插拔设备或重启电脑": "USBPcap driver state is unknown; reconnect the device or reboot",
+  "已就绪": "Ready",
+  "已就绪（开始抓包时会请求管理员权限）": "Ready (administrator permission is requested when capture starts)",
   "没有可用的根 Hub": "No root hub available",
   "—— 开始抓包 ": "—— capture started ",
   "—— 已停止抓包 ——": "—— capture stopped ——",
@@ -13699,6 +13765,21 @@ const EN = {
   "可更新": "Update available",
   "已装": "installed",
   "未安装": "Not installed",
+  "检查状态": "Check status",
+  "驱动未加载": "driver not loaded",
+  "通信": "Communication",
+  "工作区与执行": "Workspace & execution",
+  "设备与固件": "Devices & firmware",
+  "安卓调试": "Android debugging",
+  "仪器与固件分析": "Instruments & firmware analysis",
+  "屏幕与图像": "Screen & images",
+  "中控编排": "Workflow",
+  "技能与环境": "Skills & environment",
+  "界面与上下文": "UI & context",
+  "其他": "Other",
+  "全开": "Enable all",
+  "全关": "Disable all",
+  "基本工具，不可关闭": "Core tool; cannot be disabled",
   "更新 / 重装": "Update / reinstall",
   "一键安装": "Install",
   "打开官网": "Open website",

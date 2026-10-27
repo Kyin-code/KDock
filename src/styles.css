@@ -1493,6 +1493,24 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agentlist .row.active { border-color: hsl(var(--primary) / 0.5); background: hsl(var(--primary) / 0.10); }
 .agentlist .row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agentlist .row .tag { flex: 0 0 auto; font-size: 10.5px; color: hsl(var(--muted-foreground)); }
+.agentlist .toolgrouphead {
+  margin: 7px 0 2px; padding: 2px 4px; align-items: center;
+  position: sticky; top: 0; z-index: 2; background: hsl(var(--card));
+}
+.agentlist .toolgrouphead .cardtitle { margin: 0; }
+.agentlist .row.core { background: hsl(var(--muted) / .28); cursor: default; }
+.agentlist .sw {
+  width: 32px; height: 18px; flex: 0 0 auto; appearance: none; position: relative; cursor: pointer;
+  border-radius: 999px; background: var(--surface-3); border: 1px solid var(--surface-line);
+  box-shadow: none; transition: background .15s ease, border-color .15s ease;
+}
+.agentlist .sw::after {
+  content: ""; position: absolute; top: 1px; left: 1px; width: 14px; height: 14px; border-radius: 50%;
+  background: hsl(var(--muted-foreground)); transition: left .15s ease, background .15s ease;
+}
+.agentlist .sw:checked { background: hsl(var(--primary)); border-color: hsl(var(--primary)); }
+.agentlist .sw:checked::after { left: 15px; background: #fff; }
+.agentlist .sw:disabled { cursor: default; opacity: .55; }
 .agentlist .row .del {
   flex: 0 0 auto; border: none; background: none; color: hsl(var(--destructive));
   cursor: pointer; font-size: 11px; padding: 0 3px; opacity: .6;

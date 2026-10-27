@@ -21,6 +21,8 @@ let rtRunning = false;
 let rtDrag = null;
 let rtLogNo = 0;
 let rtReady = false;
+let rtCacheKeyValue = "";
+let rtDataCache = { all: null, runtime: null };
 const rtPosCache = new Map();
 
 const RT_LIB_RE = /^(?:__|_(?:exit|start|init|fini)|mem(?:cpy|move|set|cmp|chr)|str(?:cpy|ncpy|cat|ncat|cmp|ncmp|len|chr|rchr|str|tok|dup)|(?:v?sn?printf|printf|puts|putchar|fwrite|fread|fflush|stdio|exit|atexit|abort|raise|malloc|free|realloc|calloc|qsort|bsearch|rand|srand|atoi|atol|strtol|strtoul|abs|labs|div|ldiv|clock|time|getenv|sysconf)(?:$|_))/i;
@@ -77,6 +79,7 @@ async function rtPickFile() {
     rtFile = path.replace(/\//g, "\\");
     rtRoot = rtFile.replace(/[\\/][^\\/]*$/, "");
     localStorage.setItem("kdock_rt_last_file", rtFile);
+    rtResetDataCache();
     rtSetFileName();
     rtLog("已选择 " + rtFile);
     await rtAnalyze();
@@ -109,6 +112,36 @@ function rtRelPath() {
   return rtFile.slice(rtRoot.length).replace(/^[\\/]+/, "").replace(/\\/g, "/");
 }
 
+function rtCurrentCacheKey() {
+  const isBin = /\.bin$/i.test(rtFile || "");
+  if (!isBin) return String(rtFile || "");
+  return [
+    rtFile,
+    ($("rt-bin-base") && $("rt-bin-base").value.trim()) || "",
+    ($("rt-bin-arch") && $("rt-bin-arch").value) || "",
+    ($("rt-bin-entry") && $("rt-bin-entry").value.trim()) || "",
+    ($("rt-vector-base") && $("rt-vector-base").value.trim()) || "",
+  ].join("|");
+}
+function rtResetDataCache() {
+  rtCacheKeyValue = rtCurrentCacheKey();
+  rtDataCache = { all: null, runtime: null };
+  rtPosCache.clear();
+  rtData = null;
+  rtNodes = [];
+  rtEdges = [];
+  rtSel = null;
+  rtChainAddr = "";
+}
+function rtCachedData(scope) {
+  if (rtCurrentCacheKey() !== rtCacheKeyValue) rtResetDataCache();
+  return rtDataCache[scope] || null;
+}
+function rtStoreData(scope, data) {
+  if (rtCurrentCacheKey() !== rtCacheKeyValue) rtResetDataCache();
+  rtDataCache[scope] = data;
+}
+
 async function rtAnalyze() {
   if (!rtFile) return rtPickFile();
   if (rtRunning) return;
@@ -139,6 +172,7 @@ async function rtAnalyze() {
       blobEntry: isBin ? ($("rt-bin-entry").value || "").trim() : "",
       vectorBase: isBin ? ($("rt-vector-base").value || "").trim() : "",
     });
+    rtStoreData(requestScope, data);
     rtData = data;
     rtSel = null;
     rtCollapsed.clear();
@@ -166,9 +200,12 @@ async function rtAnalyze() {
       if (!rtNodes.length) throw new Error("分析已返回，但没有可显示的函数节点");
     }
   } catch (e) {
-    rtData = null;
-    rtNodes = []; rtEdges = [];
-    rtRender();
+    // Keep the last good graph visible. A failed refresh should not destroy
+    // the user's current context and force another expensive analysis.
+    if (!rtData) {
+      rtNodes = []; rtEdges = [];
+      rtRender();
+    }
     rtSetState("分析失败", "bad");
     rtLog("分析失败：" + String(e), "err");
     toast("运行结构分析失败：" + String(e));
@@ -195,6 +232,35 @@ function rtChainDepthLabel() {
 }
 function rtHasFullData() {
   return !!(rtData && (rtData.totalFunctions || rtData.entryName === "FULL FIRMWARE"));
+}
+function rtShowScopeData(data) {
+  rtData = data;
+  rtSel = null;
+  rtCollapsed.clear();
+  rtBuildGraph();
+  rtRender();
+  rtFocusRoot();
+  const root = rtDefaultRootNode();
+  if (root) {
+    rtSel = root.addr;
+    rtRefreshSelection(root);
+    rtRender();
+    rtRenderEdges();
+  }
+}
+function rtSwitchScope(value) {
+  if ($("rt-scope")) $("rt-scope").value = value;
+  if ($("rt-scope-side")) $("rt-scope-side").value = value;
+  rtSyncScope();
+  const needed = value === "chain" ? "all" : value;
+  const cached = rtCachedData(needed);
+  if (cached) {
+    rtShowScopeData(cached);
+    const label = value === "all" ? "全固件函数" : value === "runtime" ? "main 运行链" : "函数调用链路";
+    rtLog(`切换到${label}（使用本地缓存，无需重新分析）`);
+    return;
+  }
+  if (rtFile) rtAnalyze();
 }
 function rtChainRoot() {
   if (!rtData) return "";
@@ -383,20 +449,30 @@ function rtLayout(fresh) {
   if (!rtNodes.length) return;
   const layered = ($("rt-layout") && $("rt-layout").value) !== "compact";
   const by = new Map(rtNodes.map((n) => [n.addr, n]));
+  const outgoing = new Map(rtNodes.map((n) => [n.addr, []]));
+  const incoming = new Map(rtNodes.map((n) => [n.addr, []]));
+  for (const e of rtEdges) {
+    if (!by.has(e.from) || !by.has(e.to)) continue;
+    outgoing.get(e.from).push(e.to);
+    incoming.get(e.to).push(e.from);
+  }
   const depth = new Map();
   const chainMode = rtScope() === "chain";
   const chainRoot = chainMode ? rtChainRoot() : "";
   let roots = rtNodes.filter((n) => !rtEdges.some((e) => e.to === n.addr));
   if (chainMode && by.has(chainRoot)) roots = [by.get(chainRoot)];
-  const queue = roots.length ? roots : [rtNodes[0]];
+  if (!roots.length && chainMode) {
+    roots = [...rtNodes].sort((a, b) => incoming.get(a.addr).length - incoming.get(b.addr).length).slice(0, 1);
+  }
+  const queue = roots.slice();
   for (const n of queue) depth.set(n.addr, 0);
   const seen = new Set(queue.map((n) => n.addr));
   while (queue.length) {
     const n = queue.shift();
-    for (const e of rtEdges.filter((x) => x.from === n.addr)) {
+    for (const next of outgoing.get(n.addr) || []) {
       const d = (depth.get(n.addr) || 0) + 1;
-      if (!depth.has(e.to) || d < depth.get(e.to)) depth.set(e.to, d);
-      if (by.has(e.to) && !seen.has(e.to)) { seen.add(e.to); queue.push(by.get(e.to)); }
+      if (!depth.has(next) || d < depth.get(next)) depth.set(next, d);
+      if (by.has(next) && !seen.has(next)) { seen.add(next); queue.push(by.get(next)); }
     }
   }
   // Upstream callers must sit to the left of the chain root. Walk reverse
@@ -407,10 +483,10 @@ function rtLayout(fresh) {
     depth.set(chainRoot, 0);
     while (upQueue.length) {
       const addr = upQueue.shift();
-      for (const e of rtEdges.filter((x) => x.to === addr)) {
+      for (const prev of incoming.get(addr) || []) {
         const d = depth.get(addr) - 1;
-        if (!depth.has(e.from) || d < depth.get(e.from)) depth.set(e.from, d);
-        if (!upSeen.has(e.from)) { upSeen.add(e.from); upQueue.push(e.from); }
+        if (!depth.has(prev) || d < depth.get(prev)) depth.set(prev, d);
+        if (!upSeen.has(prev)) { upSeen.add(prev); upQueue.push(prev); }
       }
     }
   }
@@ -419,36 +495,44 @@ function rtLayout(fresh) {
     for (const n of rtNodes) n.depth = depth.get(n.addr) || 0;
     return;
   }
-  if (layered && rtNodes.length > 320) {
-    // 全固件视图可能有数百个函数；先按稳定网格排开，保证首屏可读。
-    const cols = Math.max(8, Math.ceil(Math.sqrt(rtNodes.length * 1.6)));
+  if (layered) {
+    // 智能分层：先按调用深度分带，再按父节点位置做重心排序，减少交叉。
+    // 某层节点过多时拆成多个相邻子列，既保留层次关系，又避免一根无限高的列。
     const minDepth = Math.min(0, ...depth.values());
-    rtNodes.forEach((n, i) => {
-      n.depth = (depth.get(n.addr) || 0) - minDepth;
-      n.x = 54 + (i % cols) * 224;
-      n.y = 48 + Math.floor(i / cols) * 116;
-    });
-  } else if (layered) {
-    // 与中控编排一致：调用层级从左到右，同层纵向排开。
-    const minDepth = Math.min(0, ...depth.values());
-    const cols = new Map();
+    const groups = new Map();
     for (const n of rtNodes) {
       const d = (depth.get(n.addr) || 0) - minDepth;
       depth.set(n.addr, d);
-      if (!cols.has(d)) cols.set(d, []);
-      cols.get(d).push(n);
+      if (!groups.has(d)) groups.set(d, []);
+      groups.get(d).push(n);
     }
-    let maxRows = 1;
-    for (const list of cols.values()) maxRows = Math.max(maxRows, list.length);
-    for (const [d, list] of [...cols.entries()].sort((a, b) => a[0] - b[0])) {
-      list.sort((a, b) => String(a.scope).localeCompare(String(b.scope)) || a.name.localeCompare(b.name));
-      const rowGap = 104, total = (list.length - 1) * rowGap;
-      const focus = (maxRows - 1) * rowGap / 2;
-      list.forEach((n, i) => {
-        n.depth = d;
-        n.x = 54 + d * 244;
-        n.y = Math.round(48 + focus - total / 2 + i * rowGap);
+    const rowGap = 104;
+    const maxRows = rtNodes.length > 500 ? 14 : rtNodes.length > 300 ? 18 : 24;
+    const scoreByAddr = new Map();
+    let bandX = 54;
+    for (const [d, list] of [...groups.entries()].sort((a, b) => a[0] - b[0])) {
+      list.sort((a, b) => {
+        const sa = incoming.get(a.addr).length
+          ? incoming.get(a.addr).reduce((sum, p) => sum + (scoreByAddr.get(p) ?? 0), 0) / incoming.get(a.addr).length
+          : Number.POSITIVE_INFINITY;
+        const sb = incoming.get(b.addr).length
+          ? incoming.get(b.addr).reduce((sum, p) => sum + (scoreByAddr.get(p) ?? 0), 0) / incoming.get(b.addr).length
+          : Number.POSITIVE_INFINITY;
+        const fa = Number.isFinite(sa) ? sa : 1e12, fb = Number.isFinite(sb) ? sb : 1e12;
+        return fa - fb || String(a.scope).localeCompare(String(b.scope)) || a.name.localeCompare(b.name);
       });
+      const columns = Math.max(1, Math.ceil(list.length / maxRows));
+      for (let col = 0; col < columns; col++) {
+        const chunk = list.slice(col * maxRows, (col + 1) * maxRows);
+        const top = 48 + Math.max(0, (maxRows - chunk.length) * rowGap / 2);
+        chunk.forEach((n, row) => {
+          n.depth = d;
+          n.x = bandX + col * 236;
+          n.y = Math.round(top + row * rowGap);
+          scoreByAddr.set(n.addr, n.y);
+        });
+      }
+      bandX += columns * 236 + 92;
     }
   } else {
     const cols = Math.max(1, Math.ceil(Math.sqrt(rtNodes.length)));
@@ -667,7 +751,9 @@ function rtUseAsChain(addr) {
   rtLog(`链路分析：以 ${node ? node.name : addr} 为根，${({ down: "向下", up: "向上", both: "双向" })[rtChainDir()] || "向下"} ${rtChainDepthLabel()}`, "ok");
   // The runtime endpoint only contains main/interrupt reachable functions.
   // Chain mode is a slice of the full-firmware graph, so fetch it when needed.
-  if (!rtHasFullData()) return rtAnalyze();
+  const full = rtCachedData("all");
+  if (!full) return rtAnalyze();
+  rtData = full;
   rtBuildGraph();
   rtSel = addr;
   rtRender();
@@ -733,7 +819,9 @@ function rtBindCanvas() {
   }, { passive: false });
   cv.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
-    if (e.target.closest && e.target.closest(".seqnode")) return;
+    // Buttons/inputs inside the canvas (especially the empty-state file picker)
+    // must receive their normal click instead of starting a canvas pan.
+    if (e.target.closest && e.target.closest(".seqnode,button,a,input,select,textarea,.rtempty")) return;
     const w = rtScreenToWorld(e.clientX, e.clientY);
     rtDrag = { pan: true, x: e.clientX, y: e.clientY, vx: rtView.x, vy: rtView.y };
     cv.classList.add("panning");
@@ -805,6 +893,7 @@ async function rtInit() {
   };
   if ($("rt-chain-pick")) $("rt-chain-pick").onclick = useChain;
   if ($("rt-chain-pick-side")) $("rt-chain-pick-side").onclick = useChain;
+  if ($("rt-chain-back")) $("rt-chain-back").onclick = () => rtSwitchScope("all");
   for (const id of ["rt-chain-dir", "rt-chain-depth"]) {
     const el = $(id); if (el) el.onchange = () => {
       if (rtScope() === "chain") {
@@ -812,7 +901,11 @@ async function rtInit() {
       }
     };
   }
-  if ($("rt-bin-arch")) $("rt-bin-arch").onchange = rtSetFileName;
+  if ($("rt-bin-arch")) $("rt-bin-arch").onchange = () => { rtResetDataCache(); rtSetFileName(); };
+  for (const id of ["rt-bin-base", "rt-bin-entry", "rt-vector-base"]) {
+    const el = $(id);
+    if (el) el.oninput = () => rtResetDataCache();
+  }
   if ($("rt-log-clear")) $("rt-log-clear").onclick = () => { $("rt-log").textContent = ""; rtLogNo = 0; };
   for (const id of ["rt-hide-lib", "rt-show-interrupts", "rt-main-only", "rt-show-addr", "rt-layout", "rt-lib-mode", "rt-edge-mode"]) {
     const el = $(id); if (el) el.onchange = () => {
@@ -822,18 +915,7 @@ async function rtInit() {
   }
   for (const id of ["rt-scope", "rt-scope-side"]) {
     const el = $(id);
-    if (el) el.onchange = () => {
-      const value = el.value;
-      if ($("rt-scope")) $("rt-scope").value = value;
-      if ($("rt-scope-side")) $("rt-scope-side").value = value;
-      rtSyncScope();
-      // Chain mode reuses the full-firmware payload already in memory.
-      if (value === "chain" && rtHasFullData()) {
-        rtBuildGraph(); rtSel = rtChainRoot(); rtRender(); rtRefreshSelection(rtAddrNode(rtSel)); rtFocusRoot();
-        return;
-      }
-      if (rtFile) rtAnalyze();
-    };
+    if (el) el.onchange = () => rtSwitchScope(el.value);
   }
   rtSyncScope();
   rtBindCanvas();

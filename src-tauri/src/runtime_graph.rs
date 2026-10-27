@@ -15,9 +15,35 @@ struct RuntimeProc {
     vector_base: String,
 }
 
+#[derive(Clone)]
+struct GraphSnapshot {
+    root: String,
+    filepath: String,
+    scope: String,
+    data: Value,
+}
+
 static RUNTIME: LazyLock<Mutex<Option<RuntimeProc>>> = LazyLock::new(|| Mutex::new(None));
+static LAST_GRAPH: LazyLock<Mutex<Option<GraphSnapshot>>> = LazyLock::new(|| Mutex::new(None));
 const ANALYZER_DIR: &str = "bingraph";
 const ANALYZER_PY: &str = "python\\python.exe";
+
+/// `canonicalize()` on Windows returns `\\?\D:\...`. angr/cle cannot use that
+/// form for its RTDB storage and fails with "No writable directory found".
+fn native_path_string(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    if let Some(rest) = raw.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{rest}")
+    } else if let Some(rest) = raw.strip_prefix("\\\\?\\") {
+        rest.to_string()
+    } else {
+        raw.into_owned()
+    }
+}
+
+fn analyzer_log_path() -> PathBuf {
+    std::env::temp_dir().join("kdock-bingraph.log")
+}
 
 fn resource_roots(app: &tauri::AppHandle) -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -148,7 +174,7 @@ fn ensure(
 ) -> Result<u16, String> {
     let root = Path::new(root).canonicalize().map_err(|e| format!("固件目录无效：{e}"))?;
     if !root.is_dir() { return Err("固件目录不是文件夹".into()); }
-    let root_s = root.to_string_lossy().to_string();
+    let root_s = native_path_string(&root);
     let mut g = RUNTIME.lock().map_err(|_| "分析器锁不可用".to_string())?;
     if let Some(p) = g.as_mut() {
         if p.root == root_s
@@ -166,12 +192,19 @@ fn ensure(
         "未找到便携分析器。请到「环境配置 → 固件运行结构分析器」点一键准备。".to_string()
     })?;
     let port = free_port()?;
+    let logfile = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(analyzer_log_path())
+        .map_err(|e| format!("创建分析器日志失败：{e}"))?;
     let mut cmd = Command::new(&py);
     cmd.arg(pkg.join("run.py"))
         .arg("--root").arg(&root_s).arg("server").arg("--port").arg(port.to_string())
         .env("BINGRAPH_NATIVE_BLOB_SPECS", blob_spec)
         .env("BINGRAPH_NATIVE_VECTOR_BASE", vector_base)
-        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(logfile));
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -200,9 +233,6 @@ fn get_json(port: u16, path: &str) -> Result<Value, String> {
     s.read_to_end(&mut raw).map_err(|e| format!("读取分析结果失败：{e}"))?;
     let split = raw.windows(4).position(|w| w == b"\r\n\r\n").ok_or("分析器响应格式错误")?;
     let head = String::from_utf8_lossy(&raw[..split]);
-    if !head.starts_with("HTTP/1.1 200") && !head.starts_with("HTTP/1.0 200") {
-        return Err(format!("分析失败：{}", head.lines().next().unwrap_or("HTTP error")));
-    }
     let mut body = raw[split + 4..].to_vec();
     if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
         let mut out = Vec::new();
@@ -219,6 +249,27 @@ fn get_json(port: u16, path: &str) -> Result<Value, String> {
         }
         body = out;
     }
+    if !head.starts_with("HTTP/1.1 200") && !head.starts_with("HTTP/1.0 200") {
+        let detail = serde_json::from_slice::<Value>(&body)
+            .ok()
+            .and_then(|v| {
+                v.get("detail")
+                    .or_else(|| v.get("error"))
+                    .or_else(|| v.get("message"))
+                    .map(|m| {
+                        m.as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| m.to_string())
+                    })
+            })
+            .unwrap_or_else(|| String::from_utf8_lossy(&body).chars().take(800).collect());
+        return Err(format!(
+            "分析器返回 {}：{}（日志：{}）",
+            head.lines().next().unwrap_or("HTTP error"),
+            detail,
+            analyzer_log_path().display()
+        ));
+    }
     serde_json::from_slice(&body).map_err(|e| format!("分析结果不是有效 JSON：{e}"))
 }
 
@@ -231,6 +282,266 @@ fn filepath_url(filepath: &str) -> String {
         }
     }
     out
+}
+
+pub(crate) fn analyze_sync(
+    app: &tauri::AppHandle,
+    root: &str,
+    filepath: &str,
+    scope: &str,
+    blob_base: &str,
+    blob_arch: &str,
+    blob_entry: &str,
+    vector_base: &str,
+) -> Result<Value, String> {
+    let base = blob_base.trim();
+    let arch = blob_arch.trim();
+    let entry = blob_entry.trim();
+    let vector = vector_base.trim();
+    let blob_spec = if !base.is_empty() {
+        let name = filepath.rsplit(['/', '\\']).next().unwrap_or(filepath);
+        let arch = if arch.is_empty() { "ARMCortexM" } else { arch };
+        if entry.is_empty() {
+            format!("{name}:{base}:{arch}")
+        } else {
+            format!("{name}:{base}:{arch}:{entry}")
+        }
+    } else {
+        String::new()
+    };
+    let api = if scope == "all" {
+        "/api/functions/json"
+    } else {
+        "/api/runtime/json"
+    };
+    let mut path = format!("{api}?filepath={}", filepath_url(filepath));
+    if !entry.is_empty() {
+        path.push_str("&entry=");
+        path.push_str(&filepath_url(entry));
+    }
+    // A failed request may leave angr's project/cache in a dead state. Stop
+    // that process and retry once with a fresh analyzer instead of making
+    // every later click fail against the same broken instance.
+    let mut port = ensure(app, root, &blob_spec, vector)?;
+    let mut data = match get_json(port, &path) {
+        Ok(v) => v,
+        Err(first) => {
+            stop_locked();
+            let retry_port = ensure(app, root, &blob_spec, vector)?;
+            let value = get_json(retry_port, &path).map_err(|second| {
+                format!("{first}\n已重启分析器重试一次，仍失败：{second}")
+            })?;
+            port = retry_port;
+            value
+        }
+    };
+    if let Some(obj) = data.as_object_mut() {
+        obj.insert("analyzerPort".into(), json!(port));
+        obj.insert("root".into(), json!(root));
+        obj.insert("scope".into(), json!(scope));
+    }
+    if let Ok(mut g) = LAST_GRAPH.lock() {
+        *g = Some(GraphSnapshot {
+            root: root.to_string(),
+            filepath: filepath.to_string(),
+            scope: scope.to_string(),
+            data: data.clone(),
+        });
+    }
+    Ok(data)
+}
+
+pub(crate) fn agent_analyze(
+    app: &tauri::AppHandle,
+    path: &str,
+    scope: &str,
+    blob_base: &str,
+    blob_arch: &str,
+    blob_entry: &str,
+    vector_base: &str,
+) -> Result<String, String> {
+    let file = Path::new(path)
+        .canonicalize()
+        .map_err(|e| format!("固件文件无效：{e}"))?;
+    if !file.is_file() {
+        return Err("固件路径不是文件".into());
+    }
+    let root = file
+        .parent()
+        .ok_or_else(|| "无法确定固件目录".to_string())?;
+    let filepath = file
+        .file_name()
+        .ok_or_else(|| "固件文件名为空".to_string())?
+        .to_string_lossy()
+        .to_string();
+    let root_s = native_path_string(root);
+    let data = analyze_sync(
+        app,
+        &root_s,
+        &filepath,
+        scope,
+        blob_base,
+        blob_arch,
+        blob_entry,
+        vector_base,
+    )?;
+    let nodes = data.get("nodes").and_then(Value::as_array).cloned().unwrap_or_default();
+    let incoming = nodes
+        .iter()
+        .map(|n| {
+            (
+                n.get("addr").and_then(Value::as_str).unwrap_or("").to_string(),
+                n.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut caller_count = std::collections::HashMap::<String, usize>::new();
+    for n in &nodes {
+        for call in n.get("calls").and_then(Value::as_array).into_iter().flatten() {
+            if let Some(addr) = call.get("addr").and_then(Value::as_str) {
+                *caller_count.entry(addr.to_string()).or_default() += 1;
+            }
+        }
+    }
+    let mut ranked = nodes
+        .iter()
+        .map(|n| {
+            let addr = n.get("addr").and_then(Value::as_str).unwrap_or("");
+            let calls = n.get("calls").and_then(Value::as_array).map(Vec::len).unwrap_or(0);
+            (
+                calls + caller_count.get(addr).copied().unwrap_or(0),
+                json!({
+                    "addr": addr,
+                    "name": n.get("name").and_then(Value::as_str).unwrap_or(""),
+                    "calls": calls,
+                    "callers": caller_count.get(addr).copied().unwrap_or(0),
+                    "size": n.get("size").and_then(Value::as_u64).unwrap_or(0),
+                    "blocks": n.get("blocks").and_then(Value::as_u64).unwrap_or(0),
+                }),
+            )
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|a, b| b.0.cmp(&a.0));
+    let roots = data
+        .get("roots")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .take(30)
+                .filter_map(Value::as_str)
+                .map(|addr| {
+                    json!({
+                        "addr": addr,
+                        "name": incoming.get(addr).cloned().unwrap_or_default(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let summary = json!({
+        "file": file.to_string_lossy(),
+        "scope": scope,
+        "entry": data.get("entry").cloned().unwrap_or(Value::Null),
+        "entryName": data.get("entryName").cloned().unwrap_or(Value::Null),
+        "functions": data.get("totalFunctions").and_then(Value::as_u64).unwrap_or(nodes.len() as u64),
+        "nodes": nodes.len(),
+        "calls": data.get("totalCalls").and_then(Value::as_u64).unwrap_or(0),
+        "interrupts": data.get("interrupts").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
+        "roots": roots,
+        "topFunctions": ranked.into_iter().take(30).map(|(_, v)| v).collect::<Vec<_>>(),
+        "next": "用 runtime_graph_query 按函数名或地址查看 callers / calls",
+    });
+    serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())
+}
+
+pub(crate) fn agent_query(query: &str, limit: usize) -> Result<String, String> {
+    let graph = LAST_GRAPH
+        .lock()
+        .map_err(|_| "运行结构缓存锁不可用".to_string())?
+        .clone()
+        .ok_or_else(|| "还没有运行结构数据；先调用 runtime_graph_analyze".to_string())?;
+    let nodes = graph
+        .data
+        .get("nodes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return Err("query 不能为空".into());
+    }
+    let hex = needle.trim_start_matches("0x");
+    let by_addr = nodes
+        .iter()
+        .filter_map(|n| {
+            let addr = n.get("addr").and_then(Value::as_str)?;
+            Some((addr.to_string(), n.clone()))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut callers = std::collections::HashMap::<String, Vec<Value>>::new();
+    for n in &nodes {
+        let src_addr = n.get("addr").and_then(Value::as_str).unwrap_or("");
+        let src_name = n.get("name").and_then(Value::as_str).unwrap_or("");
+        for call in n.get("calls").and_then(Value::as_array).into_iter().flatten() {
+            if let Some(dst) = call.get("addr").and_then(Value::as_str) {
+                callers.entry(dst.to_string()).or_default().push(json!({
+                    "addr": src_addr,
+                    "name": src_name,
+                    "site": call.get("site").cloned().unwrap_or(Value::Null),
+                }));
+            }
+        }
+    }
+    let hits = nodes
+        .iter()
+        .filter(|n| {
+            let name = n.get("name").and_then(Value::as_str).unwrap_or("").to_lowercase();
+            let addr = n.get("addr").and_then(Value::as_str).unwrap_or("").to_lowercase();
+            name.contains(&needle) || addr.contains(hex)
+        })
+        .take(limit.clamp(1, 50))
+        .map(|n| {
+            let addr = n.get("addr").and_then(Value::as_str).unwrap_or("");
+            let calls = n
+                .get("calls")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .take(40)
+                        .map(|c| {
+                            json!({
+                                "addr": c.get("addr").cloned().unwrap_or(Value::Null),
+                                "name": c.get("name").cloned().unwrap_or(Value::Null),
+                                "site": c.get("site").cloned().unwrap_or(Value::Null),
+                                "mnemonic": c.get("mnemonic").cloned().unwrap_or(Value::Null),
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            json!({
+                "addr": addr,
+                "name": n.get("name").cloned().unwrap_or(Value::Null),
+                "size": n.get("size").cloned().unwrap_or(Value::Null),
+                "blocks": n.get("blocks").cloned().unwrap_or(Value::Null),
+                "calls": calls,
+                "callers": callers.get(addr).cloned().unwrap_or_default(),
+            })
+        })
+        .collect::<Vec<_>>();
+    if hits.is_empty() {
+        return Err(format!("没有找到函数：{query}（先 runtime_graph_analyze）"));
+    }
+    serde_json::to_string_pretty(&json!({
+        "file": graph.filepath,
+        "root": graph.root,
+        "scope": graph.scope,
+        "matches": hits,
+        "knownFunctions": by_addr.len(),
+    }))
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -297,38 +608,16 @@ pub async fn runtime_analyze(
     vector_base: Option<String>,
 ) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let base = blob_base.unwrap_or_default().trim().to_string();
-        let arch = blob_arch.unwrap_or_default().trim().to_string();
-        let entry = blob_entry.unwrap_or_default().trim().to_string();
-        let vector = vector_base.unwrap_or_default().trim().to_string();
-        let blob_spec = if !base.is_empty() {
-            let name = filepath.rsplit(['/', '\\']).next().unwrap_or(&filepath);
-            let arch = if arch.is_empty() { "ARMCortexM" } else { arch.as_str() };
-            if entry.is_empty() {
-                format!("{name}:{base}:{arch}")
-            } else {
-                format!("{name}:{base}:{arch}:{entry}")
-            }
-        } else {
-            String::new()
-        };
-        let port = ensure(&app, &root, &blob_spec, &vector)?;
-        let api = if scope.as_deref() == Some("all") {
-            "/api/functions/json"
-        } else {
-            "/api/runtime/json"
-        };
-        let mut path = format!("{api}?filepath={}", filepath_url(&filepath));
-        if !entry.is_empty() {
-            path.push_str("&entry=");
-            path.push_str(&filepath_url(&entry));
-        }
-        let mut data = get_json(port, &path)?;
-        if let Some(obj) = data.as_object_mut() {
-            obj.insert("analyzerPort".into(), json!(port));
-            obj.insert("root".into(), json!(root));
-        }
-        Ok(data)
+        analyze_sync(
+            &app,
+            &root,
+            &filepath,
+            scope.as_deref().unwrap_or("runtime"),
+            blob_base.as_deref().unwrap_or(""),
+            blob_arch.as_deref().unwrap_or(""),
+            blob_entry.as_deref().unwrap_or(""),
+            vector_base.as_deref().unwrap_or(""),
+        )
     }).await.map_err(|e| format!("分析任务失败：{e}"))?
 }
 
@@ -339,4 +628,52 @@ pub fn runtime_stop() {
 
 pub fn cleanup() {
     stop_locked();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_extended_paths_are_removed_before_starting_angr() {
+        assert_eq!(
+            native_path_string(Path::new(r"\\?\D:\firmware\build")),
+            r"D:\firmware\build"
+        );
+        assert_eq!(
+            native_path_string(Path::new(r"\\?\UNC\nas\share\build")),
+            r"\\nas\share\build"
+        );
+        assert_eq!(
+            native_path_string(Path::new(r"D:\firmware\build")),
+            r"D:\firmware\build"
+        );
+    }
+
+    #[test]
+    fn agent_query_returns_calls_and_callers() {
+        if let Ok(mut g) = LAST_GRAPH.lock() {
+            *g = Some(GraphSnapshot {
+                root: r"D:\fw".into(),
+                filepath: "demo.elf".into(),
+                scope: "all".into(),
+                data: json!({
+                    "nodes": [
+                        {"addr":"10","name":"main","size":32,"blocks":2,"calls":[
+                            {"addr":"20","name":"worker","site":"12","mnemonic":"bl worker"}
+                        ]},
+                        {"addr":"20","name":"worker","size":16,"blocks":1,"calls":[]}
+                    ]
+                }),
+            });
+        }
+        let text = agent_query("worker", 8).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["matches"][0]["name"], "worker");
+        assert_eq!(value["matches"][0]["callers"][0]["name"], "main");
+        assert_eq!(agent_query("main", 8).unwrap().contains("\"worker\""), true);
+        if let Ok(mut g) = LAST_GRAPH.lock() {
+            *g = None;
+        }
+    }
 }

@@ -374,7 +374,12 @@ pub static ITEMS: &[Item] = &[
         required: false,
         min_version: Some("1.5"),
         size_mb: 1.0,
-        rules: &[exe("USBPcapCMD.exe", "C:\\Program Files\\USBPcap;C:\\Program Files (x86)\\USBPcap", "", "")],
+        rules: &[
+            exe("USBPcapCMD.exe", "C:\\Program Files\\USBPcap;C:\\Program Files (x86)\\USBPcap", "", ""),
+            // 安装器写入的卸载项。它用于命令行路径被改掉或文件暂时缺失时仍能正确
+            // 认出“USBPcap 已经安装过”，避免再次运行安装器卡在 already-installed。
+            reg("HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\USBPcap", "DisplayVersion"),
+        ],
         plan: Plan::Download {
             url: "https://github.com/desowin/usbpcap/releases/download/1.5.4.0/USBPcapSetup-1.5.4.0.exe",
             file: "USBPcapSetup-1.5.4.0.exe",
@@ -1453,6 +1458,8 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
     let mut version: Option<String> = None;
     let mut detail = String::new();
     let mut installed = false;
+    let mut warning = "";
+    let mut usbpcap_driver: Option<(bool, &'static str)> = None;
     for r in it.rules {
         match r.kind {
             Kind::Inf => {
@@ -1530,11 +1537,40 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
             Kind::Manual => {}
         }
     }
+    if it.id == "usbpcap" {
+        let status = crate::usbcapture::status_snapshot();
+        if version.is_none() {
+            version = reg_query(
+                "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\USBPcap",
+                "DisplayVersion",
+            );
+        }
+        if status.command_installed {
+            installed = true;
+        }
+        usbpcap_driver = Some((status.driver_ready, status.driver_state));
+        if installed {
+            let driver = match status.driver_state {
+                "ready" => "驱动已加载",
+                "elevation-required" => "驱动已加载（抓包时请求管理员权限）",
+                "missing" => "驱动未加载",
+                _ => "驱动状态未知",
+            };
+            if !status.driver_ready {
+                warning = "驱动未加载";
+            }
+            detail = format!(
+                "USBPcap {} · {}",
+                version.as_deref().unwrap_or("已安装"),
+                driver
+            );
+        }
+    }
     let outdated = match (it.min_version, version.as_ref()) {
         (Some(min), Some(v)) => ver_cmp(v, min) == std::cmp::Ordering::Less,
         _ => false,
     };
-    json!({
+    let mut out = json!({
         "id": it.id,
         "name": it.name,
         "kind": it.kind_cn,
@@ -1549,7 +1585,15 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
         "path": path.map(|p| p.to_string_lossy().to_string()),
         "detail": detail,
         "autoInstall": !matches!(it.plan, Plan::Manual),
-    })
+    });
+    if it.id == "usbpcap" {
+        let (driver_ready, driver_state) =
+            usbpcap_driver.unwrap_or((false, "unknown"));
+        out["warning"] = json!(warning);
+        out["driverReady"] = json!(driver_ready);
+        out["driverState"] = json!(driver_state);
+    }
+    out
 }
 
 /// 扫描结果缓存（15 分钟）：装完 / 点"重新扫描"会清掉
@@ -1711,7 +1755,13 @@ fn unzip_into(app: &tauri::AppHandle, id: &str, zip: &Path, dst: &Path, strip: u
 
 /// 安装 / 更新。dry = 只打印将要做什么（下载照做，但不执行安装器）——测试用
 #[tauri::command]
-pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>, dry: Option<bool>) -> Result<String, String> {
+pub async fn env_install(
+    app: tauri::AppHandle,
+    id: String,
+    dir: Option<String>,
+    dry: Option<bool>,
+    force: Option<bool>,
+) -> Result<String, String> {
     let dry = dry.unwrap_or(false);
     let it = ITEMS.iter().find(|x| x.id == id).ok_or_else(|| format!("不认识的组件：{id}"))?;
     let target = dir.unwrap_or_else(|| {
@@ -1720,6 +1770,33 @@ pub async fn env_install(app: tauri::AppHandle, id: String, dir: Option<String>,
     });
     set_env_dir(&target);          // 后面的检测规则（%ENVDIR%）按这个目录找
     emit(&app, it.id, "start", 0, &format!("准备安装 {}", it.name));
+
+    // USBPcap 的官方安装器在检测到已经安装后会重新弹安装器，甚至停在
+    // “already installed”等待用户点击。先走和扫描相同的检测；已安装就只
+    // 返回真实驱动状态，不再盲目重跑安装器。
+    if it.id == "usbpcap" && !dry && !force.unwrap_or(false) {
+        let status = crate::usbcapture::status_snapshot();
+        let registered = reg_query(
+            "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\USBPcap",
+            "DisplayVersion",
+        );
+        if status.command_installed || registered.is_some() {
+            emit(&app, it.id, "done", 100, "已检测到安装，跳过安装器");
+            if status.driver_ready {
+                return Ok(format!(
+                    "USBPcap 已安装，抓包驱动已就绪（{}），无需重装。",
+                    status.driver_state
+                ));
+            }
+            return Ok(format!(
+                "USBPcap 已安装（{}），本次已跳过安装器，避免卡在“已经安装”。\n\
+                 但抓包控制设备仍未加载（{}）。请使用“重新启动”而不是关机后快速开机；\
+                 若仍不出现，先卸载 USBPcap，再安装 1.5.4.0 并完整重启。",
+                registered.unwrap_or_else(|| "版本未知".to_string()),
+                status.driver_state
+            ));
+        }
+    }
 
     // ① 先看有没有"内置"的安装包：<exe 同目录>drivers<id> 下放 .exe/.msi/.inf/.zip 就直接用
     //    （CH340/FTDI 这种官网要登录的、或者公司网不好下 GitHub 的，把安装包提前丢进去就能一键装）

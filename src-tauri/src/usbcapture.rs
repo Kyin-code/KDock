@@ -34,6 +34,122 @@ fn w(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// 打开一个 USBPcap 控制设备，只用于判定驱动是否已经加载。
+///
+/// 不能把“整个系统还有一个待重启的 Windows 更新”当成 USBPcap 待重启：
+/// 两者没有关系，而且 CBS 的 RebootPending 会在任何组件更新后出现。设备
+/// 能打开（或因为当前进程没提权而返回 ACCESS_DENIED）就说明驱动已经上线；
+/// 只有设备不存在才可能是装完还没重启。
+#[cfg(windows)]
+fn usbpcap_device_state(path: &str) -> UsbPcapDeviceState {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND,
+        ERROR_PATH_NOT_FOUND, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+
+    let p = w(path);
+    let h = unsafe {
+        CreateFileW(
+            p.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+    if h == INVALID_HANDLE_VALUE {
+        let err = unsafe { GetLastError() };
+        return match err {
+            // 节点存在，只是普通权限不能直接读控制端点；实际抓包会走 UAC。
+            ERROR_ACCESS_DENIED => UsbPcapDeviceState::NeedsElevation,
+            ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => UsbPcapDeviceState::Missing,
+            _ => UsbPcapDeviceState::Unknown(err),
+        };
+    }
+    unsafe { CloseHandle(h) };
+    UsbPcapDeviceState::Ready
+}
+
+#[cfg(not(windows))]
+fn usbpcap_device_state(_path: &str) -> UsbPcapDeviceState {
+    UsbPcapDeviceState::Missing
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UsbPcapDeviceState {
+    Ready,
+    NeedsElevation,
+    Missing,
+    Unknown(u32),
+}
+
+impl UsbPcapDeviceState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::NeedsElevation => "elevation-required",
+            Self::Missing => "missing",
+            Self::Unknown(_) => "unknown",
+        }
+    }
+}
+
+/// 汇总每个根 Hub 的设备探测结果。
+///
+/// - 任意一个设备处于 ready / elevation-required，就说明驱动已经加载；
+/// - 有未知错误时不要贸然说“缺驱动”，保留 unknown 供 UI 报具体错误；
+/// - 只有全部设备都 missing 时才可能是安装后尚未重启。
+fn driver_status(states: &[UsbPcapDeviceState]) -> (bool, &'static str) {
+    if states.iter().any(|state| *state == UsbPcapDeviceState::Ready) {
+        return (true, "ready");
+    }
+    if states.iter().any(|state| *state == UsbPcapDeviceState::NeedsElevation) {
+        return (true, "elevation-required");
+    }
+    if states.is_empty() || states.iter().any(|state| matches!(state, UsbPcapDeviceState::Unknown(_))) {
+        return (false, "unknown");
+    }
+    (false, "missing")
+}
+
+pub(crate) struct UsbpcapStatus {
+    pub cmd: Option<PathBuf>,
+    pub command_installed: bool,
+    pub driver_ready: bool,
+    pub driver_state: &'static str,
+    pub root_hubs: usize,
+    pub devices: Vec<String>,
+    pub device_states: Vec<&'static str>,
+}
+
+/// 统一的只读状态探测：环境配置和“监听”页共用同一套判断。
+pub(crate) fn status_snapshot() -> UsbpcapStatus {
+    let cmd = find_cmd();
+    let hubs = root_hub_count();
+    let devices: Vec<String> = (1..=hubs.max(1))
+        .map(|n| format!("\\\\.\\USBPcap{}", n))
+        .collect();
+    let states: Vec<UsbPcapDeviceState> = devices
+        .iter()
+        .map(|path| usbpcap_device_state(path))
+        .collect();
+    let (driver_ready, driver_state) = driver_status(&states);
+    UsbpcapStatus {
+        command_installed: cmd.is_some(),
+        cmd,
+        driver_ready,
+        driver_state,
+        root_hubs: hubs,
+        devices,
+        device_states: states.iter().map(|s| s.as_str()).collect(),
+    }
+}
+
 /// USB 根 Hub 数量（USBPcap 每个根 Hub 一个 \\.\USBPcapN 控制设备）
 fn root_hub_count() -> usize {
     use windows_sys::Win32::Devices::DeviceAndDriverInstallation::*;
@@ -216,26 +332,19 @@ fn decode_packet(d: &[u8], ts: u64) -> Option<Value> {
 #[tauri::command]
 pub async fn usbpcap_info() -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let cmd = find_cmd();
-        let hubs = root_hub_count();
-        let reboot = {
-            use windows_sys::Win32::System::Registry::*;
-            let path = w("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending");
-            let mut h = std::ptr::null_mut();
-            let r = unsafe { RegOpenKeyExW(HKEY_LOCAL_MACHINE, path.as_ptr(), 0, KEY_READ, &mut h) };
-            if r == 0 {
-                unsafe { RegCloseKey(h) };
-                true
-            } else {
-                false
-            }
-        };
+        let status = status_snapshot();
         json!({
-            "installed": cmd.is_some(),
-            "cmd": cmd.map(|p| p.to_string_lossy().to_string()),
-            "rootHubs": hubs,
-            "rebootPending": reboot,
-            "devices": (1..=hubs.max(1)).map(|n| format!("\\\\.\\USBPcap{}", n)).collect::<Vec<_>>(),
+            // installed 保留给旧调用方；驱动真正可用的条件要看 driverReady。
+            "installed": status.command_installed && status.driver_ready,
+            "commandInstalled": status.command_installed,
+            "driverReady": status.driver_ready,
+            "driverState": status.driver_state,
+            "cmd": status.cmd.map(|p| p.to_string_lossy().to_string()),
+            "rootHubs": status.root_hubs,
+            // 兼容旧前端：驱动未上线时才提示重启；不再参考系统级更新状态。
+            "rebootPending": status.command_installed && !status.driver_ready,
+            "devices": status.devices,
+            "states": status.device_states,
         })
     })
     .await
@@ -403,6 +512,41 @@ fn reader_loop(app: tauri::AppHandle, file: PathBuf, stopfile: PathBuf, stop: Ar
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn driver_status_accepts_elevation_required_device() {
+        // 普通权限打开控制设备会得到 ACCESS_DENIED。设备节点已经存在，
+        // 抓包本身会提权，所以这里必须算“已就绪”，不能再要求重启。
+        assert_eq!(
+            driver_status(&[UsbPcapDeviceState::Missing, UsbPcapDeviceState::NeedsElevation]),
+            (true, "elevation-required")
+        );
+        assert_eq!(
+            driver_status(&[UsbPcapDeviceState::NeedsElevation]),
+            (true, "elevation-required")
+        );
+    }
+
+    #[test]
+    fn driver_status_reports_ready_before_elevation() {
+        assert_eq!(
+            driver_status(&[UsbPcapDeviceState::NeedsElevation, UsbPcapDeviceState::Ready]),
+            (true, "ready")
+        );
+    }
+
+    #[test]
+    fn driver_status_only_calls_all_missing_a_pending_reboot() {
+        assert_eq!(
+            driver_status(&[UsbPcapDeviceState::Missing, UsbPcapDeviceState::Missing]),
+            (false, "missing")
+        );
+        assert_eq!(driver_status(&[]), (false, "unknown"));
+        assert_eq!(
+            driver_status(&[UsbPcapDeviceState::Missing, UsbPcapDeviceState::Unknown(87)]),
+            (false, "unknown")
+        );
+    }
 
     fn pkt(ts: u32, data: &[u8]) -> Vec<u8> {
         let mut v = Vec::new();

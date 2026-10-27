@@ -524,7 +524,7 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
     );
     push(
         "ui_goto",
-        "把界面切到某个页（transfer/upgrade/flash/files/chart/flow/capture/scope）。",
+        "把界面切到某个页（transfer/upgrade/flash/files/runtime/chart/flow/capture/scope）。",
         json!({"type":"object","properties":{"page":{"type":"string"}},"required":["page"]}),
         true,
     );
@@ -569,6 +569,28 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
             "path":{"type":"string"},
             "format":{"type":"string","enum":["csv","vcd"]}
         },"required":["path"]}), true);
+    push(
+        "runtime_graph_analyze",
+        "分析一份 ELF/PE/AXF/OUT/BIN 固件的运行结构，结果同时缓存给 Agent 查询。scope=all 返回全固件函数与调用边；runtime 返回 main/中断运行链。BIN 必须给 base（如 0x08000000）和 arch（默认 ARMCortexM）。只读，不上传文件。",
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"本机固件绝对路径"},
+            "scope":{"type":"string","enum":["all","runtime"],"description":"默认 all"},
+            "base":{"type":"string","description":"裸机 BIN 加载基址，如 0x08000000"},
+            "arch":{"type":"string","description":"裸机 BIN 架构，默认 ARMCortexM"},
+            "entry":{"type":"string","description":"裸机 BIN 入口地址，可选"},
+            "vector_base":{"type":"string","description":"Cortex-M 向量表基址，可选"}
+        },"required":["path"]}),
+        false,
+    );
+    push(
+        "runtime_graph_query",
+        "查询最近一次 runtime_graph_analyze 的函数图。按函数名或地址查匹配节点，返回大小、基本块、被调用者 calls、调用者 callers 和调用点地址。用于回答“谁调用了这个函数”“这个中断往下走到哪”等。",
+        json!({"type":"object","properties":{
+            "query":{"type":"string","description":"函数名的一部分或地址，如 HAL_UART_Transmit / 0x80549fd"},
+            "limit":{"type":"integer","description":"最多返回几个匹配，默认 8，最多 50"}
+        },"required":["query"]}),
+        false,
+    );
     push("flow_get", "读**当前画布上的编排**：节点（含各自参数与坐标）+ 连线（from/port/to）+ 可用的节点类型清单（每种类型有哪些输入/输出端口）。想看懂/复述用户画的流程、或者要自己排一条，先调它拿格式。",
         json!({"type":"object","properties":{}}), true);
     push("flow_add_node", "在**现有画布上新增一个节点**（不动别人已画的东西）。type 取自 flow_get 的 kinds；x/y 不给就自动摆在最右边节点的右侧；params 里的字段会并到该节点上（比如 label）。返回新节点的 id。",
@@ -1653,6 +1675,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn runtime_graph_tools_are_registered_and_read_only() {
+        let names: Vec<&str> = catalog().iter().map(|d| d.name).collect();
+        for n in ["runtime_graph_analyze", "runtime_graph_query"] {
+            assert!(names.contains(&n), "缺工具 {n}");
+            assert!(!is_dangerous(n), "{n} 是只读工具，不应要求审批");
+            assert!(!is_host(n), "{n} 应该在 Rust 侧直接执行");
+        }
+        let analyze = catalog()
+            .into_iter()
+            .find(|d| d.name == "runtime_graph_analyze")
+            .unwrap();
+        let props = analyze.schema["properties"].as_object().unwrap();
+        for k in ["path", "scope", "base", "arch", "entry", "vector_base"] {
+            assert!(props.contains_key(k), "runtime_graph_analyze 缺参数 {k}");
+        }
+        assert!(is_core_tool("port_open"));
+        assert!(is_core_tool("workspace_read"));
+        assert!(!is_core_tool("env_install"));
+        assert_eq!(tool_category("runtime_graph_query"), "仪器与固件分析");
+        assert_eq!(tool_category("workspace_edit"), "工作区与执行");
+    }
+
     /// adb / screen 这组工具：注册了、该要审批的要、只读的不要、参数名别写错
     #[test]
     fn adb_and_screen_tools_are_registered_and_gated() {
@@ -1859,6 +1904,69 @@ mod tests {
             .iter()
             .any(|v| v == "id"));
     }
+}
+
+/// 设置页的工具分类。分类只影响展示与批量开关，不改变工具执行逻辑。
+pub fn tool_category(name: &str) -> &'static str {
+    if name.starts_with("link_") || name.starts_with("port_") || name.starts_with("ssh_") || name == "net_local_ips" {
+        "通信"
+    } else if name.starts_with("workspace_")
+        || name.starts_with("plan_")
+        || name.starts_with("subagent_")
+        || name.starts_with("parallel_")
+        || matches!(name, "local_run" | "output_read")
+    {
+        "工作区与执行"
+    } else if name.starts_with("device_") || name.starts_with("firmware_") || name == "flash" {
+        "设备与固件"
+    } else if name.starts_with("adb_") {
+        "安卓调试"
+    } else if name.starts_with("scope")
+        || name.starts_with("la_")
+        || name.starts_with("logic_")
+        || name.starts_with("runtime_graph_")
+    {
+        "仪器与固件分析"
+    } else if name.starts_with("screen_") || name.starts_with("capture_") || name.starts_with("image_") {
+        "屏幕与图像"
+    } else if name.starts_with("flow_") {
+        "中控编排"
+    } else if name.starts_with("skill_") || name.starts_with("mcp_") || name.starts_with("env_") {
+        "技能与环境"
+    } else if name.starts_with("ui_") || name.starts_with("browser_") || name == "history_search" {
+        "界面与上下文"
+    } else {
+        "其他"
+    }
+}
+
+/// 这些工具是 Agent 完成基本工作的底座，设置页只能看不能关。
+pub fn is_core_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "link_open"
+            | "link_close"
+            | "link_status"
+            | "link_send"
+            | "link_read"
+            | "port_list"
+            | "port_state"
+            | "port_write"
+            | "port_read"
+            | "port_open"
+            | "port_close"
+            | "net_local_ips"
+            | "workspace_list"
+            | "workspace_read"
+            | "workspace_write"
+            | "workspace_edit"
+            | "workspace_diff"
+            | "workspace_search"
+            | "workspace_context"
+            | "output_read"
+            | "skill_list"
+            | "skill_read"
+    )
 }
 
 pub fn is_dangerous(name: &str) -> bool {
@@ -2078,6 +2186,32 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         }
         "link_send" => link_send(ctx, args),
         "link_read" => link_read(ctx, args),
+        "runtime_graph_analyze" => {
+            let raw = arg_str(args, "path").ok_or("缺少 path")?;
+            let raw_path = std::path::PathBuf::from(&raw);
+            let path = if raw_path.is_absolute() {
+                raw_path
+            } else {
+                ctx.workspace.join(raw_path)
+            };
+            let scope = arg_str(args, "scope").unwrap_or_else(|| "all".into());
+            if scope != "all" && scope != "runtime" {
+                return Err("scope 只能是 all 或 runtime".into());
+            }
+            crate::runtime_graph::agent_analyze(
+                ctx.app,
+                &path.to_string_lossy(),
+                &scope,
+                &arg_str(args, "base").unwrap_or_default(),
+                &arg_str(args, "arch").unwrap_or_else(|| "ARMCortexM".into()),
+                &arg_str(args, "entry").unwrap_or_default(),
+                &arg_str(args, "vector_base").unwrap_or_default(),
+            )
+        }
+        "runtime_graph_query" => crate::runtime_graph::agent_query(
+            &arg_str(args, "query").ok_or("缺少 query")?,
+            arg_u64(args, "limit", 8) as usize,
+        ),
         "device_list" => device_list(ctx, args),
         "device_pull" => device_pull(ctx, args),
         "device_push" => device_push(ctx, args),

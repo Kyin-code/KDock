@@ -984,6 +984,8 @@ pub fn agent_tools_list(app: AppHandle) -> Vec<Value> {
             json!({
                 "name": t.name, "description": t.description, "host": t.host,
                 "danger": tools::is_dangerous(&t.name),
+                "category": tools::tool_category(t.name),
+                "core": tools::is_core_tool(t.name),
                 "enabled": !off.contains(&t.name.to_string()),
                 "bytes": serde_json::to_string(&tools::schema_json(std::slice::from_ref(t), true)).map(|s| s.len()).unwrap_or(0),
             })
@@ -996,10 +998,49 @@ pub fn agent_tool_set(app: AppHandle, name: String, on: bool) -> Result<Value, S
     if !tools::is_known(&name) {
         return Err(format!("没有这个工具：{name}"));
     }
+    if !on && tools::is_core_tool(&name) {
+        return Err(format!("{name} 是基本工具，不允许关闭"));
+    }
     store::tools_off_set(&app, &name, !on)?;
     Ok(
         json!({ "ok": true, "note": "下个新会话生效（工具定义在请求最前面，中途改会让整个前缀缓存作废）" }),
     )
+}
+
+#[tauri::command]
+pub fn agent_tools_bulk_set(
+    app: AppHandle,
+    category: Option<String>,
+    on: bool,
+) -> Result<Value, String> {
+    let names: Vec<String> = tools::catalog()
+        .into_iter()
+        .filter(|t| {
+            category
+                .as_deref()
+                .map(|c| c == "全部" || tools::tool_category(t.name) == c)
+                .unwrap_or(true)
+        })
+        .filter(|t| on || !tools::is_core_tool(t.name))
+        .map(|t| t.name.to_string())
+        .collect();
+    store::tools_off_set_many(&app, &names, !on)?;
+    let skipped = tools::catalog()
+        .iter()
+        .filter(|t| {
+            !on && category
+                .as_deref()
+                .map(|c| c == "全部" || tools::tool_category(t.name) == c)
+                .unwrap_or(true)
+                && tools::is_core_tool(t.name)
+        })
+        .count();
+    Ok(json!({
+        "ok": true,
+        "changed": names.len(),
+        "skippedCore": skipped,
+        "note": format!("已{} {} 个工具；{} 个基本工具保持开启。对新会话生效。", if on { "开启" } else { "关闭" }, names.len(), skipped)
+    }))
 }
 
 /// 全局指导文件（AGENTS.md）：人格 / 口吻 / 通用规矩 —— "一直在场"的东西写这儿，不写技能

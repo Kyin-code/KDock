@@ -1309,14 +1309,22 @@ pub fn tools_off(app: &AppHandle) -> Vec<String> {
 }
 
 pub fn tools_off_set(app: &AppHandle, name: &str, off: bool) -> Result<(), String> {
+    tools_off_set_many(app, &[name.to_string()], off)
+}
+
+pub fn tools_off_set_many(app: &AppHandle, names: &[String], off: bool) -> Result<(), String> {
     let mut cur = tools_off(app);
-    if off {
-        if !cur.contains(&name.to_string()) {
-            cur.push(name.to_string());
+    for name in names {
+        if off {
+            if !cur.contains(name) {
+                cur.push(name.clone());
+            }
+        } else {
+            cur.retain(|x| x != name);
         }
-    } else {
-        cur.retain(|x| x != name);
     }
+    cur.sort();
+    cur.dedup();
     let p = tools_off_path(app)?;
     let text = serde_json::to_string_pretty(&cur).map_err(|e| e.to_string())?;
     let tmp = p.with_extension("json.tmp");
