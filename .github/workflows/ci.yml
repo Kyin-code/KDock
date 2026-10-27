@@ -56,7 +56,7 @@ jobs:
     # Publishing a release needs write access; everything else in this job stays read-only.
     permissions:
       contents: write
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       # Persistent cargo cache outside the checkout, so that
       # actions/checkout's `git clean -ffdx` cannot wipe it.
@@ -115,6 +115,19 @@ jobs:
           if (-not (Test-Path resources/bingraph/THIRD_PARTY_NOTICES.md)) {
             throw "portable analyzer third-party notices are missing"
           }
+          if (Test-Path resources/bingraph/build-tools) {
+            throw "portable analyzer leaked temporary build tools"
+          }
+          $py = "resources/bingraph/python/python.exe"
+          $check = & $py -c "import sys; assert 'build-tools' not in ' '.join(sys.path); import angr, bingraph; print(sys.version.split()[0], angr.__version__, bingraph.__version__)"
+          if ($LASTEXITCODE -ne 0) {
+            throw "portable analyzer import self-check failed"
+          }
+          $pth = Get-Content "resources/bingraph/python/python313._pth" -Raw
+          if ($pth -match [regex]::Escape($env:TEMP)) {
+            throw "portable analyzer _pth still points into the build staging directory"
+          }
+          Write-Output "portable analyzer self-check: $check"
 
       - name: Build Tauri app (release)
         run: npm run tauri build

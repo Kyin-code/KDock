@@ -12,6 +12,7 @@ $OutDir = [IO.Path]::GetFullPath($OutDir)
 $stage = Join-Path $env:TEMP ("kdock-bingraph-" + [guid]::NewGuid().ToString("N"))
 $pythonStage = Join-Path $stage "python"
 $site = Join-Path $stage "site-packages"
+$pyZip = Join-Path $stage "python.zip"
 New-Item -ItemType Directory -Force $stage,$pythonStage,$site | Out-Null
 
 function Download($url, $dst) {
@@ -21,33 +22,48 @@ function Download($url, $dst) {
 
 try {
   Write-Host "== Python $PythonVersion (embeddable) =="
-  $pyZip = Join-Path $stage "python.zip"
   Download "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-embed-amd64.zip" $pyZip
   Expand-Archive -LiteralPath $pyZip -DestinationPath $pythonStage -Force
   $pth = Get-ChildItem $pythonStage -Filter "python*._pth" | Select-Object -First 1
   if (-not $pth) { throw "Python embeddable package has no _pth file" }
   $parts = $PythonVersion.Split('.')
-  $lines = @("python$($parts[0])$($parts[1]).zip", ".", "..\site-packages", "import site")
+  # arpy (an angr dependency) ships only an sdist, and its legacy setuptools
+  # backend imports setuptools from the *active* interpreter. Embeddable
+  # Python disables normal site processing via _pth, so explicitly expose the
+  # final dependency directory and a separate, ephemeral build-tools directory.
+  # Build tools stay out of the shipped package while remaining available to
+  # sdist builds through --no-build-isolation.
+  $buildTools = Join-Path $stage "build-tools"
+  New-Item -ItemType Directory -Force $buildTools | Out-Null
+  # Paths in _pth are relative to python.exe and survive moving the portable
+  # package to another directory or drive.
+  $runtimePth = @("python$($parts[0])$($parts[1]).zip", ".", "..\site-packages")
+  $lines = @($runtimePth + @("..\build-tools", "import site"))
   Set-Content -LiteralPath $pth.FullName -Value $lines -Encoding ascii
 
   Write-Host "== dependencies (locked) =="
   $src = Join-Path $root "tools/bingraph/requirements.txt"
   if (-not (Test-Path $src)) { throw "missing $src" }
   $py = Join-Path $pythonStage "python.exe"
+  $pinnedBuildTools = @("setuptools==84.2.1", "wheel==0.48.0")
   # embeddable Python has no pip. Use uv when available; otherwise bootstrap
   # pip with the official get-pip.py, so a release install can repair itself
   # without assuming the user has Python or uv.
   $uv = Get-Command uv.exe -ErrorAction SilentlyContinue
   $native = "angr,unicorn,pyvex,capstone,cffi,pydantic-core,z3-solver,lmdb,msgspec,psutil"
   if ($uv) {
-    & $uv.Source pip install --python $py --target $site --no-cache "--only-binary=$native" -r $src | Out-Host
+    & $uv.Source pip install --python $py --target $buildTools --no-cache @pinnedBuildTools | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "build tool installation failed" }
+    & $uv.Source pip install --python $py --target $site --no-cache --no-build-isolation "--only-binary=$native" -r $src | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "dependency installation failed" }
   } else {
     $getPip = Join-Path $stage "get-pip.py"
     Download "https://bootstrap.pypa.io/get-pip.py" $getPip
     & $py $getPip --no-warn-script-location | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "pip bootstrap failed" }
-    & $py -m pip install --target $site --no-cache-dir "--only-binary=$native" -r $src | Out-Host
+    & $py -m pip install --target $buildTools --no-cache-dir @pinnedBuildTools | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "build tool installation failed" }
+    & $py -m pip install --target $site --no-cache-dir --no-build-isolation "--only-binary=$native" -r $src | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "dependency installation failed" }
   }
 
@@ -83,7 +99,7 @@ try {
   } | ConvertTo-Json
   Set-Content -LiteralPath (Join-Path $stage "VERSION.json") -Value $version -Encoding utf8
 
-  $check = & $py -c "import sys; sys.path.insert(0, r'$site'); import angr, bingraph; print(sys.version.split()[0]); print(angr.__version__); print(bingraph.__version__)"
+  $check = & $py -c "import sys, setuptools; sys.path.insert(0, r'$site'); import angr, bingraph; print(sys.version.split()[0]); print(angr.__version__); print(bingraph.__version__)"
   if ($LASTEXITCODE -ne 0) { throw "portable analyzer self-check failed" }
   Write-Host ($check -join " / ")
 
@@ -114,6 +130,14 @@ try {
     }
   }
   Write-Host "license inventory -> $licenseDir"
+
+  # These are only needed while installing sdists. Do not ship an extra copy
+  # of pip/setuptools/wheel in the analyzer package, and restore the runtime
+  # _pth so the moved package never points into the build staging directory.
+  Remove-Item -LiteralPath $buildTools -Recurse -Force
+  Remove-Item -LiteralPath $pyZip -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath (Join-Path $stage "get-pip.py") -Force -ErrorAction SilentlyContinue
+  Set-Content -LiteralPath $pth.FullName -Value @($runtimePth + @("import site")) -Encoding ascii
 
   if (Test-Path $OutDir) { Remove-Item $OutDir -Recurse -Force }
   New-Item -ItemType Directory -Force (Split-Path $OutDir) | Out-Null
