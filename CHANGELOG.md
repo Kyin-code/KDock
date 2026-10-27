@@ -18,6 +18,33 @@
 ## [未发布]
 
 ### 新增
+- **运行结构页（全固件 / main / 中断 / CFG）**：新增独立“运行结构”工作页，使用原生 DOM + SVG
+  卡片画布而不是嵌入旧 Web 页面。默认分析范围是“全固件函数”，请求
+  `/api/functions/json`，展示 `angr CFGFast` 识别出的**全部函数和调用边**，不再只显示
+  `main` 可达的约 75 个可见节点；可切换到 `main` 运行链和中断作用域。
+- **全固件函数完整性**：新增全固件接口与统计（总数、调用边、无入边根）；同一份
+  `hpf416serial.elf` 实测 **1301 个函数 / 2671 条调用 / 325 个根**，而 main 可达只有 177 个。
+  全固件节点使用独立的 `FUNC` 中性作用域，不会因为 `mainReachable=false` 被误标成中断。
+- **单条链路分析**：在全固件或运行链图中选中任意函数后，可一键拉出“向下调用 / 向上调用者 /
+  双向”链路，并限制 1 / 2 / 3 / 5 / 8 层或全部深度。链路模式只保留相关函数，根节点高亮；
+  全固件大图的连线默认改为“仅选中节点”，避免上千个节点同时连线导致不可读。
+- **自动整理与库汇总**：参考中控编排页的分层画布，按调用深度自动整理；超过 320 个节点时
+  使用稳定网格。HAL / CMSIS / C 库 / newlib 默认折叠为汇总节点，可切换汇总 / 隐藏 / 全部显示；
+  同一对函数的重复调用合并为一条线并保留次数，选中函数可展开基本块 CFG。
+- **ELF / PE / 裸机 BIN**：支持 ELF、AXF/OUT/PE 与 raw BIN；裸机 BIN 可填写加载基址、
+  架构、入口和 Cortex-M 向量表地址，基址/入口/向量表参数会真正传入 angr。
+- **便携固件分析器**：新增 `tools/bingraph` 构建链，打包 Python 3.13.13 embeddable、
+  pybingraph 0.2.5、angr 10.0.4 和 77 个锁定 Python 依赖。正式包与便携 ZIP 自带
+  `resources/bingraph`，KDock 自动启动；用户不需要系统 Python、`uv` 或 Graphviz。
+- **环境配置一键准备 / 修复**：环境配置页新增便携分析器状态检测和“准备 / 更新”按钮；
+  有 `uv` 用 `uv`，没有则用官方 `get-pip.py` 引导 pip，再按锁定清单安装，适配不同用户的
+  Python 版本差异。构建产物同时保留 Python、各依赖的许可证与完整第三方清单。
+- **分析器进程与端口管理**：Rust 侧随机选择 `127.0.0.1` 空闲端口，45 秒启动等待、
+  180 秒分析超时，支持 HTTP chunked 响应解析；KDock 退出或强制结束会回收整棵 Python 进程树。
+- **文档与许可证补齐**：新增 `docs/10-固件运行结构分析器.md`（功能、架构、范围语义、ELF/BIN、
+  自动布局、安全边界、常见问题、回归基线）；新增 77 项 Python 依赖的
+  `tools/bingraph/THIRD_PARTY_NOTICES.md`，并在 `NOTICE` 中明确 Python / pybingraph / angr /
+  Cytoscape / LibVEX GPL 边界。
 - **统一进程树回收**：Windows 上所有外部子进程（ADB server、tshark、USBPcap、sigrok、
   FFmpeg、SSH、GDB、MCP 等）统一登记到 kill-on-close Job Object。正常退出和强制结束 KDock
   都会回收整棵进程树，避免 portable 目录里的 exe/dll 被残留进程锁住。

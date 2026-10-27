@@ -103,7 +103,10 @@ pub struct Provider {
     pub api_key_ref: String,
     #[serde(default = "default_temperature")]
     pub temperature: f32,
-    /// 思考强度：空=不发送；none/minimal/low/medium/high/xhigh/max/ultra。
+    /// 这个模型允许在对话里选择的思考强度。空列表表示不启用该选项。
+    #[serde(default)]
+    pub reasoning_efforts: Vec<String>,
+    /// 默认思考强度：空=不发送；none/minimal/low/medium/high/xhigh/max/ultra。
     #[serde(default)]
     pub reasoning_effort: String,
     #[serde(default = "default_context_window")]
@@ -137,6 +140,20 @@ impl Provider {
         let cut = base.find("/chat/completions").unwrap_or(base.len());
         format!("{}/models", &base[..cut])
     }
+    /// 迁移并规范化思考强度列表：去空白、去重、保持顺序；旧单值自动并入。
+    pub fn normalize_efforts(&mut self) {
+        let mut out: Vec<String> = Vec::new();
+        for v in &self.reasoning_efforts {
+            let s = v.trim();
+            if !s.is_empty() && !out.iter().any(|x| x == s) { out.push(s.to_string()); }
+        }
+        let single = self.reasoning_effort.trim();
+        if !single.is_empty() && !out.iter().any(|x| x == single) { out.push(single.to_string()); }
+        self.reasoning_efforts = out;
+        if self.reasoning_effort.trim().is_empty() {
+            self.reasoning_effort = self.reasoning_efforts.first().cloned().unwrap_or_default();
+        }
+    }
     pub fn reasoning_effort(&self) -> Option<&str> {
         let s = self.reasoning_effort.trim();
         (!s.is_empty()).then_some(s)
@@ -168,10 +185,6 @@ pub struct ProviderConfig {
     pub active_id: Option<String>,
     #[serde(default)]
     pub providers: Vec<Provider>,
-    /// AMD 那批内置免费模型是否已经塞过一次。
-    /// 有它才能做到"内置但可以删"：删掉之后不会在下次启动时自己长回来。
-    #[serde(default)]
-    pub amd_seeded: bool,
 }
 
 pub fn providers_path(app: &AppHandle) -> Result<PathBuf, String> {

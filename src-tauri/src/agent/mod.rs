@@ -61,30 +61,6 @@ pub fn stop_requested() -> bool {
     })
 }
 
-/// 老版本内置过一个免费模型（AMD Radeon Cloud 的 GLM-5.3-Flash，公开 key）。
-/// 该服务已经下线/极不稳定，所以**不再自动创建**；只在云端还能用时，用户从
-/// 「厂家预设」里手动选（预设里那条备注写了"可能不可用"）。
-/// 这里只负责把老版本自动塞进去的、已经打不通的那条清掉，免得用户以为配好了。
-pub fn prune_dead_builtin(app: &AppHandle) {
-    const OLD_ID: &str = "glm-5.3-flash";
-    let mut cfg = store::load_providers(app);
-    let Some(pos) = cfg.providers.iter().position(|p| p.id == OLD_ID) else {
-        return;
-    };
-    // 只在"它还是默认项、而且用户从没成功用过"时才自动删：判断依据是会话里没有它的记录
-    let used = store::sessions_list(app)
-        .iter()
-        .any(|m| m.provider_id == OLD_ID);
-    if used {
-        return;
-    }
-    cfg.providers.remove(pos);
-    if cfg.active_id.as_deref() == Some(OLD_ID) {
-        cfg.active_id = cfg.providers.first().map(|p| p.id.clone());
-    }
-    let _ = store::save_providers(app, &cfg);
-    let _ = store::secret_set(app, OLD_ID, "");
-}
 /// 工作区里的项目级说明文件（跟 Codex 的 AGENTS.md 一个意思）
 // 工作区指导文件名（AGENTS.md）—— 读写都走 store::read_workspace_guidance / agent_guidance_*
 
@@ -205,7 +181,6 @@ fn workspace_of(app: &AppHandle, session_id: &str) -> std::path::PathBuf {
 }
 
 fn resolve_provider(app: &AppHandle, want: Option<&str>) -> Result<(Provider, String), String> {
-    prune_dead_builtin(app);
     let cfg = store::load_providers(app);
     if cfg.providers.is_empty() {
         return Err(
@@ -226,98 +201,6 @@ fn resolve_provider(app: &AppHandle, want: Option<&str>) -> Result<(Provider, St
 }
 
 // ── 配置 / 供应商 ───────────────────────────────────────────────────
-
-// ── AMD Radeon Cloud 免费模型：内置一批 profile ─────────────────────
-// 为什么要做成"一批 profile"：这里的模型选择就是切 profile（endpoint + model + 自己的 key），
-// 每个模型一条，用户在会话下面那个下拉里就能直接挑。**可以删**（删了不会自己长回来：
-// 靠 providers.json 里的 amd_seeded 标记），想加回来点设置里的按钮（agent_amd_reseed）。
-const AMD_ENDPOINT: &str = "https://developer.amd.com.cn/radeon/api/v1";
-pub const AMD_MODELS: &[&str] = &[
-    "DeepSeek-V4-Flash",
-    "DeepSeek-V4-Flash-Vision-Exp",
-    "DeepSeek-V4.1-Flash",
-    "Qwen3.8-Flash-Next",
-    "Qwen3.8-27B",
-    "GLM-5.3-Flash",
-    "MiMo-V2.6-Flash",
-    "MiniCPM-V-4.7-35B-A3B",
-    "MiniCPM5-2B",
-    "Gemma-4-31B-IT",
-];
-
-/// AMD 模型名 → 稳定的 profile id（`amd-deepseek-v4-flash` 这种）
-pub fn amd_profile_id(model: &str) -> String {
-    let mut s = String::from("amd-");
-    for c in model.chars() {
-        if c.is_ascii_alphanumeric() {
-            s.push(c.to_ascii_lowercase());
-        } else if c == ' ' || c == '_' || c == '-' || c == '/' {
-            s.push('-');
-        } else if c == '.' {
-            s.push('-');
-        }
-        // 其它字符直接丢（模型名里基本只有 - _ . 空格）
-    }
-    while s.ends_with('-') {
-        s.pop();
-    }
-    s
-}
-
-fn amd_provider(model: &str) -> Provider {
-    Provider {
-        id: amd_profile_id(model),
-        name: format!("AMD 免费 · {model}"),
-        kind: "openai".into(),
-        endpoint: AMD_ENDPOINT.into(),
-        model: model.to_string(),
-        api_key_ref: "amd".into(),
-        temperature: 0.2,
-        reasoning_effort: String::new(),
-        context_window: 128_000,
-        reserve_output: 8192,
-        max_messages: 40,
-        supports_tools: true,
-        supports_stream: true,
-        pricing: None,
-    }
-}
-
-/// 首次运行时把 AMD 这批模型塞进 provider 列表（只做一次；删掉之后不会再回来）
-pub fn ensure_amd_builtin(app: &AppHandle) -> bool {
-    let mut cfg = store::load_providers(app);
-    if cfg.amd_seeded {
-        return false;
-    }
-    let mut added = 0;
-    for m in AMD_MODELS {
-        let p = amd_provider(m);
-        if !cfg.providers.iter().any(|x| x.id == p.id) {
-            cfg.providers.push(p);
-            added += 1;
-        }
-    }
-    cfg.amd_seeded = true;
-    let _ = store::save_providers(app, &cfg);
-    added > 0
-}
-
-/// 设置里那个"把 AMD 免费模型加回来"的按钮
-#[tauri::command]
-pub fn agent_amd_reseed(app: AppHandle) -> Result<Value, String> {
-    let mut cfg = store::load_providers(&app);
-    let mut added = 0;
-    for m in AMD_MODELS {
-        let p = amd_provider(m);
-        if !cfg.providers.iter().any(|x| x.id == p.id) {
-            cfg.providers.push(p);
-            added += 1;
-        }
-    }
-    cfg.amd_seeded = true;
-    store::save_providers(&app, &cfg)?;
-    Ok(json!({ "ok": true, "added": added, "total": AMD_MODELS.len() }))
-}
 
 // ── 出字速度统计（只统计"模型正在出字"的那段） ──────────────────────
 // 存 agent/speed.json：每个 profile 记最近一次 + 累计平均。
@@ -397,8 +280,6 @@ pub fn agent_speed_get(app: AppHandle) -> Value {
 
 #[tauri::command]
 pub async fn agent_config_get(app: AppHandle) -> Value {
-    prune_dead_builtin(&app);
-    ensure_amd_builtin(&app);
     let cfg = store::load_providers(&app);
     json!({
         "activeId": cfg.active_id,
@@ -411,6 +292,13 @@ pub async fn agent_config_get(app: AppHandle) -> Value {
         "running": app.state::<Arc<AgentState>>().running(None),
         "link": link_snapshot(&app, None),
     })
+}
+
+/// 查这个供应商的余额（目前只接了 DeepSeek 的 /user/balance，别的厂商返回 supported=false）
+#[tauri::command]
+pub fn agent_provider_balance(app: AppHandle, id: String) -> Result<Value, String> {
+    let (provider, key) = resolve_provider(&app, Some(&id))?;
+    llm::balance(&provider, &key)
 }
 
 /// 链路快照。**用 try_lock**：设备读写/升级/link_read 这些长操作会把 link 独占很久，
@@ -2904,52 +2792,6 @@ pub fn agent_compact(app: AppHandle, session_id: String) -> Result<Value, String
 }
 
 /// 查这个供应商的余额（目前只接了 DeepSeek 的 /user/balance，别的厂商返回 supported=false）
-#[tauri::command]
-pub fn agent_provider_balance(app: AppHandle, id: String) -> Result<Value, String> {
-    let (provider, key) = resolve_provider(&app, Some(&id))?;
-    llm::balance(&provider, &key)
-}
-
-// ── AMD Radeon Cloud（tokenfactory）实时负载 ─────────────────────────
-// 页面上每个模型卡片下面那条 "Live capacity: N%"（该模型的并发额度用了多少）就是这份数据：
-// 公开接口、不需要 key、也不要 cookie。跨域请求会被浏览器拦掉（响应里没有 CORS 头），
-// 所以由后端去取，前端只拿结果。
-// ⚠️ 这个接口**本身很慢**：实测连续几次都是 22~24 秒才回（curl/PowerShell 都一样，
-//    不是 TLS 栈的问题，别再去怀疑 rustls 了）。所以超时给到 45 秒。
-// 15 秒内重复调用直接给缓存：界面每 15 秒刷一次，别把人家接口打爆。
-const AMD_LOAD_URL: &str = "https://developer.amd.com.cn/radeon/api/tokenfactory/load";
-
-static AMD_LOAD_CACHE: std::sync::LazyLock<Mutex<Option<(std::time::Instant, Value)>>> =
-    std::sync::LazyLock::new(|| Mutex::new(None));
-
-#[tauri::command]
-pub async fn amd_load(force: Option<bool>) -> Result<Value, String> {
-    const TTL: Duration = Duration::from_secs(15);
-    if !force.unwrap_or(false) {
-        if let Ok(g) = AMD_LOAD_CACHE.lock() {
-            if let Some((at, v)) = g.as_ref() {
-                if at.elapsed() < TTL {
-                    return Ok(v.clone());
-                }
-            }
-        }
-    }
-    // ureq 是同步的：丢到阻塞线程池里，别占着 async 运行时
-    let v = tauri::async_runtime::spawn_blocking(|| -> Result<Value, String> {
-        let resp = ureq::get(AMD_LOAD_URL)
-            .timeout(Duration::from_secs(45))
-            .call()
-            .map_err(|e| format!("请求 AMD 负载接口失败: {e}"))?;
-        let text = resp.into_string().map_err(|e| format!("读响应失败: {e}"))?;
-        serde_json::from_str::<Value>(&text).map_err(|e| format!("响应不是 JSON: {e}"))
-    })
-    .await
-    .map_err(|e| format!("后台任务失败: {e}"))??;
-    if let Ok(mut g) = AMD_LOAD_CACHE.lock() {
-        *g = Some((std::time::Instant::now(), v.clone()));
-    }
-    Ok(v)
-}
 
 /// 上下文成分分析：把"这一轮到底是谁在占 token"拆开 ——
 /// system 提示 / 工具定义 schema / 摘要 / 用户消息 / 助手回复 / 工具调用与结果 / 剩余可用。

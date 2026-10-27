@@ -563,9 +563,10 @@
         <div class="navsec">
           <div class="navgroup">设备</div>
           <button class="navitem" data-tab="upgrade"><i>⤒</i><span>固件升级</span></button>
-          <button class="navitem" data-tab="flash"><i>⤓</i><span>烧录</span></button>
+        <button class="navitem" data-tab="flash"><i>⤓</i><span>烧录</span></button>
           <button class="navitem" data-tab="files"><i>▤</i><span>文件管理</span></button>
-          <button class="navitem" data-tab="adb" title="安卓设备：adb 设备 / shell / 推拉文件 / 装 APK / 投屏与反向控制（scrcpy 也在这页）"><i>⊞</i><span>安卓 ADB</span></button>
+          <button class="navitem" data-tab="runtime" title="固件运行结构：main 调用树 / 中断 / 库函数折叠 / 自动布局"><i>⌘</i><span>运行结构</span></button>
+        <button class="navitem" data-tab="adb" title="安卓设备：adb 设备 / shell / 推拉文件 / 装 APK / 投屏与反向控制（scrcpy 也在这页）"><i>⊞</i><span>安卓 ADB</span></button>
         </div>
         <div class="navsec">
           <div class="navgroup">环境</div>
@@ -731,7 +732,14 @@
 
         <!-- 环境配置：驱动 / 工具链 一键检测与安装 -->
         <div class="workpane envpane" data-work="env" hidden>
-          <div class="trow">
+          <div class="trow envpane-head">
+            <span class="lb">开机必需</span>
+            <span class="lb">固件运行结构分析器：随 KDock 分发的 Python 3.13 + angr；不需要系统 Python / uv / Graphviz</span>
+            <span class="grow"></span>
+            <span id="env-rt-state" class="rtbadge off">检测中…</span>
+            <button id="env-rt-prepare" class="btn small primary">准备 / 更新分析器</button>
+            <button id="env-rt-open" class="btn small" title="打开分析器所在目录">定位</button>
+          </div>          <div class="trow">
             <span class="lb">环境配置</span>
             <span id="env-sum" class="lb"></span>
             <span class="grow"></span>
@@ -1338,6 +1346,75 @@
           </div>
         </div>
 
+        <!-- 运行结构：main 调用树 / 中断外挂 / 库函数折叠 / 自动分层布局 -->
+        <div class="workpane rtwork" data-work="runtime" hidden>
+          <div class="trow">
+            <span class="lb">固件</span>
+            <button id="rt-file" class="btn small primary">选择 ELF / BIN…</button>
+            <span id="rt-file-name" class="lb rtfile">还没有选择固件</span>
+            <span class="grow"></span>
+            <button id="rt-search-btn" class="btn small" title="按函数名或地址查找">⌕ 查找</button>
+            <button id="rt-tidy" class="btn small" title="按调用深度自动分层，重新排版">⌗ 整理</button>
+            <button id="rt-fit" class="btn small" title="缩放到合适大小">⤢ 适应</button>
+            <button id="rt-expand" class="btn small" title="展开当前可见的一层">展开一层</button>
+            <button id="rt-collapse" class="btn small" title="收起叶子节点">收起叶子</button>
+            <span id="rt-state" class="dot">未分析</span>
+          </div>
+          <div class="trow rtfilter">
+            <span class="lb">范围</span>
+            <select id="rt-scope" class="tight" title="全固件包含所有被识别函数；main 运行链只显示入口可达与中断可达函数；函数调用链路只显示以选中函数为根的上下游链路">
+              <option value="all">全固件函数</option>
+              <option value="runtime">main 运行链</option>
+              <option value="chain">函数调用链路</option>
+            </select>
+            <span id="rt-chain-tools" class="rtchain-tools" hidden>
+              <span class="lb">方向</span>
+              <select id="rt-chain-dir" class="tight" title="链路方向：向下看它调用了谁，向上看谁调用了它">
+                <option value="down">向下调用</option>
+                <option value="up">向上调用者</option>
+                <option value="both">双向</option>
+              </select>
+              <span class="lb">深度</span>
+              <select id="rt-chain-depth" class="tight" title="从根函数向外展开的层数">
+                <option value="1">1 层</option>
+                <option value="2">2 层</option>
+                <option value="3" selected>3 层</option>
+                <option value="5">5 层</option>
+                <option value="8">8 层</option>
+                <option value="-1">全部</option>
+              </select>
+              <button id="rt-chain-pick" class="btn small" title="用当前选中函数作为链路根；没有选中时使用 main">用选中函数拉链路</button>
+            </span>
+            <label class="chk" title="递归展开 main 可达调用"><input type="checkbox" id="rt-show-interrupts" /> 中断</label>
+            <label class="chk" title="隐藏 HAL / CMSIS / C 库 / newlib 等系统调用"><input type="checkbox" id="rt-hide-lib" checked /> 折叠库函数</label>
+            <label class="chk" title="只显示 main 的可达节点"><input type="checkbox" id="rt-main-only" checked /> 只看 main</label>
+            <span class="rtsep"></span>
+            <label class="chk"><input type="checkbox" id="rt-show-addr" checked /> 地址</label>
+            <span class="grow"></span>
+            <span id="rt-stat" class="lb"></span>
+          </div>
+          <div class="framebox grow">
+            <div id="rt-canvas" class="seqcanvas rtcanvas" tabindex="0">
+              <svg id="rt-edges" class="seqedges"><g id="rt-edges-g"></g></svg>
+              <div id="rt-nodes" class="seqnodes"></div>
+              <div id="rt-empty" class="rtempty">
+                <div class="rtempty-icon">⌘</div>
+                <b>选择一个固件，查看运行结构</b>
+                <span>全固件函数一览、main 调用链、中断作用域和单函数链路；库函数自动折叠。</span>
+                <button id="rt-empty-pick" class="btn primary">选择 ELF / BIN</button>
+              </div>
+              <div class="seqhint lb">滚轮缩放 · 拖动画布 · 点击函数看详情 / 展开 CFG / 拉链路</div>
+            </div>
+          </div>
+          <div class="vsplit" id="rt-log-grip" title="拖动调整日志高度"></div>
+          <div class="framebox logbox" id="rt-logbox">
+            <div class="trow logbar">
+              <span class="lb">分析日志</span><span class="grow"></span>
+              <button id="rt-log-clear" class="btn small">清空</button>
+            </div>
+            <div id="rt-log" class="seqlog scrollable lognum"></div>
+          </div>
+        </div>
         <!-- 烧录：器件库在中间，方便搜型号 -->
         <div class="workpane" data-work="flash" hidden>
           <div class="trow">
@@ -2186,6 +2263,42 @@
           </div>
         </div>
 
+        <!-- 运行结构参数 -->
+        <div class="parampane" data-param="runtime" hidden>
+          <div class="cardtitle">分析目标</div>
+          <div id="rt-file-card" class="rtfilecard">
+            <b id="rt-side-name">未选择固件</b>
+            <span id="rt-side-path">选择 ELF 后可按 main 生成运行结构；BIN 需要基址与架构。</span>
+          </div>
+          <div class="field"><label>分析器</label><span id="rt-side-analyzer" class="rtbadge off">检测中…</span></div>
+          <div class="btnrow">
+            <button id="rt-run" class="btn primary">▶ 分析运行结构</button>
+            <button id="rt-pick-side" class="btn small">选择固件</button>
+          </div>
+          <div class="cardtitle">BIN 参数</div>
+          <details class="adv" id="rt-bin-box">
+            <summary>裸机 BIN 必须填写</summary>
+            <div class="field"><label>基址</label><input id="rt-bin-base" placeholder="0x08000000" /></div>
+            <div class="field"><label>架构</label><select id="rt-bin-arch"><option value="ARMCortexM">ARM Cortex-M</option><option value="ARMEL">ARM little-endian</option><option value="ARMCortexA">ARM Cortex-A</option><option value="MIPS32">MIPS32</option></select></div>
+            <div class="field"><label>入口</label><input id="rt-bin-entry" placeholder="0x08000101（可留空）" /></div>
+            <div class="field"><label>向量表</label><input id="rt-vector-base" placeholder="自动发现，可覆盖" /></div>
+            <p class="hint">BIN 没有符号表时无法可靠找到 main。优先使用 ELF；只有 BIN 时请在符号表中按地址查看 CFG。</p>
+          </details>
+          <div class="cardtitle">显示策略</div>
+          <div class="field"><label>分析范围</label><select id="rt-scope-side"><option value="all">全固件函数</option><option value="runtime">main 运行链</option><option value="chain">函数调用链路</option></select></div>
+          <div class="field"><label>布局</label><select id="rt-layout"><option value="layered">按调用分层</option><option value="compact">紧凑网格</option></select></div>
+          <div class="field"><label>库过滤</label><select id="rt-lib-mode"><option value="collapse">折叠为汇总节点</option><option value="hide">完全隐藏</option><option value="show">全部显示</option></select></div>
+          <div class="field"><label>连线</label><select id="rt-edge-mode" title="全固件大图建议只显示选中节点的连线"><option value="all">全部调用线</option><option value="selected" selected>仅选中节点</option><option value="none">不画线</option></select></div>
+          <label class="chk"><input type="checkbox" id="rt-color-scope" checked /> 按作用域着色</label>
+          <div class="cardtitle">链路分析</div>
+          <div class="rtchaincard">
+            <div class="rtdet-row">根：<b id="rt-chain-root-side">main</b></div>
+            <p class="hint">在全固件或运行链里点一个函数，再点下面的按钮。只用这一条链路时，画布不会被上千个无关函数淹没。</p>
+            <button id="rt-chain-pick-side" class="btn small primary">用选中函数拉链路</button>
+          </div>
+          <div class="cardtitle">选中函数</div>
+          <div id="rt-fn-card"><p class="hint">在中间点一个函数，这里显示地址、大小和调用点。</p></div>
+        </div>
         <!-- 烧录参数 -->
         <div class="parampane" data-param="flash" hidden>
           <details class="adv" id="fl-tools-box">
@@ -2617,6 +2730,7 @@
       <span id="toast" class="toast"></span>
     </footer>
     </div>
+    <script type="module" src="/src/runtime-graph.js"></script>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

@@ -74,6 +74,21 @@ jobs:
       - name: Check workspace
         run: cargo check --workspace --locked
 
+      - name: Build portable firmware analyzer
+        run: |
+          # build-portable.ps1 uses uv when present and otherwise bootstraps
+          # pip with the official get-pip.py, so CI does not require uv.
+          pwsh -NoProfile -ExecutionPolicy Bypass -File tools/bingraph/build-portable.ps1 -NoGraphviz
+          if (-not (Test-Path resources/bingraph/python/python.exe)) {
+            throw "portable analyzer was not produced"
+          }
+          if (-not (Test-Path resources/bingraph/run.py)) {
+            throw "portable analyzer entry point is missing"
+          }
+          if (-not (Test-Path resources/bingraph/THIRD_PARTY_NOTICES.md)) {
+            throw "portable analyzer third-party notices are missing"
+          }
+
       - name: Build Tauri app (release)
         run: npm run tauri build
 
@@ -115,10 +130,26 @@ jobs:
           $name = "KDock-$ver-test-$sha-win-x64"
           New-Item -ItemType Directory -Force "pack/$name" | Out-Null
           Copy-Item release/kdock.exe "pack/$name/KDock.exe" -Force
+          # Keep the layout the app expects:
+          #   <root>\resources\bingraph\python\python.exe
+          #   <root>\tools\bingraph\build-portable.ps1
+          New-Item -ItemType Directory -Force "pack/$name/resources/bingraph" | Out-Null
+          Copy-Item resources/bingraph/* "pack/$name/resources/bingraph" -Recurse -Force
+          New-Item -ItemType Directory -Force "pack/$name/tools/bingraph" | Out-Null
+          Copy-Item tools/bingraph/* "pack/$name/tools/bingraph" -Recurse -Force
+          Copy-Item README.md "pack/$name/README.md" -Force
+          Copy-Item LICENSE "pack/$name/LICENSE" -Force
+          Copy-Item NOTICE "pack/$name/NOTICE" -Force
+          if (-not (Test-Path "pack/$name/resources/bingraph/python/python.exe")) {
+            throw "portable ZIP is missing the bundled Python runtime"
+          }
+          if (-not (Test-Path "pack/$name/tools/bingraph/build-portable.ps1")) {
+            throw "portable ZIP is missing the analyzer repair script"
+          }
           $note = @(
             "KDock test build (portable, no install needed)",
             "==============================================",
-            "1) Unzip and double-click KDock.exe.",
+            "1) Unzip and double-click KDock.exe (keep resources/ and tools/ beside it).",
             "2) The binary is not code-signed: Windows SmartScreen may warn",
             "   -> More info -> Run anyway.",
             "3) Needs the WebView2 Runtime (usually bundled with Windows 10/11;",
@@ -162,7 +193,7 @@ jobs:
             $(if ($isStable) { "" } else { "> It may crash or change your settings - please back up first and do not use it in production. 可能崩溃、可能改你的配置；请先备份，别用在生产环境。" }),
             "",
             "## Downloads",
-            "- **KDock-$ver-test-$short-win-x64.zip** - portable: unzip and run KDock.exe",
+            "- **KDock-$ver-test-$short-win-x64.zip** - portable: unzip and run KDock.exe (includes the portable analyzer)",
             "- **KDock_$ver`_x64-setup.exe** - installer: Start menu entry + uninstaller (no admin needed)",
             "- **kdock.exe** - the bare executable",
             "",

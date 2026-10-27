@@ -3,3 +3,13 @@
 /node_modules
 *.log
 
+
+# Generated portable analyzer (hundreds of MB; release CI builds it)
+/resources/bingraph/*
+!resources/bingraph/.gitkeep
+!resources/bingraph/README.md
+
+# Local analyzer build artefacts
+__pycache__/
+*.py[cod]
+

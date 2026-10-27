@@ -45,6 +45,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "icon": ["icons/icon.ico"]
+    "icon": ["icons/icon.ico"],
+    "resources": ["../resources/bingraph/**/*", "../tools/bingraph/build-portable.ps1", "../tools/bingraph/requirements.txt", "../tools/bingraph/src/**/*"]
   }
 }

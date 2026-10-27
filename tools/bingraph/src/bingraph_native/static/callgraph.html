@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>调用关系 - {{ filepath }}</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fa;
+      --panel: #ffffff;
+      --line: #d9dee7;
+      --text: #1f2937;
+      --muted: #667085;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      --root: #fff1c2;
+      --business: #dff5e7;
+      --init: #e9e3fb;
+      --log: #ffe4d6;
+      --libc: #e5e7eb;
+      --hal: #dbeafe;
+      --hidden: #f8fafc;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: grid;
+      grid-template-columns: 322px minmax(0, 1fr);
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    aside {
+      overflow-y: auto;
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 18px;
+    }
+    h1 { margin: 0 0 3px; font-size: 20px; }
+    .file { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 16px 0; }
+    .stat { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+    .stat b { display: block; font-size: 18px; }
+    .stat span { color: var(--muted); font-size: 12px; }
+    fieldset { margin: 14px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+    legend { padding: 0 5px; font-weight: 650; }
+    label { display: flex; gap: 8px; align-items: center; margin: 7px 0; cursor: pointer; }
+    input[type=checkbox] { accent-color: var(--accent); }
+    .swatch { width: 10px; height: 10px; border-radius: 3px; border: 1px solid #0002; flex: none; }
+    .toolbar { display: flex; gap: 7px; flex-wrap: wrap; margin: 12px 0; }
+    .search { display: flex; gap: 6px; margin: 12px 0; }
+    .search input {
+      min-width: 0; flex: 1; border: 1px solid var(--line); border-radius: 7px;
+      padding: 7px 9px; font: inherit;
+    }
+    .search input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+    button {
+      border: 1px solid var(--line); border-radius: 7px; background: #fff;
+      color: var(--text); padding: 7px 10px; cursor: pointer; font: inherit;
+    }
+    button:hover { border-color: #9ca3af; background: #f9fafb; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+    button.primary:hover { background: #1d4ed8; }
+    .hint, .empty { color: var(--muted); font-size: 12px; }
+    #selected { min-height: 54px; border-top: 1px solid var(--line); padding-top: 12px; }
+    #selected .addr { color: var(--muted); font: 12px ui-monospace, monospace; }
+    #selected .kind { display: inline-block; margin-top: 5px; padding: 1px 7px; border-radius: 99px; font-size: 11px; background: var(--accent-soft); }
+    main { position: relative; min-width: 0; overflow: hidden; }
+    #graph { position: absolute; inset: 0; }
+    .legend {
+      position: absolute; left: 16px; bottom: 14px; z-index: 2;
+      background: #ffffffe8; border: 1px solid var(--line); border-radius: 8px;
+      padding: 7px 10px; color: var(--muted); font-size: 11px;
+    }
+    .banner {
+      position: absolute; top: 13px; left: 16px; z-index: 2;
+      background: #fffffff0; border: 1px solid var(--line); border-radius: 8px;
+      padding: 7px 10px; color: var(--muted); font-size: 12px;
+    }
+    @media (max-width: 800px) {
+      body { grid-template-columns: 1fr; grid-template-rows: auto minmax(420px, 1fr); }
+      aside { max-height: 45vh; border-right: 0; border-bottom: 1px solid var(--line); }
+      main { min-height: 55vh; }
+    }
+  </style>
+</head>
+<body>
+<aside>
+  <h1 id="page-title">调用关系</h1>
+  <div class="file">{{ filepath }}</div>
+  <div class="stats">
+    <div class="stat"><b id="visible-count">0</b><span>当前显示</span></div>
+    <div class="stat"><b id="total-count">0</b><span>完整节点</span></div>
+  </div>
+  <div class="toolbar">
+    <button id="view-main">main 可达图</button>
+    <button id="view-all">全固件 All-in-one</button>
+  </div>
+  <div class="search">
+    <input id="function-search" list="function-list" placeholder="搜索函数名或地址">
+    <datalist id="function-list"></datalist>
+    <button id="search-go">定位</button>
+  </div>
+
+  <div class="toolbar">
+    <button class="primary" id="fit">适应窗口</button>
+    <button id="expand-all">全部展开</button>
+    <button id="collapse-all">折叠到根</button>
+  </div>
+
+  <fieldset>
+    <legend>显示范围</legend>
+    <label><input type="checkbox" id="hide-init"> 隐藏初始化分支</label>
+    <label><input type="checkbox" id="hide-log"> 隐藏 elog / 日志</label>
+    <label><input type="checkbox" id="hide-libc"> 隐藏 C 库 / newlib</label>
+    <label><input type="checkbox" id="hide-hal"> 隐藏 STM32 HAL / CMSIS</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>快速预设</legend>
+    <div class="toolbar">
+      <button id="preset-business">只看业务逻辑</button>
+      <button id="preset-all">恢复全部</button>
+    </div>
+    <div class="hint">“只看业务逻辑”会同时隐藏初始化、日志、C 库和 HAL。</div>
+  </fieldset>
+
+  <fieldset>
+    <legend>颜色</legend>
+    <label><span class="swatch" style="background:var(--root)"></span>起点函数</label>
+    <label><span class="swatch" style="background:var(--business)"></span>业务代码</label>
+    <label><span class="swatch" style="background:var(--init)"></span>初始化</label>
+    <label><span class="swatch" style="background:var(--log)"></span>日志库</label>
+    <label><span class="swatch" style="background:var(--libc)"></span>C 库 / newlib</label>
+    <label><span class="swatch" style="background:var(--hal)"></span>HAL / CMSIS</label>
+  </fieldset>
+
+      <div class="hint">单击函数查看地址和入/出边；使用“折叠/展开分支”按钮控制它的下级分支。被折叠的函数带边框和“[+]”标记。</div>
+  <div id="selected" class="empty">尚未选择函数</div>
+</aside>
+
+<main>
+  <div class="banner">默认展示完整可达调用关系；按需折叠分支或隐藏库实现。</div>
+  <div id="graph"></div>
+  <div class="legend">滚轮缩放 · 拖动画布 · 拖动节点 · 再次单击节点折叠</div>
+</main>
+
+<script src="/_static/cytoscape.min.js"></script>
+<script>
+const META = {{ graph_json | safe }};
+const filepath = META.filepath;
+if (META.root === null) {
+  document.getElementById('page-title').textContent = '全固件调用关系';
+}
+document.getElementById('view-main').onclick = () => {
+  window.location.href = `/callgraph?filepath=${encodeURIComponent(filepath)}${META.root ? `&function=0x${META.root}` : ""}&depth=-1`;
+};
+document.getElementById('view-all').onclick = () => {
+  window.location.href = `/callgraph/all?filepath=${encodeURIComponent(filepath)}`;
+};
+const elements = [
+  ...META.nodes.map(n => ({ data: { ...n, id: 'n' + n.addr } })),
+  ...META.edges.map((e, i) => ({ data: { id: 'e' + i + '_' + e.source + '_' + e.target, source: 'n' + e.source, target: 'n' + e.target } }))
+];
+
+const cy = cytoscape({
+  container: document.getElementById('graph'),
+  elements,
+  autoungrabify: false,
+  autounselectify: false,
+  userPanningEnabled: true,
+  boxSelectionEnabled: false,
+  wheelSensitivity: 0.22,
+  layout: {
+    name: 'breadthfirst', directed: true, spacingFactor: 1.18,
+    avoidOverlap: true, nodeDimensionsIncludeLabels: true, animate: false
+  },
+  style: [
+    { selector: 'node', style: {
+      'shape': 'round-rectangle', 'width': 170, 'height': 48,
+      'background-color': '#dff5e7', 'border-width': 1,
+      'border-color': '#9aa4b2', 'label': 'data(label)', 'color': '#1f2937',
+      'font-family': 'ui-monospace, SFMono-Regular, Consolas, monospace',
+      'font-size': 12, 'text-valign': 'center', 'text-halign': 'center',
+      'text-wrap': 'wrap', 'text-max-width': 190
+    }},
+    { selector: 'node[root]', style: { 'background-color': '#fff1c2', 'border-width': 2, 'border-color': '#b7791f' } },
+    { selector: 'node[fkind = "init"]', style: { 'background-color': '#e9e3fb' } },
+    { selector: 'node[fkind = "log"]', style: { 'background-color': '#ffe4d6' } },
+    { selector: 'node[fkind = "libc"]', style: { 'background-color': '#e5e7eb' } },
+    { selector: 'node[fkind = "hal"]', style: { 'background-color': '#dbeafe' } },
+    { selector: 'node[fcollapsed]', style: { 'border-width': 3, 'border-color': '#2563eb', 'border-style': 'double' } },
+    { selector: 'node.fhidden', style: { 'display': 'none' } },
+    { selector: 'edge', style: { 'width': 1, 'line-color': '#aab4c3', 'target-arrow-color': '#aab4c3', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier', 'arrow-scale': 0.75 } },
+    { selector: 'edge.fhidden', style: { 'display': 'none' } },
+    { selector: 'node:selected', style: { 'overlay-color': '#2563eb', 'overlay-opacity': 0.18, 'overlay-padding': 4 } }
+  ]
+});
+
+const nodes = new Map(META.nodes.map(n => [String(n.addr), n]));
+const functionList = document.getElementById('function-list');
+for (const n of META.nodes.slice().sort((a, b) => a.name.localeCompare(b.name))) {
+  const option = document.createElement('option');
+  option.value = n.name;
+  option.label = `0x${n.addr}`;
+  functionList.appendChild(option);
+}
+const children = new Map();
+for (const e of META.edges) {
+  if (!children.has(String(e.source))) children.set(String(e.source), []);
+  children.get(String(e.source)).push(String(e.target));
+}
+const collapsed = new Set();
+const hideClasses = new Set();
+const classOf = { init: 'hide-init', log: 'hide-log', libc: 'hide-libc', hal: 'hide-hal' };
+
+function isShown(addr) {
+  const n = nodes.get(String(addr));
+  return !!n && !hideClasses.has(n.fkind);
+}
+
+function updateVisible() {
+  const visible = new Set();
+  const allMode = META.root === null;
+  if (allMode) {
+    // All-in-one starts with every function. A collapsed function hides its
+    // descendants; the collapsed function itself remains visible as a handle.
+    const blocked = new Set();
+    const stack = [...collapsed];
+    while (stack.length) {
+      const parent = stack.pop();
+      for (const child of children.get(parent) || []) {
+        if (blocked.has(child)) continue;
+        blocked.add(child);
+        stack.push(child);
+      }
+    }
+    for (const addr of nodes.keys()) {
+      if (isShown(addr) && !blocked.has(addr)) visible.add(addr);
+    }
+  } else {
+    const stack = [String(META.root)];
+    while (stack.length) {
+      const addr = stack.pop();
+      if (visible.has(addr)) continue;
+      if (!isShown(addr)) continue;
+      visible.add(addr);
+      if (!collapsed.has(addr)) {
+        for (const child of children.get(addr) || []) stack.push(child);
+      }
+    }
+  }
+  cy.nodes().forEach(n => {
+    const addr = n.id().slice(1);
+    const shown = visible.has(addr);
+    n.style('display', shown ? 'element' : 'none');
+    n.style('visibility', 'visible');
+    n.data('fcollapsed', collapsed.has(addr));
+    n.data('label', collapsed.has(addr) ? n.data('fullLabel') + '\n[+]' : n.data('fullLabel'));
+  });
+  cy.edges().forEach(e => {
+    const shown = visible.has(e.source().id().slice(1)) && visible.has(e.target().id().slice(1));
+    e.style('display', shown ? 'element' : 'none');
+  });
+  document.getElementById('visible-count').textContent = visible.size;
+  document.getElementById('total-count').textContent = nodes.size;
+  window.__bingraphVisible = visible;
+  window.__bingraphCollapsed = collapsed;
+}
+
+function classify() {
+  const initRe = /^(MX_|SystemClock_Config$|HAL_Init$|MPU_Config$|NVIC_SetVectorTable$|Error_Handler$)/i;
+  const logRe = /(^|_)(elog|log|printf|fiprintf)/i;
+  const libcRe = /(^__|^_|newlib|^mem|^str|^snprintf$|^vsnprintf$|^abort$|^raise$|^std$|^global_stdio|^sysconf$|^malloc|^free|^realloc)/i;
+  const halRe = /^(HAL_|__NVIC_|NVIC_|DMA_|RCC|SPI_|TIM_|UART_|QSPI_|GPIO_)/i;
+  cy.nodes().forEach(n => {
+    const name = n.data('name');
+    let kind = 'business';
+    if (META.root !== null && n.id().slice(1) === META.root) kind = 'root';
+    else if (logRe.test(name)) kind = 'log';
+    else if (initRe.test(name)) kind = 'init';
+    else if (halRe.test(name)) kind = 'hal';
+    else if (libcRe.test(name)) kind = 'libc';
+    n.data('fkind', kind);
+    const meta = nodes.get(n.id().slice(1));
+    if (meta) meta.fkind = kind;
+    n.toggleClass('root', kind === 'root');
+  });
+}
+
+function fitSoon() {
+  setTimeout(() => fitComfortably(), 30);
+}
+
+function fitComfortably() {
+  const visible = cy.elements(':visible');
+  if (!visible.length) return;
+  const allMode = META.root === null;
+  const box = visible.boundingBox();
+  if (!box.w || !box.h) return;
+  const floor = allMode ? 0.12 : 0.2;
+  const zoom = Math.max(floor, Math.min(1.4, Math.min(
+    (cy.width() - 96) / box.w,
+    (cy.height() - 96) / box.h
+  )));
+  const centerX = (box.x1 + box.x2) / 2;
+  const centerY = (box.y1 + box.y2) / 2;
+  cy.zoom(zoom);
+  cy.pan({
+    x: cy.width() / 2 - centerX * zoom,
+    y: cy.height() / 2 - centerY * zoom
+  });
+}
+
+function setChecked(id, value) { document.getElementById(id).checked = value; }
+function syncFilters() {
+  hideClasses.clear();
+  for (const [kind, id] of Object.entries(classOf)) {
+    if (document.getElementById(id).checked) hideClasses.add(kind);
+  }
+  window.__bingraphHideClasses = hideClasses;
+  window.__bingraphFilterTime = Date.now();
+  updateVisible();
+  fitSoon();
+}
+
+for (const id of Object.values(classOf)) {
+  document.getElementById(id).addEventListener('change', syncFilters);
+}
+document.getElementById('fit').onclick = () => fitComfortably();
+document.getElementById('expand-all').onclick = () => {
+  collapsed.clear();
+  updateVisible();
+  fitSoon();
+};
+document.getElementById('collapse-all').onclick = () => {
+  collapsed.clear();
+  if (META.root !== null) collapsed.add(String(META.root));
+  else for (const addr of META.roots || []) collapsed.add(addr);
+  updateVisible();
+  fitSoon();
+};
+document.getElementById('preset-business').onclick = () => {
+  for (const id of Object.values(classOf)) setChecked(id, true);
+  syncFilters();
+};
+document.getElementById('preset-all').onclick = () => {
+  for (const id of Object.values(classOf)) setChecked(id, false);
+  collapsed.clear();
+  syncFilters();
+};
+
+cy.on('dbltap', 'node', evt => {
+  const n = evt.target;
+  const addr = n.id().slice(1);
+  if (!(children.get(addr) || []).length) return;
+  if (collapsed.has(addr)) collapsed.delete(addr); else collapsed.add(addr);
+  updateVisible();
+});
+
+// Cytoscape's dbltap can be unreliable for nodes placed initially outside the
+// viewport. Keep a native-event fallback with the same collapse semantics.
+let lastTapId = null;
+let lastTapAt = 0;
+cy.on('tap', 'node', evt => {
+  const now = performance.now();
+  const id = evt.target.id();
+  if (lastTapId === id && now - lastTapAt < 420) {
+    const addr = id.slice(1);
+    if ((children.get(addr) || []).length) {
+      if (collapsed.has(addr)) collapsed.delete(addr); else collapsed.add(addr);
+      updateVisible();
+    }
+  }
+  lastTapId = id;
+  lastTapAt = now;
+});
+
+cy.on('tap', 'node', evt => {
+  const n = evt.target;
+  const addr = n.id().slice(1);
+  const d = n.data();
+  const inDegree = cy.edges().filter(e => e.target() === n && !e.hasClass('fhidden')).length;
+  const outDegree = cy.edges().filter(e => e.source() === n && !e.hasClass('fhidden')).length;
+  document.getElementById('selected').classList.remove('empty');
+  document.getElementById('selected').innerHTML =
+    `<strong>${escapeHtml(d.name)}</strong><div class="addr">${d.addr} · 深度 ${d.depth}</div>` +
+    `<div class="kind">${d.fkind}</div><div class="hint">可见入边 ${inDegree} · 可见出边 ${outDegree}${collapsed.has(addr) ? ' · 已折叠' : ''}</div>` +
+    `<div class="toolbar"><button id="open-cfg">查看函数 CFG</button><button id="toggle-node">${collapsed.has(addr) ? '展开分支' : '折叠分支'}</button></div>`;
+  document.getElementById('open-cfg').onclick = () => window.open(`/cfg?filepath=${encodeURIComponent(META.filepath)}&function=0x${d.addr}`, '_blank');
+  document.getElementById('toggle-node').onclick = () => {
+    if (!(children.get(addr) || []).length) return;
+    if (collapsed.has(addr)) collapsed.delete(addr); else collapsed.add(addr);
+    updateVisible();
+    document.getElementById('toggle-node').textContent = collapsed.has(addr) ? '展开分支' : '折叠分支';
+    cy.getElementById(n.id()).data('fcollapsed', collapsed.has(addr));
+  };
+});
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function locateFunction(query) {
+  const text = query.trim().toLowerCase();
+  if (!text) return;
+  const needle = text.startsWith('0x') ? text.slice(2) : text;
+  const node = cy.nodes().filter(n =>
+    n.data('name').toLowerCase() === text ||
+    n.id().slice(1) === needle ||
+    n.data('name').toLowerCase().includes(text)
+  ).first();
+  if (!node.length) return;
+  node.select();
+  cy.animate({ center: { eles: node }, zoom: 1.0 }, { duration: 300 });
+  node.emit('tap');
+}
+
+const searchInput = document.getElementById('function-search');
+document.getElementById('search-go').onclick = () => locateFunction(searchInput.value);
+searchInput.addEventListener('keydown', event => {
+  if (event.key === 'Enter') locateFunction(searchInput.value);
+});
+
+cy.nodes().forEach(n => n.data('fullLabel', n.data('label')));
+classify();
+updateVisible();
+// Initial view is fully expanded, but fit after Cytoscape has laid out the graph.
+setTimeout(() => fitComfortably(), 80);
+</script>
+</body>
+</html>

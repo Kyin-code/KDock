@@ -15,6 +15,7 @@ mod netfs;
 mod netip;
 mod ocr;
 mod process_guard;
+mod runtime_graph;
 mod remote_screen;
 mod scope;
 mod shell;
@@ -3835,9 +3836,7 @@ pub fn run() {
             agent::agent_stop,
             agent::agent_compact,
             agent::agent_provider_balance,
-            agent::amd_load,
             agent::agent_speed_get,
-            agent::agent_amd_reseed,
             agent::agent_context_breakdown,
             agent::agent_host_result,
             agent::agent_skills,
@@ -3890,13 +3889,18 @@ pub fn run() {
             debug::debug_gdb_cmd,
             debug::debug_server_start,
             debug::debug_server_stop,
-            debug::debug_status
+            debug::debug_status,
+            runtime_graph::runtime_analyzer_status,
+            runtime_graph::runtime_prepare,
+            runtime_graph::runtime_analyze,
+            runtime_graph::runtime_stop
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 agent::mcp::shutdown_all();
+                runtime_graph::cleanup();
                 process_guard::cleanup_all();
             }
         });

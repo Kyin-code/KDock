@@ -78,7 +78,59 @@ MPL-2.0 说明：这些组件的源码文件保持原样、未作修改；本项
 如需替换或修改这些组件的源码，请同时遵守 MPL-2.0 对相应文件的要求。
 
 --------------------------------------------------------------------------------
-3. 商标与名称
+3. 随包固件运行结构分析器 / Bundled firmware runtime analyzer
+--------------------------------------------------------------------------------
+
+KDock 的“运行结构”页使用独立子进程 `resources\bingraph`。它是单独的 Python
+运行时，不被链接进 KDock.exe；KDock 仅通过本机回环 HTTP JSON 接口读取分析结果。
+
+  Python 3.13.13                    PSF-2.0
+    https://www.python.org/
+    许可证: resources\bingraph\python\LICENSE.txt
+
+  pybingraph 0.2.5                  BSD-2-Clause
+    https://github.com/manelfx/pybingraph
+    Copyright (c) 2026 Manel Fernandez
+    许可证: site-packages\pybingraph-0.2.5.dist-info\licenses\LICENSE
+    额外声明: 同目录 NOTICE（bingraphvis、angr-utils、angr 的适配来源）
+
+  angr 10.0.4 / CLE / archinfo      BSD-2-Clause
+  PyVEX 10.0.4                      BSD-2-Clause AND GPL-2.0-or-later
+  pypcode 4.0.1                     BSD-2-Clause AND Apache-2.0 AND Zlib
+  Capstone 5.0.9                    BSD-3-Clause
+    https://angr.io/  https://www.capstone-engine.org/
+    许可证: 各 site-packages\*.dist-info\licenses\ 目录
+
+  Cytoscape.js 3.33.1               MIT
+    https://js.cytoscape.org/
+    Copyright (c) 2016-2025, The Cytoscape Consortium
+
+  其他锁定 Python 依赖            各自上游许可证
+    完整 77 项清单、版本、许可证表达式与项目地址见：
+    tools\bingraph\THIRD_PARTY_NOTICES.md
+    发行包内副本：
+    resources\bingraph\THIRD_PARTY_NOTICES.md
+    resources\bingraph\licenses\
+
+  Graphviz                          EPL-1.0（可选，默认不打包）
+    运行结构 JSON 和 KDock 原生画布不需要 Graphviz。若构建者显式用
+    build-portable.ps1 -GraphvizBin 打包，需自行保留 Graphviz 许可证并满足 EPL。
+
+pyvex 内含 LibVEX（GPL-3.0-or-later）。KDock 不修改 LibVEX，不将它静态链接进
+KDock.exe；它只存在于独立分析器子进程中。重新分发时须保留 pyvex 包内的
+vex/LICENSE.GPL、vex/LICENSE.README 及其他许可证文件，并遵守 GPL 对 LibVEX
+及其衍生作品的要求。KDock 自身代码不因调用独立子进程而被重新许可为 GPL。
+
+便携分析器的构建脚本会把 Python、各 Python distribution 的许可证、Cytoscape
+许可证文件以及完整第三方清单放入发行目录。KDock 不销售或再许可这些第三方组件。
+
+完整清单、许可证表达式、项目地址和逐项说明见：
+  tools\bingraph\THIRD_PARTY_NOTICES.md
+  resources\bingraph\THIRD_PARTY_NOTICES.md（构建后生成）
+  resources\bingraph\licenses\（构建后生成）
+
+--------------------------------------------------------------------------------
+4. 商标与名称
 --------------------------------------------------------------------------------
 
 "KDock" 仅用于标识本项目。Apache-2.0 不授予商标许可；二次分发时请勿暗示与项目作者存在官方关联。

@@ -6,8 +6,8 @@
 
 **A desktop workbench for embedded development: serial / network debugging · firmware upgrade (OTA) · flashing · device files · an AI assistant that actually does things**
 
-Serial & network I/O, a command reference, firmware packaging/upgrade/flashing, device file transfer,
-live charts, flow orchestration — plus an Agent that can drive all of it. All in one window.
+Serial & network I/O, a command reference, firmware packaging/upgrade/flashing, runtime structure analysis,
+device file transfer, live charts, flow orchestration — plus an Agent that can drive all of it. All in one window.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
@@ -48,8 +48,9 @@ push to `main`, so this link always points at the newest one. GitHub marks it as
 | **Transfer** | Serial (all parameter combinations), TCP/UDP client & server, HEX/text modes, line endings, encoding switch, session logs & replay, ANSI terminal rendering, quick-send buttons |
 | **Helpers** | Command reference (standard Linux commands), batch text processing, calculator (with a 32-bit bit board, IEEE 754 and file checksums) |
 | **Firmware** | `.fw` package parsing & verification, **serial in-app upgrade (YMODEM)**, **network upgrade (service channel)**, version manifest from an HTTP server |
+| **Runtime structure** | Full-firmware function inventory for ELF/PE/BIN, main call tree, interrupt scopes, focused upstream/downstream chains with direction and depth limits, real call sites, automatic library grouping, merged call edges, automatic layered layout, per-function CFG |
 | **Flashing** | Drives external programmers (OpenOCD / J-Link / STM32CubeProgrammer) for flash, erase, verify and reset |
-| **Environment** | One-click detection and install of drivers / toolchains (CH34x · FTDI · J-Link+JFlash · arm-none-eabi-gcc · OpenOCD · PulseView(sigrok) · RT-Thread Env · ST-Link · Zadig): read-only scan of this PC (PATH / registry / pnputil / common folders), bundled installers first, winget / git one-click install, first-run check for required drivers |
+| **Environment** | One-click detection and install of drivers / toolchains (CH34x · FTDI · J-Link+JFlash · arm-none-eabi-gcc · OpenOCD · PulseView(sigrok) · RT-Thread Env · ST-Link · Zadig): read-only scan of this PC (PATH / registry / pnputil / common folders), bundled installers first, winget / git one-click install, first-run check for required drivers; one-click check/repair for the portable firmware analyzer |
 | **Device files** | List directories, pull/push files, CRC verification (serial uses base64, network uses offset-based reads/writes) |
 | **Visualization** | Live charts (multi-channel), screen capture, **oscilloscope** (RIGOL DS1000Z series over SCPI: state, 13 auto-measurements, multi-channel waveform, screenshot, timebase/trigger control), logic analyzer (waveform / 19 protocol decoders / import VCD·CSV·raw / **real-device capture through sigrok-cli**: fx2lafw, old Saleae Logic, saleae-logic16, DSLogic …) |
 | **Flow** | Chain local commands / TCP / UDP / serial into a timed flow with branches, run it with one click |
@@ -203,6 +204,25 @@ link; those items get "Open website" + "I downloaded it — install from local" 
 folder above). The **install folder** is yours to pick: portable items (toolchain zips / git repos) unpack there;
 left blank it prefers `F:\ENV`, otherwise `KDock\env` under your user folder.
 
+### Portable firmware analyzer
+
+The Runtime structure page uses a private analyzer shipped with KDock. It never calls the user's system Python.
+
+- **Bundled with release builds and portable ZIPs** under `resources/bingraph`: Python 3.13.13 embeddable,
+  pybingraph 0.2.5, angr 10.0.4 and 77 locked Python distributions;
+- **Started automatically** on the first analysis request, on a dynamic loopback port;
+- **No system Python and no `uv` required**: Python 3.6, 3.11, 3.14 or no Python at all makes no difference;
+- **No Graphviz required**: full-firmware, main-tree, interrupt and CFG data are rendered by KDock's native
+  canvas, so `dot` is not bundled by default;
+- **One-click repair** in Environment setup → Firmware runtime analyzer. The build script uses `uv` when
+  available and otherwise bootstraps pip with the official `get-pip.py`, then installs the locked versions;
+- **Local only**: the analyzer binds to `127.0.0.1`; KDock reclaims its process tree on exit or forced shutdown;
+- **Focused chains**: select any function and draw only its downstream calls, upstream callers or both,
+  limited to 1/2/3/5/8 levels or unlimited. Large graphs default to drawing only the selected node's edges.
+
+See [docs/10](docs/10-固件运行结构分析器.md) for architecture, analysis scopes, BIN parameters, automatic layout,
+timeouts, security boundaries, troubleshooting, regression baselines and the complete third-party licence inventory.
+
 **First-run check**: runs once after startup and **only prompts when a required item is missing** (today the only
 required one is the CH340 serial driver — without a COM port you cannot do anything). "Open it" jumps to the page,
 "Cancel" stops the nagging; updatable items only raise a toast. **The app never downloads or installs anything by
@@ -218,7 +238,7 @@ The right pane has three tabs: **Agent info / Text / Browser**.
 
 **Models**: configure providers in Settings → Model & provider (any OpenAI-compatible `base_url`, or Anthropic
 format). Each profile stores its own key (DPAPI-encrypted per Windows user). The dropdown under the chat switches
-between them and shows live load (AMD Radeon Cloud free models) plus the measured throughput.
+between them and shows the measured throughput.
 
 **Permissions** (bottom of the chat):
 
@@ -259,6 +279,7 @@ The upgrade, OTA package and flashing features have their own write-ups (Chinese
 | [04 Firmware server & versioning](docs/04-固件服务器与版本管理.md) | manifest formats, version comparison, post-download verification |
 | [05 Flashing](docs/05-烧录-外部烧录器.md) | command lines for OpenOCD / J-Link / CubeProgrammer and troubleshooting |
 | [06 Device file transfer](docs/06-设备文件传输.md) | serial base64 vs. offset-based network transfer |
+| [10 Firmware runtime analyzer](docs/10-固件运行结构分析器.md) | full-firmware functions, main call tree, interrupts, BIN inputs, automatic layout, portable Python, licences and troubleshooting |
 
 ## Building from source
 
@@ -271,6 +292,17 @@ npm run tauri dev      # dev mode: frontend HMR + Rust backend
 cargo test --workspace # unit tests (run inside src-tauri, or pass --manifest-path)
 npm run tauri build    # production build: Windows output is target/release/kdock.exe
 ```
+
+Release packages also need the portable firmware analyzer:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass `
+  -File tools/bingraph/build-portable.ps1 -NoGraphviz
+```
+
+The script uses `uv` when present and otherwise downloads the official `get-pip.py`; neither system Python nor
+`uv` is required at runtime. The first build downloads roughly 500 MB into `resources/bingraph`. You can skip it
+for frontend-only debugging, but release installers and portable ZIPs must include it.
 
 > ⚠️ Always build with `npm run tauri build`. A plain `cargo build --release` produces a dev-mode binary that
 > loads `devUrl` (`http://localhost:1420`) and shows the browser's "can't reach this page" without a dev server.
@@ -287,9 +319,13 @@ npm run tauri build    # production build: Windows output is target/release/kdoc
 │  └─ src/agent/          Agent: LLM clients, tools, skills, MCP, session store
 ├─ src/                   Frontend (Vite + vanilla JS, no framework)
 │  ├─ main.js             UI and business logic
+│  ├─ runtime-graph.js    Runtime canvas, auto-layout, library grouping, CFG details
 │  └─ tools-batch-calc.js Batch text / calculator
+├─ src-tauri/src/runtime_graph.rs  Analyzer discovery, port, child process and HTTP timeouts
 ├─ docs/                  Feature & protocol docs, screenshots
 ├─ tools/                 Helper scripts (icon generation, …)
+│  └─ bingraph/           Analyzer source, locked deps, build script and third-party notices
+├─ resources/bingraph/    Generated portable analyzer (ignored by git, shipped in releases)
 └─ dist/                  Frontend build output (embedded by Tauri, not committed)
 ```
 
@@ -320,6 +356,11 @@ Settings → General switches between Chinese and English instantly.
 
 KDock is released under the **Apache License 2.0** — see [LICENSE](LICENSE). Third-party components and the
 projects we learned from are listed in [NOTICE](NOTICE).
+
+The bundled firmware analyzer includes Python 3.13.13 (PSF-2.0), pybingraph 0.2.5 (BSD-2-Clause), angr 10.0.4
+and 77 locked Python distributions. Versions, licence expressions, project URLs and the GPL/LibVEX boundary are
+listed in [tools/bingraph/THIRD_PARTY_NOTICES.md](tools/bingraph/THIRD_PARTY_NOTICES.md). Release packages also
+keep the original licence files under `resources/bingraph/licenses/` and `dist-info/licenses/`.
 
 Open-source projects we actually use whose upstream repository ships a LICENSE file:
 

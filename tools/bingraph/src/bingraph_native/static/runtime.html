@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>运行结构 - main</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef2f7;
+      --panel: #fff;
+      --line: #d7dde7;
+      --text: #172033;
+      --muted: #667085;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      --root: #fff1c2;
+      --business: #dff5e7;
+      --interrupt: #ffe4d6;
+      --library: #e5e7eb;
+      --external: #f3e8ff;
+      --collapsed: #f8fafc;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: grid; grid-template-columns: 330px minmax(0, 1fr);
+      color: var(--text); background: var(--bg);
+      font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    aside {
+      overflow-y: auto; padding: 18px; background: var(--panel);
+      border-right: 1px solid var(--line);
+    }
+    h1 { margin: 0 0 3px; font-size: 20px; }
+    h2 { margin: 18px 0 8px; font-size: 13px; text-transform: uppercase; color: var(--muted); letter-spacing: .04em; }
+    .file { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 16px 0; }
+    .stat { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+    .stat b { display: block; font-size: 18px; }
+    .stat span { color: var(--muted); font-size: 12px; }
+    button {
+      border: 1px solid var(--line); border-radius: 7px; background: #fff;
+      color: var(--text); padding: 7px 10px; cursor: pointer; font: inherit;
+    }
+    button:hover { border-color: #9ca3af; background: #f9fafb; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 7px; margin: 11px 0; }
+    .search { display: flex; gap: 6px; margin: 11px 0; }
+    .search input, .group-form input, .group-form select {
+      min-width: 0; flex: 1; border: 1px solid var(--line); border-radius: 7px;
+      padding: 7px 9px; font: inherit; background: #fff;
+    }
+    .search button { flex: none; }
+    .group { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+    .group-head { display: flex; align-items: center; gap: 7px; }
+    .group-head input { accent-color: var(--accent); }
+    .group-head strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .group-meta { color: var(--muted); font-size: 11px; margin: 3px 0 0 23px; overflow-wrap: anywhere; }
+    .group-actions { display: flex; gap: 5px; margin-top: 7px; }
+    .group-actions button { padding: 4px 7px; font-size: 12px; }
+    .group-form { display: none; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    .group-form.open { display: flex; }
+    .group-form input[type=text] { flex-basis: 100%; }
+    .hint, .empty { color: var(--muted); font-size: 12px; }
+    #selected { min-height: 54px; border-top: 1px solid var(--line); padding-top: 12px; }
+    #selected .addr { color: var(--muted); font: 12px ui-monospace, monospace; }
+    .pill { display: inline-block; margin-top: 5px; padding: 1px 7px; border-radius: 99px; font-size: 11px; background: var(--accent-soft); }
+    main { position: relative; min-width: 0; overflow: hidden; }
+    #graph { position: absolute; inset: 0; }
+    .banner {
+      position: absolute; top: 13px; left: 16px; z-index: 2;
+      background: #fffffff0; border: 1px solid var(--line); border-radius: 8px;
+      padding: 7px 10px; color: var(--muted); font-size: 12px;
+    }
+    .legend {
+      position: absolute; left: 16px; bottom: 14px; z-index: 2;
+      background: #ffffffe8; border: 1px solid var(--line); border-radius: 8px;
+      padding: 7px 10px; color: var(--muted); font-size: 11px;
+    }
+    @media (max-width: 820px) {
+      body { grid-template-columns: 1fr; grid-template-rows: auto minmax(420px, 1fr); }
+      aside { max-height: 46vh; border-right: 0; border-bottom: 1px solid var(--line); }
+      main { min-height: 54vh; }
+    }
+  </style>
+</head>
+<body>
+<aside>
+  <h1>运行结构</h1>
+  <div class="file">从 main 开始的运行结构 · 不展示文件层级</div>
+  <div class="stats">
+    <div class="stat"><b id="visible-count">0</b><span>当前可见</span></div>
+    <div class="stat"><b id="total-count">0</b><span>运行调用节点</span></div>
+  </div>
+
+  <div class="search">
+    <input id="function-search" list="function-list" placeholder="搜索函数名或地址">
+    <datalist id="function-list"></datalist>
+    <button id="search-go">定位</button>
+  </div>
+
+  <div class="toolbar">
+    <button class="primary" id="fit">适应窗口</button>
+    <button id="expand-all">全部展开</button>
+    <button id="collapse-libs">恢复默认折叠</button>
+    <button id="collapse-all">收起运行链</button>
+  </div>
+
+  <div class="toolbar">
+    <button id="toggle-interrupts">隐藏中断</button>
+    <button id="expand-irq-chains">展开中断调用链</button>
+    <button id="toggle-instructions">展开内部 CFG</button>
+  </div>
+
+  <h2>用户分组</h2>
+  <div class="hint">分组只负责默认折叠，不限制视图范围。可以新建、改名、启停或删除；内置分组也可以编辑。</div>
+  <div id="groups"></div>
+  <div class="toolbar"><button id="add-group">新建分组</button></div>
+  <div id="group-form" class="group-form">
+    <input id="group-name" type="text" placeholder="分组名称，例如 日志库">
+    <select id="group-mode">
+      <option value="prefix">函数名开头是</option>
+      <option value="contains">函数名包含</option>
+      <option value="regex">正则表达式</option>
+      <option value="addr">地址范围，例如 0x08020000-0x08030000</option>
+      <option value="manual">手动函数列表，逗号分隔</option>
+    </select>
+    <input id="group-pattern" type="text" placeholder="匹配规则">
+    <button id="group-save">保存</button>
+    <button id="group-cancel">取消</button>
+  </div>
+
+  <h2>图例</h2>
+  <div class="hint">main/入口：黄色 · 业务：绿色 · 中断：橙色 · 库函数：灰色 · 外部符号：紫色</div>
+  <div class="hint">运行结构只有 main 一个入口。所有中断 Handler 从“外部中断（向量表）”这个独立根挂出，不混入 main 的调用树。</div>
+  <div id="selected" class="empty">尚未选择函数</div>
+</aside>
+
+<main>
+  <div class="banner">main 是唯一运行入口；调用按真实指令顺序编号。HAL/C 库默认折叠；中断链从向量表独立外挂。</div>
+  <div id="graph"></div>
+  <div class="legend">滚轮缩放 · 拖动节点 · 单击选择 · 侧栏展开/折叠</div>
+</main>
+
+<script src="/_static/cytoscape.min.js"></script>
+<script>
+const META = {{ runtime_json | safe }};
+const STORAGE_KEY = 'bingraph-runtime-groups-v1:' + META.filepath;
+const BUILTIN_KEY = 'bingraph-runtime-builtins-v1:' + META.filepath;
+
+const DEFAULT_GROUPS = [
+  { id: 'chip-hal', name: 'STM32 HAL / CMSIS', mode: 'regex', pattern: '^(HAL_|__NVIC_|NVIC_|DMA_|RCC|SPI_|TIM_|UART_|QSPI_|GPIO_)', enabled: true, builtin: true },
+  { id: 'c-runtime', name: 'C 库 / newlib / 运行时', mode: 'regex', pattern: '^(__|_|mem|str|snprintf$|vsnprintf$|abort$|raise$|std$|global_stdio|sysconf$|malloc|free|realloc)', enabled: true, builtin: true }
+];
+
+let userGroups = [];
+try {
+  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+  if (Array.isArray(saved)) userGroups = saved;
+} catch (_) { userGroups = []; }
+let groups = [...DEFAULT_GROUPS, ...userGroups];
+try {
+  const savedBuiltins = JSON.parse(localStorage.getItem(BUILTIN_KEY) || '{}');
+  for (const group of groups) {
+    if (group.builtin && savedBuiltins[group.id]) Object.assign(group, savedBuiltins[group.id]);
+  }
+} catch (_) {}
+
+const IRQ_ROOT = 'irq-vector-table';
+const nodeMeta = new Map(META.nodes.map(n => [n.addr, n]));
+const mainReachable = new Set(META.mainReachable || []);
+const interruptReachable = new Set(META.interruptReachable || []);
+const interruptAddrs = new Set(META.interrupts.map(i => i.addr));
+const externalAddrs = new Set();
+for (const i of META.interrupts) {
+  for (const call of i.calls || []) {
+    if (!nodeMeta.has(call.addr)) externalAddrs.add(call.addr);
+  }
+}
+for (const n of META.nodes) {
+  for (const call of n.calls || []) {
+    if (!nodeMeta.has(call.addr)) externalAddrs.add(call.addr);
+  }
+}
+
+const nodes = [...META.nodes];
+for (const addr of externalAddrs) {
+  const found = META.interrupts.flatMap(i => i.calls || []).find(c => c.addr === addr);
+  nodes.push({ addr, name: found?.name || `sub_${addr}`, size: 0, blocks: 0, calls: [], external: true });
+}
+for (const irq of META.interrupts) {
+  const existing = nodes.find(n => n.addr === irq.addr);
+  if (existing) {
+    existing.interrupt = true;
+    existing.irqVector = irq.vector;
+  } else {
+    nodes.push({ addr: irq.addr, name: irq.name, size: 0, blocks: 0, calls: irq.calls || [], interrupt: true, irqVector: irq.vector });
+  }
+}
+// The vector table is the single graphical parent of all IRQ handlers. Add the
+// node before edges so its 18 links are generated in the common edge pass.
+if (META.interrupts.length) {
+  nodes.push({
+    addr: IRQ_ROOT,
+    name: '外部中断（向量表）',
+    size: 0,
+    blocks: 0,
+    vectorRoot: true,
+    calls: META.interrupts.map((irq, index) => ({
+      addr: irq.addr,
+      name: irq.name,
+      order: index + 1,
+      site: '',
+      mnemonic: `IRQ${irq.vector} ${irq.name}`,
+      edgeLabel: `IRQ${irq.vector}`
+    }))
+  });
+}
+
+// Build edges from the complete node set (main reachable functions, interrupt
+// roots, and external stubs) so interrupt subtrees can be expanded on demand.
+const callEdges = [];
+for (const n of nodes) {
+  for (const [index, call] of (n.calls || []).entries()) {
+    callEdges.push({ source: n.addr, target: call.addr, site: call.site, mnemonic: call.mnemonic, order: call.order, index, edgeLabel: call.edgeLabel });
+  }
+}
+
+function classify(meta) {
+  if (meta.addr === IRQ_ROOT) return 'irq-root';
+  if (meta.addr === META.entry) return 'root';
+  if (meta.external) return 'external';
+  if (interruptAddrs.has(meta.addr)) return 'interrupt';
+  for (const group of groups) {
+    if (!group.enabled) continue;
+    if (matchesGroup(meta, group)) return 'library';
+  }
+  return 'business';
+}
+
+function matchesGroup(meta, group) {
+  const text = meta.name || '';
+  try {
+    if (group.mode === 'prefix') return text.startsWith(group.pattern);
+    if (group.mode === 'contains') return text.includes(group.pattern);
+    if (group.mode === 'regex') return new RegExp(group.pattern).test(text);
+    if (group.mode === 'manual') return group.pattern.split(',').map(s => s.trim().toLowerCase()).filter(Boolean).includes(text.toLowerCase());
+    if (group.mode === 'addr') {
+      const [start, end] = group.pattern.split('-').map(s => parseInt(s.trim(), 16));
+      const value = parseInt(meta.addr, 16);
+      return Number.isFinite(start) && Number.isFinite(end) && value >= start && value <= end;
+    }
+  } catch (_) { return false; }
+  return false;
+}
+
+const elements = [
+  ...nodes.map(n => ({ data: {
+    ...n,
+    id: 'n' + n.addr,
+    fkind: classify(n),
+    faxtype: n.vectorRoot ? 'irq-root' : (interruptAddrs.has(n.addr) ? 'interrupt' : (n.external ? 'external' : 'function')),
+    label: `${n.name}\n${n.irqVector ? `IRQ${n.irqVector} · ` : ''}0x${n.addr}${n.size ? ` · ${n.blocks} blocks` : ''}`
+  } })),
+  ...callEdges.map((e, i) => ({ data: {
+    id: 'e' + i + '_' + e.source + '_' + e.target,
+    source: 'n' + e.source,
+    target: 'n' + e.target,
+    site: e.site,
+    label: e.edgeLabel || `#${e.order} @${e.site}`
+  } }))
+];
+
+const cy = cytoscape({
+  container: document.getElementById('graph'),
+  elements,
+  wheelSensitivity: 1.2,
+  layout: {
+    name: 'breadthfirst', directed: true, spacingFactor: 1.12,
+    avoidOverlap: true, nodeDimensionsIncludeLabels: true, animate: false
+  },
+  style: [
+    { selector: 'node', style: {
+      shape: 'round-rectangle', width: 185, height: 48,
+      'background-color': 'var(--business)', 'border-width': 1,
+      'border-color': '#9aa4b2', label: 'data(label)', color: '#172033',
+      'font-family': 'ui-monospace, SFMono-Regular, Consolas, monospace',
+      'font-size': 10, 'text-valign': 'center', 'text-halign': 'center',
+      'text-wrap': 'wrap', 'text-max-width': 178
+    }},
+    { selector: 'node[fkind = "root"]', style: { 'background-color': '#fff1c2', 'border-width': 3, 'border-color': '#b7791f' } },
+    { selector: 'node[fkind = "irq-root"]', style: { 'background-color': '#fff7ed', 'border-width': 3, 'border-color': '#9a3412', 'shape': 'round-diamond', 'width': 220 } },
+    { selector: 'node[faxtype = "interrupt"]', style: { 'background-color': '#ffe4d6', 'border-color': '#c2410c' } },
+    { selector: 'node[fkind = "library"]', style: { 'background-color': '#e5e7eb', 'color': '#475467' } },
+    { selector: 'node[fkind = "external"]', style: { 'background-color': '#f3e8ff', 'border-style': 'dashed' } },
+    { selector: 'node[isblock]', style: {
+      shape: 'rectangle', width: 150, height: 36, 'background-color': '#eef4ff',
+      'border-color': '#93c5fd', label: 'data(label)', 'font-size': 9
+    }},
+    { selector: 'edge[isblockedge]', style: {
+      'line-style': 'dashed', 'line-color': '#93c5fd', 'target-arrow-color': '#93c5fd'
+    }},
+    { selector: 'node[fcollapsed]', style: { 'border-width': 3, 'border-color': '#2563eb', 'border-style': 'double' } },
+    { selector: 'edge', style: { width: 1, 'line-color': '#aab4c3', 'target-arrow-color': '#aab4c3', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier', 'arrow-scale': .75, label: 'data(label)', 'font-size': 7, color: '#667085' } },
+    { selector: 'node:selected', style: { 'overlay-color': '#2563eb', 'overlay-opacity': .18, 'overlay-padding': 4 } }
+  ]
+});
+
+const children = new Map();
+for (const e of callEdges) {
+  if (!children.has(e.source)) children.set(e.source, []);
+  if (!children.get(e.source).includes(e.target)) children.get(e.source).push(e.target);
+}
+const collapsed = new Set();
+let showInterrupts = true;
+let showInstructions = false;
+let expandedFunctionAddr = null;
+
+function selectedGroupFor(meta) {
+  return groups.find(g => g.enabled && matchesGroup(meta, g));
+}
+
+function initialCollapsed() {
+  collapsed.clear();
+  // Default policy: only matching groups are folded. Everything not placed in
+  // a user/default group stays expanded, so main -> initialization -> MainLoop
+  // is visible as a real runtime hierarchy rather than a depth-limited preview.
+  // Interrupt handlers are separate roots and follow the same group policy.
+  for (const n of nodes) {
+    if (n.addr === META.entry) continue;
+    if (selectedGroupFor(n) && (children.get(n.addr) || []).length) {
+      collapsed.add(n.addr);
+    }
+  }
+}
+
+function reclassify() {
+  cy.nodes().forEach(n => {
+    const meta = nodeMeta.get(n.id().slice(1)) || { addr: n.id().slice(1), name: n.data('name'), external: n.data('external') };
+    const kind = classify(meta);
+    n.data('fkind', kind);
+    n.data('faxtype', meta.addr === IRQ_ROOT ? 'irq-root' : (interruptAddrs.has(meta.addr) ? 'interrupt' : (meta.external ? 'external' : 'function')));
+  });
+}
+
+const pinnedVisible = new Set();
+function visibleSet() {
+  const visible = new Set(pinnedVisible);
+  const roots = [META.entry, ...(showInterrupts && META.interrupts.length ? [IRQ_ROOT] : [])];
+  const stack = [...roots];
+  while (stack.length) {
+    const addr = stack.pop();
+    if (visible.has(addr)) continue;
+    visible.add(addr);
+    if (!collapsed.has(addr)) {
+      for (const child of children.get(addr) || []) stack.push(child);
+    }
+  }
+  return visible;
+}
+
+function updateView() {
+  const visible = visibleSet();
+  cy.nodes().forEach(n => {
+    const addr = n.id().slice(1);
+    const shown = visible.has(addr);
+    n.style('display', shown ? 'element' : 'none');
+    n.data('fcollapsed', collapsed.has(addr));
+    n.data('label', collapsed.has(addr) && (children.get(addr) || []).length
+      ? n.data('fullLabel') + '\n[+]' : n.data('fullLabel'));
+  });
+  cy.edges().forEach(e => {
+    const shown = visible.has(e.source().id().slice(1)) && visible.has(e.target().id().slice(1));
+    e.style('display', shown ? 'element' : 'none');
+  });
+  document.getElementById('visible-count').textContent = visible.size;
+  document.getElementById('total-count').textContent = nodes.length;
+  window.__runtimeVisible = visible;
+  window.__runtimeCollapsed = collapsed;
+  window.__runtimeShowInterrupts = showInterrupts;
+}
+
+function expandFunctionBlocks(addr) {
+  if (expandedFunctionAddr === addr) return;
+  collapseFunctionBlocks();
+  const meta = nodeMeta.get(addr);
+  if (!meta || !(meta.block_nodes || []).length) return;
+  expandedFunctionAddr = addr;
+  const functionNode = cy.getElementById('n' + addr);
+  const origin = functionNode.position();
+  const seenBlocks = new Set(meta.block_nodes.map(b => b.addr));
+  const blockElements = [];
+  for (const block of meta.block_nodes) {
+    blockElements.push({
+      data: {
+        id: `b${addr}_${block.addr}`,
+        label: `0x${block.addr}\n${block.first_insn || `${block.instructions} insn`}`,
+        isblock: true,
+        parentFunction: addr
+      }
+    });
+    for (const successor of block.successors) {
+      if (!seenBlocks.has(successor)) continue;
+      blockElements.push({
+        data: {
+          id: `be${addr}_${block.addr}_${successor}`,
+          source: `b${addr}_${block.addr}`,
+          target: `b${addr}_${successor}`,
+          isblockedge: true,
+          parentFunction: addr
+        }
+      });
+    }
+  }
+  const blockSet = cy.add(blockElements);
+  // Place blocks on a compact grid beside the selected function. Cytoscape's
+  // bounded layout ignores the requested region for disconnected CFGs, so
+  // apply positions explicitly to keep the main runtime graph untouched.
+  const blockNodes = meta.block_nodes.map(block => cy.getElementById(`b${addr}_${block.addr}`));
+  const columns = 4;
+  blockNodes.forEach((blockNode, index) => {
+    blockNode.position({
+      x: origin.x + 300 + (index % columns) * 180,
+      y: origin.y - 220 + Math.floor(index / columns) * 90
+    });
+  });
+  functionNode.style('border-color', '#0ea5e9');
+  functionNode.style('border-width', 3);
+  // Fit just the expanded function and its blocks. The full runtime graph
+  // remains laid out in place behind it.
+  const combined = functionNode.union(blockSet);
+  const box = combined.boundingBox();
+  const zoom = Math.max(0.45, Math.min(1.25, Math.min(
+    (cy.width() - 160) / Math.max(box.w, 1),
+    (cy.height() - 160) / Math.max(box.h, 1)
+  )));
+  cy.zoom(zoom);
+  cy.pan({
+    x: cy.width() / 2 - ((box.x1 + box.x2) / 2) * zoom,
+    y: cy.height() / 2 - ((box.y1 + box.y2) / 2) * zoom
+  });
+}
+
+function collapseFunctionBlocks() {
+  if (!expandedFunctionAddr) return;
+  const oldAddr = expandedFunctionAddr;
+  cy.remove(cy.elements(`[parentFunction = "${oldAddr}"]`));
+  expandedFunctionAddr = null;
+  const fn = cy.getElementById('n' + oldAddr);
+  if (fn.length) {
+    fn.style('border-color', '');
+    fn.style('border-width', '');
+  }
+}
+
+function fitView() {
+  const visible = cy.elements(':visible');
+  if (!visible.length) return;
+  const box = visible.boundingBox();
+  if (!box.w || !box.h) return;
+  const zoom = Math.max(.16, Math.min(1.4, Math.min((cy.width() - 120) / box.w, (cy.height() - 120) / box.h)));
+  cy.zoom(zoom);
+  cy.pan({ x: cy.width() / 2 - ((box.x1 + box.x2) / 2) * zoom, y: cy.height() / 2 - ((box.y1 + box.y2) / 2) * zoom });
+}
+
+function renderGroups() {
+  const root = document.getElementById('groups');
+  root.innerHTML = '';
+  for (const group of groups) {
+    const el = document.createElement('div');
+    el.className = 'group';
+    const matching = nodes.filter(n => n.addr !== META.entry && matchesGroup(n, group)).length;
+    el.innerHTML = `
+      <div class="group-head">
+        <input type="checkbox" ${group.enabled ? 'checked' : ''} aria-label="启用分组">
+        <strong>${escapeHtml(group.name)}</strong>
+        <span class="hint">${matching}</span>
+      </div>
+      <div class="group-meta">${escapeHtml(group.mode)}: ${escapeHtml(group.pattern)}</div>
+      <div class="group-actions">
+        <button data-action="edit">编辑</button>
+        <button data-action="delete">删除</button>
+      </div>`;
+    el.querySelector('input').addEventListener('change', event => {
+      group.enabled = event.target.checked;
+      persistGroups();
+  reclassify();
+      initialCollapsed();
+      updateView();
+      fitView();
+      renderGroups();
+    });
+    el.querySelector('[data-action="edit"]').addEventListener('click', () => openGroupForm(group));
+    el.querySelector('[data-action="delete"]').addEventListener('click', () => {
+      if (group.builtin) group.enabled = false;
+      else groups = groups.filter(g => g !== group);
+      persistGroups();
+      reclassify();
+      initialCollapsed();
+      updateView();
+      fitView();
+      renderGroups();
+    });
+    root.appendChild(el);
+  }
+}
+
+function persistGroups() {
+  userGroups = groups.filter(g => !g.builtin);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(userGroups));
+  const builtins = Object.fromEntries(
+    groups.filter(g => g.builtin).map(g => [g.id, { name: g.name, mode: g.mode, pattern: g.pattern, enabled: g.enabled }])
+  );
+  localStorage.setItem(BUILTIN_KEY, JSON.stringify(builtins));
+}
+
+let editingGroup = null;
+function openGroupForm(group = null) {
+  editingGroup = group;
+  document.getElementById('group-form').classList.add('open');
+  document.getElementById('group-name').value = group?.name || '';
+  document.getElementById('group-mode').value = group?.mode || 'prefix';
+  document.getElementById('group-pattern').value = group?.pattern || '';
+}
+
+document.getElementById('add-group').onclick = () => openGroupForm();
+document.getElementById('group-cancel').onclick = () => document.getElementById('group-form').classList.remove('open');
+document.getElementById('group-save').onclick = () => {
+  const name = document.getElementById('group-name').value.trim();
+  const mode = document.getElementById('group-mode').value;
+  const pattern = document.getElementById('group-pattern').value.trim();
+  if (!name || !pattern) return;
+  if (editingGroup) {
+    Object.assign(editingGroup, { name, mode, pattern });
+  } else {
+    groups.push({ id: `user-${Date.now()}`, name, mode, pattern, enabled: true, builtin: false });
+  }
+  persistGroups();
+  document.getElementById('group-form').classList.remove('open');
+  reclassify();
+  initialCollapsed();
+  updateView();
+  fitView();
+  renderGroups();
+};
+
+document.getElementById('fit').onclick = fitView;
+document.getElementById('expand-all').onclick = () => {
+  collapsed.clear();
+  // Expanding the complete call tree can bury main under library subtrees.
+  // Remove transient search pins so this remains an intentional full unfold.
+  pinnedVisible.clear();
+  collapseFunctionBlocks();
+  showInstructions = false;
+  document.getElementById('toggle-instructions').textContent = '展开内部 CFG';
+  updateView();
+  fitView();
+};
+document.getElementById('collapse-libs').onclick = () => {
+  // Restore the default summary view. Interrupt roots are a separate concern
+  // and must not disappear when libraries are folded.
+  pinnedVisible.clear();
+  collapseFunctionBlocks();
+  showInstructions = false;
+  document.getElementById('toggle-instructions').textContent = '展开内部 CFG';
+  initialCollapsed();
+  updateView();
+  fitView();
+};
+document.getElementById('collapse-all').onclick = () => {
+  // This controls the main runtime chain only. Interrupt handlers are external
+  // roots and are still controlled by the dedicated interrupt button.
+  collapsed.clear();
+  for (const addr of mainReachable) {
+    if (addr !== META.entry) collapsed.add(addr);
+  }
+  collapseFunctionBlocks();
+  showInstructions = false;
+  document.getElementById('toggle-instructions').textContent = '展开内部 CFG';
+  updateView();
+  fitView();
+};
+document.getElementById('toggle-interrupts').onclick = event => {
+  showInterrupts = !showInterrupts;
+  event.target.textContent = showInterrupts ? '隐藏中断' : '显示中断';
+  updateView();
+  fitView();
+};
+document.getElementById('expand-irq-chains').onclick = () => {
+  // Open every node in the interrupt-only reachable scope. Shared functions
+  // that are also reachable from main are left untouched so expanding the
+  // interrupt view never changes how much of the main runtime tree is shown.
+  for (const addr of interruptReachable) {
+    if (!mainReachable.has(addr)) collapsed.delete(addr);
+  }
+  // Shared helpers are reached by the interrupt scope as well. Reopen those
+  // only when a clicked IRQ handler actually calls them.
+  for (const irq of META.interrupts) {
+    for (const call of nodeMeta.get(irq.addr)?.calls || []) collapsed.delete(call.addr);
+  }
+  showInterrupts = true;
+  document.getElementById('toggle-interrupts').textContent = '隐藏中断';
+  updateView();
+  fitView();
+};
+document.getElementById('toggle-instructions').onclick = event => {
+  showInstructions = !showInstructions;
+  event.target.textContent = showInstructions ? '收起内部 CFG' : '展开内部 CFG';
+  if (showInstructions) {
+    const selected = cy.nodes(':selected').filter(n => n.data('faxtype') === 'function').first();
+    if (!selected.length) {
+      document.getElementById('selected').classList.remove('empty');
+      document.getElementById('selected').innerHTML = '<div class="hint">先选择一个函数，再展开它的内部 CFG。</div>';
+      showInstructions = false;
+      event.target.textContent = '展开内部 CFG';
+      return;
+    }
+    expandFunctionBlocks(selected.id().slice(1));
+  } else {
+    collapseFunctionBlocks();
+    fitView();
+  }
+};
+
+cy.on('tap', 'node', event => {
+  const n = event.target;
+  const addr = n.id().slice(1);
+  const d = n.data();
+  // Vector-table and external-stub nodes are synthesized in the browser and
+  // therefore are not necessarily present in the server-provided nodeMeta map.
+  const meta = nodeMeta.get(addr) || nodes.find(n => n.addr === addr) || { addr, name: d.name, calls: [] };
+  const hasCode = !meta.external && d.faxtype !== 'external' && !meta.vectorRoot;
+  const addressLine = meta?.vectorRoot ? '向量表独立根 · 不依附 main' : `0x${addr} · ${d.blocks || 0} blocks`;
+  document.getElementById('selected').classList.remove('empty');
+  document.getElementById('selected').innerHTML = `
+    <strong>${escapeHtml(d.name)}</strong>
+    <div class="addr">${addressLine}</div>
+    <div class="pill">${escapeHtml(d.fkind)}</div>
+    <div class="hint">${(meta?.calls || []).length} 个直接调用</div>
+    <div class="toolbar">
+      ${hasCode ? '<button id="open-cfg">查看函数 CFG</button>' : ''}
+      ${hasCode ? `<button id="expand-blocks">${expandedFunctionAddr === addr ? '收起内部 CFG' : '展开内部 CFG'}</button>` : ''}
+      <button id="toggle-node">${collapsed.has(addr) ? '展开分支' : '折叠分支'}</button>
+    </div>`;
+  const openCfgButton = document.getElementById('open-cfg');
+  if (openCfgButton) openCfgButton.onclick = () => {
+    window.open(`/cfg?filepath=${encodeURIComponent(META.filepath)}&function=0x${addr}`, '_blank');
+  };
+  const expandBlocksButton = document.getElementById('expand-blocks');
+  if (expandBlocksButton) expandBlocksButton.onclick = () => {
+    if (expandedFunctionAddr === addr) {
+      collapseFunctionBlocks();
+      showInstructions = false;
+      document.getElementById('toggle-instructions').textContent = '展开内部 CFG';
+      fitView();
+    } else {
+      showInstructions = true;
+      document.getElementById('toggle-instructions').textContent = '收起内部 CFG';
+      expandFunctionBlocks(addr);
+    }
+  };
+  document.getElementById('toggle-node').onclick = () => {
+    if (collapsed.has(addr)) collapsed.delete(addr); else collapsed.add(addr);
+    updateView();
+    document.getElementById('toggle-node').textContent = collapsed.has(addr) ? '展开分支' : '折叠分支';
+  };
+});
+
+cy.nodes().forEach(n => n.data('fullLabel', n.data('label')));
+const functionList = document.getElementById('function-list');
+for (const n of nodes.slice().sort((a, b) => a.name.localeCompare(b.name))) {
+  const opt = document.createElement('option');
+  opt.value = n.name;
+  opt.label = `0x${n.addr}`;
+  functionList.appendChild(opt);
+}
+function revealNode(addr) {
+  // A search result may be hidden behind one or more folded ancestors. Walk
+  // the complete call structure from every root and reopen only that path.
+  const roots = [META.entry, ...(META.interrupts.length ? [IRQ_ROOT] : [])];
+  const parent = new Map();
+  const queue = [...roots];
+  const visited = new Set(roots);
+  while (queue.length) {
+    const current = queue.shift();
+    for (const child of children.get(current) || []) {
+      if (visited.has(child)) continue;
+      visited.add(child);
+      parent.set(child, current);
+      queue.push(child);
+    }
+  }
+  const path = [];
+  for (let current = addr; current != null; current = parent.get(current)) path.push(current);
+  if (path.some(a => interruptAddrs.has(a))) {
+    showInterrupts = true;
+    document.getElementById('toggle-interrupts').textContent = '隐藏中断';
+  }
+  // Keep the located function folded if desired, but make every ancestor visible.
+  for (const ancestor of path.slice(1)) collapsed.delete(ancestor);
+  pinnedVisible.add(addr);
+  updateView();
+}
+
+function locate(query) {
+  const text = query.trim().toLowerCase();
+  if (!text) return;
+  const normalized = text.replace(/^0x/, '');
+  const exact = cy.nodes().filter(n => n.id().slice(1) === normalized).first();
+  const node = exact.length ? exact : cy.nodes().filter(n => n.data('name').toLowerCase().includes(text)).first();
+  if (!node.length) return;
+  const addr = node.id().slice(1);
+  revealNode(addr);
+  node.select();
+  cy.animate({ center: { eles: node }, zoom: 1 }, { duration: 250 });
+  node.emit('tap');
+  // Search is often used to find a folded library function. Reveal the
+  // function's own CFG on demand without expanding its parent's call branch.
+  if ((nodeMeta.get(addr)?.block_nodes || []).length) {
+    showInstructions = true;
+    document.getElementById('toggle-instructions').textContent = '收起内部 CFG';
+    expandFunctionBlocks(addr);
+  }
+}
+document.getElementById('search-go').onclick = () => locate(document.getElementById('function-search').value);
+document.getElementById('function-search').addEventListener('keydown', e => { if (e.key === 'Enter') locate(e.target.value); });
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+initialCollapsed();
+updateView();
+renderGroups();
+setTimeout(fitView, 60);
+</script>
+</body>
+</html>

@@ -11,6 +11,8 @@ import { initBatch, initCalc } from "./tools-batch-calc.js";
 import { initLogic, laAgentState, laAgentRead, laAgentDecoders, laAgentConfig, laAgentCapture, laAgentSave } from "./logic-analyzer.js";
 
 const $ = (id) => document.getElementById(id);
+window.kdockToast = (text) => toast(text);
+window.kdockUiScale = () => uiScaleValue();
 
 /* ── 悬停提示：自绘气泡（接管原生 title）─────────────────────────────────────
    原生 title 的气泡是系统画的：延迟 ~1 秒才出来、样式跟系统走（Windows 上是个
@@ -1583,8 +1585,10 @@ function showPane(tab) {
   document.querySelectorAll("[data-param]").forEach((p) => { p.hidden = p.dataset.param !== tab; });
   document.documentElement.dataset.tab = tab;      // 窄窗样式要按"当前这一页"决定收不收那条参数带（如计算器）
   document.documentElement.classList.toggle("kb-focus", tab === "kb" && kbFocus);
+  if (tab === "runtime" && window.rtInit) window.rtInit();
   syncParamStrip();
   if (tab === "upgrade") syncUpgCtl();
+  if (tab === "datacalc") initCalc();          // 折叠区块的初始化在 initCalc 里（只有一次）
   if (tab === "files") {
     // 网络盘模式（FTP/FTPS/TFTP）没连之前别去列目录：那会报"先点连接"
     if (!flIsNet()) {
@@ -6571,6 +6575,55 @@ async function envFirstRunCheck() {
   } catch (_) {}
 }
 
+async function __envRuntimeRefresh() {
+  const el = $("env-rt-state");
+  if (!el) return null;
+  try {
+    const s = await invoke("runtime_analyzer_status");
+    el.textContent = s.installed ? "已就绪" : "未准备";
+    el.className = "rtbadge " + (s.installed ? "ok" : "bad");
+    el.title = s.path || "点击「准备 / 更新分析器」";
+    if ($("env-rt-open")) $("env-rt-open").disabled = !s.installed;
+    return s;
+  } catch (e) {
+    el.textContent = "检测失败";
+    el.className = "rtbadge bad";
+    el.title = String(e);
+    return null;
+  }
+}
+async function __envRuntimePrepare() {
+  const btn = $("env-rt-prepare"), state = $("env-rt-state");
+  if (!btn) return;
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "准备中…（首次需下载 ~500 MB）";
+  if (state) { state.textContent = "准备中…"; state.className = "rtbadge warn"; }
+  envLog("开始准备固件运行结构分析器。KDock 会自带 Python 3.13，不使用系统 Python。");
+  try {
+    const r = await invoke("runtime_prepare");
+    envLog(r.message || "分析器已准备完成");
+    envLog("完成后可以在「运行结构」页选择 ELF/BIN 并直接分析。");
+    await __envRuntimeRefresh();
+  } catch (e) {
+    envLog("分析器准备失败：" + String(e));
+    toast(String(e));
+    if (state) { state.textContent = "准备失败"; state.className = "rtbadge bad"; }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+function __envRuntimeBind() {
+  const b = $("env-rt-prepare");
+  if (b) b.onclick = __envRuntimePrepare;
+  const o = $("env-rt-open");
+  if (o) o.onclick = async () => {
+    const s = await __envRuntimeRefresh();
+    if (s && s.path) invoke("open_folder", { path: s.path.replace(/[\\/][^\\/]*$/, "") }).catch(() => {});
+  };
+  __envRuntimeRefresh();
+}
 function bindEnv() {
   envSyncDirInputs();
   const setDir = (v) => { localStorage.setItem("kdock_env_dir", v || ""); envSyncDirInputs(); };
@@ -6591,6 +6644,7 @@ function bindEnv() {
   for (const id of ["env-dir", "env-dir2"]) if ($(id)) $(id).onchange = (e) => setDir(e.target.value.trim());
   if ($("env-only-missing")) $("env-only-missing").onchange = () => envRenderGrid();
   // 后端装东西时的进度：下载百分比 / 解包 / 装驱动 / git clone
+  __envRuntimeBind();
   listen("env://progress", (ev) => {
     const p = ev.payload || {};
     if (p.pct != null) envProg(p.pct, p.text || "");
@@ -7276,14 +7330,14 @@ function langWalk() {
 // ---------------- 上下文帮助（F1 / 标题栏 / 设置 / 各分区的 ?） ----------------
 const HELP_PAGE_LABEL = {
   link: "传输", cmds: "命令表", agent: "Agent", kb: "知识库",
-  upgrade: "固件升级", flash: "烧录", files: "文件管理", adb: "安卓 ADB",
+  upgrade: "固件升级", runtime: "运行结构", flash: "烧录", files: "文件管理", adb: "安卓 ADB",
   env: "环境配置", chart: "实时图表", seq: "中控编排", scope: "示波器",
   capture: "屏幕共享", logic: "逻辑分析仪", usb: "监听", batch: "批量文本",
   calc: "计算器", datacalc: "数据计算", debug: "调试",
 };
 const HELP_PAGE_ROOT = {
   link: "help-transfer-start", cmds: "help-cmds", agent: "help-agent-chat",
-  kb: "help-kb-chat", upgrade: "help-upgrade-start", flash: "help-flash-programmer",
+  kb: "help-kb-chat", upgrade: "help-upgrade-start", runtime: "help-runtime-start", flash: "help-flash-programmer",
   files: "help-files-start", adb: "help-adb-device", env: "help-env-first",
   chart: "help-chart-main", seq: "help-seq-links", scope: "help-scope-connect",
   capture: "help-capture-source", logic: "help-logic-source", usb: "help-usb-local",
@@ -7363,6 +7417,20 @@ const HELP_GROUPS = [
     { id: "help-flash-preview", title: "命令预览",
       zh: "执行前显示将要运行的烧录命令。",
       en: "Shows the command that will run before flashing." },
+  ]},
+  { title: "运行结构", items: [
+    { id: "help-runtime-start", title: "从 main 开始",
+      zh: "选择 ELF 后点「分析运行结构」。KDock 会用随包分发的分析器，从 main 展开真实调用；不需要用户另装 Python、uv 或 Graphviz。",
+      en: "Choose an ELF and select Analyze runtime. KDock uses its bundled analyzer to expand real calls from main; users do not install Python, uv or Graphviz separately." },
+    { id: "help-runtime-layout", title: "自动整理",
+      zh: "「整理」按调用深度分层，库函数自动折叠成汇总节点；可以切换紧凑网格或全部显示。",
+      en: "Tidy lays nodes out by call depth and collapses library calls into summary nodes; switch to compact or show all when needed." },
+    { id: "help-runtime-chain", title: "拉一条链路",
+      zh: "在全固件图里点一个函数，再点「拉这条链路」。可选向下调用、向上调用者或双向，并限制 1/2/3/5/8 层或全部深度；这样只显示相关函数，不再被上千个无关节点淹没。",
+      en: "Select a function in the full-firmware graph and choose Draw this chain. Pick downstream calls, upstream callers or both, and limit it to 1/2/3/5/8 levels or unlimited; only related functions remain on the canvas." },
+    { id: "help-runtime-bin", title: "BIN",
+      zh: "裸机 BIN 必须提供基址与架构；没有符号表时无法可靠定位 main，优先使用 ELF。",
+      en: "Bare-metal BIN needs a base address and architecture. Without symbols main cannot be found reliably; prefer ELF." },
   ]},
   { title: "文件管理", items: [
     { id: "help-files-start", title: "从这里开始",

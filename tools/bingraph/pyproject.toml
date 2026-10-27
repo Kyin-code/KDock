@@ -1,0 +1,29 @@
+[project]
+name = "pybingraph-native"
+version = "0.1.0"
+description = "Portable Windows-native pybingraph runtime call-graph viewer"
+readme = "README.md"
+license = "BSD-2-Clause"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "angr==10.0.4",
+    "fastapi>=0.143.2",
+    "networkx>=3.4",
+    "pydot>=4.0.1",
+    "pybingraph==0.2.5",
+    "pycparser==3.11",
+    "unicorn>=2.1.4",
+]
+
+[project.scripts]
+bingraph-native = "bingraph_native.launcher:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bingraph_native"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/bingraph_native/static" = "bingraph_native/static"

@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 export default defineConfig({
   clearScreen: false,
   server: {
+    host: "127.0.0.1",
     port: 1420,
     strictPort: true,
     // 别去监视 Rust 那边：cargo 写 target/ 时会锁住 .dll/.pdb，
@@ -23,4 +24,3 @@ export default defineConfig({
     },
   },
 });
-
