@@ -9,6 +9,7 @@ import "uplot/dist/uPlot.min.css";
 // 两个纯本地工具页（批量文本 / 计算器）——单独成文件，免得 main.js 再长下去
 import { initBatch, initCalc } from "./tools-batch-calc.js";
 import { initLogic, laAgentState, laAgentRead, laAgentDecoders, laAgentConfig, laAgentCapture, laAgentSave } from "./logic-analyzer.js";
+import { HELP_GROUPS as HELP_GROUPS_CONTENT } from "./help-content.js";
 
 const $ = (id) => document.getElementById(id);
 window.kdockToast = (text) => toast(text);
@@ -7369,236 +7370,20 @@ const HELP_PAGE_ROOT = {
   batch: "help-batch-main", calc: "help-calc-history", datacalc: "help-datacalc-main",
   debug: "help-debug-gdb",
 };
+const HELP_SETTINGS_ROOT = {
+  general: "help-settings-general",
+  theme: "help-settings-theme",
+  model: "help-settings-model",
+  skills: "help-settings-skills",
+  tools: "help-settings-tools",
+  mcp: "help-settings-mcp",
+  kb: "help-settings-kb",
+  netip: "help-settings-netip",
+  cache: "help-settings-cache",
+  help: "help-settings-help",
+};
 
-const HELP_GROUPS = [
-  { title: "概览", items: [
-    { id: "help-work", title: "Work with KDock",
-      zh: "把目标说出来，KDock 会和你一起推进。页面、设备与会话都可以直接开始。\n### 建议流程\n- 传输 / 监听：先在右栏选连接方式或抓包设备，再开始收发。\n- Agent：描述目标，Agent 会读取工作区、调用工具并汇报结果。\n- 设备页：升级、烧录、文件管理都先确认目标连接，再执行操作。\n- 工具页：计算器、数据计算、批量文本和逻辑分析仪都可以独立使用。\n### 帮助\n- 按 F1 打开当前页面帮助。\n- 右上角 ? 也会打开对应页面的说明。",
-      en: "Tell KDock what you want to get done. Pages, devices and sessions are ready when you are.\n### Suggested flow\n- Transfer / Monitor: choose a link or capture target in the right panel, then start.\n- Agent: describe the goal; it reads the workspace, uses tools and reports back.\n- Device pages: confirm the target connection before upgrade, flashing or file operations.\n- Tool pages: calculator, data tools, batch text and logic analyzer work independently.\n### Help\n- Press F1 for help on the current page.\n- The ? button in the title bar opens the same page-aware help." },
-    { id: "help-shortcuts", title: "快捷键",
-      zh: "F1 打开当前页帮助；Ctrl+, 打开设置；Ctrl+L 清空传输日志。",
-      en: "F1 opens help for the current page; Ctrl+, opens Settings; Ctrl+L clears the transfer log." },
-  ]},
-  { title: "传输", items: [
-    { id: "help-transfer-start", title: "从这里开始",
-      zh: "选择串口、TCP、UDP 或 SSH，连接后即可在下方收发。",
-      en: "Pick serial, TCP, UDP or SSH, connect, then send and receive below." },
-    { id: "help-transfer-stats", title: "统计",
-      zh: "显示本次连接的收发字符数、字节数和日志行数。",
-      en: "Characters, bytes and log lines for the current link." },
-    { id: "help-transfer-quick", title: "快捷发送",
-      zh: "常用指令点一行即可发送；「编辑」里可以增删改。",
-      en: "Click a saved command to send it; add, edit or remove rows via Edit." },
-    { id: "help-cmds", title: "命令表",
-      zh: "搜索并发送常用命令，点击一行直接执行。",
-      en: "Search and send common commands; click a row to run it." },
-  ]},
-  { title: "Agent", items: [
-    { id: "help-agent-chat", title: "对话",
-      zh: "把目标交给 Agent；它会读取工作区、调用工具并持续汇报结果。",
-      en: "Give the Agent a goal; it reads the workspace, uses tools and reports back as it goes." },
-    { id: "help-agent-info", title: "Agent 信息",
-      zh: "当前模型、上下文、费用、输出速度和缓存命中。",
-      en: "Current model, context, cost, output speed and cache hits." },
-    { id: "help-agent-context", title: "上下文成分",
-      zh: "当前上下文里系统提示、历史、技能和工具各占多少 token。",
-      en: "How much of the context is system prompt, history, skills and tools." },
-    { id: "help-agent-skills", title: "技能",
-      zh: "按需加载的流程说明；开关决定哪些内容常驻上下文。",
-      en: "On-demand procedures; switches decide what stays in context." },
-    { id: "help-agent-mcp", title: "MCP 服务",
-      zh: "外部工具服务，启用后会以工具形式提供给 Agent。",
-      en: "External tool servers exposed to the Agent when enabled." },
-    { id: "help-agent-links", title: "页面里的链接",
-      zh: "列出当前网页中的链接，方便继续打开或交给 Agent 读取。",
-      en: "Links found on the current page, ready to open or hand to the Agent." },
-  ]},
-  { title: "知识库", items: [
-    { id: "help-kb-chat", title: "对话",
-      zh: "知识库对话页；点右上角「管理」切换到数据管理页面。",
-      en: "Knowledge-base chat; use Manage at the top right to switch to the admin page." },
-    { id: "help-kb-admin", title: "管理",
-      zh: "知识库后台或数据集管理页；在设置 → 知识库里配置地址。",
-      en: "Knowledge-base admin or dataset page; set its URL in Settings → Knowledge base." },
-  ]},
-  { title: "固件升级", items: [
-    { id: "help-upgrade-start", title: "从这里开始",
-      zh: "选择串口或 TCP 连接到待升级设备。",
-      en: "Connect to the target over serial or TCP." },
-    { id: "help-upgrade-firmware", title: "固件",
-      zh: "选择本地 .fw 包，或从服务器读取可用版本后升级。",
-      en: "Choose a local .fw package or read versions from a server, then upgrade." },
-  ]},
-  { title: "烧录", items: [
-    { id: "help-flash-tools", title: "烧录工具路径",
-      zh: "自动检测不到时，在这里指定 OpenOCD、J-Link 或厂商 CLI。",
-      en: "Point to OpenOCD, J-Link or a vendor CLI when auto-detection misses it." },
-    { id: "help-flash-programmer", title: "烧录器",
-      zh: "选择工具、适配器、接口、速度和目标芯片。",
-      en: "Pick the tool, adapter, interface, speed and target chip." },
-    { id: "help-flash-firmware", title: "固件",
-      zh: ".hex / .elf 使用文件内地址；.bin 使用下方起始地址；.fw 在固件升级页使用。",
-      en: ".hex / .elf use addresses from the file; .bin uses the start address below; .fw belongs to Firmware upgrade." },
-    { id: "help-flash-preview", title: "命令预览",
-      zh: "执行前显示将要运行的烧录命令。",
-      en: "Shows the command that will run before flashing." },
-  ]},
-  { title: "运行结构", items: [
-    { id: "help-runtime-start", title: "从 main 开始",
-      zh: "选择 ELF 后点「分析运行结构」。KDock 会用随包分发的分析器，从 main 展开真实调用；不需要用户另装 Python、uv 或 Graphviz。",
-      en: "Choose an ELF and select Analyze runtime. KDock uses its bundled analyzer to expand real calls from main; users do not install Python, uv or Graphviz separately." },
-    { id: "help-runtime-layout", title: "自动整理",
-      zh: "「整理」按调用深度分层，库函数自动折叠成汇总节点；可以切换紧凑网格或全部显示。",
-      en: "Tidy lays nodes out by call depth and collapses library calls into summary nodes; switch to compact or show all when needed." },
-    { id: "help-runtime-chain", title: "拉一条链路",
-      zh: "在全固件图里点一个函数，再点「拉这条链路」。可选向下调用、向上调用者或双向，并限制 1/2/3/5/8 层或全部深度；这样只显示相关函数，不再被上千个无关节点淹没。",
-      en: "Select a function in the full-firmware graph and choose Draw this chain. Pick downstream calls, upstream callers or both, and limit it to 1/2/3/5/8 levels or unlimited; only related functions remain on the canvas." },
-    { id: "help-runtime-bin", title: "BIN",
-      zh: "裸机 BIN 必须提供基址与架构；没有符号表时无法可靠定位 main，优先使用 ELF。",
-      en: "Bare-metal BIN needs a base address and architecture. Without symbols main cannot be found reliably; prefer ELF." },
-  ]},
-  { title: "文件管理", items: [
-    { id: "help-files-start", title: "从这里开始",
-      zh: "按设备支持的方式选择串口、TCP、FTP 或 TFTP 并连接。",
-      en: "Choose serial, TCP, FTP or TFTP as the target supports, then connect." },
-    { id: "help-files-dir", title: "目录",
-      zh: "浏览远端目录，新建或删除条目。",
-      en: "Browse the remote directory and create or remove entries." },
-    { id: "help-files-pull", title: "取回本机",
-      zh: "把选中的远端文件或目录下载到本机。",
-      en: "Download the selected remote file or folder." },
-    { id: "help-files-push", title: "发到设备",
-      zh: "把本机文件发送到当前远端路径。",
-      en: "Send a local file to the current remote path." },
-    { id: "help-files-tftp", title: "内置 TFTP 服务端",
-      zh: "让局域网设备从这台电脑取文件，也可以允许写入。",
-      en: "Serve files from this PC to LAN devices; writes can be enabled." },
-  ]},
-  { title: "安卓 ADB", items: [
-    { id: "help-adb-device", title: "设备",
-      zh: "当前通过 adb 连接的设备；插线或开无线调试后点「刷新」。",
-      en: "The device currently connected over adb; refresh after plugging in or enabling wireless debugging." },
-    { id: "help-adb-wireless", title: "无线调试",
-      zh: "用配对码完成一次配对，再连接到设备的无线调试端口。",
-      en: "Pair once with the code, then connect to the device's wireless-debugging port." },
-    { id: "help-adb-mirror", title: "投屏",
-      zh: "查看设备画面；可开启反向控制，或改用 scrcpy 获得更流畅的画面。",
-      en: "View the device screen, optionally with control, or use scrcpy for smoother video." },
-    { id: "help-adb-transfer", title: "传文件",
-      zh: "在电脑与设备之间推送、取回文件，也可以直接截图存盘。",
-      en: "Push and pull files between PC and device, or save a screenshot." },
-    { id: "help-adb-apk", title: "APK",
-      zh: "安装、覆盖安装或卸载应用。",
-      en: "Install, overwrite or uninstall apps." },
-    { id: "help-adb-commands", title: "常用命令",
-      zh: "常用 adb shell 指令，点一下即可执行。",
-      en: "Common adb shell commands, ready to run." },
-  ]},
-  { title: "环境配置", items: [
-    { id: "help-env-first", title: "首次运行检查",
-      zh: "检测串口驱动、调试器、工具链等组件，缺失的可以在这里安装。",
-      en: "Checks serial drivers, debuggers and toolchains; missing pieces can be installed here." },
-    { id: "help-env-location", title: "安装位置",
-      zh: "统一存放便携工具与工具链；留空时使用默认目录。",
-      en: "Shared folder for portable tools and toolchains; blank uses the default." },
-    { id: "help-env-progress", title: "安装进度",
-      zh: "显示当前组件的安装输出。",
-      en: "Installer output for the current component." },
-  ]},
-  { title: "监听", items: [
-    { id: "help-usb-local", title: "本机 USB 抓包",
-      zh: "在「监听 → 本机」选择设备节点，然后点开始抓包。KDock 会调用 USBPcap 被动记录该设备的 IN/OUT 传输。\n### 常用操作\n- 开始抓包：会弹一次 UAC；抓包驱动需要管理员权限。\n- 停止抓包：已经收到的数据会保留。\n- 只看控制传输：只显示 ctl，适合看枚举、RNDIS 握手和厂商控制请求。\n- 完整数据：关闭时每行最多 128 字节；打开后显示并保存完整 HEX/ASCII。\n### 注意\n- 设备下拉显示地址、VID:PID、COM 和名称；默认自动选 COM 对应的节点。\n- 选「全部设备」会混入鼠标、键盘、Hub 等其它设备的流量。",
-      en: "In Monitor → Local, pick a device node and start capture. KDock passively records that device's IN/OUT transfers through USBPcap.\n### Common actions\n- Start capture: one UAC prompt is raised because the capture driver needs administrator rights.\n- Stop capture: records already received are kept.\n- Control only: show ctl transfers only; useful for enumeration, RNDIS handshakes and vendor control requests.\n- Full data: when off, each row shows at most 128 bytes; when on, full HEX/ASCII is displayed and saved.\n### Notes\n- The device list shows address, VID:PID, COM and name; the COM device is selected by default.\n- All devices also includes mouse, keyboard, hubs and other traffic." },
-    { id: "help-usb-columns", title: "怎么看一行数据",
-      zh: "### 列含义\n- 序号：从 1 递增，清空后重新计数。\n- 时间：USBPcap 捕获到的本地时间，精确到毫秒。\n- EPn：端点号；原始端点地址（例如 0x82）可在悬停提示里看到。\n- IN/OUT：OUT 是主机发往设备，IN 是设备返回主机。\n- ✓/✕：✓ 表示 status=0；✕ 时悬停可看错误码。\n- HEX/ASCII：载荷原始字节及可打印字符。\n- 控制传输右侧会显示 setup 字段。\n### 技巧\n- 只看控制传输，先判断设备枚举是否成功。\n- 大包先关完整数据看流量，再打开完整数据核对内容。",
-      en: "### Meaning\n- No.: starts at 1 and resets after Clear.\n- Time: local capture time in milliseconds.\n- EPn: endpoint number; hover to see the raw endpoint address (for example 0x82).\n- IN/OUT: OUT goes from host to device; IN comes back from the device.\n- ✓/✕: ✓ means status 0; hover over ✕ to see the error code.\n- HEX/ASCII: raw payload bytes and printable characters.\n- Control transfers show their setup fields on the right.\n### Tips\n- Use Control only to check whether enumeration succeeded.\n- For large packets, turn Full data off while scanning and on when inspecting the payload." },
-    { id: "help-usb-manager", title: "设备管理器",
-      zh: "右侧列出串口、Hub 端口树和 SetupAPI 设备。\n- COM：串口设备带 COM 标签；蓝牙、HID、Hub、存储、网络、调试器等也会显示类型标签。\n- 管理员读取：读取 Hub 端口和描述符需要 UAC；主程序不会因此提权。\n- 重新扫描：重新枚举当前设备。\n- 点击设备或端口会高亮，方便和抓包目标对照。",
-      en: "The right panel lists serial ports, the hub port tree and SetupAPI devices.\n- COM: serial devices get a COM tag; Bluetooth, HID, hubs, storage, network and debug probes also get type tags.\n- Read as admin: reading hub ports and descriptors raises UAC; the main app stays unelevated.\n- Rescan: enumerate the current devices again.\n- Clicking a device or port highlights it so you can compare it with the capture target." },
-    { id: "help-usb-network", title: "网络抓包",
-      zh: "「监听 → 网络」使用 tshark。\n- 选择网卡后开始抓包。\n- 表格显示时间、源、目的、协议、长度和信息。\n- 与本机 USB 共用自动滚动、清空和保存。\n- 需要先安装 tshark / Npcap，可在环境配置里一键安装。",
-      en: "Monitor → Network uses tshark.\n- Pick an interface and start capture.\n- The table shows time, source, destination, protocol, length and info.\n- Auto-scroll, Clear and Save are shared with local USB capture.\n- Install tshark / Npcap first; Environment setup has a one-click installer." },
-    { id: "help-usb-save", title: "清空与保存",
-      zh: "「清空」只清当前来源的记录；「保存…」把当前来源的记录导出为文本。完整数据打开时导出完整 HEX/ASCII，关闭时按每行限制截断。",
-      en: "Clear removes records from the active source only; Save exports the active source as text. With Full data on, the export contains complete HEX/ASCII; with it off, each row is truncated to the display limit." },
-    { id: "help-usb-trouble", title: "抓不到数据怎么办",
-      zh: "- 确认 USBPcap 已安装，并且安装后重启过。\n- 确认选中的确实是对应设备节点；重新插拔后地址会变化。\n- 换一个设备或端口测试，确认设备本身有流量。\n- 查看 %TEMP% 下的 kdock-usbpcap-*.err；常见原因是根 Hub 被另一个抓包进程占用。\n- 选「全部设备」流量会很大，分析时优先选具体设备。",
-      en: "- Make sure USBPcap is installed and the machine has been rebooted since installation.\n- Make sure the selected node really is the target; addresses change after replugging.\n- Test another device or port to confirm traffic exists.\n- Check kdock-usbpcap-*.err under %TEMP%; a common cause is another capture process holding the root hub.\n- All devices produces a lot of traffic; select a specific device for analysis." },
-  ]},  { title: "其它页面", items: [
-    { id: "help-chart-main", title: "图表",
-      zh: "把串口数据画成实时曲线；在下方选择通道。",
-      en: "Plot serial data live; choose channels below." },
-    { id: "help-chart-channels", title: "通道",
-      zh: "选择要显示的数据列和颜色。",
-      en: "Choose the data columns and colors to show." },
-    { id: "help-seq-links", title: "中控连接",
-      zh: "给编排步骤准备主连接、中控连接或临时连接。",
-      en: "Prepare main, flow or ad-hoc links for steps." },
-    { id: "help-seq-node", title: "选中节点",
-      zh: "编辑当前节点的连接、内容、延时与等待条件。",
-      en: "Edit the selected node's link, payload, delay and wait condition." },
-    { id: "help-seq-file", title: "编排文件",
-      zh: "导入或导出编排 JSON，也可以清空画布。",
-      en: "Import or export flow JSON, or clear the canvas." },
-    { id: "help-scope-connect", title: "示波器连接",
-      zh: "填写示波器地址与 SCPI 端口后连接。",
-      en: "Enter the scope address and SCPI port, then connect." },
-    { id: "help-scope-status", title: "机器状态",
-      zh: "显示示波器型号、固件和当前状态。",
-      en: "Scope model, firmware and current state." },
-    { id: "help-scope-channels", title: "通道",
-      zh: "开关通道并设置耦合、档位与偏移。",
-      en: "Enable channels and set coupling, scale and offset." },
-    { id: "help-scope-measure", title: "自动测量",
-      zh: "读取当前通道的幅值、频率、周期等测量值。",
-      en: "Read amplitude, frequency, period and other measurements." },
-    { id: "help-scope-timebase", title: "时基 / 触发",
-      zh: "设置时间范围、触发源、电平与模式。",
-      en: "Set the timebase, trigger source, level and mode." },
-    { id: "help-scope-scpi", title: "SCPI",
-      zh: "直接发送任意 SCPI 指令。",
-      en: "Send any SCPI command directly." },
-    { id: "help-capture-source", title: "来源",
-      zh: "选择本机桌面、VNC、RTSP、RTMP 或 H.264 输入。",
-      en: "Choose the local desktop, VNC, RTSP, RTMP or H.264 input." },
-    { id: "help-capture-view", title: "画面",
-      zh: "设置帧率、画质、缩放与解码尺寸。",
-      en: "Set frame rate, quality, scale and decode size." },
-    { id: "help-logic-source", title: "数据来源",
-      zh: "读取示例、VCD、CSV 或原始二进制采样。",
-      en: "Load the sample, VCD, CSV or raw binary capture." },
-    { id: "help-logic-decoder", title: "解码器",
-      zh: "给选中的通道添加协议解码。",
-      en: "Add protocol decoders to selected channels." },
-    { id: "help-logic-measure", title: "测量",
-      zh: "查看当前视图窗口与选中通道的频率、占空比和脉宽。",
-      en: "Frequency, duty cycle and pulse widths for the current view and channel." },
-    { id: "help-batch-main", title: "批量文本",
-      zh: "逐行处理文本，并可把结果逐行发到串口。",
-      en: "Process text line by line and send the result over serial." },
-    { id: "help-calc-history", title: "历史记录",
-      zh: "保存计算历史，可标记、复用或清空。",
-      en: "Keep calculation history for reuse, marking or clearing." },
-    { id: "help-calc-bases", title: "各进制一览",
-      zh: "同时查看当前值的十进制、十六进制、八进制和二进制。",
-      en: "See the current value in decimal, hex, octal and binary." },
-    { id: "help-datacalc-main", title: "数据计算",
-      zh: "校验、浮点、进制字节序以及 AES / RSA 工具。",
-      en: "Checksums, floating point, byte order and AES / RSA tools." },
-    { id: "help-datacalc-help", title: "说明",
-      zh: "各输入框的格式与结果含义，都在对应分组里。",
-      en: "Input formats and result meanings follow the matching group above." },
-    { id: "help-debug-gdb", title: "GDB",
-      zh: "连接 GDB，并在这里查看与发送调试命令。",
-      en: "Connect GDB and send debug commands here." },
-    { id: "help-debug-server", title: "GDB Server",
-      zh: "启动 openocd、J-Link GDB Server 或 pyocd，给 GDB 提供调试端口。",
-      en: "Run openocd, J-Link GDB Server or pyocd to provide GDB's debug port." },
-    { id: "help-debug-firmware", title: "固件 / 运行控制",
-      zh: "载入 ELF，并继续、暂停、单步、复位目标。",
-      en: "Load an ELF and continue, pause, step or reset the target." },
-  ]},
-];
+const HELP_GROUPS = HELP_GROUPS_CONTENT;
 
 const HELP_HEADING_MAP = {
   link: { "从这里开始": "help-transfer-start", "统计": "help-transfer-stats", "快捷发送": "help-transfer-quick" },
@@ -7615,8 +7400,9 @@ const HELP_HEADING_MAP = {
   capture: { "来源": "help-capture-source", "画面": "help-capture-view" },
   logic: { "数据来源": "help-logic-source", "解码器": "help-logic-decoder", "测量": "help-logic-measure" },
   usb: { "本机 USB": "help-usb-local", "网络": "help-usb-network", "设备管理器": "help-usb-manager" },
+  runtime: { "分析目标": "help-runtime-start", "显示策略": "help-runtime-mode", "链路分析": "help-runtime-chain", "选中函数": "help-runtime-mode" },
   calc: { "历史记录": "help-calc-history", "各进制一览": "help-calc-bases" },
-  datacalc: { "串口常用换算": "help-datacalc-main", "说明": "help-datacalc-help" },
+  datacalc: { "串口常用换算": "help-datacalc-main", "说明": "help-datacalc-main" },
   debug: { "GDB Server": "help-debug-server", "固件 / 运行控制": "help-debug-firmware", "GDB": "help-debug-gdb" },
 };
 
@@ -7757,7 +7543,9 @@ function showHelpItem(id) {
     if (line.startsWith("### ")) {
       ul = null;
       const h3 = document.createElement("h3");
-      h3.textContent = line.slice(4);
+      const heading = line.slice(4);
+      h3.textContent = heading;
+      if (/^(联动|Relationships?|Relationship)$/i.test(heading)) h3.classList.add("help-related");
       body.appendChild(h3);
     } else if (line.startsWith("- ")) {
       if (!ul) { ul = document.createElement("ul"); body.appendChild(ul); }
@@ -7776,10 +7564,13 @@ function showHelpItem(id) {
 }
 
 function openHelp(anchor) {
-  const id = anchor || HELP_PAGE_ROOT[helpCurrentPage()] || "help-work";
   const m = $("help-modal");
   if (!m) return;
   const sm = $("settings-modal");
+  const settingsPane = sm && !sm.hidden
+    ? (sm.querySelector(".modaltab.active")?.dataset.set || "general")
+    : "";
+  const id = anchor || HELP_SETTINGS_ROOT[settingsPane] || HELP_PAGE_ROOT[helpCurrentPage()] || "help-work";
   if (sm && !sm.hidden) closeSettings();
   m.hidden = false;
   buildHelpNav();
@@ -7799,11 +7590,11 @@ function bindHelp() {
   const close = $("help-close");
   if (close) close.onclick = closeHelp;
   m.addEventListener("click", (e) => { if (e.target === m) closeHelp(); });
-  if ($("set-help-open")) $("set-help-open").onclick = () => openHelp(HELP_PAGE_ROOT[helpCurrentPage()]);
+  if ($("set-help-open")) $("set-help-open").onclick = () => openHelp();
   document.addEventListener("keydown", (e) => {
     if (e.key === "F1") {
       e.preventDefault();
-      openHelp(HELP_PAGE_ROOT[helpCurrentPage()]);
+      openHelp();
     } else if (e.key === "Escape" && !m.hidden) {
       e.preventDefault();
       closeHelp();
