@@ -7,11 +7,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  # Persistent cargo cache outside the checkout, so that
-  # actions/checkout's `git clean -ffdx` cannot wipe it.
-  CARGO_TARGET_DIR: D:/CI/cargo-target/kdock
-
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -20,7 +15,41 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    # The self-hosted build machine has Windows Application Control enabled and
+    # rejects newly built, unsigned test executables with os error 4551. Run all
+    # code-executing checks on an ephemeral GitHub-hosted runner instead.
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        run: |
+          rustc --version
+          cargo --version
+          node --version
+          npm --version
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Test kdock-core
+        run: cargo test -p kdock-core --locked
+
+      - name: Check workspace
+        run: cargo check --workspace --locked
+
   build:
+    needs: verify
     # The runner is a physical machine, so never execute code coming from a fork.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [ self-hosted, windows, kdock ]
@@ -28,6 +57,10 @@ jobs:
     permissions:
       contents: write
     timeout-minutes: 60
+    env:
+      # Persistent cargo cache outside the checkout, so that
+      # actions/checkout's `git clean -ffdx` cannot wipe it.
+      CARGO_TARGET_DIR: D:/CI/cargo-target/kdock
     defaults:
       run:
         shell: pwsh
@@ -67,12 +100,6 @@ jobs:
 
       - name: Build frontend
         run: npm run build
-
-      - name: Test kdock-core
-        run: cargo test -p kdock-core --locked
-
-      - name: Check workspace
-        run: cargo check --workspace --locked
 
       - name: Build portable firmware analyzer
         run: |
