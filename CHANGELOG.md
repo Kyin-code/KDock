@@ -18,6 +18,10 @@
 ## [未发布]
 
 ### 新增
+- **README / 许可 / 翻译收尾**：README 中英文重写为目录、能力、协作、下载、编译、展示图与
+  开源说明的短文档；删除旧功能截图，改为 4 张最新界面展示图。补齐运行结构内部图标与
+  中英文界面文案，并将 pybingraph 及其 LICENSE/NOTICE、angr/PyVEX 边界和实际
+  **78 个 Python distributions** 写进 README、NOTICE 与第三方清单。
 - **二级菜单图标统一重做**：左导航 21 个入口全部改为 24×24 网格、1.8px 描边的
   内联 SVG 线性图标，统一尺寸、线帽和活动态；新建工作区、窄栏展开按钮也同步替换，
   不再混用 `⇄ / ⌘ / ⎔ / ✦` 等字体符号。
@@ -40,7 +44,7 @@
 - **ELF / PE / 裸机 BIN**：支持 ELF、AXF/OUT/PE 与 raw BIN；裸机 BIN 可填写加载基址、
   架构、入口和 Cortex-M 向量表地址，基址/入口/向量表参数会真正传入 angr。
 - **便携固件分析器**：新增 `tools/bingraph` 构建链，打包 Python 3.13.13 embeddable、
-  pybingraph 0.2.5、angr 10.0.4 和 77 个锁定 Python 依赖。正式包与便携 ZIP 自带
+  pybingraph 0.2.5、angr 10.0.4 和 78 个锁定 Python distributions。正式包与便携 ZIP 自带
   `resources/bingraph`，KDock 自动启动；用户不需要系统 Python、`uv` 或 Graphviz。
 - **环境配置一键准备 / 修复**：环境配置页新增便携分析器状态检测和“准备 / 更新”按钮；
   有 `uv` 用 `uv`，没有则用官方 `get-pip.py` 引导 pip，再按锁定清单安装，适配不同用户的
@@ -48,7 +52,7 @@
 - **分析器进程与端口管理**：Rust 侧随机选择 `127.0.0.1` 空闲端口，45 秒启动等待、
   180 秒分析超时，支持 HTTP chunked 响应解析；KDock 退出或强制结束会回收整棵 Python 进程树。
 - **文档与许可证补齐**：新增 `docs/10-固件运行结构分析器.md`（功能、架构、范围语义、ELF/BIN、
-  自动布局、安全边界、常见问题、回归基线）；新增 77 项 Python 依赖的
+  自动布局、安全边界、常见问题、回归基线）；新增 78 项 Python distributions 的
   `tools/bingraph/THIRD_PARTY_NOTICES.md`，并在 `NOTICE` 中明确 Python / pybingraph / angr /
   Cytoscape / LibVEX GPL 边界。
 - **统一进程树回收**：Windows 上所有外部子进程（ADB server、tshark、USBPcap、sigrok、

@@ -9,7 +9,7 @@ import "uplot/dist/uPlot.min.css";
 // 两个纯本地工具页（批量文本 / 计算器）——单独成文件，免得 main.js 再长下去
 import { initBatch, initCalc } from "./tools-batch-calc.js";
 import { initLogic, laAgentState, laAgentRead, laAgentDecoders, laAgentConfig, laAgentCapture, laAgentSave } from "./logic-analyzer.js";
-import { HELP_GROUPS as HELP_GROUPS_CONTENT } from "./help-content.js";
+import { HELP_GROUPS as HELP_GROUPS_CONTENT, HELP_TITLE_EN } from "./help-content.js";
 
 const $ = (id) => document.getElementById(id);
 window.kdockToast = (text) => toast(text);
@@ -7415,7 +7415,7 @@ const helpItemById = new Map(HELP_GROUPS.flatMap((g) => g.items.map((it) => [it.
 let helpCurrent = "help-work";
 
 function helpLang() { return LANG === "en" ? "en" : "zh"; }
-function helpTitle(it) { return helpLang() === "en" ? (it.enTitle || en(it.title)) : it.title; }
+function helpTitle(it) { return helpLang() === "en" ? (it.enTitle || HELP_TITLE_EN[it.title] || en(it.title)) : it.title; }
 function helpText(it) { return helpLang() === "en" ? it.en : it.zh; }
 
 function helpPageOf(el) {
@@ -10819,6 +10819,8 @@ const TOOL_DESC_EN = {
   history_search: "Search this session's raw log by keyword (including parts already compacted away).",
   ui_show_text: "Show a block of text in the Text pane on the right.",
   ui_goto: "Switch the UI to a page (transfer/upgrade/flash/files/runtime/chart/flow/capture/scope).",
+  runtime_graph_analyze: "Analyze a local ELF/PE/AXF/OUT/BIN firmware and cache its function/call graph for the Agent. BIN requires a load base and architecture; files are not uploaded.",
+  runtime_graph_query: "Query the last analyzed runtime graph by function name or address. Returns calls, callers, call sites, block counts and interrupt metadata.",
   flow_run: "Run the flow (the current canvas when no graph is given).",
   flow_status: "Check flow progress / the tail of its log.",
   flow_stop: "Stop the running flow.",
@@ -11973,6 +11975,29 @@ const EN = {
   "导入 JSON": "Import JSON", "导出 JSON": "Export JSON", "清空画布": "Clear canvas",
   "加节点": "Add node", "步骤": "Step", "延时": "Delay", "条件": "Branch", "结束": "End",
   "失败结束": "Fail", "示例": "Example", "整理": "Tidy", "适应": "Fit", "运行": "Run",
+  "查找": "Find", "展开一层": "Expand one layer", "收起叶子": "Collapse leaves",
+  "分析运行结构": "Analyze runtime", "选择固件": "Select firmware",
+  "用选中函数拉链路": "Draw chain from selection", "返回全固件": "Back to full firmware",
+  "选择 ELF / BIN…": "Select ELF / BIN…", "分析目标": "Analysis target",
+  "全固件函数": "Full firmware", "main 运行链": "main runtime chain", "函数调用链路": "Call chain",
+  "运行结构": "Runtime graph",
+  "向下调用": "Downstream calls", "向上调用者": "Upstream callers", "双向": "Both directions",
+  "深度": "Depth", "1 层": "1 level", "2 层": "2 levels", "3 层": "3 levels",
+  "5 层": "5 levels", "8 层": "8 levels", "选择一个固件，查看运行结构": "Select firmware to inspect runtime structure",
+  "全固件函数一览、main 调用链、中断作用域和单函数链路；库函数自动折叠。": "Full-firmware functions, main runtime chains, interrupt scopes and focused call chains; libraries are summarized.",
+  "滚轮缩放 · 拖动画布 · 点击函数看详情 / 展开 CFG / 拉链路": "Wheel to zoom · drag to pan · select a function for details / CFG / call chain",
+  "分析日志": "Analysis log", "分析器": "Analyzer", "BIN 参数": "BIN parameters",
+  "裸机 BIN 必须填写": "Required for bare-metal BIN", "基址": "Base address", "架构": "Architecture",
+  "入口": "Entry", "向量表": "Vector table",
+  "BIN 没有符号表时无法可靠找到 main。优先使用 ELF；只有 BIN 时请在符号表中按地址查看 CFG。": "BIN without symbols cannot reliably locate main. Prefer ELF; for BIN, inspect CFG by address.",
+  "分析范围": "Scope", "布局": "Layout", "按调用分层": "Layered by calls", "紧凑网格": "Compact grid",
+  "库过滤": "Library filter", "折叠为汇总节点": "Summarize libraries", "完全隐藏": "Hide libraries",
+  "全部显示": "Show all", "连线": "Edges", "全部调用线": "All call edges",
+  "仅选中节点": "Selected node only", "不画线": "No edges",
+  "在全固件或运行链里点一个函数，再点下面的按钮。只用这一条链路时，画布不会被上千个无关函数淹没。": "Select a function in Full firmware or Runtime chain, then draw its chain. Only related nodes remain on the canvas.",
+  "函数": "Function", "调用点": "Call sites", "定位画布": "Center on canvas",
+  "展开 CFG": "Open CFG", "拉这条链路": "Draw this chain",
+  "未分析": "Not analyzed", "在中间点一个函数，这里显示地址、大小和调用点。": "Select a function on the canvas to inspect address, size and call sites.",
   "运行日志": "Run log", "节点": "Node",
   "图表": "Chart", "数据源": "Source", "通道": "Channels", "采样": "Sample",
   "捕获": "Capture", "显示器": "Monitor", "帧率": "FPS", "画质": "Quality",

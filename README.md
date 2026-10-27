@@ -4,13 +4,12 @@
 
 # KDock
 
-**面向嵌入式开发的桌面工作台：串口 / 网络调试 · 固件升级(OTA) · 烧录 · 设备文件 · 会自己动手的 AI 助手**
+**嵌入式调试工作台 + 可调用全部工具的 Agent**
 
-串口与网络收发、命令速查、固件打包/升级/烧录、固件运行结构、设备文件读写、实时图表、时序编排，
-外加一个能直接调这些能力的 Agent —— 全部在一个窗口里。
+串口、网络、烧录、设备、固件分析、仪器与流程编排，集中在一个桌面窗口。
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
 ![Rust](https://img.shields.io/badge/Rust-1.80%2B-orange)
 
@@ -20,501 +19,122 @@
 
 ---
 
-## 下载（测试版）
-
-> ⚠️ **目前只有自动构建的测试版，没有正式版。** 它跟着 `main` 分支走：可能崩溃、可能改你的配置，
-> 请先备份，不要用在生产环境。
-
-**[⬇ 最新测试版](https://github.com/Kyin-code/KDock/releases/tag/test-latest)** —— `main` 上每有新提交
-CI 就会重建一次，这个链接永远指向最新那份，GitHub 上标着 **Pre-release**。
-（[全部 Release](https://github.com/Kyin-code/KDock/releases)）
-
-里面有三个包，按需要挑一个：
-
-| 文件 | 说明 |
-| --- | --- |
-| `KDock-*-win-x64.zip` | **免安装**：解压后双击 `KDock.exe` |
-| `KDock_*_x64-setup.exe` | **安装包**（NSIS）：装到当前用户、开始菜单有入口、可从"应用和功能"卸载 |
-| `kdock.exe` | 裸可执行文件 |
-
-- 程序**没做代码签名**：首次运行 Windows 可能弹 SmartScreen，点「更多信息 → 仍要运行」即可；
-- 需要 **WebView2 Runtime**（Win10/11 一般自带；缺了程序启动时会引导你安装）；
-- 目前只构建 Windows x64 的包。
-
----
-
 ## 目录
 
-- [它能做什么](#它能做什么)
-- [下载（测试版）](#下载测试版)
-- [截图](#截图)
-- [快速开始](#快速开始)
-- [界面速览](#界面速览)
-- [示波器](#示波器)
-- [逻辑分析仪](#逻辑分析仪)
-- [环境配置](#环境配置)
-- [Agent 使用说明](#agent-使用说明)
-- [协议与算法文档](#协议与算法文档)
-- [从源码构建](#从源码构建)
-- [目录结构](#目录结构)
-- [常见问题](#常见问题)
-- [开源协议与致谢](#开源协议与致谢)
-- [版本管理](#版本管理)
+- [下载与运行](#下载与运行)
+- [能做什么](#能做什么)
+- [如何协作](#如何协作)
+- [从源码编译](#从源码编译)
+- [界面展示](#界面展示)
+- [项目目录](#项目目录)
+- [开源依赖与许可](#开源依赖与许可)
+- [文档](#文档)
 
-## 它能做什么
+## 下载与运行
 
-| 分类 | 能力 |
-| --- | --- |
-| **传输** | 串口（全参数组合）、TCP/UDP 客户端与服务器、SSH、HEX/文本双模式、行尾处理、编码切换、会话日志与回放、ANSI 终端渲染、快捷发送 |
-| **调试辅助** | 命令表速查、批量文本、计算器（32 位控制板 / IEEE 754 / 文件校验）、数据计算（进制与字节序 / AES / RSA / 视频带宽） |
-| **监听 / 设备** | USBPcap 原始 USB 传输与设备树诊断、tshark 网络抓包、ADB 设备 / shell / 推拉 / APK / 投屏、VNC 与 RTSP/RTMP 远程画面 |
-| **固件** | `.fw` 解析与校验、串口在线升级（YMODEM）、网口在线升级（服务通道）、HTTP 固件清单、设备文件传输 |
-| **运行结构** | ELF/PE/BIN 全固件函数一览、main 调用树、中断作用域、单函数上下游链路（方向 / 深度可调）、真实调用点、库函数自动汇总、重复边合并、自动分层整理、单函数 CFG |
-| **烧录** | 调用 OpenOCD / J-Link / STM32CubeProgrammer 完成烧录、擦除、校验、复位 |
-| **环境配置** | 只读扫描并安装 60+ 项驱动 / 工具链（串口、调试器、Arm GCC、Rust、LVGL、MQTT、CAN、网络工具等）；便携固件分析器一键检测与修复 |
-| **网络文件** | FTP / FTPS / TFTP 客户端，内置 TFTP 服务端，远程目录浏览与上传下载 |
-| **可视化** | 实时图表、屏幕捕获、RIGOL DS1000Z 示波器、逻辑分析仪（19 种协议解码 / VCD·CSV·原始二进制导入 / sigrok 真机采集） |
-| **中控编排** | 把本机命令 / TCP / UDP / 串口串成带条件分支、等待与超时的时序流程 |
-| **AI Agent** | OpenAI 兼容 / Anthropic 供应商、思考强度、技能与常驻技能、MCP、会话隔离、上下文压缩、权限审批、工作区读写与测试、计划 / 子任务、模型指纹与花费统计 |
-## 截图
+目前只有跟随 `main` 自动构建的 **Pre-release 测试版**：
 
-**传输页：串口 / 网络收发 + HEX 视图 + 会话日志**
+**[下载最新测试版](https://github.com/Kyin-code/KDock/releases/tag/test-latest)**
 
-![传输页](docs/images/01-transfer.png)
+- `KDock-*-win-x64.zip`：免安装，解压后运行 `KDock.exe`
+- `KDock_*_x64-setup.exe`：NSIS 安装包
+- `kdock.exe`：裸可执行文件
 
-**命令表：标准 Linux 命令速查，点一下填进发送框**
+需要 Windows x64 和 WebView2 Runtime。程序未签名，首次运行可能触发 SmartScreen；
+测试版可能改配置或崩溃，请先备份。
 
-![命令表](docs/images/02-commands.png)
+## 能做什么
 
-**Agent：对话式调试助手，能直接读写设备、升级、烧录**
+- **连接**：串口、TCP/UDP、SSH、USBPcap、tshark。
+- **设备**：`.fw` 升级、OpenOCD/J-Link、设备文件、FTP/FTPS/TFTP、ADB。
+- **分析**：ELF/BIN 运行结构、调用链、CFG、逻辑分析仪。
+- **工具**：示波器、命令表、实时图表、批量文本、计算器、中控编排。
+- **Agent**：对话、技能、MCP、工作区、权限审批与设备分析。
 
-![Agent](docs/images/03-agent.png)
+## 如何协作
 
-**批量文本：多行去重/排序/转格式，按间隔逐行发到串口**
+- **Agent**：描述目标，由 Agent 调用工具并按权限请求确认。
+- **自动化**：用工作流、`AGENTS.md`、技能和 MCP 固化操作与项目规范。
+- **开发**：提交 Issue / PR；合并前通过 `cargo test --workspace --locked` 和 `npm run build`。
 
-![批量文本](docs/images/04-batch-text.png)
+## 从源码编译
 
-**计算器：C 风格表达式 + 传统键盘 + 32 位控制板 + 文件校验**
-
-![计算器](docs/images/05-calculator.png)
-
-**示波器：RIGOL DS1000Z 系（SCPI over TCP）—— 状态 / 自动测量 / 多通道波形 / 截屏**
-
-![示波器](docs/images/06-scope.png)
-
-**示波器页里的波形图：多通道叠加、悬停读数值（这条是 CH2 上的 1 kHz 方波）**
-
-![示波器波形](docs/images/06-scope-waveform.png)
-
-**Agent 信息页：技能与 MCP 开关、上下文成分、缓存命中与花费；技能由 agent 自己按需读取**
-
-![技能与 MCP](docs/images/07-skills.png)
-
-## 快速开始
-
-1. 打开 **传输** 页，选串口、TCP/UDP 或 SSH，点「连接」；
-2. 发送框里写内容，`Enter` 发送、`Shift+Enter` 换行；HEX 形如 `41 54 0D 0A`；
-3. 想升级固件：**固件升级** 页 → 选本地 `.fw` 或填服务器地址 → 选串口/网口通道 → 开始；
-4. 想烧片：**烧录** 页 → 选工具与型号 → 选文件 → 烧录；
-5. 想管理设备：**文件管理** 走串口 / 网口 / FTP / FTPS / TFTP，**ADB** 页管安卓设备；
-6. 想要个帮手：**Agent** 页 → 在设置里配一个供应商（OpenAI 兼容或 Anthropic）和 API Key → 直接说需求。
-
-## 界面速览
-
-### 传输
-
-- 串口参数（波特率/数据位/停止位/校验/流控）与网络参数都在右栏；连接状态在标题栏与状态点；
-- 输出区支持 HEX/文本切换、时间戳、发送/接收着色、暂停与回看、导出会话日志；
-- 「终端模式」把设备发出的 ANSI 序列渲染出来（退格、重绘、光标移动），像终端一样用；
-- 快捷发送可以自己加常用命令。
-
-### 命令表
-
-标准 Linux 命令速查，按「文件 / 文本 / 系统 / 网络 / 权限」分组，带参数模板；
-点命令名填进发送框，点 `▶` 直接发。搜索框支持命令名与说明。
-
-### 固件升级
-
-- **包**：`.fw` = 64 字节包头（magic / 版本 / payload CRC / 包头 CRC / 板卡名）+ 镜像；
-- **通道**：串口（设备端 YMODEM 在线升级）或网口（服务端口按偏移写 + 校验 + 打升级标记 + 复位）；
-- **来源**：本地文件，或 HTTP 服务器的版本清单（自动按版本排序、下载后自检 CRC）；
-- 每一步都有明确进度与"卡在哪一步"的人话报错。
-
-### 烧录
-
-界面只负责拼命令行并把输出实时回显；支持 OpenOCD / J-Link / STM32CubeProgrammer，
-工具路径、适配器、型号、速度这些填一次就记住。适合首件、救砖、产线。
-
-### 文件管理 / 监听 / ADB / 网络文件
-
-- **文件管理**：设备目录、取回/下发、CRC 核对；串口走 `base64`，网口走服务通道。网络文件支持 FTP / FTPS / TFTP，页内也能起 TFTP 服务端；
-- **监听**：本机 USB 走 USBPcap（传输表、设备树、端口、描述符、热插拔），网络走 tshark（源/目的/协议/长度/信息），两路都支持暂停、清空、保存；
-- **ADB**：已配对无线设备、连接/配对、shell、推拉、APK 安装卸载、截图、内嵌投屏和 scrcpy；
-- **远程画面**：VNC（含键鼠回传）与 RTSP / RTMP / H.264（FFmpeg 解码）画面。
-
-### 数据计算
-
-计算器之外还有独立的 **数据计算** 页：文件校验（CRC16/CRC32/MD5/SHA-1/SHA-256）、IEEE 754、进制与大小端、AES-GCM/CBC、RSA-OAEP/签名验签，以及 **视频带宽计算**（CVT / CVT-RB / CVT-RBv2 / DMT / CTA-861，逐接口判定 DP / USB-C DP Alt / HDMI）。
-
-### 实时图表 / 屏幕捕获 / 示波器 / 中控编排
-
-- 设备按 `1.23,4.56,7.89` 每行发一串数字，图表自动分通道画曲线；
-- 屏幕捕获用系统桌面复制抓帧，参数可调；
-- **示波器**支持普源（RIGOL）DS1000Z 系，详见下面单独一节；
-- **逻辑分析仪**：看波形 + 解协议（19 种：UART · SPI · I2C · CAN · 1-Wire · DS18B20 · DHT · PS/2 · NEC 红外 · I2S · JTAG · SWD · Modbus · LIN · DMX512 · Manchester · 差分 Manchester · Miller · PWM），详见下面单独一节；
-- 中控编排把多路连接串成流程，支持条件分支、超时、等待与日志。
-
-### 批量文本 / 计算器
-
-- **批量文本**：多行去重/排序/加前后缀/加行号、转 HEX 数组 / HEX 串 / JSON / CSV / C 数组、
-  搜索替换（Ctrl+F，支持全词、模糊、正则）、JSON 格式化、正则批量处理、大小写与缩进整理（选区优先）、
-  按间隔逐行发到串口；
-- **计算器**：C 风格表达式（`0x/0b/0o`、`<< >> & | ~ % **`，手写解析不用 eval）、传统键盘、
-  **32 位控制板**（点任意一位即改并反馈到计算区）、IEEE 754 浮点↔位（含符号/阶码/尾数拆解）、
-  进制换算、**文件校验**（CRC32 / CRC16-CCITT / CRC16-MODBUS / MD5 / SHA1 / SHA256，可只算某一段）。
-
-### 窄窗口 / 高 DPI
-
-平时很少全屏，窗口小、或者系统缩放一大，CSS 像素就那么点。所以界面按"还放不放得下"分四级往下收，
-每一级都留了回头路：
-
-| 窗口宽度 | 收什么 | 从哪找回来 |
-| --- | --- | --- |
-| ≤1120 | 标题栏品牌文字；五个菜单折进「☰」（一次列全，分两栏可滚） | 点「☰」 |
-| ≤980 | 中间那个"当前页名"；右栏参数区整行挪到工作区下面 | 左导航已经高亮当前页 |
-| ≤860 | 标题栏主题按钮；左导航变纯图标条（分组标题 / 功能文字 / 工作区 / 会话都收起） | 导航顶部「☰」临时展开；主题在 设置 → 主题与配色 |
-| ≤720 | 标题栏语言、设置；连接状态缩成一个点（悬停看全文） | 设置弹窗里有语言与主题；导航底部也有「设置」 |
-
-参数区随时可以用标题栏那个「▭」折叠 / 展开（宽窗折掉中栏立刻变宽，窄窗折掉下面那一整行），
-导航的展开状态和参数区的折叠状态都记在本地。
-
-**传输页在这一档还会再省一层**（小窗口里那两行工具最占地）：
-
-- 中间：显示 / 行尾 / 历史 / 循环 / 清屏 / 时间戳 / 序号 / 方向 / 更多 那一整行收掉；
-  "发送"那一行只留「文本 / HEX」开关贴在输入框左边，发送照旧 **Enter**；
-- 右栏（已经挪到下面那条）：压成**一行** —— 方式 / 串口 / 波特率 / 自定义 / 连接·断开；
-  统计、快捷发送、高级参数收起来；760px 以下连标签也收掉（控件都有悬停提示）；
-- 收起来的东西都在**标题栏菜单**里找得到：清屏 / 复制 / 暂停 / 自动滚动 / ASCII 交互，以及
-  时间戳 / 行号 / 方向标记 / 显示用 HEX / 发送用 HEX。窗口拉宽就全部回来。
-- 窄窗下连"自定义波特率"也收掉（要特殊波特率把窗口拉宽，或用标题栏「▭」看宽屏布局）。
-
-**升级页 / 烧录页**在这一档同样把参数区压平（一到三行）：
-
-- 升级 = 方式 / 端口 / 波特率 / 来源 / 文件 / 版本 / 连接·断开 / 升级；
-- 烧录 = 工具 / 适配器 / 接口 / 速度 / 目标芯片 / 器件库 / 文件 / 路径 / 地址 / 擦除·烧录·校验·复位；
-- 分组标题、长提示、命令预览、烧录工具路径全部收起；760px 以下连标签一起收。
-
-**计算器**在窄窗只留"基本计算器 + 进制/标记 + 8 位位板"：
-
-- 位运算那一行（`<< >> AND OR XOR NOT`）、x² / xʸ / x³ / 1⁄x / n! / √ / MOD / 字节交换、
-  位板的移位·循环·全反 收起（53 键 → 35 键）——这些在「算式」输入框里照样能打（`<< >> & | ^ ~ ** %`）；
-- 32 位板缩成 8 位（只留最低字节，位号 7..0），点单个位照样改值。
-
-> 示波器 / 逻辑分析仪 / 屏幕捕获**没有做这套降级** —— 它们不会在小窗口里用。
-
-**另外几页在窄窗下还各收了一点**：
-
-- **传输 / 固件升级**（共用中间那张面板）：发送那一行整个收掉（连「文本 / HEX」都不留），输入框占满整行；
-  要切 HEX 发送走标题栏「编辑」菜单（窄窗菜单在 ☰ 里）；
-- **文件管理**：参数区跟升级/烧录一样压平成一到三行（分组标题、长提示收起，760px 以下连标签一起收）；
-- **命令表**：「常用命令 + ✎ 编辑指令表」那一行收掉（搜索框留着），命令行行高压到 28px，一屏多看几条；
-- **计算器**：不看历史记录（那条参数带整条收掉）、**32 位板留 16 位**、显示区并成一行
-  （左算式 / 右「= 进制 结果」，不再上下叠）、多进制那行收掉。
-
-## 示波器
-
-连的是 RIGOL DS1000Z / DS1000Z-E 系（DS1054Z、DS1202Z-E 这些）标配的网口口子：**TCP 5555，SCPI 文本**。
-
-- **状态**：型号（`*IDN?`）、各通道开关 / 档位 / 偏移 / 耦合 / 探头、时基、采样率、存储深度、触发源与电平；
-- **通道卡片**：直接改 V/div 与偏移（点「应用」下发到示波器）；
-- **自动测量**：频率 / 周期 / 峰峰 / 最大最小 / 平均 / 有效值 / 顶底电平 / 上升下降时间 / 正负占空，
-  共 13 项，可以勾「连续」每 2 秒刷一次；没接信号的那一路显示 `—`（示波器回的是 9.9E37，按"测不到"处理）；
-- **波形**：多通道一起画（一通道一色，鼠标悬停读数），点数是屏幕的 1200 点，
-  也可以选深存储（存储深度是 AUTO 时会提示"示波器只给了 1200 点"）；
-- **截屏**：直接取示波器屏幕（`DISP:DATA?` 回的二进制 PNG，原生 800×480）就地显示，可另存为；
-- **控制**：时基 / 触发源 / 触发电平 / RUN·STOP / 自动设置，外加一个 SCPI 控制台（带回复日志）。
-
-同一套能力也挂在 **Agent** 上：`scope_connect` / `scope_info` / `scope_measure` /
-`scope_waveform`（回摘要 + 字符画）/ `scope_screenshot`（默认存进会话工作区）/ `scope_control`，
-再加上一条裸 `scope <cmd>`。所以"连着示波器看看 CH2 是什么波形"这种话可以直接跟 agent 说。
-
-> 注意：DS1000Z 的 SCPI 口同时只接受**一个**客户端；被别的程序占着时本程序会自动重连，
-> 但别同时开两个上位机。
-
-## 逻辑分析仪
-
-参考 DSView / PulseView 的用法做的查看页：左边通道列（名字 / 颜色 / 眼睛显隐 / 当前电平），右边波形，
-下面按解码器各占一行，把解出来的字节 / 字段贴着波形画出来（方块颜色按"起始 / 地址 / 数据 / 应答 / 出错"
-分类：橙 = 起始、紫 = 地址、蓝 = 数据、绿 = 应答、红 = 出错）。
-
-**19 种协议解码器**（都是按各自规范实现的，不是"认个大概就能过"）：
-
-| 分类 | 协议 |
-| --- | --- |
-| 串行 | UART（5~9 数据位 / 无·偶·奇校验 / 1·1.5·2 停止位 / 正反极性，停止位不对会重新同步） |
-| 总线 | SPI（模式 0~3、MSB/LSB、字长 4~32、MOSI/MISO/CS 都可选）、I2C（起始 / 停止 / 地址+读写位 / ACK·NACK / 重复起始）、CAN 2.0（标准与扩展帧、位填充、CRC-15 校验、ACK、帧格式）、1-Wire、PS/2（设备↔主机两个方向、奇校验判定） |
-| 传感 | DS18B20（1-Wire 取暂存器 → 温度 + CRC-8）、DHT11 / DHT22（湿度 / 温度 + 校验） |
-| 编码 | Manchester（IEEE 802.3 / G.E. Thomas）、差分 Manchester、Miller |
-| 调试 | JTAG（TAP 状态机 + IR/DR 移位，TDI/TDO 一起给）、SWD（请求 / ACK / 32 位数据 + 校验） |
-| 现场总线 | Modbus RTU（功能码 + 寄存器解析 + CRC-16）、LIN（断帧 / 同步 / PID 奇偶 / 经典·增强校验）、DMX512（断帧 / 起始码 / 各槽值） |
-| 音频 | I2S（位深 16/24/32、I2S 标准 / 左对齐 / 右对齐、左右声道分开标色） |
-| 红外 | NEC（地址 + 命令 + 取反校验、重复码） |
-| 测量 | PWM（每个周期直接标频率 / 占空比） |
-
-**数据来源**：三个内置示例场景（按协议规范手工拼出来的真实波形，载入就带好对应解码器）、
-导入 VCD（单比特标量，按 `$timescale` 展开）、导入 CSV、导入原始二进制（一个字节 = 8 个通道）。
-
-- `bus` —— 常用总线：UART 115200 发 "KDock\n" · 1 kHz 25% PWM · I2C 读写 · SPI 读 JEDEC ID · DS18B20 温度 · NEC 红外；
-- `more` —— 调试与音频：CAN 250k（标准帧 + 扩展帧）· JTAG（IR 4 位 + DR 16 位）· I2S 16 位 · PS/2 键盘两帧；
-- `enc` —— 编码与工业总线：Manchester · 差分 Manchester · Miller · DHT22 · 1-Wire ROM · LIN · Modbus RTU · SWD · DMX512。
-
-**操作**：滚轮缩放（Shift+滚 = 平移）、拖动平移、双击适应窗口、← → 平移 / +/- 缩放 / Home 回起点；
-在波形上点一下放光标 A、Shift+点放 B（底下给 Δt 与 1/Δt）；
-右栏按解码器列出它要的参数（通道 / 波特率 / 模式…），加协议就是"下拉里选一个 + 点 ＋"；
-**存盘**导出 CSV（time + 各通道）或 VCD（PulseView / DSView / GTKWave 能打开）。
-
-> **真机采集**：逻辑分析仪页新增了「真机」那一行 —— 设备 / 采样率 / 点数 / 通道 / 采集。
-> 后端走 **sigrok-cli**（`-O binary` 的原始采样直接进现有波形管线），所以 fx2lafw（老款 Saleae Logic、
-> 各种 FX2 板）、saleae-logic16、DSLogic 这些 sigrok 认得设备都能直接用；页面上的设备、通道和采样率
-> 都是从设备自己报上来的（`--scan` / `--show`），不是写死的。采样率受设备限制（这台老 Saleae Logic
-> 报的是 20 kHz–48 MHz，但 8 通道实测 24 MHz 才稳定），采到的点数会跟请求的比对，不够会明确提示。
-> 采不到时会把 sigrok 的原始错误带回来（典型：`LIBUSB_ERROR_ACCESS` = 设备被占用，重启一下这个 USB
-> 设备/重新插拔即可）。sigrok-cli 可以在「环境配置 → sigrok-cli（逻辑分析仪的采集后端）」一键装。
-> **梦源 DSLogic**：同一套链路（sigrok 的 `dreamsourcelab-dslogic` 驱动，支持 Basic / Plus / Pro / U2 / U3）。
-> 引擎要 FX2 固件 + FPGA 位流，在「环境配置 → DSLogic（梦源）固件」一键装（从 DSView 官方仓库下载、
-> MD5 校验、复制到 sigrok-cli 的 `share\sigrok-firmware`）。16 通道按 libsigrok 的 `unitsize=2` 解析，
-> 界面最多 16 路。
->
-> **精度口径**：采样时钟是设备自己的晶振（FX2 典型 ±30~50 ppm），KDock **只做原样转发** —— 不重采样、
-> 不加时间戳、不做任何"修正"，所以时间轴精度就是设备规格本身；我们不标定设备，只做功能自测
-> （采到的点数、已知信号能不能解出来）。
->
-> 采集口径 / 各驱动的 unitsize / 已验证设备 / 解码器状态 / 回归清单：见
-> [docs/09-逻辑分析仪-准确性与解码自测.md](docs/09-逻辑分析仪-准确性与解码自测.md)。
-
-同一套能力也挂在 **Agent** 上：
-`la_decoders`（看支持哪些协议、每种协议要配哪些参数、有哪些示例场景）/ `la_state`（读状态）/
-`la_read`（读解出来的字节 + 字段判定 + 每路测量）/ `la_config`（改配置：采样率、整份替换解码器列表、
-通道显隐、选中哪一路、视图窗口、光标）/ `la_capture`（载入示例场景，或 source=device 用真机采一段：可给 device / rate / samples / channels）/
-`la_save`（存 CSV / VCD）。**采到的数据本身 agent 改不了** —— 只能改配置或重新采集；
-跟传输页那套一个形状：读类不审批，写配置 / 采集 / 存盘要审批。
-
-## 环境配置
-
-左导航「环境」分组下的 **环境配置**：驱动和工具链不用再挨个官网翻，页面上一次扫完、缺什么装什么。
-
-**驱动七件套**：CH34x / CH340 串口驱动、FTDI FT2232 / D2XX、SEGGER J-Link（含 JFlash / GDB Server / RTT）、
-GNU Arm Embedded Toolchain（arm-none-eabi-gcc）、OpenOCD、逻辑分析仪（PulseView / sigrok）、RT-Thread Env、
-ST-Link USB 驱动、Zadig（给 FX2 逻辑分析仪装 WinUSB）。
-
-**之外还有**（按类别分）：
-
-| 类别 | 组件 |
-| --- | --- |
-| 工具链 | Rust 工具链（rustup + cargo）、MSVC 生成工具（Build Tools 2022，只装 C++ 工作负载）、LLVM / Clang、Python 3、ESP-IDF |
-| 烧录 / 调试 | probe-rs（嵌入式 Rust）、pyOCD、esptool、wlink、nRF Util、各厂商探针驱动（J-Link · CMSIS-DAP · ST-Link · WCH-Link · XDS110 · Infineon DAS） |
-| GUI | LVGL（含 Windows 模拟器工程，自动递归拉 submodule）、SquareLine Studio、SEGGER AppWizard（emWin）、TouchGFX Designer、NXP GUI Guider |
-| MQTT | Eclipse Mosquitto（本机 broker）、MQTTX（MQTT 5.0 客户端）、MQTT Explorer（主题树浏览）、paho-mqtt（Python） |
-| 总线（CAN / Modbus） | PEAK PCAN 驱动与工具（CAN / CAN FD）、Cangaroo（candleLight 开源分析仪）、python-can + cantools（DBC 解析）、ModbusTool（主站 / 从站）、pymodbus |
-| 网络 | Wireshark / tshark + Npcap、MobaXterm、OpenSSH（客户端 / 服务端）、PuTTY plink、Tftpd64 |
-| 其他 | CMake · Ninja · Meson · OpenSSL · QEMU · Renode · dtc · UsbDk · Git · 安卓 platform-tools · scrcpy · FFmpeg |
-
-**扫描**是只读的，不动你的机器：看 PATH 与几个额外根目录、`pnputil /enum-drivers` 的驱动列表
-（CH34x / FTDI / ST-Link 这类就靠它认）、注册表（J-Link 的版本）、`pip list`（一次取全量，几秒内完成）、
-以及各盘常见目录（按模式定向扫，不是整盘乱翻）。整份清单一起扫**秒级**，结果缓存 15 分钟，
-点「重新扫描」强制刷新。
-
-**安装**按这个顺序来：
-
-1. `<exe 同目录>\drivers\<组件id>\` 里有没有内置安装包（`.exe` / `.msi` / `.inf` 都认）—— 有就直接用，
-   **不走网络**。几 MB 的小驱动（CH340 / FTDI 这种官网要登录的）可以这样跟软件一起分发。
-2. 再按清单走：winget（Arm 工具链 / OpenOCD / PulseView / Zadig / Mosquitto / MQTTX / PCAN / Rust 都有官方包）、
-   `pip install`（pyOCD / esptool / python-can / cantools / pymodbus / paho-mqtt）、
-   `cargo install`（probe-rs）、git clone（RT-Thread Env / LVGL 模拟器工程）、下载到"下载"文件夹再跑安装器。
-3. 装 USB 驱动会弹**一次 UAC**（`Start-Process -Verb RunAs`）—— 驱动必须提权，软件不做静默绕过。
-
-WCH / FTDI / SEGGER / ST 官网的下载要点勾选同意或登录，拿不到稳定直链，所以这几项只给「打开官网」+
-「我下好了，用本地的装」（把安装包丢进上面的内置目录就能一键装）。**安装位置**自己选：便携类
-（工具链 zip / git 仓库）解到那儿；留空则优先 `F:\ENV`，没有就用用户目录下的 `KDock\env`。
-
-### 固件运行结构分析器
-
-“运行结构”页的分析后端是随 KDock 分发的独立便携环境，不会调用用户系统里的 Python：
-
-- **正式包 / 便携 ZIP 自带** `resources/bingraph`：Python 3.13.13 embeddable、pybingraph 0.2.5、
-  angr 10.0.4 与 77 个锁定依赖；
-- **自动启动**：第一次点“分析运行结构”时，KDock 从随包目录启动分析器，动态选择本机回环端口；
-- **不依赖系统环境**：系统 Python 是 3.6、3.11、3.14，或者根本没装，都不影响；用户不需要 `uv`；
-- **不依赖 Graphviz**：全固件、main 运行链、中断和 CFG JSON 都由 KDock 原生画布渲染，默认不打包 `dot`；
-- **一键修复**：开发包或文件损坏时，在“环境配置 → 固件运行结构分析器”点“准备 / 更新分析器”；
-  有 `uv` 就用 `uv`，没有则用 Python 官方 `get-pip.py` 引导 pip，再按锁定清单安装；
-- **安装位置**：优先使用随包目录；需要修复时组装到应用数据目录，后续自动优先复用；
-- **进程回收**：分析器只监听 `127.0.0.1`，KDock 退出或强制结束时会回收整棵 Python 进程树；
-- **单条链路**：全固件图里选中函数后，可只拉它的向下调用、向上调用者或双向链路，并限制
-  1 / 2 / 3 / 5 / 8 层或全部深度；大图默认只显示选中节点附近的线。
-
-详细架构、三种分析范围、BIN 参数、自动整理、端口超时、安全边界、故障排查和 77 项第三方
-许可说明见 [docs/10-固件运行结构分析器.md](docs/10-固件运行结构分析器.md)。
-
-**首次运行检查**：启动后查一次，**只有缺「必需项」才弹一次**（目前必需项只有 CH340 串口驱动 ——
-认不出 COM 口就没法干活），点「去看看」跳到环境页、点「取消」以后不再提示；有可更新的只弹一条提示。
-除明确点击的安装和固件分析器准备外，**软件不会自动下载或安装任何东西**，扫描也是纯只读。
-
-同一套能力也挂在 **Agent** 上：`env_scan`（扫本机，只读不审批，回的清单跟页面上一致）/
-`env_install`（装 / 更新某一项，**要审批**，装的时候界面自动切到环境配置页，进度和日志用户全程看得见）。
-
-## Agent 使用说明
-
-右栏三页：**Agent 信息 / 文本 / 浏览器**。每个会话独立保存工作区、模型、权限、计划与运行状态。
-
-**模型**：设置 → 模型与供应商里配「供应商 profile」（OpenAI 兼容的 `base_url`，或 Anthropic 格式），每个 profile 一个 Key（Windows 上用 DPAPI 按当前用户加密存储）。对话页下方可随时切换供应商；支持设置单轮思考强度，并显示测得的出字速度。
-
-**权限**（对话页底部）：
-
-| 档位 | 行为 |
-| --- | --- |
-| 只读 | 写设备 / 写文件 / 跑命令 / 烧录一律拒绝 |
-| 需要批准 | 危险动作先弹卡片让你点允许/拒绝；可把同类命令前缀加入会话白名单 |
-| 自动 | 直接执行（做完汇报） |
-
-**技能**：一份 `SKILL.md`（frontmatter 的 name/description 进系统提示，正文按需读）。Agent 信息页只管开关，路径 / 导入 / 编辑都在 设置 → 技能。
-**常驻**：技能行上的「常驻」开关打开后，该技能的**正文每轮都注入系统提示**（系统提示不参与裁剪、也不会被压缩掉）—— 身份 / 口吻 / 说话规则这类技能就靠它生效；合计上限 16 KB，占多少 token 在「上下文成分」里单列一栏。
-
-**MCP**：设置 → MCP 里加 stdio 服务（`command` + `args` + `env`，也兼容 `command` 数组 + `environment` 的写法）；Agent 信息页只管启用开关。远程 HTTP 类型暂不支持。
-
-**工作区能力**：Agent 可读取/搜索/写入/精确编辑工作区文件，查看 `git status` / diff，执行命令和测试（自动识别 cargo / npm / pytest），批量读写或并行只读；大工具结果会截取摘要进上下文，全文落盘并可用 `output_read` 读回。
-
-**计划与子任务**：`plan_write` / `plan_read` 把多步计划存进会话；`subagent_spawn` / `wait` / `result` 可开独立子会话并行处理子任务。
-
-**斜杠命令**：`/goal <目标>`（长期目标，每轮注入）、`/compact`、`/new`、`/perm ask|auto|read`、`/stop`、`/help`。
-
-**上下文与花费**：Agent 信息页显示上下文占用、成分分析（系统提示 / 工具定义 / 摘要 / 用户消息 / 助手回复 / 工具调用）、缓存命中率、估算花费与出字速度（只统计模型正在出字的那段）。
-
-## 协议与算法文档
-
-升级、OTA、烧录、设备文件、视频带宽和逻辑分析仪的实现细节都单独成文：
-
-| 文档 | 内容 |
-| --- | --- |
-| [01 固件包格式与打包算法](docs/01-固件包格式与打包算法.md) | `.fw` 包头逐字节布局、版本号编码、CRC 算法、校验顺序 |
-| [02 串口在线升级](docs/02-固件升级-串口在线升级.md) | YMODEM 流程、超时与重试、失败定位 |
-| [03 网口升级与服务通道协议](docs/03-固件升级-网口服务通道.md) | SVC1/SVR1 帧格式、命令码、seq 去重、错误码表 |
-| [04 固件服务器与版本管理](docs/04-固件服务器与版本管理.md) | 清单格式、版本比较、下载后自检 |
-| [05 烧录（外部烧录器）](docs/05-烧录-外部烧录器.md) | OpenOCD / J-Link / CubeProgrammer 命令拼装与排错 |
-| [06 设备文件传输](docs/06-设备文件传输.md) | 串口 base64 与网口按偏移读写的取舍与流程 |
-| [07 视频带宽计算算法](docs/07-视频带宽计算算法.md) | 像素时钟/时序生成、带宽公式、接口能力判定、输入边界与错误提示 |
-| [08 模型指纹对照表](docs/08-模型指纹对照表.md) | 模型 checkpoint 指纹、厂商指纹类型与数据来源 |
-| [09 逻辑分析仪准确性与解码自测](docs/09-逻辑分析仪-准确性与解码自测.md) | sigrok 采样口径、已验证硬件、解码器状态与回归清单 |
-| [10 固件运行结构分析器](docs/10-固件运行结构分析器.md) | 全固件函数 / main 调用链 / 中断 / BIN / 自动布局 / 便携 Python / 许可与排错 |
-
-## 从源码构建
-
-需要 Node.js 18+、Rust 1.80+（MSVC 工具链）与 Tauri 2 的系统依赖。
-
-```bash
-npm install
-npm run dev            # 只跑前端（配合下面的 tauri dev）
-npm run tauri dev      # 开发模式：前端热更 + Rust 后端
-cargo test --workspace # 单元测试（在 src-tauri 目录下，或加 --manifest-path）
-npm run tauri build    # 出包：Windows 下产物是 target/release/kdock.exe
-```
-
-发布包还需要先生成便携固件分析器：
+需要 Windows x64、Node.js 18+、Rust 1.80+（MSVC 工具链）和 Tauri 2 依赖。
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass `
-  -File tools/bingraph/build-portable.ps1 -NoGraphviz
+git clone https://github.com/Kyin-code/KDock.git
+cd KDock
+npm ci
+
+# 首次构建“运行结构”分析器，约 500 MB
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools/bingraph/build-portable.ps1 -NoGraphviz
+
+# 开发
+npm run tauri dev
+
+# 测试与正式出包
+cargo test --workspace --locked
+npm run tauri build
 ```
 
-脚本优先使用 `uv`，没有时会下载官方 `get-pip.py` 引导 pip；用户系统 Python/uv 均不是运行前提。
-首轮构建约需下载 500 MB，产物在 `resources/bingraph`。开发调试若暂时不需要“运行结构”页，可以跳过；
-但正式安装包和便携 ZIP 必须包含它，否则页内会给出去环境配置修复的提示。
+产物：
 
-> ⚠️ 出包**只能**用 `npm run tauri build`。直接 `cargo build --release` 编出来的是 dev 模式二进制，
-> 它会去加载 `devUrl`（`http://localhost:1420`）；没有前端开发服务器时窗口就是浏览器那个
-> "无法访问此页"。
+- `target/release/kdock.exe`
+- `target/release/bundle/nsis/KDock_0.3.0_x64-setup.exe`
 
-> 🔧 调试口子：debug 构建里设 `KDOCK_DEBUG_PORT=<端口>` 再启动，会给 WebView2 打开远程调试端口，
-> 可以用 CDP 脚本驱动界面做回归测试（release 包里这段代码不存在）。
+不要直接用 `cargo build --release` 代替 Tauri 打包，否则前端资源和 `devUrl` 配置不会完整。
 
-## 目录结构
+## 界面展示
 
+> 仅作界面展示，详细操作请按 F1 查看上下文帮助。
+
+| 主工作台 | 运行结构 |
+| --- | --- |
+| ![主工作台](docs/images/readme-overview.png) | ![运行结构](docs/images/readme-runtime.png) |
+
+| 逻辑分析仪 | Agent |
+| --- | --- |
+| ![逻辑分析仪](docs/images/readme-logic.png) | ![Agent](docs/images/readme-agent.png) |
+
+## 项目目录
+
+```text
+src/                    Vite 前端
+src-tauri/              Tauri 2 / Rust 后端与 Agent
+crates/kdock-core/      串口、HEX、行尾、会话等核心库
+tools/bingraph/         便携固件分析器源码与构建脚本
+resources/bingraph/     构建产物，不进入 Git
+docs/                   协议、算法与功能文档
 ```
-.
-├─ crates/kdock-core/     协议层：HEX 编解码、行尾、波特率、串口参数映射、会话日志（与 UI 解耦，可单独测）
-├─ src-tauri/             Tauri 2 应用：串口/网络 I/O、升级与烧录、Agent、文件与窗口命令
-│  └─ src/agent/          Agent：LLM 客户端、工具、技能、MCP、会话存储
-├─ src/                   前端（Vite + 原生 JS，无框架）
-│  ├─ main.js             界面与业务逻辑
-│  ├─ runtime-graph.js    运行结构画布、自动整理、库汇总、CFG 详情
-│  └─ tools-batch-calc.js 批量文本 / 计算器
-├─ src-tauri/src/runtime_graph.rs  便携分析器定位、端口、子进程与 HTTP 超时
-├─ docs/                  功能与协议说明、截图
-├─ tools/                 辅助脚本（图标生成等）
-│  └─ bingraph/           便携分析器源码、锁定依赖、构建脚本与第三方许可清单
-├─ resources/bingraph/    构建生成的便携 Python 分析器（不入库，发行包携带）
-└─ dist/                  前端构建产物（被 Tauri 内嵌，不入库）
-```
 
-## 常见问题
+## 开源依赖与许可
 
-**Q：双击 exe 没反应 / 闪退？**
-A：先看是不是已经开着一个 KDock（单实例：第二次启动只会把已有窗口叫到前面）。
-若上次是被强杀的，WebView2 的进程可能还占着数据目录，等几秒或结束残留的 `msedgewebview2.exe` 再试。
+KDock 自身采用 [Apache-2.0](LICENSE)。
 
-**Q：窗口边框 / 任务栏图标不对？**
-A：自绘无边框窗口在 Windows 上要额外处理非客户区，代码里已经处理（含最大化贴工作区与 DWM 描边）。
-遇到异常请带上系统版本反馈。
+核心开源项目：
 
-**Q：升级中途断电/断线会怎样？**
-A：设备端会拒收不完整的包；重跑一次升级即可（网口按偏移写，会覆盖）。详见 `docs/03`。
+| 项目 | 用途 | 许可 |
+| --- | --- | --- |
+| [Tauri](https://github.com/tauri-apps/tauri) | 桌面框架 | MIT OR Apache-2.0 |
+| [uPlot](https://github.com/leeoniya/uPlot) | 实时曲线 | MIT |
+| [pybingraph](https://github.com/manelfx/pybingraph) | 固件函数/CFG 分析 | BSD-2-Clause |
+| [angr](https://angr.io/) | 二进制分析与符号执行 | BSD-2-Clause |
+| [Python](https://www.python.org/) | 便携分析器运行时 | PSF-2.0 |
+| [Cytoscape.js](https://js.cytoscape.org/) | 分析器离线页面图形 | MIT |
 
-**Q：`/goal` 设了目标但没生效？**
-A：目标存在会话里，每轮都会拼进系统提示；用 `/goal` 可以查当前值，`/goal clear` 清除。
+固件分析器在**独立 Python 子进程**中运行；发行包保留 78 个 Python distributions
+的许可证与第三方声明。`pyvex` 内含 LibVEX（`GPL-2.0-or-later`），KDock 不修改，
+仅在独立进程中使用。完整边界见 [NOTICE](NOTICE) 与
+[第三方清单](tools/bingraph/THIRD_PARTY_NOTICES.md)。
 
-**Q：为什么有些界面文字是英文？**
-A：设置 → 通用里可以切换中英文，切换是即时生效的。
+USBPcap、tshark、sigrok、ADB/scrcpy、DSView、J-Link、OpenOCD 等为可选外部工具，
+KDock 只调用用户安装的程序，不打包或再许可其代码。
 
-## 版本管理
+## 文档
 
-- **应用版本**走 [语义化版本](https://semver.org/lang/zh-CN/) `MAJOR.MINOR.PATCH`，当前
-  `v0.3.0`（关于页也会显示实时值）。版本号在这三处保持一致：
-  `src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`package.json`；
-- 每次发版在 [CHANGELOG.md](CHANGELOG.md) 追加一段，并打 `vX.Y.Z` 的 git tag
-  （例如 `git tag v0.3.0 && git push origin v0.3.0`）；
-- **固件包版本**是另一套：`.fw` 包头里的三段式 `PD_HW.PD_SW.PD_FIX`，用于设备端判断能否升级/降级，
-  与应用版本无关（见 [docs/01](docs/01-固件包格式与打包算法.md)）；
-- 应用内「设置 → 关于与数据」里也写了同样的约定，并给出当前版本、作者与仓库地址。
-
-## 开源协议与致谢
-
-本项目以 **Apache License 2.0** 开源，见 [LICENSE](LICENSE)；第三方组件与借鉴项目的声明见 [NOTICE](NOTICE)。
-
-随包固件分析器包含 Python 3.13.13（PSF-2.0）、pybingraph 0.2.5（BSD-2-Clause）、angr 10.0.4
-及其 77 个锁定 Python 依赖。各依赖版本、许可证表达式、项目地址与 GPL/LibVEX 边界见
-[tools/bingraph/THIRD_PARTY_NOTICES.md](tools/bingraph/THIRD_PARTY_NOTICES.md)；发行包内还会保留
-`resources/bingraph/licenses/` 和各 `dist-info/licenses/` 的许可证原文。
-
-实际使用、且上游仓库带有 LICENSE 文件的开源项目：
-
-- [DSView](https://github.com/DreamSourceLab/DSView) — GPL-3.0；解码器文件为 GPL-2.0+，独立运行
-- [PulseView / sigrok](https://github.com/sigrokproject/pulseview) — GPL-3.0 / GPL-2.0+，外部采集与解码程序
-- [USBPcap](https://github.com/desowin/usbpcap) — GPLv2 / BSD-2-Clause，外部抓包组件
-- [Microsoft Calculator](https://github.com/microsoft/calculator) — MIT
-- [opencode](https://github.com/anomalyco/opencode) — MIT
-- [CC Switch](https://github.com/farion1231/cc-switch) — MIT
-- [OxideSerial](https://github.com/Z1R343L-D77/OxideSerial) — MIT
-- [ModelDNA](https://github.com/RadicalNotion/modeldna-cli) — Apache-2.0
-- [Model Provenance Kit](https://github.com/cisco-ai-defense/model-provenance-kit) — Apache-2.0
-- [scrcpy](https://github.com/Genymobile/scrcpy) — Apache-2.0，外部投屏程序
-- [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools) — Apache-2.0，外部 adb
-- [Codex](https://github.com/openai/codex) — Apache-2.0
-- [Tauri](https://github.com/tauri-apps/tauri)、[uPlot](https://github.com/leeoniya/uPlot)、
-  [RustCrypto](https://github.com/RustCrypto) 等直接依赖，完整许可见 [NOTICE](NOTICE)
-
-其他外部程序（Wireshark/tshark、FFmpeg、PuTTY、Zadig、Tftpd64、OpenSSH、RT-Thread Env）按各自许可使用。
-
-GPL 组件均以独立文件或外部程序使用；KDock 不链接、不打包其代码，也不销售或再许可第三方代码。
-DSView 解码器复制后仍按 GPL-2.0+ 提供。
-
-欢迎 issue / PR。
+- [固件包与升级协议](docs/01-固件包格式与打包算法.md)
+- [烧录与外部烧录器](docs/05-烧录-外部烧录器.md)
+- [设备文件传输](docs/06-设备文件传输.md)
+- [逻辑分析仪自测](docs/09-逻辑分析仪-准确性与解码自测.md)
+- [固件运行结构分析器](docs/10-固件运行结构分析器.md)
+- [更新日志](CHANGELOG.md)

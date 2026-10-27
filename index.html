@@ -94,6 +94,33 @@
       <symbol id="ni-menu" viewBox="0 0 24 24">
         <path d="M4 7h16M4 12h16M4 17h16"/>
       </symbol>
+      <symbol id="ni-search" viewBox="0 0 24 24">
+        <circle cx="10.5" cy="10.5" r="6.5"/>
+        <path d="m15.5 15.5 4.5 4.5"/>
+      </symbol>
+      <symbol id="ni-layers" viewBox="0 0 24 24">
+        <path d="m12 3 9 5-9 5-9-5 9-5Z"/>
+        <path d="m3 12 9 5 9-5M3 16l9 5 9-5"/>
+      </symbol>
+      <symbol id="ni-fit" viewBox="0 0 24 24">
+        <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>
+      </symbol>
+      <symbol id="ni-plus" viewBox="0 0 24 24">
+        <path d="M12 5v14M5 12h14"/>
+      </symbol>
+      <symbol id="ni-minus" viewBox="0 0 24 24">
+        <path d="M5 12h14"/>
+      </symbol>
+      <symbol id="ni-play" viewBox="0 0 24 24">
+        <path d="m8 5 11 7-11 7V5Z"/>
+      </symbol>
+      <symbol id="ni-file-binary" viewBox="0 0 24 24">
+        <path d="M6 2h8l4 4v16H6V2Z"/>
+        <path d="M14 2v5h4M9 12h2v4H9v-4ZM14 12h1.5a1.5 1.5 0 0 1 0 3H14v-3Z"/>
+      </symbol>
+      <symbol id="ni-arrow-left" viewBox="0 0 24 24">
+        <path d="M20 12H4m6-6-6 6 6 6"/>
+      </symbol>
     </svg>
     <div id="ui-root">
     <header class="titlebar" id="titlebar">
@@ -1438,14 +1465,14 @@
         <div class="workpane rtwork" data-work="runtime" hidden>
           <div class="trow">
             <span class="lb">固件</span>
-            <button id="rt-file" class="btn small primary">选择 ELF / BIN…</button>
+            <button id="rt-file" class="btn small primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-file-binary"></use></svg>选择 ELF / BIN…</button>
             <span id="rt-file-name" class="lb rtfile">还没有选择固件</span>
             <span class="grow"></span>
-            <button id="rt-search-btn" class="btn small" title="按函数名或地址查找">⌕ 查找</button>
-            <button id="rt-tidy" class="btn small" title="按调用深度自动分层，重新排版">⌗ 整理</button>
-            <button id="rt-fit" class="btn small" title="缩放到合适大小">⤢ 适应</button>
-            <button id="rt-expand" class="btn small" title="展开当前可见的一层">展开一层</button>
-            <button id="rt-collapse" class="btn small" title="收起叶子节点">收起叶子</button>
+            <button id="rt-search-btn" class="btn small" title="按函数名或地址查找"><svg class="btn-ico" aria-hidden="true"><use href="#ni-search"></use></svg>查找</button>
+            <button id="rt-tidy" class="btn small" title="按调用深度自动分层，重新排版"><svg class="btn-ico" aria-hidden="true"><use href="#ni-layers"></use></svg>整理</button>
+            <button id="rt-fit" class="btn small" title="缩放到合适大小"><svg class="btn-ico" aria-hidden="true"><use href="#ni-fit"></use></svg>适应</button>
+            <button id="rt-expand" class="btn small" title="展开当前可见的一层"><svg class="btn-ico" aria-hidden="true"><use href="#ni-plus"></use></svg>展开一层</button>
+            <button id="rt-collapse" class="btn small" title="收起叶子节点"><svg class="btn-ico" aria-hidden="true"><use href="#ni-minus"></use></svg>收起叶子</button>
             <span id="rt-state" class="dot">未分析</span>
           </div>
           <div class="trow rtfilter">
@@ -1471,8 +1498,8 @@
                 <option value="8">8 层</option>
                 <option value="-1">全部</option>
               </select>
-              <button id="rt-chain-pick" class="btn small" title="用当前选中函数作为链路根；没有选中时使用 main">用选中函数拉链路</button>
-              <button id="rt-chain-back" class="btn small" title="回到全固件图；直接使用本地缓存，不重新分析">返回全固件</button>
+              <button id="rt-chain-pick" class="btn small" title="用当前选中函数作为链路根；没有选中时使用 main"><svg class="btn-ico" aria-hidden="true"><use href="#ni-flow"></use></svg>用选中函数拉链路</button>
+              <button id="rt-chain-back" class="btn small" title="回到全固件图；直接使用本地缓存，不重新分析"><svg class="btn-ico" aria-hidden="true"><use href="#ni-arrow-left"></use></svg>返回全固件</button>
             </span>
             <label class="chk" title="递归展开 main 可达调用"><input type="checkbox" id="rt-show-interrupts" /> 中断</label>
             <label class="chk" title="隐藏 HAL / CMSIS / C 库 / newlib 等系统调用"><input type="checkbox" id="rt-hide-lib" checked /> 折叠库函数</label>
@@ -1487,10 +1514,10 @@
               <svg id="rt-edges" class="seqedges"><g id="rt-edges-g"></g></svg>
               <div id="rt-nodes" class="seqnodes"></div>
               <div id="rt-empty" class="rtempty">
-                <div class="rtempty-icon">⌘</div>
+                <div class="rtempty-icon"><svg class="rtempty-svg" aria-hidden="true"><use href="#ni-runtime"></use></svg></div>
                 <b>选择一个固件，查看运行结构</b>
                 <span>全固件函数一览、main 调用链、中断作用域和单函数链路；库函数自动折叠。</span>
-                <button id="rt-empty-pick" class="btn primary">选择 ELF / BIN</button>
+                <button id="rt-empty-pick" class="btn primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-file-binary"></use></svg>选择 ELF / BIN</button>
               </div>
               <div class="seqhint lb">滚轮缩放 · 拖动画布 · 点击函数看详情 / 展开 CFG / 拉链路</div>
             </div>
@@ -2361,8 +2388,8 @@
           </div>
           <div class="field"><label>分析器</label><span id="rt-side-analyzer" class="rtbadge off">检测中…</span></div>
           <div class="btnrow">
-            <button id="rt-run" class="btn primary">▶ 分析运行结构</button>
-            <button id="rt-pick-side" class="btn small">选择固件</button>
+            <button id="rt-run" class="btn primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-play"></use></svg>分析运行结构</button>
+            <button id="rt-pick-side" class="btn small"><svg class="btn-ico" aria-hidden="true"><use href="#ni-file-binary"></use></svg>选择固件</button>
           </div>
           <div class="cardtitle">BIN 参数</div>
           <details class="adv" id="rt-bin-box">
@@ -2383,7 +2410,7 @@
           <div class="rtchaincard">
             <div class="rtdet-row">根：<b id="rt-chain-root-side">main</b></div>
             <p class="hint">在全固件或运行链里点一个函数，再点下面的按钮。只用这一条链路时，画布不会被上千个无关函数淹没。</p>
-            <button id="rt-chain-pick-side" class="btn small primary">用选中函数拉链路</button>
+            <button id="rt-chain-pick-side" class="btn small primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-flow"></use></svg>用选中函数拉链路</button>
           </div>
           <div class="cardtitle">选中函数</div>
           <div id="rt-fn-card"><p class="hint">在中间点一个函数，这里显示地址、大小和调用点。</p></div>

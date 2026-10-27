@@ -106,7 +106,7 @@ KDock 的“运行结构”页使用独立子进程 `resources\bingraph`。它�
     Copyright (c) 2016-2025, The Cytoscape Consortium
 
   其他锁定 Python 依赖            各自上游许可证
-    完整 77 项清单、版本、许可证表达式与项目地址见：
+    完整 78 项清单、版本、许可证表达式与项目地址见：
     tools\bingraph\THIRD_PARTY_NOTICES.md
     发行包内副本：
     resources\bingraph\THIRD_PARTY_NOTICES.md

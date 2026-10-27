@@ -4,13 +4,12 @@
 
 # KDock
 
-**A desktop workbench for embedded development: serial / network debugging · firmware upgrade (OTA) · flashing · device files · an AI assistant that actually does things**
+**An embedded debugging workbench with an Agent that can use every built-in tool**
 
-Serial & network I/O, a command reference, firmware packaging/upgrade/flashing, runtime structure analysis,
-device file transfer, live charts, flow orchestration — plus an Agent that can drive all of it. All in one window.
+Serial, network, flashing, devices, firmware analysis, instruments and workflows—in one window.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
 ![Rust](https://img.shields.io/badge/Rust-1.80%2B-orange)
 
@@ -20,381 +19,123 @@ device file transfer, live charts, flow orchestration — plus an Agent that can
 
 ---
 
-## Download (test builds)
+## Contents
 
-> ⚠️ **There are no stable releases yet — only automatically built test builds.** They follow `main`:
-> they may crash or change your settings, so please back up and do not use them in production.
+- [Download and run](#download-and-run)
+- [What it does](#what-it-does)
+- [Working together](#working-together)
+- [Build from source](#build-from-source)
+- [Screenshots](#screenshots)
+- [Project layout](#project-layout)
+- [Open source and licensing](#open-source-and-licensing)
+- [Documentation](#documentation)
 
-**[⬇ Latest test build](https://github.com/Kyin-code/KDock/releases/tag/test-latest)** — CI rebuilds it on every
-push to `main`, so this link always points at the newest one. GitHub marks it as a **Pre-release**.
-([All releases](https://github.com/Kyin-code/KDock/releases))
+## Download and run
 
-| File | What it is |
-| --- | --- |
-| `KDock-*-win-x64.zip` | **Portable** — unzip and run `KDock.exe` |
-| `KDock_*_x64-setup.exe` | **Installer** (NSIS) — installs for the current user, adds a Start menu entry, uninstalls cleanly |
-| `kdock.exe` | The bare executable |
+Only automatically built **Pre-release** test builds are available:
 
-- The binaries are **not code-signed**: Windows SmartScreen may warn on first launch (More info → Run anyway);
-- The **WebView2 Runtime** is required (usually present on Windows 10/11; the app offers to install it if missing);
-- Only Windows x64 packages are built right now.
+**[Download the latest test build](https://github.com/Kyin-code/KDock/releases/tag/test-latest)**
 
----
+- `KDock-*-win-x64.zip`: portable, unzip and run `KDock.exe`
+- `KDock_*_x64-setup.exe`: NSIS installer
+- `kdock.exe`: bare executable
+
+Requires Windows x64 and the WebView2 Runtime. Builds are unsigned and may trigger SmartScreen.
+Test builds can change local settings or crash; back up first.
 
 ## What it does
 
-| Area | Capabilities |
-| --- | --- |
-| **Transfer** | Serial (all parameter combinations), TCP/UDP client & server, HEX/text modes, line endings, encoding switch, session logs & replay, ANSI terminal rendering, quick-send buttons |
-| **Helpers** | Command reference (standard Linux commands), batch text processing, calculator (with a 32-bit bit board, IEEE 754 and file checksums) |
-| **Firmware** | `.fw` package parsing & verification, **serial in-app upgrade (YMODEM)**, **network upgrade (service channel)**, version manifest from an HTTP server |
-| **Runtime structure** | Full-firmware function inventory for ELF/PE/BIN, main call tree, interrupt scopes, focused upstream/downstream chains with direction and depth limits, real call sites, automatic library grouping, merged call edges, automatic layered layout, per-function CFG |
-| **Flashing** | Drives external programmers (OpenOCD / J-Link / STM32CubeProgrammer) for flash, erase, verify and reset |
-| **Environment** | One-click detection and install of drivers / toolchains (CH34x · FTDI · J-Link+JFlash · arm-none-eabi-gcc · OpenOCD · PulseView(sigrok) · RT-Thread Env · ST-Link · Zadig): read-only scan of this PC (PATH / registry / pnputil / common folders), bundled installers first, winget / git one-click install, first-run check for required drivers; one-click check/repair for the portable firmware analyzer |
-| **Device files** | List directories, pull/push files, CRC verification (serial uses base64, network uses offset-based reads/writes) |
-| **Visualization** | Live charts (multi-channel), screen capture, **oscilloscope** (RIGOL DS1000Z series over SCPI: state, 13 auto-measurements, multi-channel waveform, screenshot, timebase/trigger control), logic analyzer (waveform / 19 protocol decoders / import VCD·CSV·raw / **real-device capture through sigrok-cli**: fx2lafw, old Saleae Logic, saleae-logic16, DSLogic …) |
-| **Flow** | Chain local commands / TCP / UDP / serial into a timed flow with branches, run it with one click |
-| **AI Agent** | Built-in assistant that can call all of the above; OpenAI-compatible and Anthropic protocols, skills (`SKILL.md`, each can be marked "Always on" = its body goes into the system prompt every turn, which is how you shape a persona / tone), MCP servers, context compaction, throughput and cost stats |
+- **Links**: serial, TCP/UDP, SSH, USBPcap and tshark.
+- **Devices**: `.fw` upgrade, OpenOCD/J-Link, device files, FTP/FTPS/TFTP and ADB.
+- **Analysis**: ELF/BIN runtime graph, call chains, CFG and logic analyzer.
+- **Tools**: scope, commands, live charts, batch text, calculator and workflow.
+- **Agent**: chat, skills, MCP, workspaces, approvals and device analysis.
+
+## Working together
+
+- **Agent**: describe a goal; it uses tools with permission checks.
+- **Automation**: capture operations and project rules in workflows, `AGENTS.md`, skills and MCP.
+- **Development**: open issues or PRs; pass `cargo test --workspace --locked` and `npm run build`.
+
+## Build from source
+
+Requires Windows x64, Node.js 18+, Rust 1.80+ (MSVC toolchain) and Tauri 2 dependencies.
+
+```powershell
+git clone https://github.com/Kyin-code/KDock.git
+cd KDock
+npm ci
+
+# First runtime-analyzer build, about 500 MB
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools/bingraph/build-portable.ps1 -NoGraphviz
+
+# Development
+npm run tauri dev
+
+# Tests and release package
+cargo test --workspace --locked
+npm run tauri build
+```
+
+Outputs:
+
+- `target/release/kdock.exe`
+- `target/release/bundle/nsis/KDock_0.3.0_x64-setup.exe`
+
+Use `npm run tauri build`; `cargo build --release` alone does not package the frontend correctly.
 
 ## Screenshots
 
-**Transfer: serial / network I/O with HEX view and session log**
+> UI preview only. Press F1 for contextual help.
 
-![Transfer](docs/images/01-transfer.png)
-
-**Command reference: standard Linux commands, click to fill the send box**
-
-![Commands](docs/images/02-commands.png)
-
-**Agent: a conversational assistant that can read/write the device, upgrade and flash**
-
-![Agent](docs/images/03-agent.png)
-
-**Batch text: de-duplicate/sort/convert multiple lines, send line by line**
-
-![Batch text](docs/images/04-batch-text.png)
-
-**Calculator: C-style expressions, keypad, 32-bit bit board, file checksums**
-
-![Calculator](docs/images/05-calculator.png)
-
-**Oscilloscope: RIGOL DS1000Z series over SCPI — state, auto-measurements, multi-channel waveform, screenshot**
-
-![Oscilloscope](docs/images/06-scope.png)
-
-**The waveform view inside KDock: channels overlaid, values on hover (here the 1 kHz square wave on CH2)**
-
-![Scope waveform](docs/images/06-scope-waveform.png)
-
-**Agent info page: skill and MCP switches, context breakdown, cache hit rate and cost — the agent reads skills on demand**
-
-![Skills and MCP](docs/images/07-skills.png)
-
-## Quick start
-
-1. Open **Transfer**, pick a serial port (or TCP/UDP) and click Connect;
-2. Type in the send box — `Enter` sends, `Shift+Enter` inserts a newline; HEX looks like `41 54 0D 0A`;
-3. To upgrade firmware: **Firmware** → pick a local `.fw` or enter a server address → choose the serial or
-   network channel → start;
-4. To flash a chip: **Flash** → choose the programmer and target → pick the file → flash;
-5. Want a hand? Open **Agent**, configure a model (provider + API key) in Settings, and just ask.
-
-## UI tour
-
-### Transfer
-
-- Serial parameters (baud / data bits / stop bits / parity / flow control) and network parameters live in the
-  right pane; link state shows in the title bar and as a status dot;
-- The output pane supports HEX/text switching, timestamps, TX/RX colouring, pause & scroll-back, log export;
-- **Terminal mode** renders the ANSI sequences a device sends (backspace, redraw, cursor moves) so it behaves
-  like a real terminal;
-- Quick-send buttons are yours to edit.
-
-### Commands
-
-A reference of standard Linux commands grouped into files / text / system / network / permissions, each with an
-argument template. Click the name to fill the send box, or `▶` to send it right away. The filter searches both
-names and descriptions.
-
-### Firmware
-
-- **Package**: `.fw` = a 64-byte header (magic / version / payload CRC / header CRC / board name) + the image;
-- **Channels**: serial (device-side YMODEM in-app upgrade) or network (offset writes over the service port,
-  verification, upgrade flag, reboot);
-- **Sources**: a local file, or a version manifest served over HTTP (sorted by version, verified after download);
-- Every step reports progress, and failures say *which* step got stuck in plain language.
-
-### Flash
-
-The UI only builds the command line and streams the programmer's output; OpenOCD / J-Link / STM32CubeProgrammer
-are supported. Tool paths, adapters, targets and speeds are remembered after you set them once. Great for
-first-article boards, bricked boards and production lines.
-
-### Files
-
-List a device directory, pull/push files, verify CRC32 — over serial (`base64`) or the network service channel.
-
-### Charts / Capture / Scope / Flow
-
-- Send `1.23,4.56,7.89` one line at a time and the chart splits it into channels automatically;
-- Screen capture uses the OS desktop duplication API with adjustable frame rate and quality;
-- The **oscilloscope** speaks RIGOL DS1000Z-series SCPI — see its own section below;
-- Flow orchestrates several links into a timed sequence with branches, timeouts and logs.
-
-### Batch text / Calculator
-
-- **Batch text**: de-duplicate / sort / add prefix·suffix / number lines, convert to HEX array, HEX string,
-  JSON, CSV or a C array; find & replace (Ctrl+F, whole word, fuzzy, regex), JSON formatting, regex batch runs,
-  case and indent cleanup (selection-aware), and line-by-line sending with a delay;
-- **Calculator**: C-style expressions (`0x/0b/0o`, `<< >> & | ~ % **`, hand-written parser — no `eval`),
-  a traditional keypad, a **32-bit bit board** (click any bit; the value feeds back into the expression),
-  IEEE 754 float ↔ bits (with sign/exponent/mantissa breakdown), radix conversion and **file checksums**
-  (CRC32 / CRC16-CCITT / CRC16-MODBUS / MD5 / SHA1 / SHA256, optionally over a byte range).
-
-## Oscilloscope
-
-It talks over the LAN port every RIGOL DS1000Z / DS1000Z-E series scope (DS1054Z, DS1202Z-E, …) has:
-**TCP 5555, SCPI text**.
-
-- **State**: model (`*IDN?`), each channel's on/off, V/div, offset, coupling and probe, timebase,
-  sample rate, memory depth, trigger source and level;
-- **Channel cards**: change V/div and offset and push them to the scope with one click;
-- **Auto-measurements**: frequency, period, Vpp, Vmax/Vmin, Vavg, Vrms, Vtop/Vbase, rise/fall time,
-  duty+/duty- — 13 items, optionally refreshed every two seconds. A channel with no signal shows `—`
-  (the scope returns 9.9E37, which is treated as "not measurable");
-- **Waveform**: every enabled channel on one plot (one colour per channel, cursor readout) with the
-  1200 on-screen points, or deep memory (the UI says so when memory depth AUTO only gives 1200 points);
-- **Screenshot**: grabbed from the scope (`DISP:DATA?` returns a binary PNG at the native 800×480) and shown in
-  place, saveable as PNG;
-- **Control**: timebase, trigger source, trigger level, RUN/STOP, autoset, plus a raw SCPI console with a reply log.
-
-The same abilities are exposed to the **Agent** as tools: `scope_connect` / `scope_info` / `scope_measure` /
-`scope_waveform` (a summary plus an ASCII plot) / `scope_screenshot` (saved into the session workspace) /
-`scope_control`, plus the raw `scope <cmd>`. So you can just say "check what CH2 looks like".
-
-> Note: the DS1000Z SCPI socket accepts a **single** client at a time. KDock reconnects automatically when
-> it gets kicked, but do not drive the scope from two programs at once.
-
-## Environment setup
-
-**Environment setup** (left nav → the **Environment** group): drivers and toolchains without hopping through
-vendor sites — one scan, then install whatever is missing.
-
-**Nine items**: CH34x / CH340 serial driver, FTDI FT2232 / D2XX, SEGGER J-Link (incl. JFlash / GDB Server / RTT),
-GNU Arm Embedded Toolchain (arm-none-eabi-gcc), OpenOCD, logic analyzer (PulseView / sigrok), RT-Thread Env,
-ST-Link USB driver, Zadig (WinUSB for FX2 logic analyzers).
-
-**The scan is read-only** and never touches your machine: PATH plus a few extra roots, the driver list from
-`pnputil /enum-drivers` (that is how CH34x / FTDI / ST-Link are recognized), the registry (J-Link's version),
-and common folders on each drive (matched by pattern, not a full-disk walk). All nine scan in **0.3 s**
-(measured), cached for 15 minutes; "Rescan" forces a refresh.
-
-**Installing** goes in this order:
-
-1. Is there a bundled installer in `<exe folder>\drivers\<item id>\` (`.exe` / `.msi` / `.inf`)? Then use it —
-   **no network at all**. A few-MB driver (CH340 / FTDI, whose vendors gate the download behind a login) can
-   ship next to the app this way.
-2. Otherwise follow the plan: winget (official packages for the Arm toolchain / OpenOCD / PulseView / Zadig),
-   git clone (RT-Thread Env), or download into your Downloads folder and run the installer.
-3. Installing a USB driver raises **one UAC prompt** (`Start-Process -Verb RunAs`) — drivers need elevation and
-   the app never bypasses it silently.
-
-WCH / FTDI / SEGGER / ST gate their downloads behind a consent checkbox or a login, so there is no stable direct
-link; those items get "Open website" + "I downloaded it — install from local" (drop the installer into the bundled
-folder above). The **install folder** is yours to pick: portable items (toolchain zips / git repos) unpack there;
-left blank it prefers `F:\ENV`, otherwise `KDock\env` under your user folder.
-
-### Portable firmware analyzer
-
-The Runtime structure page uses a private analyzer shipped with KDock. It never calls the user's system Python.
-
-- **Bundled with release builds and portable ZIPs** under `resources/bingraph`: Python 3.13.13 embeddable,
-  pybingraph 0.2.5, angr 10.0.4 and 77 locked Python distributions;
-- **Started automatically** on the first analysis request, on a dynamic loopback port;
-- **No system Python and no `uv` required**: Python 3.6, 3.11, 3.14 or no Python at all makes no difference;
-- **No Graphviz required**: full-firmware, main-tree, interrupt and CFG data are rendered by KDock's native
-  canvas, so `dot` is not bundled by default;
-- **One-click repair** in Environment setup → Firmware runtime analyzer. The build script uses `uv` when
-  available and otherwise bootstraps pip with the official `get-pip.py`, then installs the locked versions;
-- **Local only**: the analyzer binds to `127.0.0.1`; KDock reclaims its process tree on exit or forced shutdown;
-- **Focused chains**: select any function and draw only its downstream calls, upstream callers or both,
-  limited to 1/2/3/5/8 levels or unlimited. Large graphs default to drawing only the selected node's edges.
-
-See [docs/10](docs/10-固件运行结构分析器.md) for architecture, analysis scopes, BIN parameters, automatic layout,
-timeouts, security boundaries, troubleshooting, regression baselines and the complete third-party licence inventory.
-
-**First-run check**: runs once after startup and **only prompts when a required item is missing** (today the only
-required one is the CH340 serial driver — without a COM port you cannot do anything). "Open it" jumps to the page,
-"Cancel" stops the nagging; updatable items only raise a toast. **The app never downloads or installs anything by
-itself** — even the scan is strictly read-only.
-
-The same capabilities are on the **Agent**: `env_scan` (scan this PC, read-only, no approval — same inventory the
-page shows) and `env_install` (install / update one item, **needs approval**; the UI switches to Environment setup
-so the user watches the progress and log live).
-
-## Using the Agent
-
-The right pane has three tabs: **Agent info / Text / Browser**.
-
-**Models**: configure providers in Settings → Model & provider (any OpenAI-compatible `base_url`, or Anthropic
-format). Each profile stores its own key (DPAPI-encrypted per Windows user). The dropdown under the chat switches
-between them and shows the measured throughput.
-
-**Permissions** (bottom of the chat):
-
-| Level | Behaviour |
+| Workbench | Runtime graph |
 | --- | --- |
-| Read-only | Device writes, file writes, shell commands and flashing are refused |
-| Ask | Risky actions raise an approve/deny card first; switching to Auto releases anything already waiting |
-| Auto | Everything runs immediately (and reports back) |
+| ![Workbench](docs/images/readme-overview.png) | ![Runtime graph](docs/images/readme-runtime.png) |
 
-**Skills**: one `SKILL.md` each (name/description from the frontmatter go into the system prompt, the body is read
-on demand). The Agent info page only toggles them; paths, import and editing live in Settings → Skills.
-**Always on**: flipping the "Always on" switch on a skill row injects that skill's body into the system prompt
-**every turn** (the system prompt is never trimmed or compacted) — that is what makes an identity / tone /
-house-rules skill actually stick, i.e. "drop in a persona skill and the agent becomes that persona", without
-editing the `SKILL.md` or the built-in role description. Combined limit 16 KB (enforced on both ends); its
-token cost shows up as its own row in the context breakdown.
-
-**MCP**: add stdio servers in Settings → MCP (`command` + `args` + `env`; the `command` array + `environment`
-style used by other tools is accepted too). The Agent info page only toggles them. Remote HTTP servers are not
-supported yet.
-
-**Slash commands**: `/goal <text>` (standing goal, injected every round), `/compact`, `/new`,
-`/perm ask|auto|read`, `/stop`, `/help`.
-
-**Context & cost**: the Agent info page shows context usage, a breakdown (system prompt / tool schemas / summary /
-user messages / assistant replies / tool calls), cache hit rate, estimated cost and throughput (measured only
-while the model is actually emitting tokens).
-
-## Protocol & algorithm docs
-
-The upgrade, OTA package and flashing features have their own write-ups (Chinese):
-
-| Document | Contents |
+| Logic analyzer | Agent |
 | --- | --- |
-| [01 Firmware package format](docs/01-固件包格式与打包算法.md) | byte layout of the `.fw` header, version encoding, CRC algorithms, verification order |
-| [02 Serial in-app upgrade](docs/02-固件升级-串口在线升级.md) | YMODEM flow, timeouts and retries, how to locate failures |
-| [03 Network upgrade & service channel](docs/03-固件升级-网口服务通道.md) | SVC1/SVR1 frame format, command codes, sequence de-duplication, error codes |
-| [04 Firmware server & versioning](docs/04-固件服务器与版本管理.md) | manifest formats, version comparison, post-download verification |
-| [05 Flashing](docs/05-烧录-外部烧录器.md) | command lines for OpenOCD / J-Link / CubeProgrammer and troubleshooting |
-| [06 Device file transfer](docs/06-设备文件传输.md) | serial base64 vs. offset-based network transfer |
-| [10 Firmware runtime analyzer](docs/10-固件运行结构分析器.md) | full-firmware functions, main call tree, interrupts, BIN inputs, automatic layout, portable Python, licences and troubleshooting |
-
-## Building from source
-
-Requirements: Node.js 18+, Rust 1.80+ (MSVC toolchain) and the Tauri 2 system dependencies.
-
-```bash
-npm install
-npm run dev            # frontend only (pair with the command below)
-npm run tauri dev      # dev mode: frontend HMR + Rust backend
-cargo test --workspace # unit tests (run inside src-tauri, or pass --manifest-path)
-npm run tauri build    # production build: Windows output is target/release/kdock.exe
-```
-
-Release packages also need the portable firmware analyzer:
-
-```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass `
-  -File tools/bingraph/build-portable.ps1 -NoGraphviz
-```
-
-The script uses `uv` when present and otherwise downloads the official `get-pip.py`; neither system Python nor
-`uv` is required at runtime. The first build downloads roughly 500 MB into `resources/bingraph`. You can skip it
-for frontend-only debugging, but release installers and portable ZIPs must include it.
-
-> ⚠️ Always build with `npm run tauri build`. A plain `cargo build --release` produces a dev-mode binary that
-> loads `devUrl` (`http://localhost:1420`) and shows the browser's "can't reach this page" without a dev server.
-
-> 🔧 Debug hook: in debug builds, set `KDOCK_DEBUG_PORT=<port>` before launching to open a WebView2 remote
-> debugging port, so CDP scripts can drive the UI for regression tests (this code does not exist in release builds).
+| ![Logic analyzer](docs/images/readme-logic.png) | ![Agent](docs/images/readme-agent.png) |
 
 ## Project layout
 
-```
-.
-├─ crates/kdock-core/     Protocol layer: HEX codec, line endings, baud rates, serial mapping, session logs
-├─ src-tauri/             Tauri 2 app: serial/network I/O, upgrade & flashing, Agent, file and window commands
-│  └─ src/agent/          Agent: LLM clients, tools, skills, MCP, session store
-├─ src/                   Frontend (Vite + vanilla JS, no framework)
-│  ├─ main.js             UI and business logic
-│  ├─ runtime-graph.js    Runtime canvas, auto-layout, library grouping, CFG details
-│  └─ tools-batch-calc.js Batch text / calculator
-├─ src-tauri/src/runtime_graph.rs  Analyzer discovery, port, child process and HTTP timeouts
-├─ docs/                  Feature & protocol docs, screenshots
-├─ tools/                 Helper scripts (icon generation, …)
-│  └─ bingraph/           Analyzer source, locked deps, build script and third-party notices
-├─ resources/bingraph/    Generated portable analyzer (ignored by git, shipped in releases)
-└─ dist/                  Frontend build output (embedded by Tauri, not committed)
+```text
+src/                    Vite frontend
+src-tauri/              Tauri 2 / Rust backend and Agent
+crates/kdock-core/      Serial, HEX, line endings and session core
+tools/bingraph/         Portable firmware analyzer source and build script
+resources/bingraph/     Generated bundle, not tracked by Git
+docs/                   Protocol, algorithm and feature docs
 ```
 
-## FAQ
+## Open source and licensing
 
-**Double-clicking the exe does nothing / it exits immediately?**
-Check whether KDock is already running — it is single-instance, so a second launch just brings the existing
-window forward. If the previous run was killed hard, WebView2 may still hold the data folder; wait a few seconds
-or end the leftover `msedgewebview2.exe` processes.
+KDock itself is [Apache-2.0](LICENSE).
 
-**Window frame / taskbar icon looks wrong?**
-Custom-decorated windows need extra non-client handling on Windows; this is implemented (including snapping
-maximised windows to the work area and DWM border colours). Please report your Windows version if something
-still looks off.
+Core open-source projects:
 
-**What happens if an upgrade is interrupted?**
-The device rejects incomplete packages; just run the upgrade again (network upgrades write by offset and
-overwrite). See `docs/03`.
+| Project | Purpose | License |
+| --- | --- | --- |
+| [Tauri](https://github.com/tauri-apps/tauri) | Desktop framework | MIT OR Apache-2.0 |
+| [uPlot](https://github.com/leeoniya/uPlot) | Live charts | MIT |
+| [pybingraph](https://github.com/manelfx/pybingraph) | Firmware function/CFG analysis | BSD-2-Clause |
+| [angr](https://angr.io/) | Binary analysis and symbolic execution | BSD-2-Clause |
+| [Python](https://www.python.org/) | Portable analyzer runtime | PSF-2.0 |
+| [Cytoscape.js](https://js.cytoscape.org/) | Analyzer offline graph UI | MIT |
 
-**`/goal` seems to have no effect?**
-The goal is stored per session and injected into the system prompt every round. `/goal` prints the current one,
-`/goal clear` removes it.
+The firmware analyzer runs as an **independent Python child process**. Release artifacts retain
+licenses and notices for **78 Python distributions**. `pyvex` contains LibVEX
+(`GPL-2.0-or-later`); KDock does not modify it and uses it only in that separate process.
+See [NOTICE](NOTICE) and the
+[third-party inventory](tools/bingraph/THIRD_PARTY_NOTICES.md).
 
-**Why is some UI text in Chinese?**
-Settings → General switches between Chinese and English instantly.
+USBPcap, tshark, sigrok, ADB/scrcpy, DSView, J-Link and OpenOCD are optional external tools.
+KDock invokes user-installed programs and does not bundle or relicense them.
 
-## License & acknowledgements
+## Documentation
 
-KDock is released under the **Apache License 2.0** — see [LICENSE](LICENSE). Third-party components and the
-projects we learned from are listed in [NOTICE](NOTICE).
-
-The bundled firmware analyzer includes Python 3.13.13 (PSF-2.0), pybingraph 0.2.5 (BSD-2-Clause), angr 10.0.4
-and 77 locked Python distributions. Versions, licence expressions, project URLs and the GPL/LibVEX boundary are
-listed in [tools/bingraph/THIRD_PARTY_NOTICES.md](tools/bingraph/THIRD_PARTY_NOTICES.md). Release packages also
-keep the original licence files under `resources/bingraph/licenses/` and `dist-info/licenses/`.
-
-Open-source projects we actually use whose upstream repository ships a LICENSE file:
-
-- [DSView](https://github.com/DreamSourceLab/DSView) — GPL-3.0; decoder files are GPL-2.0+ and run as separate files
-- [PulseView / sigrok](https://github.com/sigrokproject/pulseview) — GPL-3.0 / GPL-2.0+, external capture and decode programs
-- [USBPcap](https://github.com/desowin/usbpcap) — GPLv2 / BSD-2-Clause, external capture component
-- [Microsoft Calculator](https://github.com/microsoft/calculator) — MIT
-- [opencode](https://github.com/anomalyco/opencode) — MIT
-- [CC Switch](https://github.com/farion1231/cc-switch) — MIT
-- [OxideSerial](https://github.com/Z1R343L-D77/OxideSerial) — MIT
-- [ModelDNA](https://github.com/RadicalNotion/modeldna-cli) — Apache-2.0
-- [Model Provenance Kit](https://github.com/cisco-ai-defense/model-provenance-kit) — Apache-2.0
-- [scrcpy](https://github.com/Genymobile/scrcpy) — Apache-2.0, external mirroring program
-- [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools) — Apache-2.0, external adb
-- [Codex](https://github.com/openai/codex) — Apache-2.0
-- [Tauri](https://github.com/tauri-apps/tauri), [uPlot](https://github.com/leeoniya/uPlot),
-  [RustCrypto](https://github.com/RustCrypto) and other direct dependencies; see [NOTICE](NOTICE)
-
-Other external programs (Wireshark/tshark, FFmpeg, PuTTY, Zadig, Tftpd64, OpenSSH, RT-Thread Env) are used
-under their own licences.
-
-GPL components are used as separate files or external programs; KDock does not link or bundle their code and
-does not sell or sublicense third-party code. DSView decoders remain GPL-2.0+ after copying.
-
-Issues and pull requests are welcome.
-
-## Versioning
-
-- The **application version** follows [SemVer](https://semver.org/) `MAJOR.MINOR.PATCH`; it is currently
-  `v0.3.0` (the About page shows the live value) and is kept in sync across
-  `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `package.json`;
-- Every release appends a section to [CHANGELOG.md](CHANGELOG.md) and creates a `vX.Y.Z` git tag
-  (e.g. `git tag v0.3.0 && git push origin v0.3.0`);
-- The **firmware package version** is a separate three-segment `PD_HW.PD_SW.PD_FIX` stored in the `.fw` header and
-  used by the device to accept or reject an upgrade — it is unrelated to the app version
-  (see [docs/01](docs/01-固件包格式与打包算法.md));
-- Settings → About & data repeats these rules and shows the current version, author and repository.
+- [Firmware packages and upgrade protocol](docs/01-固件包格式与打包算法.md)
+- [Flashing and external programmers](docs/05-烧录-外部烧录器.md)
+- [Device file transfer](docs/06-设备文件传输.md)
+- [Logic analyzer validation](docs/09-逻辑分析仪-准确性与解码自测.md)
+- [Firmware runtime analyzer](docs/10-固件运行结构分析器.md)
+- [Changelog](CHANGELOG.md)

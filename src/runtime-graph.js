@@ -5,6 +5,7 @@ const $ = (id) => document.getElementById(id);
 const SQ_NS = "http://www.w3.org/2000/svg";
 const uiScaleValue = () => (window.kdockUiScale ? window.kdockUiScale() : 1);
 const toast = (text) => (window.kdockToast ? window.kdockToast(text) : console.warn(text));
+const rtZh = (zh, en) => document.documentElement.dataset.lang === "en" ? en : zh;
 // ---------------- 固件运行结构：调用树 / 中断 / 自动布局 ----------------
 // 数据来自随包分发的 pybingraph-native。KDock 只接收分析器 JSON，
 // 布局、库函数折叠和交互都在本地完成，不嵌旧页面，也不依赖浏览器 localStorage 分组。
@@ -21,6 +22,7 @@ let rtRunning = false;
 let rtDrag = null;
 let rtLogNo = 0;
 let rtReady = false;
+let rtLastReadySecs = "";
 let rtCacheKeyValue = "";
 let rtDataCache = { all: null, runtime: null };
 const rtPosCache = new Map();
@@ -58,21 +60,28 @@ async function rtRefreshAnalyzer() {
     const s = await invoke("runtime_analyzer_status");
     const el = $("rt-side-analyzer");
     if (el) {
-      el.textContent = s.installed ? "便携分析器已就绪" : "未安装（去环境配置准备）";
+      el.textContent = s.installed
+        ? rtZh("便携分析器已就绪", "Portable analyzer ready")
+        : rtZh("未安装（去环境配置准备）", "Not installed (prepare in Environment setup)");
       el.className = "rtbadge " + (s.installed ? "ok" : "off");
       el.title = s.path || "";
     }
     return s;
   } catch (e) {
     const el = $("rt-side-analyzer");
-    if (el) { el.textContent = "检测失败"; el.className = "rtbadge bad"; }
+    if (el) { el.textContent = rtZh("检测失败", "Detection failed"); el.className = "rtbadge bad"; }
     return null;
   }
 }
 
 async function rtPickFile() {
   try {
-    const p = await dlgOpen({ multiple: false, directory: false, title: "选择固件", filters: [{ name: "固件", extensions: ["elf", "bin", "axf", "out", "hex"] }] });
+    const p = await dlgOpen({
+      multiple: false,
+      directory: false,
+      title: rtZh("选择固件", "Select firmware"),
+      filters: [{ name: rtZh("固件", "Firmware"), extensions: ["elf", "bin", "axf", "out", "hex"] }],
+    });
     if (!p) return;
     const path = typeof p === "string" ? p : p.path;
     if (!path) return;
@@ -81,29 +90,34 @@ async function rtPickFile() {
     localStorage.setItem("kdock_rt_last_file", rtFile);
     rtResetDataCache();
     rtSetFileName();
-    rtLog("已选择 " + rtFile);
+    rtLog(rtZh("已选择 ", "Selected ") + rtFile);
     await rtAnalyze();
-  } catch (e) { rtLog("选择固件失败：" + String(e), "err"); }
+  } catch (e) { rtLog(rtZh("选择固件失败：", "Failed to select firmware: ") + String(e), "err"); }
 }
 function rtSetFileName() {
   const base = rtFile ? rtFile.replace(/^.*[\\/]/, "") : "";
-  if ($("rt-file-name")) $("rt-file-name").textContent = base || "还没有选择固件";
-  if ($("rt-side-name")) $("rt-side-name").textContent = base || "未选择固件";
-  if ($("rt-side-path")) $("rt-side-path").textContent = rtFile || "选择 ELF 后可按 main 生成运行结构；BIN 需要基址与架构。";
+  if ($("rt-file-name")) $("rt-file-name").textContent = base || rtZh("还没有选择固件", "No firmware selected");
+  if ($("rt-side-name")) $("rt-side-name").textContent = base || rtZh("未选择固件", "No firmware selected");
+  if ($("rt-side-path")) $("rt-side-path").textContent = rtFile || rtZh(
+    "选择 ELF 后可按 main 生成运行结构；BIN 需要基址与架构。",
+    "Choose an ELF to expand runtime structure from main; BIN requires base and architecture.",
+  );
   const isBin = /\.bin$/i.test(base);
   if ($("rt-bin-box")) $("rt-bin-box").open = isBin;
 }
 
 function rtStatsText(visible, total, totalCalls) {
   if (rtScope() === "all") {
-    const calls = totalCalls == null ? "" : ` · ${totalCalls} 调用边`;
-    return `${visible} / ${total} 函数 · 全固件${calls}`;
+    const calls = totalCalls == null ? "" : rtZh(` · ${totalCalls} 调用边`, ` · ${totalCalls} calls`);
+    return rtZh(`${visible} / ${total} 函数 · 全固件${calls}`, `${visible} / ${total} functions · full firmware${calls}`);
   }
   if (rtScope() === "chain") {
-    const dir = ({ down: "向下", up: "向上", both: "双向" })[rtChainDir()] || "向下";
-    return `${visible} 函数 · ${dir}链路 · ${rtChainDepthLabel()}`;
+    const dir = rtChainDir() === "up" ? rtZh("向上", "upstream")
+      : rtChainDir() === "both" ? rtZh("双向", "bidirectional") : rtZh("向下", "downstream");
+    return rtZh(`${visible} 函数 · ${dir}链路 · ${rtChainDepthLabel()}`,
+      `${visible} functions · ${dir} chain · ${rtChainDepthLabel()}`);
   }
-  return `${visible} 函数 · main 运行链`;
+  return rtZh(`${visible} 函数 · main 运行链`, `${visible} functions · main runtime chain`);
 }
 
 function rtRelPath() {
@@ -147,21 +161,27 @@ async function rtAnalyze() {
   if (rtRunning) return;
   const status = await rtRefreshAnalyzer();
   if (!status || !status.installed) {
-    rtSetState("分析器未安装", "bad");
-    rtLog("未找到便携分析器。到「环境配置 → 固件运行结构分析器」点「一键准备」。", "err");
+    rtSetState(rtZh("分析器未安装", "Analyzer not installed"), "bad");
+    rtLog(rtZh(
+      "未找到便携分析器。到「环境配置 → 固件运行结构分析器」点「一键准备」。",
+      "Portable analyzer not found. Open Environment setup → Firmware runtime analyzer and prepare it.",
+    ), "err");
     return;
   }
   rtRunning = true;
-  rtSetState("分析中…", "run");
+  rtSetState(rtZh("分析中…", "Analyzing…"), "run");
   $("rt-run").disabled = true;
   const t0 = performance.now();
   const rel = rtRelPath();
-  rtLog(`开始分析 ${rel || rtFile}（首次启动需要加载 angr，可能要几十秒）…`);
+  rtLog(rtZh(
+    `开始分析 ${rel || rtFile}（首次启动需要加载 angr，可能要几十秒）…`,
+    `Analyzing ${rel || rtFile} (first run loads angr and may take several seconds)…`,
+  ));
   try {
     const isBin = /\.bin$/i.test(rtFile);
     if (isBin) {
       const base = ($("rt-bin-base").value || "").trim();
-      if (!base) throw new Error("BIN 需要填写基址（例如 0x08000000）");
+      if (!base) throw new Error(rtZh("BIN 需要填写基址（例如 0x08000000）", "BIN requires a base address (for example 0x08000000)"));
     }
     // 链路模式需要完整调用图；先取全固件数据，再在本地裁出单条链路。
     const requestScope = rtScope() === "chain" ? "all" : rtScope();
@@ -190,14 +210,19 @@ async function rtAnalyze() {
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
     const nodes = (rtNodes || []).filter((n) => !n.group).length;
     const irq = (data.interrupts || []).length;
-    rtSetState(`就绪 · ${secs}s`, "ok");
+    rtLastReadySecs = secs;
+    rtSetState(rtZh(`就绪 · ${secs}s`, `Ready · ${secs}s`), "ok");
     const total = data.totalFunctions || (data.nodes || []).length;
-    const mode = rtScope() === "all" ? "全固件" : rtScope() === "chain" ? "调用链路" : "main 运行链";
-    rtLog(`分析完成（${mode}）：显示 ${nodes} / ${total} 个函数，${irq} 个中断，用时 ${secs}s`, "ok");
+    const mode = rtScope() === "all" ? rtZh("全固件", "full firmware")
+      : rtScope() === "chain" ? rtZh("调用链路", "call chain") : rtZh("main 运行链", "main runtime chain");
+    rtLog(rtZh(
+      `分析完成（${mode}）：显示 ${nodes} / ${total} 个函数，${irq} 个中断，用时 ${secs}s`,
+      `Analysis complete (${mode}): ${nodes} / ${total} functions, ${irq} interrupts, ${secs}s`,
+    ), "ok");
     if (!rtNodes.length) {
       rtBuildGraph();
       rtRender();
-      if (!rtNodes.length) throw new Error("分析已返回，但没有可显示的函数节点");
+      if (!rtNodes.length) throw new Error(rtZh("分析已返回，但没有可显示的函数节点", "Analysis returned no displayable function nodes"));
     }
   } catch (e) {
     // Keep the last good graph visible. A failed refresh should not destroy
@@ -206,9 +231,9 @@ async function rtAnalyze() {
       rtNodes = []; rtEdges = [];
       rtRender();
     }
-    rtSetState("分析失败", "bad");
-    rtLog("分析失败：" + String(e), "err");
-    toast("运行结构分析失败：" + String(e));
+    rtSetState(rtZh("分析失败", "Analysis failed"), "bad");
+    rtLog(rtZh("分析失败：", "Analysis failed: ") + String(e), "err");
+    toast(rtZh("运行结构分析失败：", "Runtime graph analysis failed: ") + String(e));
   } finally {
     rtRunning = false;
     if ($("rt-run")) $("rt-run").disabled = false;
@@ -228,7 +253,7 @@ function rtChainDepth() {
 }
 function rtChainDepthLabel() {
   const d = rtChainDepth();
-  return d < 0 ? "全部深度" : `${d} 层`;
+  return d < 0 ? rtZh("全部深度", "all depths") : rtZh(`${d} 层`, `${d} levels`);
 }
 function rtHasFullData() {
   return !!(rtData && (rtData.totalFunctions || rtData.entryName === "FULL FIRMWARE"));
@@ -256,8 +281,10 @@ function rtSwitchScope(value) {
   const cached = rtCachedData(needed);
   if (cached) {
     rtShowScopeData(cached);
-    const label = value === "all" ? "全固件函数" : value === "runtime" ? "main 运行链" : "函数调用链路";
-    rtLog(`切换到${label}（使用本地缓存，无需重新分析）`);
+    const label = value === "all" ? rtZh("全固件函数", "full firmware")
+      : value === "runtime" ? rtZh("main 运行链", "main runtime chain") : rtZh("函数调用链路", "call chain");
+    rtLog(rtZh(`切换到${label}（使用本地缓存，无需重新分析）`,
+      `Switched to ${label} (using local cache, no re-analysis needed)`));
     return;
   }
   if (rtFile) rtAnalyze();
@@ -279,7 +306,7 @@ function rtDefaultRootNode() {
 }
 function rtChainRootLabel() {
   const node = rtData && rtAddrNode(rtChainRoot());
-  return node ? `${node.name} · 0x${node.addr}` : "未选择";
+  return node ? `${node.name} · 0x${node.addr}` : rtZh("未选择", "not selected");
 }
 function rtSyncScope() {
   const main = rtScope() === "runtime";
@@ -416,7 +443,7 @@ function rtBuildGraph() {
       if (s === "main" || s === "irq") scopeCount[s] += 1;
     }
     rtNodes.push({
-      addr: libGroup, name: "库函数", group: true, x: 0, y: 0,
+      addr: libGroup, name: rtZh("库函数", "Library"), group: true, x: 0, y: 0,
       scope: allScope || chainScope ? "function" : libAddresses.some((addr) => !mainSet.has(addr) && irqSet.has(addr)) ? "irq" : "main",
       libAddrs: libAddresses,
       size: libAddresses.reduce((sum, addr) => sum + ((byAddr.get(addr) || {}).size || 0), 0),
@@ -554,7 +581,10 @@ function rtRender() {
   rtRenderEdges();
   rtApplyView();
   const count = rtNodes.filter((n) => !n.group).length, edges = rtEdges.length;
-  if ($("rt-stat")) $("rt-stat").textContent = rtStatsText(count, (rtData && rtData.totalFunctions) || (rtData && rtData.nodes ? rtData.nodes.length : count), rtData && rtData.totalCalls) + ` · ${edges} 条可见线`;
+  if ($("rt-stat")) {
+    $("rt-stat").textContent = rtStatsText(count, (rtData && rtData.totalFunctions) || (rtData && rtData.nodes ? rtData.nodes.length : count), rtData && rtData.totalCalls)
+      + rtZh(` · ${edges} 条可见线`, ` · ${edges} visible edges`);
+  }
 }
 
 function rtRenderEdges() {
@@ -618,15 +648,18 @@ function rtNodeEl(n) {
   el.appendChild(hd);
   const bd = rtEl("div", "nbd");
   if (n.group) {
-    bd.appendChild(rtEl("div", "rtmeta", `${n.libCount} 个库函数 · ${n.blocks || 0} 块`));
-    if (rtScope() === "all") bd.appendChild(rtEl("div", "rtmeta", "全固件库函数 · 自动汇总"));
-    else if (rtScope() === "chain") bd.appendChild(rtEl("div", "rtmeta", "当前链路内的库函数 · 自动汇总"));
-    else if (n.scopeCount) bd.appendChild(rtEl("div", "rtmeta", `运行链 ${n.scopeCount.main} · 中断 ${n.scopeCount.irq}`));
-    bd.appendChild(rtEl("div", "rtmeta", "展开「库过滤 → 全部显示」查看明细"));
+    bd.appendChild(rtEl("div", "rtmeta", rtZh(`${n.libCount} 个库函数 · ${n.blocks || 0} 块`, `${n.libCount} library functions · ${n.blocks || 0} blocks`)));
+    if (rtScope() === "all") bd.appendChild(rtEl("div", "rtmeta", rtZh("全固件库函数 · 自动汇总", "Full-firmware library functions · summarized")));
+    else if (rtScope() === "chain") bd.appendChild(rtEl("div", "rtmeta", rtZh("当前链路内的库函数 · 自动汇总", "Library functions in this chain · summarized")));
+    else if (n.scopeCount) bd.appendChild(rtEl("div", "rtmeta", rtZh(`运行链 ${n.scopeCount.main} · 中断 ${n.scopeCount.irq}`, `Runtime ${n.scopeCount.main} · interrupt ${n.scopeCount.irq}`)));
+    bd.appendChild(rtEl("div", "rtmeta", rtZh("展开「库过滤 → 全部显示」查看明细", "Choose Library filter → Show all for details")));
   } else {
     if ($("rt-show-addr") && $("rt-show-addr").checked) bd.appendChild(rtEl("div", "rtaddr", "0x" + n.addr));
     const childCount = rtEdges.filter((e) => e.from === n.addr).length;
-    bd.appendChild(rtEl("div", "rtmeta", `${n.calls ? n.calls.length : 0} 调用 · ${n.blocks || 0} 块` + (childCount ? ` · 展开 ${childCount}` : "")));
+    bd.appendChild(rtEl("div", "rtmeta", rtZh(
+      `${n.calls ? n.calls.length : 0} 调用 · ${n.blocks || 0} 块` + (childCount ? ` · 展开 ${childCount}` : ""),
+      `${n.calls ? n.calls.length : 0} calls · ${n.blocks || 0} blocks` + (childCount ? ` · expands ${childCount}` : ""),
+    )));
   }
   el.appendChild(bd);
   el.addEventListener("pointerdown", (e) => {
@@ -686,10 +719,10 @@ function rtRefreshSelection(n) {
   const box = $("rt-fn-card");
   if (!box) return;
   box.textContent = "";
-  if (!n) { box.appendChild(rtEl("p", "hint", "在中间点一个函数，这里显示地址、大小和调用点。")); return; }
+  if (!n) { box.appendChild(rtEl("p", "hint", rtZh("在中间点一个函数，这里显示地址、大小和调用点。", "Select a function on the canvas to inspect address, size and call sites."))); return; }
   if (n.group) {
-    box.appendChild(rtEl("div", "cardtitle", `库函数汇总 · ${n.libCount} 个`));
-    box.appendChild(rtEl("div", "rtdet-row", `合计 ${n.size || 0} B · ${n.blocks || 0} 个基本块`));
+    box.appendChild(rtEl("div", "cardtitle", rtZh(`库函数汇总 · ${n.libCount} 个`, `Library summary · ${n.libCount}`)));
+    box.appendChild(rtEl("div", "rtdet-row", rtZh(`合计 ${n.size || 0} B · ${n.blocks || 0} 个基本块`, `Total ${n.size || 0} B · ${n.blocks || 0} basic blocks`)));
     const list = rtEl("div", "rtcalls");
     for (const addr of (n.libAddrs || []).slice(0, 80)) {
       const item = rtAddrNode(addr);
@@ -707,18 +740,23 @@ function rtRefreshSelection(n) {
       list.appendChild(row);
     }
     box.appendChild(list);
-    box.appendChild(rtEl("p", "hint", "已折叠 HAL / CMSIS / newlib 调用。点列表里的函数或切换「全部显示」可展开明细。"));
+    box.appendChild(rtEl("p", "hint", rtZh(
+      "已折叠 HAL / CMSIS / newlib 调用。点列表里的函数或切换「全部显示」可展开明细。",
+      "HAL / CMSIS / newlib calls are summarized. Click a function or choose Show all to expand them.",
+    )));
     return;
   }
   const top = rtEl("div", "rtdet-head");
   top.appendChild(rtEl("b", "rtdet-name", n.name));
-  const scopeBadge = n.scope === "irq" ? ["warn", "中断"] : n.scope === "function" ? ["fn", "函数"] : n.scope === "chain" ? ["chain", "链路"] : ["ok", "main"];
+  const scopeBadge = n.scope === "irq" ? ["warn", rtZh("中断", "IRQ")]
+    : n.scope === "function" ? ["fn", rtZh("函数", "FUNC")]
+    : n.scope === "chain" ? ["chain", rtZh("链路", "LINK")] : ["ok", "main"];
   top.appendChild(rtEl("span", "rtbadge " + scopeBadge[0], scopeBadge[1]));
   box.appendChild(top);
-  box.appendChild(rtEl("div", "rtdet-row", "地址 0x" + n.addr));
-  box.appendChild(rtEl("div", "rtdet-row", `大小 ${n.size || 0} B · ${n.blocks || 0} 个基本块`));
+  box.appendChild(rtEl("div", "rtdet-row", rtZh("地址 ", "Address ") + "0x" + n.addr));
+  box.appendChild(rtEl("div", "rtdet-row", rtZh(`大小 ${n.size || 0} B · ${n.blocks || 0} 个基本块`, `Size ${n.size || 0} B · ${n.blocks || 0} basic blocks`)));
   if (n.calls && n.calls.length) {
-    box.appendChild(rtEl("div", "cardtitle", "调用点"));
+    box.appendChild(rtEl("div", "cardtitle", rtZh("调用点", "Call sites")));
     const list = rtEl("div", "rtcalls");
     for (const c of n.calls.slice(0, 24)) {
       const r = rtEl("button", "rtcall");
@@ -730,25 +768,30 @@ function rtRefreshSelection(n) {
     box.appendChild(list);
   }
   const btns = rtEl("div", "btnrow");
-  const b = rtEl("button", "btn small", "定位画布");
+  const b = rtEl("button", "btn small", rtZh("定位画布", "Center on canvas"));
   b.onclick = () => rtCenter(n.addr);
   btns.appendChild(b);
-  const cfg = rtEl("button", "btn small", "展开 CFG");
+  const cfg = rtEl("button", "btn small", rtZh("展开 CFG", "Open CFG"));
   cfg.onclick = () => rtShowCfg(n);
   btns.appendChild(cfg);
-  const chain = rtEl("button", "btn small primary", "拉这条链路");
+  const chain = rtEl("button", "btn small primary", rtZh("拉这条链路", "Draw this chain"));
   chain.onclick = () => rtUseAsChain(n.addr);
   btns.appendChild(chain);
   box.appendChild(btns);
 }
 function rtUseAsChain(addr) {
-  if (!rtData || !byAddrHas(addr)) return toast("先分析固件，再选择链路根函数");
+  if (!rtData || !byAddrHas(addr)) return toast(rtZh("先分析固件，再选择链路根函数", "Analyze firmware before selecting a chain root"));
   rtChainAddr = addr;
   if ($("rt-scope")) $("rt-scope").value = "chain";
   if ($("rt-scope-side")) $("rt-scope-side").value = "chain";
   rtSyncScope();
   const node = rtAddrNode(addr);
-  rtLog(`链路分析：以 ${node ? node.name : addr} 为根，${({ down: "向下", up: "向上", both: "双向" })[rtChainDir()] || "向下"} ${rtChainDepthLabel()}`, "ok");
+  const chainDir = rtChainDir() === "up" ? rtZh("向上", "upstream")
+    : rtChainDir() === "both" ? rtZh("双向", "both directions") : rtZh("向下", "downstream");
+  rtLog(rtZh(
+    `链路分析：以 ${node ? node.name : addr} 为根，${chainDir} ${rtChainDepthLabel()}`,
+    `Chain analysis: root ${node ? node.name : addr}, ${chainDir}, ${rtChainDepthLabel()}`,
+  ), "ok");
   // The runtime endpoint only contains main/interrupt reachable functions.
   // Chain mode is a slice of the full-firmware graph, so fetch it when needed.
   const full = rtCachedData("all");
@@ -776,9 +819,9 @@ function rtCenter(addr) {
   rtApplyView();
 }
 function rtShowCfg(n) {
-  if (n.group) return toast("库函数已折叠；切换为「全部显示」后再展开单个 CFG");
+  if (n.group) return toast(rtZh("库函数已折叠；切换为「全部显示」后再展开单个 CFG", "Library functions are summarized; choose Show all before opening an individual CFG"));
   const detail = rtAddrNode(n.addr);
-  if (!detail || !detail.block_nodes) return toast("这个函数没有 CFG 数据（BIN 无符号时常见）");
+  if (!detail || !detail.block_nodes) return toast(rtZh("这个函数没有 CFG 数据（BIN 无符号时常见）", "No CFG data for this function (common for unsigned BIN)"));
   rtSel = n.addr;
   rtCollapsed.clear();
   const blocks = detail.block_nodes || [];
@@ -786,7 +829,7 @@ function rtShowCfg(n) {
     const key = n.addr + "@" + b.addr;
     rtCollapsed.delete(key);
   }
-  rtLog(`展开 ${n.name} 的 ${blocks.length} 个基本块`);
+  rtLog(rtZh(`展开 ${n.name} 的 ${blocks.length} 个基本块`, `Opened ${blocks.length} basic blocks for ${n.name}`));
   rtRenderCfgBlocks(detail);
 }
 function rtRenderCfgBlocks(n) {
@@ -798,7 +841,7 @@ function rtRenderCfgBlocks(n) {
     const r = rtEl("div", "rtblock");
     r.appendChild(rtEl("b", "rtblock-a", "0x" + b.addr));
     r.appendChild(rtEl("span", "rtblock-i", String(b.first_insn || "")));
-    r.appendChild(rtEl("span", "rtblock-m", `${b.instructions} 条`));
+    r.appendChild(rtEl("span", "rtblock-m", rtZh(`${b.instructions} 条`, `${b.instructions} insns`)));
     box.appendChild(r);
   }
 }
@@ -858,12 +901,12 @@ function rtBindCanvas() {
 }
 
 async function rtFind() {
-  if (!rtData) return toast("先分析一个固件");
-  const q = prompt("查找函数名或地址（支持部分匹配）", "");
+  if (!rtData) return toast(rtZh("先分析一个固件", "Analyze firmware first"));
+  const q = prompt(rtZh("查找函数名或地址（支持部分匹配）", "Find a function name or address (partial match)"), "");
   if (!q || !q.trim()) return;
   const s = q.trim().toLowerCase(), hex = s.replace(/^0x/, "");
   const hit = rtNodes.find((n) => n.name.toLowerCase().includes(s) || n.addr.toLowerCase().includes(hex));
-  if (!hit) return toast("没有找到： " + q);
+  if (!hit) return toast(rtZh("没有找到： ", "Not found: ") + q);
   rtCenter(hit.addr);
 }
 
@@ -873,8 +916,8 @@ async function rtInit() {
   const last = localStorage.getItem("kdock_rt_last_file") || "";
   if (last) { rtFile = last; rtRoot = last.replace(/[\\/][^\\/]*$/, ""); rtSetFileName(); }
   const st = await rtRefreshAnalyzer();
-  if (st && st.installed) rtLog("便携分析器就绪：" + st.version);
-  else rtLog("未找到便携分析器：去环境配置 → 固件运行结构分析器 准备。", "err");
+  if (st && st.installed) rtLog(rtZh("便携分析器就绪：", "Portable analyzer ready: ") + st.version);
+  else rtLog(rtZh("未找到便携分析器：去环境配置 → 固件运行结构分析器 准备。", "Portable analyzer not found; prepare it in Environment setup → Firmware runtime analyzer."), "err");
   const pick = $("rt-file"), pick2 = $("rt-empty-pick"), pick3 = $("rt-pick-side"), run = $("rt-run");
   for (const b of [pick, pick2, pick3]) if (b) b.onclick = rtPickFile;
   if (run) run.onclick = rtAnalyze;
@@ -885,10 +928,10 @@ async function rtInit() {
     if (!rtData) return;
     rtCollapsed.clear(); rtBuildGraph(); rtRender(); rtFit();
   };
-  if ($("rt-collapse")) $("rt-collapse").onclick = () => toast("叶子节点会在下次整理时收起");
+  if ($("rt-collapse")) $("rt-collapse").onclick = () => toast(rtZh("叶子节点会在下次整理时收起", "Leaf nodes collapse on the next Tidy"));
   const useChain = () => {
     const root = (rtSel && !String(rtSel).startsWith("__")) ? rtSel : rtChainRoot();
-    if (!root) return toast("先分析固件并选择一个函数");
+    if (!root) return toast(rtZh("先分析固件并选择一个函数", "Analyze firmware and select a function first"));
     rtUseAsChain(root);
   };
   if ($("rt-chain-pick")) $("rt-chain-pick").onclick = useChain;
@@ -920,6 +963,16 @@ async function rtInit() {
   rtSyncScope();
   rtBindCanvas();
   rtRender();
+  if (window.kdockOnLang) window.kdockOnLang(() => {
+    rtSyncScope();
+    if (rtData) { rtBuildGraph(); rtRender(); rtFocusRoot(); }
+    else rtRender();
+    if (rtLastReadySecs) rtSetState(rtZh(`就绪 · ${rtLastReadySecs}s`, `Ready · ${rtLastReadySecs}s`), "ok");
+    if (rtSel) {
+      const selected = rtNodes.find((n) => n.addr === rtSel) || rtAddrNode(rtSel);
+      if (selected) rtRefreshSelection(selected);
+    }
+  });
 }
 
 

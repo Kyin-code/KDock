@@ -17,7 +17,7 @@ KDock 自身采用 Apache-2.0。便携固件分析器是**独立子进程**，�
 
 - Python 3.13.13 官方 Windows embeddable runtime，许可为 PSF-2.0；
 - `pybingraph 0.2.5`，许可为 BSD-2-Clause；
-- `angr 10.0.4` 及其锁定依赖，共 77 个 Python distributions；
+- `angr 10.0.4` 及其锁定依赖，含 pybingraph 共 78 个 Python distributions；
 - KDock 自己的 `bingraph_native` 启动器与 JSON 路由代码；
 - 可选的 Cytoscape.js 静态文件（上游页面的离线依赖），MIT。
 
@@ -73,7 +73,7 @@ KDock 自身代码不因调用独立进程而被重新许可为 GPL。
 - 默认状态：**不打包**。运行结构 JSON、KDock 原生画布、自动整理和 CFG 详情都不需要 Graphviz
 - 如构建者主动用 `-GraphvizBin` 打包，必须自行保留 Graphviz 的许可证文件并满足 EPL 要求
 
-## 3. 77 项锁定 Python 依赖
+## 3. 78 项锁定 Python 依赖
 
 下表由实际构建出的 Python 3.13.13 便携环境读取 `importlib.metadata` 生成，版本与
 `tools/bingraph/requirements.txt` 一致。许可证栏来自包元数据；写着
@@ -185,7 +185,7 @@ $py = "resources\bingraph\python\python.exe"
 & $py -c "import importlib.metadata as m; print(len(list(m.distributions())))"
 ```
 
-预期输出为 `77`。如果依赖版本或数量变化，必须同步更新
+预期输出为 `78`。如果依赖版本或数量变化，必须同步更新
 `tools/bingraph/requirements.txt`、本清单以及 KDock 根目录的 `NOTICE`。
 
 ## 6. 免责声明

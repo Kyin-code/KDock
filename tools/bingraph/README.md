@@ -9,7 +9,7 @@
 bingraph/
 ├─ python/
 │  └─ python.exe              Python 3.13.13 embeddable
-├─ site-packages/             锁定的 77 个 Python 依赖
+├─ site-packages/             锁定的 78 个 Python distributions（含 pybingraph）
 ├─ launcher/                  KDock 的兼容启动器与 JSON 路由
 ├─ run.py                     稳定入口
 ├─ VERSION.json               构建版本

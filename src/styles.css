@@ -446,6 +446,11 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 .btn.small { height: 26px; padding: 0 10px; font-size: 12px; border-radius: 8px; }
 .btn.icon { width: 30px; padding: 0; font-size: 14px; line-height: 1; }
 .btn.file { width: 100%; }
+.btn-ico {
+  display: inline-block; width: 14px; height: 14px; margin-right: 4px;
+  vertical-align: -2px; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; pointer-events: none;
+}
 .chk { display: inline-flex; align-items: center; gap: 5px; color: hsl(var(--muted-foreground)); font-size: 12.5px; white-space: nowrap; cursor: pointer; }
 /* 参数区里的长勾选项（"反向控制（点画面 = 点手机）"这种）：窄窗下让人换行，别顶出右边界 */
 .parampane .trow > label.chk { white-space: normal; min-width: 0; overflow-wrap: anywhere; }
@@ -3333,6 +3338,10 @@ html[data-tab="usb"] .params {
 .rtempty .rtempty-icon {
   display: grid; place-items: center; width: 54px; height: 54px; border-radius: 15px;
   background: hsl(var(--primary) / .12); border: 1px solid hsl(var(--primary) / .3); color: hsl(var(--primary)); font-size: 26px;
+}
+.rtempty-svg {
+  width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
 }
 .rtempty b { font-size: 14px; color: hsl(var(--foreground)); }
 .rtempty span { font-size: 11.5px; max-width: 380px; line-height: 1.6; }
