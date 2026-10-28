@@ -370,6 +370,7 @@ function rtShowScopeData(data) {
 function rtSwitchScope(value) {
   if ($("rt-scope")) $("rt-scope").value = value;
   if ($("rt-scope-side")) $("rt-scope-side").value = value;
+  if (value !== "chain") rtChainAddr = "";
   rtSyncScope();
   const needed = value === "chain" ? "all" : value;
   const cached = rtCachedData(needed);
@@ -1232,7 +1233,6 @@ function rtNodeEl(n) {
   });
   el.addEventListener("click", () => {
     rtRefreshSelection(n);
-    if (rtScope() === "chain" && !n.group) rtChainAddr = n.addr;
     rtSyncScope();
   });
   el.addEventListener("dblclick", (e) => {
@@ -1691,7 +1691,9 @@ async function rtInit() {
   };
   if ($("rt-chain-pick")) $("rt-chain-pick").onclick = useChain;
   if ($("rt-chain-pick-side")) $("rt-chain-pick-side").onclick = useChain;
-  if ($("rt-chain-back")) $("rt-chain-back").onclick = () => rtSwitchScope("all");
+  const returnToFull = () => rtSwitchScope("all");
+  if ($("rt-chain-back")) $("rt-chain-back").onclick = returnToFull;
+  if ($("rt-chain-back-side")) $("rt-chain-back-side").onclick = returnToFull;
   for (const id of ["rt-chain-dir", "rt-chain-depth"]) {
     const el = $(id); if (el) el.onchange = () => {
       if (rtScope() === "chain") {

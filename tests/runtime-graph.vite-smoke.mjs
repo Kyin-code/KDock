@@ -16,6 +16,8 @@ if (!existsSync(fixturePath)) {
 }
 
 const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
+const chainTarget = fixture.nodes.find((node) => node.name === "lfs_init");
+if (!chainTarget) throw new Error("Fixture does not contain lfs_init");
 const server = await createServer({
   root,
   configFile: resolve(root, "vite.config.js"),
@@ -68,6 +70,43 @@ try {
   }
 
   const initialCount = initialNames.length;
+  await page.evaluate((addr) => window.rtUseAsChain(addr), chainTarget.addr);
+  await page.waitForFunction(() => document.querySelector("#rt-scope")?.value === "chain");
+  const chainNames = await nodeNames();
+  if (chainNames.includes("main")) {
+    throw new Error("Chain mode still contains unrelated main-chain nodes");
+  }
+  await page.locator("#rt-nodes .rtfn:not(.chainroot)").first().click();
+  const chainRoot = await page.locator("#rt-chain-root-side").textContent();
+  if (!chainRoot.includes("lfs_init")) {
+    throw new Error(`Selecting a child changed the chain root: ${chainRoot}`);
+  }
+  await page.locator("#rt-chain-back").click();
+  await page.waitForFunction(() => document.querySelector("#rt-scope")?.value === "all");
+  const returnedNames = await nodeNames();
+  if (
+    returnedNames.length !== initialNames.length
+    || returnedNames.some((name) => !initialNames.includes(name))
+  ) {
+    throw new Error(
+      `Returning to full firmware did not restore the graph `
+      + `(initial=${initialNames.length}, chain=${chainNames.length}, returned=${returnedNames.length})`,
+    );
+  }
+  for (const scopeSelector of ["#rt-scope", "#rt-scope-side"]) {
+    await page.evaluate((addr) => window.rtUseAsChain(addr), chainTarget.addr);
+    await page.waitForFunction(() => document.querySelector("#rt-scope")?.value === "chain");
+    await page.locator(scopeSelector).selectOption("all");
+    await page.waitForFunction(() => document.querySelector("#rt-scope")?.value === "all");
+    const names = await nodeNames();
+    if (names.length !== initialNames.length || names.some((name) => !initialNames.includes(name))) {
+      throw new Error(
+        `${scopeSelector} did not restore the full graph `
+        + `(initial=${initialNames.length}, returned=${names.length})`,
+      );
+    }
+  }
+
   const mainLoop = page.locator("#rt-nodes .rtfn").filter({ hasText: "MainLoop" }).first();
   await mainLoop.locator(".rtfold").click();
   const collapsedCount = await page.locator("#rt-nodes .rtfn").count();
@@ -133,6 +172,9 @@ try {
     initialVisible: initialCount,
     afterMainLoopCollapse: collapsedCount,
     afterMainLoopExpand: expandedCount,
+    chainTarget: "lfs_init",
+    chainVisible: chainNames.length,
+    returnedToFullVisible: returnedNames.length,
     searchTarget: "lfs_init",
     clearMethods: ["blank-canvas", "Escape"],
   }, null, 2));

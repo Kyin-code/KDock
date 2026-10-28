@@ -217,8 +217,8 @@ export const HELP_GROUPS = [
       {
         id: "help-runtime-chain",
         title: "拉一条链路与返回",
-        zh: "### 操作\n点一个函数，再点「拉这条链路」；选择向下调用、向上调用者或双向，以及 1/2/3/5/8 层或全部深度。\n### 联动\n- 根节点会高亮，右上角显示根函数。\n- 「返回全固件」直接使用本地缓存，不重新分析。\n- 切换库过滤后可展开或折叠链路里的 HAL/CMSIS/C 库。",
-        en: "### Usage\nSelect a function and choose Draw this chain; pick downstream, upstream or both, and 1/2/3/5/8 levels or unlimited.\n### Relationships\n- The root is highlighted and shown at top right.\n- Return to Full firmware uses local cache without re-analysis.\n- Library filtering expands or collapses HAL/CMSIS/C-library nodes inside the chain."
+        zh: "### 操作\n点一个函数，再点「拉这条链路」；选择向下调用、向上调用者或双向，以及 1/2/3/5/8 层或全部深度。\n### 联动\n- 链路内点击其他节点只查看详情，不会改变链路根。\n- 需要换根时重新点「用选中函数拉链路」。\n- 「返回全固件」在顶部和右侧链路卡片都可用，直接使用本地缓存，不重新分析。",
+        en: "### Usage\nSelect a function and choose Draw this chain; pick downstream, upstream or both, and 1/2/3/5/8 levels or unlimited.\n### Relationships\n- Clicking another node in the chain only inspects it and does not change the chain root.\n- Use Draw this chain from selection to choose a new root.\n- Return to Full firmware is available at the top and in the side chain card, using local cache without re-analysis."
       },
       {
         id: "help-runtime-bin",

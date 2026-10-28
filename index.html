@@ -2439,8 +2439,9 @@
           <div class="cardtitle">链路分析</div>
           <div class="rtchaincard">
             <div class="rtdet-row">根：<b id="rt-chain-root-side">main</b></div>
-            <p class="hint">在全固件或运行链里点一个函数，再点下面的按钮。只用这一条链路时，画布不会被上千个无关函数淹没。</p>
+            <p class="hint">在全固件或运行链里点一个函数，再点下面的按钮。链路内点其他节点只查看详情，不会改变根；需要换根时重新点“用选中函数拉链路”。</p>
             <button id="rt-chain-pick-side" class="btn small primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-flow"></use></svg>用选中函数拉链路</button>
+            <button id="rt-chain-back-side" class="btn small"><svg class="btn-ico" aria-hidden="true"><use href="#ni-arrow-left"></use></svg>返回全固件</button>
           </div>
           <div class="cardtitle">选中函数</div>
           <div id="rt-fn-card"><p class="hint">在中间点一个函数，这里显示地址、大小和调用点。</p></div>
