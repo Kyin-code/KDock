@@ -1468,11 +1468,16 @@
             <button id="rt-file" class="btn small primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-file-binary"></use></svg>选择 ELF / BIN…</button>
             <span id="rt-file-name" class="lb rtfile">还没有选择固件</span>
             <span class="grow"></span>
-            <button id="rt-search-btn" class="btn small" title="按函数名或地址查找"><svg class="btn-ico" aria-hidden="true"><use href="#ni-search"></use></svg>查找</button>
+            <div class="rtsearchbox">
+              <svg class="rtsearchico" aria-hidden="true"><use href="#ni-search"></use></svg>
+              <input id="rt-search-input" type="search" autocomplete="off" spellcheck="false" placeholder="搜索函数名 / 地址" />
+              <button id="rt-search-btn" class="btn small" title="按函数名或地址查找">查找</button>
+              <div id="rt-search-results" class="rtsearchresults" hidden></div>
+            </div>
             <button id="rt-tidy" class="btn small" title="按调用深度自动分层，重新排版"><svg class="btn-ico" aria-hidden="true"><use href="#ni-layers"></use></svg>整理</button>
             <button id="rt-fit" class="btn small" title="缩放到合适大小"><svg class="btn-ico" aria-hidden="true"><use href="#ni-fit"></use></svg>适应</button>
-            <button id="rt-expand" class="btn small" title="展开当前可见的一层"><svg class="btn-ico" aria-hidden="true"><use href="#ni-plus"></use></svg>展开一层</button>
-            <button id="rt-collapse" class="btn small" title="收起叶子节点"><svg class="btn-ico" aria-hidden="true"><use href="#ni-minus"></use></svg>收起叶子</button>
+            <button id="rt-expand" class="btn small" title="展开所有折叠分支"><svg class="btn-ico" aria-hidden="true"><use href="#ni-plus"></use></svg>展开全部</button>
+            <button id="rt-collapse" class="btn small" title="折叠选中分支；未选中时折叠所有有下游的分支"><svg class="btn-ico" aria-hidden="true"><use href="#ni-minus"></use></svg>收起分支</button>
             <span id="rt-state" class="dot">未分析</span>
           </div>
           <div class="trow rtfilter">
@@ -1502,8 +1507,8 @@
               <button id="rt-chain-back" class="btn small" title="回到全固件图；直接使用本地缓存，不重新分析"><svg class="btn-ico" aria-hidden="true"><use href="#ni-arrow-left"></use></svg>返回全固件</button>
             </span>
             <label class="chk" title="递归展开 main 可达调用"><input type="checkbox" id="rt-show-interrupts" /> 中断</label>
-            <label class="chk" title="隐藏 HAL / CMSIS / C 库 / newlib 等系统调用"><input type="checkbox" id="rt-hide-lib" checked /> 折叠库函数</label>
-            <label class="chk" title="只显示 main 的可达节点"><input type="checkbox" id="rt-main-only" checked /> 只看 main</label>
+            <label class="chk" title="先显示 main 入口和组件入口，点击节点逐步展开"><input type="checkbox" id="rt-skeleton" checked /> 入口骨架</label>
+            <label class="chk" title="勾选后收起库函数下游分支；取消勾选立即展开"><input type="checkbox" id="rt-hide-lib" checked /> 折叠库函数</label>
             <span class="rtsep"></span>
             <label class="chk"><input type="checkbox" id="rt-show-addr" checked /> 地址</label>
             <span class="grow"></span>
@@ -1519,7 +1524,7 @@
                 <span>全固件函数一览、main 调用链、中断作用域和单函数链路；库函数自动折叠。</span>
                 <button id="rt-empty-pick" class="btn primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-file-binary"></use></svg>选择 ELF / BIN</button>
               </div>
-              <div class="seqhint lb">滚轮缩放 · 拖动画布 · 点击函数看详情 / 展开 CFG / 拉链路</div>
+              <div class="seqhint lb">滚轮缩放 · 拖动画布 · 点击空白或按 Esc 取消高亮 · 点击函数看详情</div>
             </div>
           </div>
           <div class="vsplit" id="rt-log-grip" title="拖动调整日志高度"></div>
@@ -2391,6 +2396,18 @@
             <button id="rt-run" class="btn primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-play"></use></svg>分析运行结构</button>
             <button id="rt-pick-side" class="btn small"><svg class="btn-ico" aria-hidden="true"><use href="#ni-file-binary"></use></svg>选择固件</button>
           </div>
+          <details class="adv rtelfhelp">
+            <summary>如何生成 ELF（MDK / CMake）</summary>
+            <div class="rtelfsteps">
+              <b>Keil MDK</b>
+              <span id="rt-elf-mdk">Options for Target → Output 勾选 Create Executable，并保留 Debug Information。构建后的 <code>Objects\&lt;target&gt;.axf</code> 本身就是 ELF，可直接选择；若必须命名为 <code>.elf</code>，执行：</span>
+              <code>fromelf --elf --output=Objects\app.elf Objects\app.axf</code>
+              <b>CMake</b>
+              <span id="rt-elf-cmake">构建链接器和 <code>.elf</code> 目标，不要只构建 <code>.bin</code>。保留 <code>-g</code> 调试符号；可在 CMake 中设置：</span>
+              <code>set_target_properties(app PROPERTIES SUFFIX ".elf")</code>
+              <span id="rt-elf-note">生成的 <code>app.elf</code> 需与当前烧录固件来自同一次构建。</span>
+            </div>
+          </details>
           <div class="cardtitle">BIN 参数</div>
           <details class="adv" id="rt-bin-box">
             <summary>裸机 BIN 必须填写</summary>
@@ -2403,9 +2420,22 @@
           <div class="cardtitle">显示策略</div>
           <div class="field"><label>分析范围</label><select id="rt-scope-side"><option value="all">全固件函数</option><option value="runtime">main 运行链</option><option value="chain">函数调用链路</option></select></div>
           <div class="field"><label>布局</label><select id="rt-layout"><option value="layered">按调用分层</option><option value="compact">紧凑网格</option></select></div>
-          <div class="field"><label>库过滤</label><select id="rt-lib-mode"><option value="collapse">折叠为汇总节点</option><option value="hide">完全隐藏</option><option value="show">全部显示</option></select></div>
-          <div class="field"><label>连线</label><select id="rt-edge-mode" title="全固件大图建议只显示选中节点的连线"><option value="all">全部调用线</option><option value="selected" selected>仅选中节点</option><option value="none">不画线</option></select></div>
+          <div class="field"><label>函数筛选</label><select id="rt-filter-kind"><option value="all">全部函数</option><option value="business">仅业务函数</option><option value="library">仅库函数</option><option value="irq">仅中断</option><option value="isolated">仅孤立函数</option></select></div>
+          <div class="field"><label>连线</label><select id="rt-edge-mode" title="大图建议只突出选中节点的上下游链路"><option value="all">全部调用线</option><option value="selected" selected>选中上下游</option><option value="none">不画线</option></select></div>
           <label class="chk"><input type="checkbox" id="rt-color-scope" checked /> 按作用域着色</label>
+          <div class="cardtitle">折叠分组<span class="grow"></span><button id="rt-group-add" class="btn small">＋ 新建</button></div>
+          <p class="hint">启用的分组会按名称或地址识别函数，并默认收起其下游分支；设置保存在本机。</p>
+          <div id="rt-groups" class="rtgroups"></div>
+          <div id="rt-group-editor" class="rtgroupeditor" hidden>
+            <div class="field"><label>名称</label><input id="rt-group-name" placeholder="例如：日志模块" /></div>
+            <div class="field"><label>匹配</label><select id="rt-group-mode"><option value="prefix">名称前缀</option><option value="contains">名称包含</option><option value="regex">正则表达式</option><option value="manual">精确名称（逗号分隔）</option><option value="addr">地址范围（十六进制）</option></select></div>
+            <div class="field"><label>规则</label><input id="rt-group-pattern" placeholder="例如：LOG_ 或 0x08010000-0x0801ffff" /></div>
+            <div class="btnrow">
+              <button id="rt-group-save" class="btn small primary">保存</button>
+              <button id="rt-group-cancel" class="btn small">取消</button>
+              <button id="rt-group-delete" class="btn small danger">删除</button>
+            </div>
+          </div>
           <div class="cardtitle">链路分析</div>
           <div class="rtchaincard">
             <div class="rtdet-row">根：<b id="rt-chain-root-side">main</b></div>

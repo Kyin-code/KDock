@@ -73,6 +73,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File tools/bingraph/build-portable.ps1 
 npm run tauri dev
 
 # Tests and release package
+npm run test:vite
 cargo test --workspace --locked
 npm run tauri build
 ```

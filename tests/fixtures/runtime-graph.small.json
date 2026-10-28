@@ -1,0 +1,147 @@
+{
+  "filepath": "hpf416serial.elf",
+  "entry": "803c8a1",
+  "entryName": "main",
+  "totalFunctions": 1301,
+  "totalCalls": 9086,
+  "roots": ["803c8a1", "804c689"],
+  "mainReachable": ["803c8a1", "8043ba9", "80453ed", "8026571", "802664d", "802a7e9", "8026e49", "803f5a9"],
+  "interruptReachable": [],
+  "interrupts": [],
+  "nodes": [
+    {
+      "addr": "803c8a1",
+      "name": "main",
+      "size": 210,
+      "blocks": 24,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": [
+        { "site": "803c99a", "addr": "8043ba9", "name": "HAL_Init", "order": 1, "mnemonic": "bl #0x8043ba8" },
+        { "site": "803c9aa", "addr": "80453ed", "name": "MainLoop", "order": 2, "mnemonic": "bl #0x80453ec" }
+      ]
+    },
+    {
+      "addr": "80453ed",
+      "name": "MainLoop",
+      "size": 1968,
+      "blocks": 17,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": [
+        { "site": "8045ad6", "addr": "8026571", "name": "fifo_Analysis", "order": 1, "mnemonic": "bl #0x8026570" },
+        { "site": "8045928", "addr": "802664d", "name": "it6263_handle", "order": 2, "mnemonic": "bl #0x802664c" },
+        { "site": "8045934", "addr": "802a7e9", "name": "EgbBiasBlobBusy", "order": 3, "mnemonic": "bl #0x802a7e8" },
+        { "site": "804593e", "addr": "8026e49", "name": "C788_edgeblend_Handle", "order": 4, "mnemonic": "bl #0x8026e48" },
+        { "site": "804596a", "addr": "803bd4d", "name": "dispaly_port", "order": 5, "mnemonic": "bl #0x803bd4c" }
+      ]
+    },
+    {
+      "addr": "8026571",
+      "name": "fifo_Analysis",
+      "size": 420,
+      "blocks": 18,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": [
+        { "site": "8026580", "addr": "8043c75", "name": "UART_init", "order": 1, "mnemonic": "bl #0x8043c74" }
+      ]
+    },
+    {
+      "addr": "802664d",
+      "name": "it6263_handle",
+      "size": 356,
+      "blocks": 15,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": [
+        { "site": "8026660", "addr": "803b789", "name": "init_6805x", "order": 1, "mnemonic": "bl #0x803b788" }
+      ]
+    },
+    {
+      "addr": "802a7e9",
+      "name": "EgbBiasBlobBusy",
+      "size": 96,
+      "blocks": 5,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": []
+    },
+    {
+      "addr": "8026e49",
+      "name": "C788_edgeblend_Handle",
+      "size": 600,
+      "blocks": 26,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": []
+    },
+    {
+      "addr": "803bd4d",
+      "name": "dispaly_port",
+      "size": 188,
+      "blocks": 9,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": []
+    },
+    {
+      "addr": "8043c75",
+      "name": "UART_init",
+      "size": 88,
+      "blocks": 5,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": []
+    },
+    {
+      "addr": "803b789",
+      "name": "init_6805x",
+      "size": 220,
+      "blocks": 8,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": []
+    },
+    {
+      "addr": "8043ba9",
+      "name": "HAL_Init",
+      "size": 124,
+      "blocks": 6,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": [
+        { "site": "8043bb8", "addr": "803f5a9", "name": "HAL_GPIO_ReadPin", "order": 1, "mnemonic": "bl #0x803f5a8" }
+      ]
+    },
+    {
+      "addr": "803f5a9",
+      "name": "HAL_GPIO_ReadPin",
+      "size": 42,
+      "blocks": 3,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": []
+    },
+    {
+      "addr": "804c689",
+      "name": "lfs_init",
+      "size": 180,
+      "blocks": 9,
+      "mainReachable": false,
+      "block_nodes": [],
+      "calls": [
+        { "site": "804c69a", "addr": "804c700", "name": "lfs_mount", "order": 1, "mnemonic": "bl #0x804c700" }
+      ]
+    },
+    {
+      "addr": "804c700",
+      "name": "lfs_mount",
+      "size": 240,
+      "blocks": 11,
+      "mainReachable": false,
+      "block_nodes": [],
+      "calls": []
+    }
+  ]
+}

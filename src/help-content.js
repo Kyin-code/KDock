@@ -197,16 +197,22 @@ export const HELP_GROUPS = [
         en: "### Purpose\nAnalyze functions, call edges, interrupts and CFG in ELF/PE/AXF/OUT/BIN files.\n### First use\nThe analyzer ships with release builds; prepare it from Environment setup if missing.\n### Relationships\n- The result is cached in Rust and Agent runtime_graph_query can inspect calls/callers.\n- Full firmware, runtime chain and single-chain views reuse the same analysis."
       },
       {
+        id: "help-runtime-elf",
+        title: "生成可分析的 ELF",
+        zh: "### Keil MDK\n- Options for Target → Output 勾选 Create Executable，并保留 Debug Information。\n- `Objects\\<target>.axf` 本身就是 ELF，可以直接选择；需要 `.elf` 文件名时执行 `fromelf --elf --output=Objects\\app.elf Objects\\app.axf`。\n### CMake\n- 构建链接器和 `.elf` 目标，不要只构建 `.bin`。\n- 保留 `-g` 调试符号；可用 `set_target_properties(app PROPERTIES SUFFIX \".elf\")` 固定输出名。\n### 注意\nELF 必须与当前烧录固件来自同一次构建。只有 `.bin` 时没有符号名，函数搜索、中断识别和调用链都会明显变差。",
+        en: "### Keil MDK\n- In Options for Target → Output, enable Create Executable and keep Debug Information.\n- `Objects\\<target>.axf` is already an ELF and can be selected directly. To produce a `.elf` filename, run `fromelf --elf --output=Objects\\app.elf Objects\\app.axf`.\n### CMake\n- Build the linker/ELF target, not only `.bin`.\n- Keep `-g` debug symbols; use `set_target_properties(app PROPERTIES SUFFIX \".elf\")` to fix the output name.\n### Note\nThe ELF must come from the same build as the firmware being flashed. A `.bin` has no symbol names, so function search, interrupt detection and call chains are substantially worse."
+      },
+      {
         id: "help-runtime-mode",
         title: "全固件 / main / 链路",
-        zh: "### 全固件函数\n列出 CFGFast 识别的全部函数，不要求从 main 可达。\n### main 运行链\n从 main 展开，单独挂载中断 Handler；BIN 无符号时入口可能显示 _start。\n### 函数调用链路\n以选中函数为根，按向上/向下/双向和深度裁剪。\n### 联动\n- 切回全固件优先使用本地缓存，不重新分析。\n- 选中节点右侧可查看大小、块数、调用点和 CFG。",
-        en: "### Full firmware\nLists every CFGFast-discovered function, regardless of main reachability.\n### main runtime\nExpands from main and mounts interrupt handlers separately; unsigned BIN may show _start.\n### Call chain\nCrops the graph around a selected function by direction and depth.\n### Relationships\n- Returning to Full firmware reuses local cache instead of re-analyzing.\n- Select a node to inspect size, blocks, call sites and CFG."
+        zh: "### 全固件函数\n列出 CFGFast 识别的全部函数。默认开启「入口骨架」：先显示 main、它的一级调用和其他组件入口，点节点上的 `+` 或双击逐层展开；全部展开会关闭骨架。\n### main 运行链\n从 main 展开，单独挂载中断 Handler；BIN 无符号时入口可能显示 _start。\n### 函数调用链路\n以选中函数为根，按向上/向下/双向和深度裁剪。\n### 联动\n- 切回全固件优先使用本地缓存，不重新分析。\n- 选中节点右侧可查看大小、块数、调用点和 CFG。",
+        en: "### Full firmware\nLists every CFGFast-discovered function. Entry skeleton is enabled by default: main, its direct calls and other component entries are shown first; use + or double-click to expand level by level. Expand all turns the skeleton off.\n### main runtime\nExpands from main and mounts interrupt handlers separately; unsigned BIN may show _start.\n### Call chain\nCrops the graph around a selected function by direction and depth.\n### Relationships\n- Returning to Full firmware reuses local cache instead of re-analyzing.\n- Select a node to inspect size, blocks, call sites and CFG."
       },
       {
         id: "help-runtime-layout",
-        title: "自动整理与缩放",
-        zh: "### 整理\n按调用深度分带，再按父节点位置排序，减少连线交叉；超宽层会拆成相邻子列。\n### 视图\n- 适应：把整张图缩放到画布。\n- 滚轮缩放，拖动画布或节点。\n- 全固件大图建议连线选「仅选中节点」。\n### 注意\n- 紧凑网格只用于总览，不表达调用层次。",
-        en: "### Tidy\nGroups nodes by call depth and sorts by parent position to reduce crossings; wide layers split into adjacent subcolumns.\n### View\n- Fit: scale the whole graph to the canvas.\n- Wheel to zoom; drag canvas or nodes.\n- For large full-firmware graphs, show edges for the selected node only.\n### Note\n- Compact grid is for overview only and does not express hierarchy."
+        title: "拓扑整理、搜索与高亮",
+        zh: "### 拓扑整理\n先按弱连通分量拆成独立调用树，再在每个分量内按调用深度和父节点重心排序；不同组件不会挤进同一个网格。\n### 搜索\n顶部搜索框支持名称前缀、包含、地址和模糊子序列；方向键选择，Enter 定位。隐藏在被折叠祖先下的结果会自动展开路径。\n### 高亮\n选中函数后，橙色线表示上游调用者，绿色线表示下游调用；其余节点和连线淡化。点画布空白或按 Esc 清除选中和高亮。\n### 视图\n滚轮缩放、拖动画布/节点；「适应」缩放到全图，「整理」重新计算拓扑。",
+        en: "### Topology\nWeakly connected components are separated into independent call trees, then ordered by call depth and parent barycenter. Unrelated components no longer share one grid.\n### Search\nName prefix, substring, address and fuzzy subsequence matching; use arrow keys and Enter to jump. A path hidden by collapsed ancestors opens automatically.\n### Highlight\nOrange edges show upstream callers and green edges show downstream calls; unrelated elements dim. Click empty canvas space or press Esc to clear the selection and highlight.\n### View\nWheel to zoom, drag the canvas or nodes, Fit to see everything and Tidy to recompute topology."
       },
       {
         id: "help-runtime-chain",
@@ -222,9 +228,9 @@ export const HELP_GROUPS = [
       },
       {
         id: "help-runtime-libcfg",
-        title: "库过滤、CFG 与中断",
-        zh: "### 库过滤\n- 折叠：HAL/CMSIS/newlib 汇总为一个 LIB 节点。\n- 隐藏：不显示库节点，但总数保留。\n- 全部显示：每个库函数单独显示。\n### CFG\n选中函数后可展开基本块；BIN 无符号时可能没有完整 CFG。\n### 中断\n运行链模式可显示向量表识别的 Handler；橙色节点表示 IRQ 作用域。",
-        en: "### Library filter\n- Collapse: summarize HAL/CMSIS/newlib as one LIB node.\n- Hide: omit library nodes while preserving totals.\n- Show all: render every library function.\n### CFG\nOpen basic blocks for the selected function; unsigned BIN may lack complete CFG data.\n### Interrupts\nRuntime mode can show vector-table handlers; orange nodes are in IRQ scope."
+        title: "分组折叠、筛选与 CFG",
+        zh: "### 分组折叠\n- 「折叠库函数」勾选时立即收起 HAL/CMSIS/newlib 分支，取消后立即展开。\n- 自定义分组支持名称前缀/包含、正则、精确名称列表和地址范围；启用后默认折叠匹配分支。\n- 节点右上角 `+/-`、双击节点或右侧「收起/展开下游」都可单独控制。\n### 函数筛选\n可只看业务、库、中断或孤立函数；筛选不会改变分析结果。\n### CFG 与中断\n选中函数后可展开基本块；运行链模式可显示向量表识别的 Handler。",
+        en: "### Group collapse\n- Ticking Library collapse immediately folds HAL/CMSIS/newlib branches; clearing it expands them.\n- Custom groups support prefix/contains, regex, exact-name lists and address ranges. Enabled groups collapse matching branches by default.\n- Use the node +/- control, double-click, or Collapse/Expand downstream in the detail card.\n### Function filter\nShow only business, library, interrupt or isolated functions without re-running analysis.\n### CFG and interrupts\nOpen basic blocks for the selected function; Runtime mode can show vector-table handlers."
       },
       {
         id: "help-runtime-agent",
@@ -748,11 +754,12 @@ export const HELP_TITLE_EN = {
   "固件与地址": "Firmware and addresses",
   "命令预览与执行": "Command preview and execution",
   "分析器与输入": "Analyzer and input",
+  "生成可分析的 ELF": "Produce an analyzable ELF",
   "全固件 / main / 链路": "Full firmware / main / chain",
-  "自动整理与缩放": "Tidy and zoom",
+  "拓扑整理、搜索与高亮": "Topology, search and highlighting",
   "拉一条链路与返回": "Draw a chain and return",
   "BIN 参数与 ELF 差异": "BIN parameters and ELF differences",
-  "库过滤、CFG 与中断": "Library filter, CFG and interrupts",
+  "分组折叠、筛选与 CFG": "Group collapse, filters and CFG",
   "让 Agent 看这张图": "Let the Agent inspect this graph",
   "连接方式": "Connection mode",
   "目录": "Directories",

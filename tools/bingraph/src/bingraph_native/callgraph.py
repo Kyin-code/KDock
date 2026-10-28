@@ -36,6 +36,108 @@ def _callgraph_data(project: Project) -> tuple[object, object]:
     return cfg, cfg.functions.callgraph
 
 
+@lru_cache(maxsize=16)
+def _symbol_direct_calls(project: Project, cfg: object) -> dict[int, list[tuple[int, int, str]]]:
+    """Recover direct calls from the full ELF symbol range.
+
+    CFGFast sometimes stops at an indirect call or an unusual loop boundary and
+    assigns a much smaller size to an otherwise valid function. This is common
+    in MDK-generated Cortex-M images (for example MainLoop): relying only on
+    ``function.get_call_sites()`` then loses every call in the loop body.
+
+    ELF symbol sizes describe the complete function range, so disassemble that
+    range and merge its direct BL/BLX calls back into the graph.
+    """
+    sections = getattr(project.loader.main_object, "sections", [])
+    canonical_functions: dict[int, int] = {}
+    for addr, function in cfg.functions.items():
+        normalized = int(addr) & ~1
+        candidate = int(addr)
+        current = canonical_functions.get(normalized)
+        if current is None:
+            canonical_functions[normalized] = candidate
+            continue
+        current_function = cfg.functions.get(current)
+        current_named = bool(current_function and not current_function.name.startswith("sub_"))
+        candidate_named = bool(function and not function.name.startswith("sub_"))
+        if candidate_named and not current_named:
+            canonical_functions[normalized] = candidate
+    symbols: dict[int, object] = {}
+    for symbol in getattr(project.loader.main_object, "symbols", []):
+        if not symbol.is_function or not symbol.size:
+            continue
+        start = int(symbol.rebased_addr) & ~1
+        try:
+            section = sections[int(symbol.section)]
+            executable = bool(getattr(section, "is_executable", False))
+        except (AttributeError, IndexError, TypeError, ValueError):
+            executable = True
+        if executable:
+            # Keep the largest alias for duplicate symbol names at one address.
+            old = symbols.get(start)
+            if old is None or int(symbol.size) > int(old.size):
+                symbols[start] = symbol
+
+    disassembler = (
+        project.arch.capstone_thumb
+        if getattr(project.arch, "is_thumb", False)
+        else project.arch.capstone
+    )
+    result: dict[int, list[tuple[int, int, str]]] = {}
+    for normalized_addr, symbol in symbols.items():
+        function_addr = canonical_functions.get(normalized_addr, normalized_addr)
+        try:
+            raw = project.loader.memory.load(normalized_addr, int(symbol.size))
+        except Exception:
+            continue
+        recovered: list[tuple[int, int, str]] = []
+        for instruction in disassembler.disasm(bytes(raw), normalized_addr):
+            if instruction.mnemonic not in {"bl", "blx"} or not instruction.operands:
+                continue
+            target = getattr(instruction.operands[0], "imm", None)
+            if target is None:
+                continue
+            target_normalized = int(target) & ~1
+            target_symbol = symbols.get(target_normalized)
+            if target_symbol is not None:
+                target = int(target_symbol.rebased_addr)
+            elif target_normalized in canonical_functions:
+                target = canonical_functions[target_normalized]
+            else:
+                continue
+            recovered.append(
+                (
+                    int(instruction.address),
+                    target,
+                    f"{instruction.mnemonic} {instruction.op_str}".strip(),
+                )
+            )
+        if recovered:
+            result[function_addr] = recovered
+    return result
+
+
+@lru_cache(maxsize=16)
+def _symbol_sizes(project: Project) -> dict[int, int]:
+    sizes: dict[int, int] = {}
+    for symbol in getattr(project.loader.main_object, "symbols", []):
+        if not symbol.is_function or not symbol.size:
+            continue
+        normalized = int(symbol.rebased_addr) & ~1
+        sizes[normalized] = max(sizes.get(normalized, 0), int(symbol.size))
+    return sizes
+
+
+def _augmented_callgraph(project: Project, cfg: object, callgraph: object) -> object:
+    """Return CFGFast's call graph plus recovered direct-call edges."""
+    graph = callgraph.copy()
+    for function_addr, calls in _symbol_direct_calls(project, cfg).items():
+        for _, target, _ in calls:
+            if target in cfg.functions or (target & ~1) in cfg.functions:
+                graph.add_edge(function_addr, target)
+    return graph
+
+
 def _visible_callgraph(
     cfg: object,
     callgraph: object,
@@ -89,6 +191,7 @@ def runtime_graph_json(
 ) -> dict[str, object]:
     """Build an ordered runtime tree plus separately mounted interrupt roots."""
     cfg, callgraph = _callgraph_data(project)
+    callgraph = _augmented_callgraph(project, cfg, callgraph)
     if entry is None:
         candidates = [addr for addr, f in cfg.functions.items() if f.name == "main"]
         if not candidates:
@@ -99,7 +202,7 @@ def runtime_graph_json(
         function = cfg.functions.get(func_addr)
         if function is None:
             return []
-        all_calls: list[tuple[int, int, object]] = []
+        all_calls: list[tuple[int, int, str]] = []
         for site in sorted(function.get_call_sites()):
             target = function.get_call_target(site)
             if target is None or target not in cfg.functions or target == func_addr:
@@ -125,29 +228,38 @@ def runtime_graph_json(
             ]
             chosen = matched if matched else call_candidates[-1:]
             for call_insn in chosen:
-                all_calls.append((call_insn.address, target, call_insn))
+                all_calls.append(
+                    (
+                        int(call_insn.address),
+                        int(target),
+                        f"{call_insn.mnemonic} {call_insn.op_str}".strip(),
+                    )
+                )
+        scanned_calls = _symbol_direct_calls(project, cfg)
+        all_calls.extend(
+            scanned_calls.get(int(func_addr))
+            or scanned_calls.get(int(func_addr) & ~1)
+            or []
+        )
         # CFGFast can report the same edge from both the block entry and the
         # actual instruction. Keep one record per concrete call instruction.
-        calls: list[tuple[int, int, object]] = []
-        seen_sites: set[int] = set()
-        for call_site, target, call_insn in sorted(all_calls, key=lambda item: item[0]):
-            if call_site in seen_sites:
+        calls: list[tuple[int, int, str]] = []
+        for call_site, target, mnemonic in sorted(all_calls, key=lambda item: item[0]):
+            if any(
+                previous_target == target and abs(previous_site - call_site) <= 1
+                for previous_site, previous_target, _ in calls
+            ):
                 continue
-            seen_sites.add(call_site)
-            calls.append((call_site, target, call_insn))
+            calls.append((call_site, target, mnemonic))
         return [
             {
                 "site": f"{site:x}",
                 "addr": f"{target:x}",
                 "name": _function_name(cfg, target),
                 "order": order,
-                "mnemonic": (
-                    f"{call_insn.mnemonic} {call_insn.op_str}".strip()
-                    if call_insn is not None
-                    else "call"
-                ),
+                "mnemonic": mnemonic or "call",
             }
-            for order, (site, target, call_insn) in enumerate(calls, start=1)
+            for order, (site, target, mnemonic) in enumerate(calls, start=1)
         ]
 
     main_reachable = nx.descendants(callgraph, entry) | {entry}
@@ -189,6 +301,7 @@ def runtime_graph_json(
         interrupt_reachable |= nx.descendants(callgraph, root)
 
     nodes = []
+    symbol_sizes = _symbol_sizes(project)
     for addr in sorted(main_reachable | interrupt_reachable):
         function = cfg.functions.get(addr)
         blocks = []
@@ -212,7 +325,10 @@ def runtime_graph_json(
             {
                 "addr": f"{addr:x}",
                 "name": _function_name(cfg, addr),
-                "size": function.size if function is not None else 0,
+                "size": max(
+                    function.size if function is not None else 0,
+                    symbol_sizes.get(addr & ~1, 0),
+                ),
                 "blocks": len(list(function.blocks)) if function is not None else 0,
                 "block_nodes": blocks,
                 "calls": ordered_calls(addr),
@@ -235,11 +351,21 @@ def runtime_graph_json(
 def all_functions_json(project: Project, filepath: str) -> dict[str, object]:
     """Return every discovered function and call edge, without reachability pruning."""
     cfg, callgraph = _callgraph_data(project)
+    callgraph = _augmented_callgraph(project, cfg, callgraph)
+    scanned = _symbol_direct_calls(project, cfg)
+    all_addrs = set(callgraph.nodes)
+    for source, calls in scanned.items():
+        if source in cfg.functions:
+            all_addrs.add(source)
+        for _, target, _ in calls:
+            if target in cfg.functions:
+                all_addrs.add(target)
     nodes = []
+    symbol_sizes = _symbol_sizes(project)
     # The list endpoint is a browsing view. Sending no instruction text keeps
     # large images responsive; per-function block metadata is still included
     # for the CFG panel and sidebar.
-    for addr in sorted(callgraph.nodes):
+    for addr in sorted(all_addrs):
         function = cfg.functions.get(addr)
         blocks = []
         if function is not None:
@@ -261,7 +387,10 @@ def all_functions_json(project: Project, filepath: str) -> dict[str, object]:
             {
                 "addr": f"{addr:x}",
                 "name": _function_name(cfg, addr),
-                "size": function.size if function is not None else 0,
+                "size": max(
+                    function.size if function is not None else 0,
+                    symbol_sizes.get(addr & ~1, 0),
+                ),
                 "blocks": len(blocks),
                 "block_nodes": blocks,
                 "calls": [],
@@ -269,7 +398,36 @@ def all_functions_json(project: Project, filepath: str) -> dict[str, object]:
             }
         )
     by_addr = {node["addr"]: node for node in nodes}
+    for source, calls in scanned.items():
+        source_s = f"{source:x}"
+        if source_s not in by_addr:
+            continue
+        seen = {
+            (call["site"], call["addr"])
+            for call in by_addr[source_s]["calls"]
+        }
+        for site, target, mnemonic in calls:
+            target_s = f"{target:x}"
+            key = (f"{site:x}", target_s)
+            if target_s not in by_addr or key in seen:
+                continue
+            seen.add(key)
+            by_addr[source_s]["calls"].append(
+                {
+                    "site": f"{site:x}",
+                    "addr": target_s,
+                    "name": by_addr[target_s]["name"],
+                    "order": 0,
+                    "mnemonic": mnemonic,
+                }
+            )
+    scanned_sources = set(scanned)
     for source, target in sorted(callgraph.edges()):
+        # The full-symbol scan already captures every concrete direct call site
+        # for these functions. CFGFast's aggregate edge would add site-less
+        # duplicates to the same targets.
+        if source in scanned_sources:
+            continue
         source_s, target_s = f"{source:x}", f"{target:x}"
         if source_s in by_addr and target_s in by_addr:
             by_addr[source_s]["calls"].append(

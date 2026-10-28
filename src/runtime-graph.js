@@ -18,6 +18,8 @@ let rtView = { x: 46, y: 32, k: 1 };
 let rtNodes = [];
 let rtEdges = [];
 let rtCollapsed = new Set();
+let rtSkeletonOpen = new Set();
+let rtSkeletonClosed = new Set();
 let rtRunning = false;
 let rtDrag = null;
 let rtLogNo = 0;
@@ -25,10 +27,95 @@ let rtReady = false;
 let rtLastReadySecs = "";
 let rtCacheKeyValue = "";
 let rtDataCache = { all: null, runtime: null };
+let rtGroups = [];
+let rtGroupEditId = null;
+let rtSearchHits = [];
+let rtSearchIndex = -1;
+let rtFocusSets = { up: new Set(), down: new Set() };
 const rtPosCache = new Map();
 
 const RT_LIB_RE = /^(?:__|_(?:exit|start|init|fini)|mem(?:cpy|move|set|cmp|chr)|str(?:cpy|ncpy|cat|ncat|cmp|ncmp|len|chr|rchr|str|tok|dup)|(?:v?sn?printf|printf|puts|putchar|fwrite|fread|fflush|stdio|exit|atexit|abort|raise|malloc|free|realloc|calloc|qsort|bsearch|rand|srand|atoi|atol|strtol|strtoul|abs|labs|div|ldiv|clock|time|getenv|sysconf)(?:$|_))/i;
 const RT_HAL_RE = /^(HAL_|LL_|MX_|CMSIS|SystemInit|__libc|__aeabi|arm_|NVIC_|RCC_|GPIO_|USART_|SPI_|I2C_|DMA_|FLASH_|SysTick_)/;
+const RT_GROUP_KEY = "kdock_rt_groups_v1";
+
+function rtDefaultGroups() {
+  return [
+    {
+      id: "chip-hal", name: rtZh("STM32 HAL / CMSIS", "STM32 HAL / CMSIS"),
+      mode: "regex", pattern: "^(HAL_|__NVIC_|NVIC_|DMA_|RCC|SPI_|TIM_|UART_|QSPI_|GPIO_)",
+      enabled: true, builtin: true,
+    },
+    {
+      id: "c-runtime", name: rtZh("C 库 / newlib / 运行时", "C library / newlib / runtime"),
+      mode: "regex", pattern: "^(__|_|mem|str|snprintf$|vsnprintf$|abort$|raise$|std$|global_stdio|sysconf$|malloc|free|realloc)",
+      enabled: true, builtin: true,
+    },
+  ];
+}
+
+function rtLoadGroups() {
+  const defaults = rtDefaultGroups();
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RT_GROUP_KEY) || "[]");
+    if (!Array.isArray(parsed)) return defaults;
+    const saved = new Map(parsed.filter((g) => g && g.id && g.name && g.pattern).map((g) => [g.id, g]));
+    for (const base of defaults) {
+      const old = saved.get(base.id);
+      if (old) Object.assign(base, {
+        name: String(old.name || base.name),
+        mode: String(old.mode || base.mode),
+        pattern: String(old.pattern || base.pattern),
+        enabled: old.enabled !== false,
+      });
+    }
+    const custom = parsed
+      .filter((g) => g && g.id && !defaults.some((d) => d.id === g.id))
+      .map((g) => ({
+        id: String(g.id), name: String(g.name), mode: String(g.mode || "prefix"),
+        pattern: String(g.pattern), enabled: g.enabled !== false, builtin: false,
+      }));
+    return [...defaults, ...custom];
+  } catch (_) {
+    return defaults;
+  }
+}
+
+function rtSaveGroups() {
+  try {
+    localStorage.setItem(RT_GROUP_KEY, JSON.stringify(rtGroups.map((g) => ({
+      id: g.id, name: g.name, mode: g.mode, pattern: g.pattern,
+      enabled: g.enabled !== false, builtin: !!g.builtin,
+    }))));
+  } catch (_) {}
+}
+
+function rtMatchesGroup(node, group) {
+  if (!node || !group || !group.pattern) return false;
+  const name = String(node.name || "");
+  try {
+    if (group.mode === "prefix") return name.startsWith(group.pattern);
+    if (group.mode === "contains") return name.includes(group.pattern);
+    if (group.mode === "regex") return new RegExp(group.pattern).test(name);
+    if (group.mode === "manual") {
+      const names = group.pattern.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+      return names.includes(name.toLowerCase());
+    }
+    if (group.mode === "addr") {
+      const [from, to] = group.pattern.split("-").map((s) => parseInt(s.trim().replace(/^0x/i, ""), 16));
+      const value = parseInt(String(node.addr || "").replace(/^0x/i, ""), 16);
+      return Number.isFinite(from) && Number.isFinite(to) && value >= from && value <= to;
+    }
+  } catch (_) {
+    return false;
+  }
+  return false;
+}
+
+function rtGroupForNode(node) {
+  return rtGroups.find((g) => g.enabled !== false && rtMatchesGroup(node, g)) || null;
+}
+
+rtGroups = rtLoadGroups();
 
 function rtEl(tag, cls, text) {
   const e = document.createElement(tag);
@@ -146,6 +233,13 @@ function rtResetDataCache() {
   rtEdges = [];
   rtSel = null;
   rtChainAddr = "";
+  rtCollapsed.clear();
+  rtSkeletonOpen.clear();
+  rtSkeletonClosed.clear();
+  rtFocusSets = { up: new Set(), down: new Set() };
+  rtSearchHits = [];
+  rtSearchIndex = -1;
+  if ($("rt-search-results")) $("rt-search-results").hidden = true;
 }
 function rtCachedData(scope) {
   if (rtCurrentCacheKey() !== rtCacheKeyValue) rtResetDataCache();
@@ -261,7 +355,7 @@ function rtHasFullData() {
 function rtShowScopeData(data) {
   rtData = data;
   rtSel = null;
-  rtCollapsed.clear();
+  rtApplyFilterDefaults();
   rtBuildGraph();
   rtRender();
   rtFocusRoot();
@@ -322,11 +416,269 @@ function rtSyncScope() {
   if ($("rt-color-scope")) $("rt-color-scope").disabled = chain;
 }
 
+function rtGroupName(group) {
+  if (!group) return "";
+  if (group.id === "chip-hal") return rtZh("STM32 HAL / CMSIS", "STM32 HAL / CMSIS");
+  if (group.id === "c-runtime") return rtZh("C 库 / newlib / 运行时", "C library / newlib / runtime");
+  return group.name;
+}
+
+function rtSyncElfHelpLang() {
+  const mdk = $("rt-elf-mdk");
+  const cmake = $("rt-elf-cmake");
+  const note = $("rt-elf-note");
+  if (mdk) mdk.innerHTML = rtZh(
+    'Options for Target → Output 勾选 Create Executable，并保留 Debug Information。构建后的 <code>Objects\\&lt;target&gt;.axf</code> 本身就是 ELF，可直接选择；若必须命名为 <code>.elf</code>，执行：',
+    'In Options for Target → Output, enable Create Executable and keep Debug Information. The generated <code>Objects\\&lt;target&gt;.axf</code> is already an ELF and can be selected directly. To produce a <code>.elf</code> name, run:',
+  );
+  if (cmake) cmake.innerHTML = rtZh(
+    '构建链接器和 <code>.elf</code> 目标，不要只构建 <code>.bin</code>。保留 <code>-g</code> 调试符号；可在 CMake 中设置：',
+    'Build the linker/ELF target, not only <code>.bin</code>. Keep <code>-g</code> debug symbols; in CMake you can set:',
+  );
+  if (note) note.innerHTML = rtZh(
+    '生成的 <code>app.elf</code> 需与当前烧录固件来自同一次构建。',
+    'The resulting <code>app.elf</code> must come from the same build as the firmware being flashed.',
+  );
+}
+
+function rtHasDownstream(addr) {
+  const node = rtAddrNode(addr);
+  if (!node) return false;
+  const byAddr = new Set((rtData && rtData.nodes || []).map((n) => n.addr));
+  return (node.calls || []).some((c) => byAddr.has(c.addr) && c.addr !== addr);
+}
+
+function rtSkeletonEnabled() {
+  return rtScope() === "all" && !!($("rt-skeleton") && $("rt-skeleton").checked);
+}
+
+function rtSkeletonMainAddr() {
+  const main = rtData && (rtData.nodes || []).find((n) => n.name === "main");
+  return main ? main.addr : (rtData && rtData.entry) || "";
+}
+
+function rtSkeletonNodeOpen(addr) {
+  if (addr === rtSkeletonMainAddr()) return !rtSkeletonClosed.has(addr);
+  return rtSkeletonOpen.has(addr);
+}
+
+function rtPrimaryWorkAddr() {
+  if (!rtData) return "";
+  const main = rtSkeletonMainAddr();
+  const byAddr = new Map((rtData.nodes || []).map((n) => [n.addr, n]));
+  const root = byAddr.get(main);
+  if (!root) return "";
+  const candidates = [...new Set((root.calls || []).map((c) => c.addr).filter((a) => byAddr.has(a)))];
+  const subtreeSize = (start) => {
+    const seen = new Set([start]);
+    const queue = [start];
+    while (queue.length) {
+      const current = queue.shift();
+      for (const call of byAddr.get(current)?.calls || []) {
+        if (!byAddr.has(call.addr) || seen.has(call.addr)) continue;
+        seen.add(call.addr);
+        queue.push(call.addr);
+      }
+    }
+    return seen.size;
+  };
+  let best = "";
+  let bestSize = -1;
+  for (const addr of candidates) {
+    const size = subtreeSize(addr);
+    if (size > bestSize) { best = addr; bestSize = size; }
+  }
+  return best;
+}
+
+function rtNodeIsCollapsed(addr) {
+  if (!rtHasDownstream(addr)) return false;
+  if (rtSkeletonEnabled()) return !rtSkeletonNodeOpen(addr);
+  return rtCollapsed.has(addr);
+}
+
+function rtApplyCollapseDefaults() {
+  rtCollapsed.clear();
+  rtSkeletonOpen.clear();
+  rtSkeletonClosed.clear();
+  if (!rtData) return;
+  const primary = rtPrimaryWorkAddr();
+  if (primary) rtSkeletonOpen.add(primary);
+  const collapseBuiltins = !!($("rt-hide-lib") && $("rt-hide-lib").checked);
+  for (const node of rtData.nodes || []) {
+    const group = rtGroupForNode(node);
+    if (!group || !rtHasDownstream(node.addr)) continue;
+    if (group.builtin && !collapseBuiltins) continue;
+    rtCollapsed.add(node.addr);
+  }
+}
+
+function rtSetLibraryCollapse(enabled) {
+  if ($("rt-hide-lib")) $("rt-hide-lib").checked = enabled;
+  if (!rtData) return;
+  for (const node of rtData.nodes || []) {
+    const group = rtGroupForNode(node);
+    if (!group || !group.builtin || !rtHasDownstream(node.addr)) continue;
+    if (enabled) rtCollapsed.add(node.addr);
+    else rtCollapsed.delete(node.addr);
+  }
+}
+
+function rtToggleBranch(addr, force) {
+  if (!addr || !rtHasDownstream(addr)) return;
+  const shouldCollapse = force == null ? !rtNodeIsCollapsed(addr) : !!force;
+  if (rtSkeletonEnabled()) {
+    if (addr === rtSkeletonMainAddr()) {
+      if (shouldCollapse) rtSkeletonClosed.add(addr);
+      else rtSkeletonClosed.delete(addr);
+    } else if (shouldCollapse) {
+      rtSkeletonOpen.delete(addr);
+    } else {
+      rtSkeletonOpen.add(addr);
+      rtSkeletonClosed.delete(addr);
+    }
+  } else if (shouldCollapse) {
+    rtCollapsed.add(addr);
+  } else {
+    rtCollapsed.delete(addr);
+  }
+  rtSel = addr;
+  rtBuildGraph();
+  rtRender();
+  const selected = rtNodes.find((n) => n.addr === addr) || rtAddrNode(addr);
+  if (selected) rtRefreshSelection(selected);
+  rtRenderEdges();
+}
+
+function rtCollapseBranches() {
+  if (rtSel && rtHasDownstream(rtSel)) {
+    rtToggleBranch(rtSel, true);
+    return;
+  }
+  if (rtSkeletonEnabled()) {
+    rtSkeletonOpen.clear();
+    rtSkeletonClosed.clear();
+    rtBuildGraph();
+    rtRender();
+    rtFocusRoot();
+    return;
+  }
+  for (const n of rtNodes) if (rtHasDownstream(n.addr)) rtCollapsed.add(n.addr);
+  rtBuildGraph();
+  rtRender();
+  rtFocusRoot();
+}
+
+function rtExpandEverything() {
+  rtCollapsed.clear();
+  rtSkeletonOpen.clear();
+  rtSkeletonClosed.clear();
+  if ($("rt-skeleton")) $("rt-skeleton").checked = false;
+  if ($("rt-hide-lib")) $("rt-hide-lib").checked = false;
+  if (rtData) {
+    rtBuildGraph();
+    rtRender();
+    rtFit();
+  }
+}
+
+function rtOpenGroupEditor(id) {
+  const editor = $("rt-group-editor");
+  if (!editor) return;
+  rtGroupEditId = id || null;
+  const group = rtGroups.find((g) => g.id === id) || null;
+  $("rt-group-name").value = group ? group.name : "";
+  $("rt-group-mode").value = group ? group.mode : "prefix";
+  $("rt-group-pattern").value = group ? group.pattern : "";
+  const del = $("rt-group-delete");
+  if (del) del.textContent = group && group.builtin ? rtZh("恢复默认", "Reset") : rtZh("删除", "Delete");
+  editor.hidden = false;
+  $("rt-group-name").focus();
+}
+
+function rtCloseGroupEditor() {
+  rtGroupEditId = null;
+  if ($("rt-group-editor")) $("rt-group-editor").hidden = true;
+}
+
+function rtSaveGroupEditor() {
+  const name = ($("rt-group-name").value || "").trim();
+  const mode = ($("rt-group-mode").value || "prefix").trim();
+  const pattern = ($("rt-group-pattern").value || "").trim();
+  if (!name || !pattern) return toast(rtZh("分组名称和匹配规则不能为空", "Group name and pattern are required"));
+  if (mode === "regex") {
+    try { new RegExp(pattern); } catch (_) { return toast(rtZh("正则表达式无效", "Invalid regular expression")); }
+  }
+  let group = rtGroups.find((g) => g.id === rtGroupEditId);
+  if (!group) {
+    group = { id: "custom-" + Date.now().toString(36), builtin: false };
+    rtGroups.push(group);
+  }
+  Object.assign(group, { name, mode, pattern, enabled: true });
+  rtSaveGroups();
+  rtCloseGroupEditor();
+  rtApplyCollapseDefaults();
+  rtRenderGroups();
+  if (rtData) { rtBuildGraph(); rtRender(); rtFocusRoot(); }
+}
+
+function rtDeleteGroupEditor() {
+  const group = rtGroups.find((g) => g.id === rtGroupEditId);
+  if (!group) return rtCloseGroupEditor();
+  if (group.builtin) {
+    const reset = rtDefaultGroups().find((g) => g.id === group.id);
+    if (reset) Object.assign(group, reset);
+  } else {
+    rtGroups = rtGroups.filter((g) => g !== group);
+  }
+  rtSaveGroups();
+  rtCloseGroupEditor();
+  rtApplyCollapseDefaults();
+  rtRenderGroups();
+  if (rtData) { rtBuildGraph(); rtRender(); rtFocusRoot(); }
+}
+
+function rtRenderGroups() {
+  const box = $("rt-groups");
+  if (!box) return;
+  box.textContent = "";
+  const nodes = rtData && rtData.nodes ? rtData.nodes : [];
+  for (const group of rtGroups) {
+    const row = rtEl("div", "rtgroupline");
+    const label = rtEl("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = group.enabled !== false;
+    cb.title = rtZh("启用后匹配的函数会默认收起下游分支", "Matched functions start with downstream branches collapsed");
+    cb.onchange = () => {
+      group.enabled = cb.checked;
+      rtSaveGroups();
+      rtApplyCollapseDefaults();
+      rtRenderGroups();
+      if (rtData) { rtBuildGraph(); rtRender(); rtFocusRoot(); }
+    };
+    label.appendChild(cb);
+    label.appendChild(rtEl("b", "", rtGroupName(group)));
+    const count = nodes.filter((n) => rtMatchesGroup(n, group)).length;
+    row.appendChild(label);
+    row.appendChild(rtEl("span", "", String(count)));
+    const edit = rtEl("button", "", "✎");
+    edit.title = rtZh("编辑分组", "Edit group");
+    edit.onclick = () => rtOpenGroupEditor(group.id);
+    row.appendChild(edit);
+    box.appendChild(row);
+  }
+  if (!rtGroups.length) box.appendChild(rtEl("p", "hint", rtZh("还没有折叠分组", "No collapse groups yet")));
+}
+
 function rtApplyFilterDefaults() {
   if ($("rt-hide-lib")) $("rt-hide-lib").checked = true;
-  if ($("rt-lib-mode")) $("rt-lib-mode").value = "collapse";
+  if ($("rt-skeleton")) $("rt-skeleton").checked = true;
   if ($("rt-show-interrupts")) $("rt-show-interrupts").checked = false;
+  if ($("rt-layout") && !$("rt-layout").value) $("rt-layout").value = "layered";
   rtSyncScope();
+  rtApplyCollapseDefaults();
+  rtRenderGroups();
 }
 
 /** 从分析器 JSON 生成 KDock 自己的可见图。
@@ -335,25 +687,12 @@ function rtBuildGraph() {
   rtNodes = []; rtEdges = [];
   if (!rtData) return;
   const byAddr = new Map((rtData.nodes || []).map((n) => [n.addr, n]));
-  const mainOnly = !!($("rt-main-only") && $("rt-main-only").checked);
   const showIrq = !!($("rt-show-interrupts") && $("rt-show-interrupts").checked);
-  const libMode = ($("rt-lib-mode") && $("rt-lib-mode").value) || "collapse";
-  const libOn = !!($("rt-hide-lib") && $("rt-hide-lib").checked);
   const mainSet = new Set(rtData.mainReachable || []);
   const irqSet = new Set(rtData.interruptReachable || []);
   const mode = rtScope();
   const allScope = mode === "all";
   const chainScope = mode === "chain";
-  const include = new Set();
-  const scopeOf = new Map();
-  const add = (addr, scope) => {
-    const n = byAddr.get(addr);
-    if (!n) return false;
-    if (libOn && libMode === "hide" && addr !== rtData.entry && rtIsLib(n.name)) return false;
-    include.add(addr);
-    if (scope) scopeOf.set(addr, scope);
-    return true;
-  };
   const callTargets = new Map();
   const callers = new Map();
   for (const n of rtData.nodes || []) {
@@ -364,33 +703,33 @@ function rtBuildGraph() {
       callers.get(a).push(n.addr);
     }
   }
-  const walkDown = (start, scope, allow, depthLimit) => {
-    if (!start || !byAddr.has(start)) return;
-    const queue = [[start, 0]];
-    const seen = new Set([start]);
-    add(start, scope);
-    while (queue.length) {
-      const [addr, depth] = queue.shift();
-      if (depthLimit >= 0 && depth >= depthLimit) continue;
-      for (const next of callTargets.get(addr) || []) {
-        if (allow && !allow(next)) continue;
-        if (!add(next, scope)) continue;
-        if (!seen.has(next)) { seen.add(next); queue.push([next, depth + 1]); }
-      }
-    }
+  const kindFilter = ($("rt-filter-kind") && $("rt-filter-kind").value) || "all";
+  const kindOf = (addr) => {
+    if (irqSet.has(addr)) return "irq";
+    const node = byAddr.get(addr);
+    if (rtGroupForNode(node)) return "library";
+    if ((callTargets.get(addr) || []).length === 0 && (callers.get(addr) || []).length === 0) return "isolated";
+    return "business";
   };
-  const walkUp = (start, scope, allow, depthLimit) => {
-    if (!start || !byAddr.has(start)) return;
+  const allowed = (addr) => {
+    if (!byAddr.has(addr)) return false;
+    if (!allScope && !chainScope && !mainSet.has(addr) && !irqSet.has(addr)) return false;
+    return kindFilter === "all" || kindOf(addr) === kindFilter;
+  };
+  const visible = new Set();
+  const walk = (start, reverse, depthLimit, stopAtCollapsed) => {
+    if (!start || !allowed(start)) return;
     const queue = [[start, 0]];
     const seen = new Set([start]);
-    add(start, scope);
     while (queue.length) {
       const [addr, depth] = queue.shift();
+      visible.add(addr);
       if (depthLimit >= 0 && depth >= depthLimit) continue;
-      for (const prev of callers.get(addr) || []) {
-        if (allow && !allow(prev)) continue;
-        if (!add(prev, scope)) continue;
-        if (!seen.has(prev)) { seen.add(prev); queue.push([prev, depth + 1]); }
+      if (stopAtCollapsed && rtCollapsed.has(addr)) continue;
+      for (const next of (reverse ? callers.get(addr) : callTargets.get(addr)) || []) {
+        if (!allowed(next) || seen.has(next)) continue;
+        seen.add(next);
+        queue.push([next, depth + 1]);
       }
     }
   };
@@ -398,73 +737,131 @@ function rtBuildGraph() {
     const root = rtChainRoot();
     const dir = rtChainDir();
     const depth = rtChainDepth();
-    const scope = "chain";
     rtChainAddr = root;
-    if (dir === "up") walkUp(root, scope, null, depth);
+    if (dir === "up") walk(root, true, depth, false);
     else if (dir === "both") {
-      walkDown(root, scope, null, depth);
-      walkUp(root, scope, null, depth);
-    } else walkDown(root, scope, null, depth);
-  } else if (allScope) {
-    // 全固件模式没有“入口可达”这一层语义，所有节点都是普通函数。
-    // 不能拿 mainReachable=false 推断成中断，否则整张图都会被误染成橙色。
-    for (const n of rtData.nodes || []) add(n.addr, "function");
-  } else {
-    // ELF 从 main 开始；BIN 没有符号时分析器会返回一个明确的根函数。
-    walkDown(rtData.entry, "main", (addr) => !mainOnly || mainSet.has(addr), -1);
-    if (showIrq) for (const irq of rtData.interrupts || []) {
-      walkDown(irq.addr, "irq", (addr) => irqSet.has(addr), -1);
+      walk(root, false, depth, true);
+      walk(root, true, depth, false);
+    } else walk(root, false, depth, true);
+  } else if (allScope && rtSkeletonEnabled()) {
+    const allowedNodes = (rtData.nodes || []).filter((n) => allowed(n.addr));
+    const allowedSet = new Set(allowedNodes.map((n) => n.addr));
+    const undirected = new Map(allowedNodes.map((n) => [n.addr, new Set()]));
+    for (const addr of allowedSet) {
+      for (const next of callTargets.get(addr) || []) {
+        if (!allowedSet.has(next)) continue;
+        undirected.get(addr).add(next);
+        undirected.get(next).add(addr);
+      }
     }
+    const seenComponents = new Set();
+    const starts = [];
+    const preferredMain = allowedSet.has(rtSkeletonMainAddr())
+      ? rtSkeletonMainAddr()
+      : allowedNodes.find((n) => n.name === "main" || n.addr === (rtData && rtData.entry))?.addr || "";
+    for (const node of allowedNodes) {
+      if (seenComponents.has(node.addr)) continue;
+      const members = [];
+      const q = [node.addr];
+      seenComponents.add(node.addr);
+      while (q.length) {
+        const addr = q.shift();
+        members.push(addr);
+        for (const next of undirected.get(addr) || []) {
+          if (!seenComponents.has(next)) { seenComponents.add(next); q.push(next); }
+        }
+      }
+      if (members.includes(preferredMain)) {
+        starts.push(preferredMain);
+      } else {
+        const roots = members.filter((addr) => (callers.get(addr) || []).filter((a) => allowedSet.has(a)).length === 0);
+        const candidates = roots.length ? roots : members;
+        candidates.sort((a, b) => (callTargets.get(b) || []).length - (callTargets.get(a) || []).length);
+        if (candidates.length) starts.push(candidates[0]);
+      }
+    }
+    for (const addr of rtSkeletonOpen) {
+      if (allowedSet.has(addr) && !starts.includes(addr)) starts.push(addr);
+    }
+    for (const start of starts) {
+      const q = [start];
+      const seen = new Set([start]);
+      while (q.length) {
+        const addr = q.shift();
+        visible.add(addr);
+        if (!rtSkeletonNodeOpen(addr)) continue;
+        for (const next of callTargets.get(addr) || []) {
+          if (!allowed(next) || seen.has(next)) continue;
+          seen.add(next);
+          q.push(next);
+        }
+      }
+    }
+  } else if (allScope) {
+    const inboundAllowed = (addr) => (callers.get(addr) || []).filter(allowed).length;
+    const roots = (rtData.nodes || [])
+      .map((n) => n.addr)
+      .filter((addr) => allowed(addr) && inboundAllowed(addr) === 0);
+    for (const root of roots) walk(root, false, -1, true);
+    // Cycles and caller-only islands have no indegree-zero root. Start only
+    // those components explicitly instead of flattening them into the same row.
+    const blocked = new Set();
+    for (const addr of rtCollapsed) {
+      if (!allowed(addr)) continue;
+      const q = [...(callTargets.get(addr) || [])];
+      while (q.length) {
+        const next = q.shift();
+        if (!allowed(next) || blocked.has(next) || visible.has(next)) continue;
+        blocked.add(next);
+        q.push(...(callTargets.get(next) || []));
+      }
+    }
+    for (const n of rtData.nodes || []) {
+      if (allowed(n.addr) && !visible.has(n.addr) && !blocked.has(n.addr)) walk(n.addr, false, -1, true);
+    }
+  } else {
+    walk(rtData.entry, false, -1, true);
+    if (showIrq) for (const irq of rtData.interrupts || []) walk(irq.addr, false, -1, true);
   }
-  // 折叠模式用一个汇总节点表示所有库函数，而不是悄悄删掉它们。
-  const libAddresses = [];
-  const visible = new Set();
-  for (const addr of include) {
+
+  const hiddenFrom = (addr) => {
+    const hidden = new Set();
+    const q = [...(callTargets.get(addr) || [])];
+    while (q.length) {
+      const next = q.shift();
+      if (!allowed(next) || hidden.has(next) || visible.has(next)) continue;
+      hidden.add(next);
+      q.push(...(callTargets.get(next) || []));
+    }
+    return hidden.size;
+  };
+  for (const addr of visible) {
     const n = byAddr.get(addr);
     if (!n) continue;
-    if (libOn && libMode === "collapse" && addr !== rtData.entry && rtIsLib(n.name)) {
-      libAddresses.push(addr);
-      continue;
-    }
-    visible.add(addr);
-  }
-  for (const addr of include) {
-    if (!visible.has(addr)) continue;
-    const n = byAddr.get(addr);
     const pos = rtPosCache.get(addr) || { x: 0, y: 0 };
     const fallbackScope = allScope ? "function" : chainScope ? "chain" : irqSet.has(addr) && !mainSet.has(addr) ? "irq" : "main";
-    rtNodes.push({ ...n, x: pos.x, y: pos.y, scope: scopeOf.get(addr) || fallbackScope });
-  }
-  const libGroup = "__kdock_lib__";
-  if (libAddresses.length) {
-    const scopeCount = { main: 0, irq: 0 };
-    for (const addr of libAddresses) {
-      const s = scopeOf.get(addr) || (allScope ? "function" : chainScope ? "chain" : irqSet.has(addr) && !mainSet.has(addr) ? "irq" : "main");
-      if (s === "main" || s === "irq") scopeCount[s] += 1;
-    }
+    const group = rtGroupForNode(n);
+    const canCollapse = (callTargets.get(addr) || []).some(allowed);
     rtNodes.push({
-      addr: libGroup, name: rtZh("库函数", "Library"), group: true, x: 0, y: 0,
-      scope: allScope || chainScope ? "function" : libAddresses.some((addr) => !mainSet.has(addr) && irqSet.has(addr)) ? "irq" : "main",
-      libAddrs: libAddresses,
-      size: libAddresses.reduce((sum, addr) => sum + ((byAddr.get(addr) || {}).size || 0), 0),
-      blocks: libAddresses.reduce((sum, addr) => sum + ((byAddr.get(addr) || {}).blocks || 0), 0),
-      calls: [], libCount: libAddresses.length,
-      scopeCount,
+      ...n, x: pos.x, y: pos.y,
+      scope: fallbackScope,
+      kind: kindOf(addr),
+      groupId: group ? group.id : "",
+      groupName: group ? rtGroupName(group) : "",
+      collapsed: canCollapse && rtNodeIsCollapsed(addr),
+      hiddenCount: canCollapse ? hiddenFrom(addr) : 0,
     });
   }
-  const targetOf = (addr) => (visible.has(addr) ? addr : libAddresses.includes(addr) ? libGroup : null);
   const edgeMap = new Map();
-  for (const src of include) {
+  for (const src of visible) {
     const n = byAddr.get(src);
     for (const c of (n && n.calls) || []) {
-      const from = targetOf(src), to = targetOf(c.addr);
-      if (!from || !to || !byAddr.has(c.addr) || (!visible.has(src) && from !== libGroup)) continue;
-      if (from === libGroup && to === libGroup) continue;
+      if (!visible.has(c.addr)) continue;
       // 同一对函数可能被调用很多次；画布上合成一条线，详情里仍保留全部调用点。
-      const key = from + ">" + to;
+      const key = src + ">" + c.addr;
       const edge = edgeMap.get(key);
       if (edge) edge.count += 1;
-      else edgeMap.set(key, { from, to, site: c.site, order: c.order || 0, mnemonic: c.mnemonic || "", count: 1 });
+      else edgeMap.set(key, { from: src, to: c.addr, site: c.site, order: c.order || 0, mnemonic: c.mnemonic || "", count: 1 });
     }
   }
   rtEdges = [...edgeMap.values()];
@@ -486,81 +883,150 @@ function rtLayout(fresh) {
   const depth = new Map();
   const chainMode = rtScope() === "chain";
   const chainRoot = chainMode ? rtChainRoot() : "";
-  let roots = rtNodes.filter((n) => !rtEdges.some((e) => e.to === n.addr));
-  if (chainMode && by.has(chainRoot)) roots = [by.get(chainRoot)];
-  if (!roots.length && chainMode) {
-    roots = [...rtNodes].sort((a, b) => incoming.get(a.addr).length - incoming.get(b.addr).length).slice(0, 1);
-  }
-  const queue = roots.slice();
-  for (const n of queue) depth.set(n.addr, 0);
-  const seen = new Set(queue.map((n) => n.addr));
-  while (queue.length) {
-    const n = queue.shift();
-    for (const next of outgoing.get(n.addr) || []) {
-      const d = (depth.get(n.addr) || 0) + 1;
-      if (!depth.has(next) || d < depth.get(next)) depth.set(next, d);
-      if (by.has(next) && !seen.has(next)) { seen.add(next); queue.push(by.get(next)); }
-    }
-  }
-  // Upstream callers must sit to the left of the chain root. Walk reverse
-  // edges for the "up" / "both" chain modes instead of flattening them to row 0.
-  if (chainMode && by.has(chainRoot)) {
-    const upQueue = [chainRoot];
-    const upSeen = new Set(upQueue);
-    depth.set(chainRoot, 0);
-    while (upQueue.length) {
-      const addr = upQueue.shift();
-      for (const prev of incoming.get(addr) || []) {
-        const d = depth.get(addr) - 1;
-        if (!depth.has(prev) || d < depth.get(prev)) depth.set(prev, d);
-        if (!upSeen.has(prev)) { upSeen.add(prev); upQueue.push(prev); }
-      }
-    }
-  }
-  for (const n of rtNodes) if (!depth.has(n.addr)) depth.set(n.addr, 0);
-  if (!fresh) {
-    for (const n of rtNodes) n.depth = depth.get(n.addr) || 0;
-    return;
-  }
   if (layered) {
-    // 智能分层：先按调用深度分带，再按父节点位置做重心排序，减少交叉。
-    // 某层节点过多时拆成多个相邻子列，既保留层次关系，又避免一根无限高的列。
-    const minDepth = Math.min(0, ...depth.values());
-    const groups = new Map();
-    for (const n of rtNodes) {
-      const d = (depth.get(n.addr) || 0) - minDepth;
-      depth.set(n.addr, d);
-      if (!groups.has(d)) groups.set(d, []);
-      groups.get(d).push(n);
+    const undirected = new Map(rtNodes.map((n) => [n.addr, new Set()]));
+    for (const e of rtEdges) {
+      if (!by.has(e.from) || !by.has(e.to)) continue;
+      undirected.get(e.from).add(e.to);
+      undirected.get(e.to).add(e.from);
     }
-    const rowGap = 104;
-    const maxRows = rtNodes.length > 500 ? 14 : rtNodes.length > 300 ? 18 : 24;
-    const scoreByAddr = new Map();
-    let bandX = 54;
-    for (const [d, list] of [...groups.entries()].sort((a, b) => a[0] - b[0])) {
-      list.sort((a, b) => {
-        const sa = incoming.get(a.addr).length
-          ? incoming.get(a.addr).reduce((sum, p) => sum + (scoreByAddr.get(p) ?? 0), 0) / incoming.get(a.addr).length
-          : Number.POSITIVE_INFINITY;
-        const sb = incoming.get(b.addr).length
-          ? incoming.get(b.addr).reduce((sum, p) => sum + (scoreByAddr.get(p) ?? 0), 0) / incoming.get(b.addr).length
-          : Number.POSITIVE_INFINITY;
-        const fa = Number.isFinite(sa) ? sa : 1e12, fb = Number.isFinite(sb) ? sb : 1e12;
-        return fa - fb || String(a.scope).localeCompare(String(b.scope)) || a.name.localeCompare(b.name);
-      });
-      const columns = Math.max(1, Math.ceil(list.length / maxRows));
-      for (let col = 0; col < columns; col++) {
-        const chunk = list.slice(col * maxRows, (col + 1) * maxRows);
-        const top = 48 + Math.max(0, (maxRows - chunk.length) * rowGap / 2);
-        chunk.forEach((n, row) => {
-          n.depth = d;
-          n.x = bandX + col * 236;
-          n.y = Math.round(top + row * rowGap);
-          scoreByAddr.set(n.addr, n.y);
-        });
+    const seen = new Set();
+    const components = [];
+    for (const start of rtNodes) {
+      if (seen.has(start.addr)) continue;
+      const members = [];
+      const queue = [start.addr];
+      seen.add(start.addr);
+      while (queue.length) {
+        const addr = queue.shift();
+        members.push(by.get(addr));
+        for (const next of undirected.get(addr) || []) {
+          if (!seen.has(next)) { seen.add(next); queue.push(next); }
+        }
       }
-      bandX += columns * 236 + 92;
+      components.push(members);
     }
+    // One weakly connected component is laid out as its own horizontal call
+    // topology. Components are packed vertically so unrelated firmware trees
+    // no longer collapse into one giant "depth 0" grid.
+    components.sort((a, b) => {
+      const am = a.some((n) => n.name === "main") || a.some((n) => n.addr === (rtData && rtData.entry));
+      const bm = b.some((n) => n.name === "main") || b.some((n) => n.addr === (rtData && rtData.entry));
+      return Number(bm) - Number(am) || b.length - a.length;
+    });
+    const cellW = 226, rowGap = 94, nodeH = 76, rankGap = 92, compGap = 110;
+    const laidOut = [];
+    components.forEach((members, componentIndex) => {
+      const memberSet = new Set(members.map((n) => n.addr));
+      const localIncoming = new Map(members.map((n) => [
+        n.addr, (incoming.get(n.addr) || []).filter((a) => memberSet.has(a)),
+      ]));
+      const localOutgoing = new Map(members.map((n) => [
+        n.addr, (outgoing.get(n.addr) || []).filter((a) => memberSet.has(a)),
+      ]));
+      const localDepth = new Map();
+      const localSeen = new Set();
+      const startAt = (addr) => {
+        if (!addr || localSeen.has(addr)) return;
+        const q = [[addr, 0]];
+        localSeen.add(addr);
+        while (q.length) {
+          const [current, d] = q.shift();
+          if (!localDepth.has(current) || d < localDepth.get(current)) localDepth.set(current, d);
+          for (const next of localOutgoing.get(current) || []) {
+            if (localSeen.has(next)) continue;
+            localSeen.add(next);
+            q.push([next, d + 1]);
+          }
+        }
+      };
+      let roots = members.filter((n) => localIncoming.get(n.addr).length === 0);
+      if (chainMode && memberSet.has(chainRoot)) roots = [by.get(chainRoot)];
+      if (!roots.length) {
+        const preferred = members.find((n) => n.name === "main" || n.addr === (rtData && rtData.entry));
+        roots = [preferred || [...members].sort((a, b) => localIncoming.get(a.addr).length - localIncoming.get(b.addr).length)[0]];
+      }
+      for (const root of roots) startAt(root.addr);
+      for (const n of members) if (!localSeen.has(n.addr)) startAt(n.addr);
+
+      const ranks = new Map();
+      for (const n of members) {
+        const d = localDepth.get(n.addr) || 0;
+        depth.set(n.addr, d);
+        if (!ranks.has(d)) ranks.set(d, []);
+        ranks.get(d).push(n);
+      }
+      const score = new Map();
+      const maxRows = members.length > 800 ? 16 : members.length > 300 ? 20 : 24;
+      let localX = 0;
+      let componentBottom = 0;
+      for (const [d, list] of [...ranks.entries()].sort((a, b) => a[0] - b[0])) {
+        list.sort((a, b) => {
+          const av = localIncoming.get(a.addr).map((x) => score.get(x)).filter(Number.isFinite);
+          const bv = localIncoming.get(b.addr).map((x) => score.get(x)).filter(Number.isFinite);
+          const ay = av.length ? av.reduce((s, x) => s + x, 0) / av.length : Number.POSITIVE_INFINITY;
+          const by2 = bv.length ? bv.reduce((s, x) => s + x, 0) / bv.length : Number.POSITIVE_INFINITY;
+          const af = Number.isFinite(ay) ? ay : 1e12, bf = Number.isFinite(by2) ? by2 : 1e12;
+          return af - bf || localOutgoing.get(b.addr).length - localOutgoing.get(a.addr).length || a.name.localeCompare(b.name);
+        });
+        const columns = Math.max(1, Math.ceil(list.length / maxRows));
+        list.forEach((n, index) => {
+          const col = Math.floor(index / maxRows);
+          const row = index % maxRows;
+          n.component = componentIndex;
+          n.depth = d;
+          n.x = localX + col * cellW;
+          n.y = row * rowGap;
+          score.set(n.addr, n.y);
+          componentBottom = Math.max(componentBottom, n.y + nodeH);
+        });
+        localX += columns * cellW + rankGap;
+      }
+      laidOut.push({
+        members, componentIndex,
+        width: Math.max(188, localX - rankGap),
+        height: Math.max(nodeH, componentBottom),
+      });
+    });
+    // Keep the main call tree on its own row. Small disconnected roots are
+    // shelf-packed instead of becoming a 60-row vertical strip.
+    let rowY = 48;
+    let shelfX = 54;
+    let shelfY = 48;
+    let shelfH = 0;
+    laidOut.forEach((component, index) => {
+      let baseX = 54;
+      let baseY = 48;
+      if (index === 0) {
+        baseY = 48;
+        rowY = 48 + component.height + compGap;
+        shelfY = rowY;
+        shelfX = 54;
+        shelfH = 0;
+      } else if (component.members.length > 8) {
+        if (shelfX !== 54) rowY = Math.max(rowY, shelfY + shelfH + compGap);
+        baseY = rowY;
+        rowY += component.height + compGap;
+        shelfY = rowY;
+        shelfX = 54;
+        shelfH = 0;
+      } else {
+        if (shelfX + component.width > 2200) {
+          shelfX = 54;
+          shelfY += shelfH + compGap;
+          shelfH = 0;
+          rowY = Math.max(rowY, shelfY);
+        }
+        baseY = shelfY;
+        baseX = shelfX;
+        shelfX += component.width + compGap;
+        shelfH = Math.max(shelfH, component.height);
+      }
+      for (const n of component.members) {
+        n.x += baseX;
+        n.y += baseY;
+      }
+    });
   } else {
     const cols = Math.max(1, Math.ceil(Math.sqrt(rtNodes.length)));
     rtNodes.forEach((n, i) => {
@@ -578,6 +1044,8 @@ function rtRender() {
   const empty = $("rt-empty");
   if (empty) empty.hidden = !!rtNodes.length;
   for (const n of rtNodes) wrap.appendChild(rtNodeEl(n));
+  rtComputeFocusSets();
+  rtApplyNodeFocusClasses();
   rtRenderEdges();
   rtApplyView();
   const count = rtNodes.filter((n) => !n.group).length, edges = rtEdges.length;
@@ -585,6 +1053,56 @@ function rtRender() {
     $("rt-stat").textContent = rtStatsText(count, (rtData && rtData.totalFunctions) || (rtData && rtData.nodes ? rtData.nodes.length : count), rtData && rtData.totalCalls)
       + rtZh(` · ${edges} 条可见线`, ` · ${edges} visible edges`);
   }
+}
+
+function rtComputeFocusSets() {
+  rtFocusSets = { up: new Set(), down: new Set() };
+  if (!rtSel) return;
+  const incoming = new Map(rtNodes.map((n) => [n.addr, []]));
+  const outgoing = new Map(rtNodes.map((n) => [n.addr, []]));
+  const known = new Set(rtNodes.map((n) => n.addr));
+  if (!known.has(rtSel)) return;
+  for (const e of rtEdges) {
+    if (!known.has(e.from) || !known.has(e.to)) continue;
+    outgoing.get(e.from).push(e.to);
+    incoming.get(e.to).push(e.from);
+  }
+  const visit = (reverse, output) => {
+    const q = [rtSel];
+    output.add(rtSel);
+    while (q.length) {
+      const addr = q.shift();
+      for (const next of (reverse ? incoming.get(addr) : outgoing.get(addr)) || []) {
+        if (output.has(next)) continue;
+        output.add(next);
+        q.push(next);
+      }
+    }
+  };
+  visit(true, rtFocusSets.up);
+  visit(false, rtFocusSets.down);
+}
+
+function rtApplyNodeFocusClasses() {
+  const hasFocus = !!rtSel && (rtFocusSets.up.size || rtFocusSets.down.size);
+  for (const el of document.querySelectorAll("#rt-nodes .rtfn")) {
+    const addr = el.dataset.addr;
+    el.classList.toggle("sel", addr === rtSel);
+    el.classList.toggle("focus-up", hasFocus && addr !== rtSel && rtFocusSets.up.has(addr));
+    el.classList.toggle("focus-down", hasFocus && addr !== rtSel && rtFocusSets.down.has(addr));
+    const related = addr === rtSel || rtFocusSets.up.has(addr) || rtFocusSets.down.has(addr);
+    el.classList.toggle("dimmed", hasFocus && !related);
+  }
+}
+
+function rtClearSelection() {
+  rtSel = null;
+  rtFocusSets = { up: new Set(), down: new Set() };
+  for (const el of document.querySelectorAll("#rt-nodes .rtfn")) {
+    el.classList.remove("sel", "focus-up", "focus-down", "dimmed");
+  }
+  rtRenderEdges();
+  rtRefreshSelection(null);
 }
 
 function rtRenderEdges() {
@@ -595,41 +1113,55 @@ function rtRenderEdges() {
   let defs = edgeG.querySelector("defs");
   if (!defs) {
     defs = document.createElementNS(SQ_NS, "defs");
-    const marker = document.createElementNS(SQ_NS, "marker");
-    marker.setAttribute("id", "rt-arrow");
-    marker.setAttribute("viewBox", "0 0 8 8");
-    marker.setAttribute("refX", "7");
-    marker.setAttribute("refY", "4");
-    marker.setAttribute("markerWidth", "6");
-    marker.setAttribute("markerHeight", "6");
-    marker.setAttribute("orient", "auto");
-    const head = document.createElementNS(SQ_NS, "path");
-    head.setAttribute("d", "M 0 0 L 8 4 L 0 8 z");
-    head.setAttribute("class", "rtarrowhead");
-    marker.appendChild(head);
-    defs.appendChild(marker);
+    for (const [id, cls] of [["rt-arrow", ""], ["rt-arrow-up", "up"], ["rt-arrow-down", "down"], ["rt-arrow-focus", "focus"]]) {
+      const marker = document.createElementNS(SQ_NS, "marker");
+      marker.setAttribute("id", id);
+      marker.setAttribute("viewBox", "0 0 8 8");
+      marker.setAttribute("refX", "7");
+      marker.setAttribute("refY", "4");
+      marker.setAttribute("markerWidth", "6");
+      marker.setAttribute("markerHeight", "6");
+      marker.setAttribute("orient", "auto");
+      const head = document.createElementNS(SQ_NS, "path");
+      head.setAttribute("d", "M 0 0 L 8 4 L 0 8 z");
+      head.setAttribute("class", "rtarrowhead" + (cls ? " " + cls : ""));
+      marker.appendChild(head);
+      defs.appendChild(marker);
+    }
     edgeG.appendChild(defs);
   }
   const chainMode = rtScope() === "chain";
   const mode = ($("rt-edge-mode") && $("rt-edge-mode").value) || "selected";
   const focus = rtSel || (chainMode ? rtChainRoot() : "");
+  const hasFocus = !!focus && rtFocusSets.up.has(focus);
   for (const e of rtEdges) {
     const a = by.get(e.from), b = by.get(e.to);
     if (!a || !b) continue;
     const incident = !!(focus && (e.from === focus || e.to === focus));
-    // A chain is already a focused subgraph; drawing only root-incident edges
-    // would hide its internal dependencies. Draw every edge inside the chain.
-    if (!chainMode && (mode === "none" || (mode === "selected" && !incident))) continue;
+    const routeUp = hasFocus && rtFocusSets.up.has(e.from) && rtFocusSets.up.has(e.to);
+    const routeDown = hasFocus && rtFocusSets.down.has(e.from) && rtFocusSets.down.has(e.to);
+    // "Selected" means the complete upstream and downstream routes, not only
+    // the two edges touching the selected node.
+    if (mode === "none" || (!chainMode && mode === "selected" && hasFocus && !routeUp && !routeDown)) continue;
     const ax = a.x + 188, ay = a.y + 38, bx = b.x, byy = b.y + 38;
-    const bend = Math.max(36, Math.abs(bx - ax) * 0.46);
-    const d = `M ${ax} ${ay} C ${ax + bend} ${ay}, ${bx - bend} ${byy}, ${bx} ${byy}`;
+    const bend = Math.max(36, Math.abs(bx - ax) * 0.38);
+    const d = bx >= ax
+      ? `M ${ax} ${ay} C ${ax + bend} ${ay}, ${bx - bend} ${byy}, ${bx} ${byy}`
+      : `M ${ax} ${ay} C ${ax + bend} ${ay - 70}, ${bx - bend} ${byy + 70}, ${bx} ${byy}`;
     const p = document.createElementNS(SQ_NS, "path");
     p.setAttribute("d", d);
-    p.setAttribute("marker-end", "url(#rt-arrow)");
+    const markerId = incident ? "rt-arrow-focus" : routeUp ? "rt-arrow-up" : routeDown ? "rt-arrow-down" : "rt-arrow";
+    p.setAttribute("marker-end", `url(#${markerId})`);
     p.dataset.src = a.name;
     p.dataset.dst = b.name;
     if (e.count > 1) p.dataset.count = String(e.count);
-    p.setAttribute("class", "seqedge rtlink" + (rtIsLib(a.name) || rtIsLib(b.name) || a.group || b.group ? " lib" : "") + (incident ? " focus" : ""));
+    const cls = "seqedge rtlink"
+      + (rtIsLib(a.name) || rtIsLib(b.name) || a.group || b.group ? " lib" : "")
+      + (routeUp ? " route-up" : "")
+      + (routeDown ? " route-down" : "")
+      + (incident ? " focus" : "")
+      + (hasFocus && !routeUp && !routeDown ? " dim" : "");
+    p.setAttribute("class", cls);
     const tip = document.createElementNS(SQ_NS, "title");
     tip.textContent = `${a.name} → ${b.name}${e.count > 1 ? ` ×${e.count}` : ""}`;
     p.appendChild(tip);
@@ -638,13 +1170,33 @@ function rtRenderEdges() {
 }
 
 function rtNodeEl(n) {
-  const el = rtEl("div", "seqnode rtfn" + (n.scope === "irq" ? " irq" : "") + (n.group ? " libgroup" : "") + (n.scope === "chain" ? " chainfn" : "") + (n.addr === rtChainRoot() && rtScope() === "chain" ? " chainroot" : "") + (rtSel === n.addr ? " sel" : ""));
+  const outCount = n.calls ? n.calls.filter((c) => rtAddrNode(c.addr)).length : 0;
+  const el = rtEl("div", "seqnode rtfn"
+    + (n.scope === "irq" ? " irq" : "")
+    + (n.group ? " libgroup" : "")
+    + (n.collapsed ? " collapsed" : "")
+    + (n.scope === "chain" ? " chainfn" : "")
+    + (n.addr === rtChainRoot() && rtScope() === "chain" ? " chainroot" : "")
+    + (rtSel === n.addr ? " sel" : ""));
   el.dataset.addr = n.addr;
+  el.dataset.kind = n.kind || "business";
   el.style.left = n.x + "px";
   el.style.top = n.y + "px";
   const hd = rtEl("div", "nhd");
   hd.appendChild(rtEl("span", "nkind", n.group ? "LIB" : n.scope === "irq" ? "IRQ" : n.scope === "chain" ? "LINK" : "FUNC"));
   hd.appendChild(rtEl("span", "rtfn-name", n.name));
+  if (outCount) {
+    const fold = rtEl("button", "rtfold", n.collapsed ? "+" : "−");
+    fold.title = n.collapsed
+      ? rtZh(`展开下游（${n.hiddenCount || 0} 个函数）`, `Expand downstream (${n.hiddenCount || 0} functions)`)
+      : rtZh("收起下游分支", "Collapse downstream branch");
+    fold.onpointerdown = (e) => e.stopPropagation();
+    fold.onclick = (e) => {
+      e.stopPropagation();
+      rtToggleBranch(n.addr);
+    };
+    hd.appendChild(fold);
+  }
   el.appendChild(hd);
   const bd = rtEl("div", "nbd");
   if (n.group) {
@@ -660,14 +1212,19 @@ function rtNodeEl(n) {
       `${n.calls ? n.calls.length : 0} 调用 · ${n.blocks || 0} 块` + (childCount ? ` · 展开 ${childCount}` : ""),
       `${n.calls ? n.calls.length : 0} calls · ${n.blocks || 0} blocks` + (childCount ? ` · expands ${childCount}` : ""),
     )));
+    if (n.collapsed) bd.appendChild(rtEl("div", "rtmeta rtfold-meta", rtZh(
+      `已收起 ${n.hiddenCount || 0} 个下游函数`,
+      `${n.hiddenCount || 0} downstream functions collapsed`,
+    )));
   }
   el.appendChild(bd);
   el.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     rtSel = n.addr;
     rtRefreshSelection(n);
-    for (const old of document.querySelectorAll(".rtfn.sel")) old.classList.remove("sel");
-    el.classList.add("sel");
+    rtComputeFocusSets();
+    rtApplyNodeFocusClasses();
+    rtRenderEdges();
     const w = rtScreenToWorld(e.clientX, e.clientY);
     rtDrag = { id: n.addr, dx: w.x - n.x, dy: w.y - n.y };
     el.setPointerCapture(e.pointerId);
@@ -677,6 +1234,10 @@ function rtNodeEl(n) {
     rtRefreshSelection(n);
     if (rtScope() === "chain" && !n.group) rtChainAddr = n.addr;
     rtSyncScope();
+  });
+  el.addEventListener("dblclick", (e) => {
+    e.stopPropagation();
+    if (outCount) rtToggleBranch(n.addr);
   });
   return el;
 }
@@ -731,11 +1292,8 @@ function rtRefreshSelection(n) {
       row.appendChild(rtEl("span", "rtcall-a", "0x" + item.addr));
       row.appendChild(rtEl("span", "rtcall-n", item.name));
       row.onclick = () => {
-        const mode = $("rt-lib-mode"), hide = $("rt-hide-lib");
-        if (mode) mode.value = "show";
-        if (hide) hide.checked = false;
-        rtBuildGraph(); rtRender();
-        rtCenter(item.addr);
+        if ($("rt-hide-lib")) $("rt-hide-lib").checked = false;
+        rtRevealNode(item.addr);
       };
       list.appendChild(row);
     }
@@ -755,6 +1313,14 @@ function rtRefreshSelection(n) {
   box.appendChild(top);
   box.appendChild(rtEl("div", "rtdet-row", rtZh("地址 ", "Address ") + "0x" + n.addr));
   box.appendChild(rtEl("div", "rtdet-row", rtZh(`大小 ${n.size || 0} B · ${n.blocks || 0} 个基本块`, `Size ${n.size || 0} B · ${n.blocks || 0} basic blocks`)));
+  if (n.groupName) box.appendChild(rtEl("div", "rtdet-row", rtZh("折叠分组：", "Collapse group: ") + n.groupName));
+  const incoming = rtData && (rtData.nodes || [])
+    .filter((item) => (item.calls || []).some((c) => c.addr === n.addr)).length;
+  rtComputeFocusSets();
+  box.appendChild(rtEl("div", "rtdet-row", rtZh(
+    `上游 ${Math.max(0, rtFocusSets.up.size - 1)} · 下游 ${Math.max(0, rtFocusSets.down.size - 1)} · 直接调用者 ${incoming || 0}`,
+    `Upstream ${Math.max(0, rtFocusSets.up.size - 1)} · downstream ${Math.max(0, rtFocusSets.down.size - 1)} · direct callers ${incoming || 0}`,
+  )));
   if (n.calls && n.calls.length) {
     box.appendChild(rtEl("div", "cardtitle", rtZh("调用点", "Call sites")));
     const list = rtEl("div", "rtcalls");
@@ -762,7 +1328,7 @@ function rtRefreshSelection(n) {
       const r = rtEl("button", "rtcall");
       r.appendChild(rtEl("span", "rtcall-a", "0x" + c.site));
       r.appendChild(rtEl("span", "rtcall-n", c.name));
-      r.onclick = () => rtCenter(c.addr);
+      r.onclick = () => rtRevealNode(c.addr);
       list.appendChild(r);
     }
     box.appendChild(list);
@@ -774,6 +1340,13 @@ function rtRefreshSelection(n) {
   const cfg = rtEl("button", "btn small", rtZh("展开 CFG", "Open CFG"));
   cfg.onclick = () => rtShowCfg(n);
   btns.appendChild(cfg);
+  if (rtHasDownstream(n.addr)) {
+    const fold = rtEl("button", "btn small", n.collapsed
+      ? rtZh(`展开下游 (${n.hiddenCount || 0})`, `Expand downstream (${n.hiddenCount || 0})`)
+      : rtZh("收起下游分支", "Collapse downstream"));
+    fold.onclick = () => rtToggleBranch(n.addr);
+    btns.appendChild(fold);
+  }
   const chain = rtEl("button", "btn small primary", rtZh("拉这条链路", "Draw this chain"));
   chain.onclick = () => rtUseAsChain(n.addr);
   btns.appendChild(chain);
@@ -866,7 +1439,7 @@ function rtBindCanvas() {
     // must receive their normal click instead of starting a canvas pan.
     if (e.target.closest && e.target.closest(".seqnode,button,a,input,select,textarea,.rtempty")) return;
     const w = rtScreenToWorld(e.clientX, e.clientY);
-    rtDrag = { pan: true, x: e.clientX, y: e.clientY, vx: rtView.x, vy: rtView.y };
+    rtDrag = { pan: true, moved: false, x: e.clientX, y: e.clientY, vx: rtView.x, vy: rtView.y };
     cv.classList.add("panning");
     cv.setPointerCapture(e.pointerId);
   });
@@ -874,6 +1447,7 @@ function rtBindCanvas() {
     if (!rtDrag) return;
     if (rtDrag.pan) {
       const ui = uiScaleValue();
+      if (Math.abs(e.clientX - rtDrag.x) > 4 || Math.abs(e.clientY - rtDrag.y) > 4) rtDrag.moved = true;
       rtView.x = rtDrag.vx + (e.clientX - rtDrag.x) / ui;
       rtView.y = rtDrag.vy + (e.clientY - rtDrag.y) / ui;
       rtApplyView();
@@ -889,25 +1463,175 @@ function rtBindCanvas() {
     }
   });
   const end = () => {
+    const clickCleared = !!(rtDrag && rtDrag.pan && !rtDrag.moved);
     if (rtDrag && !rtDrag.pan) rtRenderEdges();
     rtDrag = null;
     cv.classList.remove("panning");
+    if (clickCleared) rtClearSelection();
   };
   cv.addEventListener("pointerup", end);
   cv.addEventListener("pointercancel", end);
   cv.addEventListener("dblclick", (e) => {
     if (!e.target.closest || !e.target.closest(".seqnode")) rtFit();
   });
+  cv.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      rtSearchClose();
+      rtClearSelection();
+    }
+  });
+}
+
+function rtFuzzyScore(node, query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return -1;
+  const name = String(node.name || "").toLowerCase();
+  const addr = String(node.addr || "").toLowerCase().replace(/^0x/, "");
+  const hex = q.replace(/^0x/, "");
+  let score = -1;
+  if (/^[0-9a-f]+$/i.test(hex)) {
+    if (addr === hex) score = 1400;
+    else if (addr.startsWith(hex)) score = 1100 - addr.length;
+    else if (addr.includes(hex)) score = 850 - addr.indexOf(hex);
+  }
+  if (name === q) score = Math.max(score, 1300);
+  else if (name.startsWith(q)) score = Math.max(score, 1000 - name.length);
+  else if (name.includes(q)) score = Math.max(score, 760 - name.indexOf(q));
+  const tokens = q.split(/[\s/]+/).filter(Boolean);
+  if (tokens.length > 1 && tokens.every((t) => name.includes(t))) score = Math.max(score, 720);
+  if (score < 0) {
+    let pos = 0, gaps = 0;
+    for (const ch of q) {
+      if (/\s/.test(ch)) continue;
+      const found = name.indexOf(ch, pos);
+      if (found < 0) { pos = -1; break; }
+      gaps += found - pos;
+      pos = found + 1;
+    }
+    if (pos >= 0) score = Math.max(0, 520 - gaps * 5 - name.length);
+  }
+  return score;
+}
+
+function rtSearchClose() {
+  const box = $("rt-search-results");
+  if (box) box.hidden = true;
+  rtSearchIndex = -1;
+}
+
+function rtRenderSearchResults(query) {
+  const box = $("rt-search-results");
+  if (!box || !rtData) return;
+  const q = String(query || "").trim();
+  if (!q) {
+    rtSearchHits = [];
+    box.hidden = true;
+    return;
+  }
+  const degrees = new Map((rtData.nodes || []).map((n) => [n.addr, (n.calls || []).length]));
+  rtSearchHits = (rtData.nodes || [])
+    .map((n) => ({ node: n, score: rtFuzzyScore(n, q) }))
+    .filter((item) => item.score >= 0)
+    .sort((a, b) => b.score - a.score || degrees.get(b.node.addr) - degrees.get(a.node.addr) || a.node.name.localeCompare(b.node.name))
+    .slice(0, 40);
+  rtSearchIndex = rtSearchHits.length ? 0 : -1;
+  box.textContent = "";
+  if (!rtSearchHits.length) {
+    box.appendChild(rtEl("div", "rtsearchempty", rtZh("没有匹配的函数", "No matching function")));
+    box.hidden = false;
+    return;
+  }
+  rtSearchHits.forEach((hit, index) => {
+    const n = hit.node;
+    const row = rtEl("button", "rtsearchhit" + (index === rtSearchIndex ? " active" : ""));
+    row.appendChild(rtEl("b", "", n.name));
+    row.appendChild(rtEl("small", "", "0x" + n.addr));
+    const group = rtGroupForNode(n);
+    const detail = [
+      n.addr === (rtData.entry || "") ? "ENTRY" : "",
+      group ? rtGroupName(group) : "",
+      rtZh(`${(n.calls || []).length} 调用`, `${(n.calls || []).length} calls`),
+    ].filter(Boolean).join(" · ");
+    row.appendChild(rtEl("em", "", detail));
+    row.onmouseenter = () => { rtSearchIndex = index; rtMarkSearchHit(); };
+    row.onclick = () => rtJumpToNode(n.addr);
+    box.appendChild(row);
+  });
+  box.hidden = false;
+}
+
+function rtMarkSearchHit() {
+  const rows = [...document.querySelectorAll("#rt-search-results .rtsearchhit")];
+  rows.forEach((row, index) => row.classList.toggle("active", index === rtSearchIndex));
+  const active = rows[rtSearchIndex];
+  if (active) active.scrollIntoView({ block: "nearest" });
+}
+
+function rtTakeSearch() {
+  const hit = rtSearchHits[rtSearchIndex];
+  if (!hit) {
+    const q = ($("rt-search-input") && $("rt-search-input").value || "").trim();
+    if (q) return toast(rtZh("没有找到：", "Not found: ") + q);
+    if ($("rt-search-input")) $("rt-search-input").focus();
+    return;
+  }
+  rtJumpToNode(hit.node.addr);
+}
+
+function rtRevealNode(addr) {
+  if (!rtData || !addr) return;
+  const target = rtAddrNode(addr);
+  if (!target) return toast(rtZh("这个函数不在当前分析结果里", "This function is not in the current analysis"));
+  if ($("rt-filter-kind") && $("rt-filter-kind").value !== "all") $("rt-filter-kind").value = "all";
+  if (rtScope() === "chain" && rtCachedData("all")) {
+    if ($("rt-scope")) $("rt-scope").value = "all";
+    if ($("rt-scope-side")) $("rt-scope-side").value = "all";
+    rtData = rtCachedData("all");
+  }
+  const callers = new Map((rtData.nodes || []).map((n) => [n.addr, []]));
+  for (const n of rtData.nodes || []) {
+    for (const c of n.calls || []) if (callers.has(c.addr)) callers.get(c.addr).push(n.addr);
+  }
+  const q = [addr];
+  const seen = new Set(q);
+  while (q.length) {
+    const current = q.shift();
+    rtCollapsed.delete(current);
+    rtSkeletonOpen.add(current);
+    rtSkeletonClosed.delete(current);
+    for (const prev of callers.get(current) || []) {
+      if (seen.has(prev)) continue;
+      seen.add(prev);
+      q.push(prev);
+    }
+  }
+  rtSyncScope();
+  rtBuildGraph();
+  rtRender();
+  const visible = rtNodes.find((n) => n.addr === addr);
+  if (!visible) {
+    toast(rtZh("函数被筛选或折叠规则隐藏，已尝试展开所在路径", "The function is hidden by a filter or collapse rule; its path was opened"));
+    return;
+  }
+  rtCenter(addr);
+}
+
+function rtJumpToNode(addr) {
+  rtRevealNode(addr);
+  const n = rtAddrNode(addr);
+  if (n) rtLog(rtZh(`已定位 ${n.name} · 0x${n.addr}`, `Located ${n.name} · 0x${n.addr}`));
+  rtSearchClose();
 }
 
 async function rtFind() {
   if (!rtData) return toast(rtZh("先分析一个固件", "Analyze firmware first"));
-  const q = prompt(rtZh("查找函数名或地址（支持部分匹配）", "Find a function name or address (partial match)"), "");
-  if (!q || !q.trim()) return;
-  const s = q.trim().toLowerCase(), hex = s.replace(/^0x/, "");
-  const hit = rtNodes.find((n) => n.name.toLowerCase().includes(s) || n.addr.toLowerCase().includes(hex));
-  if (!hit) return toast(rtZh("没有找到： ", "Not found: ") + q);
-  rtCenter(hit.addr);
+  const input = $("rt-search-input");
+  if (!input) return;
+  const q = input.value.trim();
+  if (!q) return input.focus();
+  rtRenderSearchResults(q);
+  rtTakeSearch();
 }
 
 async function rtInit() {
@@ -924,11 +1648,42 @@ async function rtInit() {
   if ($("rt-tidy")) $("rt-tidy").onclick = () => { rtLayout(true); rtNodes.forEach((n) => rtPosCache.set(n.addr, { x: n.x, y: n.y })); rtRender(); rtFocusRoot(); };
   if ($("rt-fit")) $("rt-fit").onclick = rtFit;
   if ($("rt-search-btn")) $("rt-search-btn").onclick = rtFind;
-  if ($("rt-expand")) $("rt-expand").onclick = () => {
-    if (!rtData) return;
-    rtCollapsed.clear(); rtBuildGraph(); rtRender(); rtFit();
-  };
-  if ($("rt-collapse")) $("rt-collapse").onclick = () => toast(rtZh("叶子节点会在下次整理时收起", "Leaf nodes collapse on the next Tidy"));
+  const searchInput = $("rt-search-input");
+  if (searchInput) {
+    searchInput.oninput = () => rtRenderSearchResults(searchInput.value);
+    searchInput.onfocus = () => { if (searchInput.value.trim()) rtRenderSearchResults(searchInput.value); };
+    searchInput.onkeydown = (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        if (!rtSearchHits.length) return;
+        e.preventDefault();
+        rtSearchIndex = (rtSearchIndex + (e.key === "ArrowDown" ? 1 : -1) + rtSearchHits.length) % rtSearchHits.length;
+        rtMarkSearchHit();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        rtTakeSearch();
+      } else if (e.key === "Escape") {
+        rtSearchClose();
+        rtClearSelection();
+      }
+    };
+  }
+  document.addEventListener("pointerdown", (e) => {
+    if (!e.target.closest || !e.target.closest(".rtsearchbox")) rtSearchClose();
+  });
+  if (!document.documentElement.dataset.rtEscBound) {
+    document.documentElement.dataset.rtEscBound = "1";
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      rtSearchClose();
+      rtClearSelection();
+    });
+  }
+  if ($("rt-expand")) $("rt-expand").onclick = rtExpandEverything;
+  if ($("rt-collapse")) $("rt-collapse").onclick = rtCollapseBranches;
+  if ($("rt-group-add")) $("rt-group-add").onclick = () => rtOpenGroupEditor(null);
+  if ($("rt-group-save")) $("rt-group-save").onclick = rtSaveGroupEditor;
+  if ($("rt-group-cancel")) $("rt-group-cancel").onclick = rtCloseGroupEditor;
+  if ($("rt-group-delete")) $("rt-group-delete").onclick = rtDeleteGroupEditor;
   const useChain = () => {
     const root = (rtSel && !String(rtSel).startsWith("__")) ? rtSel : rtChainRoot();
     if (!root) return toast(rtZh("先分析固件并选择一个函数", "Analyze firmware and select a function first"));
@@ -950,7 +1705,20 @@ async function rtInit() {
     if (el) el.oninput = () => rtResetDataCache();
   }
   if ($("rt-log-clear")) $("rt-log-clear").onclick = () => { $("rt-log").textContent = ""; rtLogNo = 0; };
-  for (const id of ["rt-hide-lib", "rt-show-interrupts", "rt-main-only", "rt-show-addr", "rt-layout", "rt-lib-mode", "rt-edge-mode"]) {
+  if ($("rt-hide-lib")) $("rt-hide-lib").onchange = () => {
+    rtSetLibraryCollapse($("rt-hide-lib").checked);
+    if (rtData) { rtBuildGraph(); rtRender(); rtFocusRoot(); }
+  };
+  if ($("rt-skeleton")) $("rt-skeleton").onchange = () => {
+    if ($("rt-skeleton").checked) {
+      rtApplyCollapseDefaults();
+    } else {
+      rtSkeletonOpen.clear();
+      rtSkeletonClosed.clear();
+    }
+    if (rtData) { rtBuildGraph(); rtRender(); rtFocusRoot(); }
+  };
+  for (const id of ["rt-show-interrupts", "rt-main-only", "rt-show-addr", "rt-layout", "rt-filter-kind", "rt-edge-mode", "rt-color-scope"]) {
     const el = $(id); if (el) el.onchange = () => {
       if ($("rt-scope-side")) $("rt-scope-side").value = rtScope();
       if (rtData) { rtBuildGraph(); rtRender(); rtFocusRoot(); }
@@ -961,10 +1729,14 @@ async function rtInit() {
     if (el) el.onchange = () => rtSwitchScope(el.value);
   }
   rtSyncScope();
+  rtSyncElfHelpLang();
+  rtRenderGroups();
   rtBindCanvas();
   rtRender();
   if (window.kdockOnLang) window.kdockOnLang(() => {
     rtSyncScope();
+    rtSyncElfHelpLang();
+    rtRenderGroups();
     if (rtData) { rtBuildGraph(); rtRender(); rtFocusRoot(); }
     else rtRender();
     if (rtLastReadySecs) rtSetState(rtZh(`就绪 · ${rtLastReadySecs}s`, `Ready · ${rtLastReadySecs}s`), "ok");
