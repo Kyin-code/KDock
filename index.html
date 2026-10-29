@@ -1503,7 +1503,7 @@
                 <option value="8">8 层</option>
                 <option value="-1">全部</option>
               </select>
-              <button id="rt-chain-pick" class="btn small" title="用当前选中函数作为链路根；没有选中时使用 main"><svg class="btn-ico" aria-hidden="true"><use href="#ni-flow"></use></svg>用选中函数拉链路</button>
+              <button id="rt-chain-pick" class="btn small" title="用当前选中的全部函数作为链路根；Ctrl / Shift 点击可多选"><svg class="btn-ico" aria-hidden="true"><use href="#ni-flow"></use></svg>拉选中链路</button>
               <button id="rt-chain-back" class="btn small" title="回到全固件图；直接使用本地缓存，不重新分析"><svg class="btn-ico" aria-hidden="true"><use href="#ni-arrow-left"></use></svg>返回全固件</button>
             </span>
             <label class="chk" title="递归展开 main 可达调用"><input type="checkbox" id="rt-show-interrupts" /> 中断</label>
@@ -2439,8 +2439,8 @@
           <div class="cardtitle">链路分析</div>
           <div class="rtchaincard">
             <div class="rtdet-row">根：<b id="rt-chain-root-side">main</b></div>
-            <p class="hint">在全固件或运行链里点一个函数，再点下面的按钮。链路内点其他节点只查看详情，不会改变根；需要换根时重新点“用选中函数拉链路”。</p>
-            <button id="rt-chain-pick-side" class="btn small primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-flow"></use></svg>用选中函数拉链路</button>
+            <p class="hint">在全固件或运行链里点击函数；Ctrl / Shift 点击可多选。链路内点其他节点只查看详情，不会改变根。</p>
+            <button id="rt-chain-pick-side" class="btn small primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-flow"></use></svg>拉选中链路</button>
             <button id="rt-chain-back-side" class="btn small"><svg class="btn-ico" aria-hidden="true"><use href="#ni-arrow-left"></use></svg>返回全固件</button>
           </div>
           <div class="cardtitle">选中函数</div>

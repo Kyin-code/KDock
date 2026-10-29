@@ -18,6 +18,11 @@ if (!existsSync(fixturePath)) {
 const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
 const chainTarget = fixture.nodes.find((node) => node.name === "lfs_init");
 if (!chainTarget) throw new Error("Fixture does not contain lfs_init");
+const multiRootNames = [
+  ["fsm_init", "XC7K160T_FSM"],
+  ["fifo_Analysis", "it6263_handle"],
+].find(([a, b]) => fixture.nodes.some((n) => n.name === a) && fixture.nodes.some((n) => n.name === b));
+if (!multiRootNames) throw new Error("Fixture does not contain a multi-root test pair");
 const server = await createServer({
   root,
   configFile: resolve(root, "vite.config.js"),
@@ -70,6 +75,31 @@ try {
   }
 
   const initialCount = initialNames.length;
+  const firstRoot = page.locator("#rt-nodes .rtfn").filter({ hasText: multiRootNames[0] }).first();
+  const secondRoot = page.locator("#rt-nodes .rtfn").filter({ hasText: multiRootNames[1] }).first();
+  await firstRoot.click();
+  await secondRoot.click({ modifiers: ["Control"] });
+  if ((await page.locator("#rt-nodes .rtfn.sel").count()) !== 2) {
+    throw new Error("Ctrl-click multi-select did not select two roots");
+  }
+  await page.locator("#rt-chain-pick-side").click();
+  await page.waitForFunction(() => document.querySelector("#rt-scope")?.value === "chain");
+  const multiChainNames = await nodeNames();
+  if (multiChainNames.includes("main")) {
+    throw new Error("Multi-root chain kept unrelated main-chain nodes");
+  }
+  for (const expected of multiRootNames) {
+    if (!multiChainNames.includes(expected)) {
+      throw new Error(`Multi-root chain is missing ${expected}`);
+    }
+  }
+  const multiRootLabel = await page.locator("#rt-chain-root-side").textContent();
+  if (!multiRootLabel.includes("+ 1")) {
+    throw new Error(`Multi-root label is incorrect: ${multiRootLabel}`);
+  }
+  await page.locator("#rt-chain-back-side").click();
+  await page.waitForFunction(() => document.querySelector("#rt-scope")?.value === "all");
+
   await page.evaluate((addr) => window.rtUseAsChain(addr), chainTarget.addr);
   await page.waitForFunction(() => document.querySelector("#rt-scope")?.value === "chain");
   const chainNames = await nodeNames();
@@ -173,6 +203,8 @@ try {
     afterMainLoopCollapse: collapsedCount,
     afterMainLoopExpand: expandedCount,
     chainTarget: "lfs_init",
+    multiSelectRoots: multiRootNames,
+    multiChainVisible: multiChainNames.length,
     chainVisible: chainNames.length,
     returnedToFullVisible: returnedNames.length,
     searchTarget: "lfs_init",

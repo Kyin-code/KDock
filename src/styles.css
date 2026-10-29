@@ -3387,6 +3387,7 @@ html[data-tab="usb"] .params {
 .rtfn.irq { border-color: hsl(var(--warning) / .55); }
 .rtfn.irq .nhd { color: hsl(var(--warning)); }
 .rtfn.sel { border-color: hsl(var(--primary)); box-shadow: 0 0 0 2px hsl(var(--primary) / .25), 0 6px 16px hsl(var(--primary) / .12); }
+.rtfn.sel.primary-sel { box-shadow: 0 0 0 3px hsl(var(--primary) / .34), 0 8px 20px hsl(var(--primary) / .16); }
 .rtfn.collapsed { border-style: dashed; background: hsl(var(--muted) / .22); }
 .rtfn.focus-up { border-color: hsl(var(--warning) / .75); box-shadow: inset 3px 0 0 hsl(var(--warning) / .72); }
 .rtfn.focus-down { border-color: hsl(var(--success) / .78); box-shadow: inset 3px 0 0 hsl(var(--success) / .72); }
@@ -3445,6 +3446,7 @@ html[data-tab="usb"] .params {
   color: hsl(var(--foreground)); cursor: pointer; text-align: left;
 }
 .rtcall:hover { border-color: hsl(var(--primary) / .55); background: var(--surface-3); }
+.rtcall.active { border-color: hsl(var(--primary) / .75); background: hsl(var(--primary) / .10); }
 .rtcall-a { flex: 0 0 auto; font: 10px Consolas, monospace; color: hsl(var(--primary)); }
 .rtcall-n { flex: 1; min-width: 0; font: 11px Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rtblock {

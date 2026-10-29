@@ -217,8 +217,8 @@ export const HELP_GROUPS = [
       {
         id: "help-runtime-chain",
         title: "拉一条链路与返回",
-        zh: "### 操作\n点一个函数，再点「拉这条链路」；选择向下调用、向上调用者或双向，以及 1/2/3/5/8 层或全部深度。\n### 联动\n- 链路内点击其他节点只查看详情，不会改变链路根。\n- 需要换根时重新点「用选中函数拉链路」。\n- 「返回全固件」在顶部和右侧链路卡片都可用，直接使用本地缓存，不重新分析。",
-        en: "### Usage\nSelect a function and choose Draw this chain; pick downstream, upstream or both, and 1/2/3/5/8 levels or unlimited.\n### Relationships\n- Clicking another node in the chain only inspects it and does not change the chain root.\n- Use Draw this chain from selection to choose a new root.\n- Return to Full firmware is available at the top and in the side chain card, using local cache without re-analysis."
+        zh: "### 操作\n普通点击选择一个函数；`Ctrl / Shift + 点击` 可多选。点「拉选中链路」后，选择向下调用、向上调用者或双向，以及 1/2/3/5/8 层或全部深度。\n### 多根示例\n同时选择 `fsm_init` 和状态机本体，再选“向下 / 全部深度”，即可只保留两棵逻辑树并合并整理，其他函数不进入画布。\n### 联动\n- 链路内点击其他节点只查看详情，不会改变链路根。\n- 需要换根时重新多选并点「拉选中链路」。\n- 「返回全固件」在顶部和右侧链路卡片都可用，直接使用本地缓存，不重新分析。",
+        en: "### Usage\nClick to select one function; use `Ctrl / Shift + click` for multi-select. Draw selected chain, then choose downstream, upstream or both, and 1/2/3/5/8 levels or unlimited.\n### Multi-root example\nSelect both `fsm_init` and the state-machine body, then choose Downstream / All depths to keep and arrange only their two logic trees.\n### Relationships\n- Clicking another node in the chain only inspects it and does not change the roots.\n- To change roots, multi-select again and choose Draw selected chain.\n- Return to Full firmware is available at the top and in the side chain card, using local cache without re-analysis."
       },
       {
         id: "help-runtime-bin",

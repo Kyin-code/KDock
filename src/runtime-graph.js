@@ -14,6 +14,8 @@ let rtFile = null;                 // 当前固件绝对路径
 let rtRoot = "";                   // 固件目录（传给分析器）
 let rtSel = null;
 let rtChainAddr = "";
+let rtChainAddrs = [];
+let rtSelection = new Set();
 let rtView = { x: 46, y: 32, k: 1 };
 let rtNodes = [];
 let rtEdges = [];
@@ -232,7 +234,9 @@ function rtResetDataCache() {
   rtNodes = [];
   rtEdges = [];
   rtSel = null;
+  rtSelection = new Set();
   rtChainAddr = "";
+  rtChainAddrs = [];
   rtCollapsed.clear();
   rtSkeletonOpen.clear();
   rtSkeletonClosed.clear();
@@ -289,15 +293,18 @@ async function rtAnalyze() {
     rtStoreData(requestScope, data);
     rtData = data;
     rtSel = null;
+    rtSelection = new Set();
     rtCollapsed.clear();
     rtApplyFilterDefaults();
     rtBuildGraph();
     rtRender();
     rtFocusRoot();
     const root = rtDefaultRootNode();
-    if (root) {
-      rtSel = root.addr;
-      rtRefreshSelection(root);
+    const chainRoots = rtScope() === "chain" ? rtChainRoots().filter(byAddrHas) : [];
+    const selectedRoots = chainRoots.length ? chainRoots : root ? [root.addr] : [];
+    if (selectedRoots.length) {
+      rtSetSelection(selectedRoots, selectedRoots[0]);
+      rtRefreshSelection(rtNodes.find((n) => n.addr === selectedRoots[0]) || rtAddrNode(selectedRoots[0]));
       rtRender();
       rtRenderEdges();
     }
@@ -355,13 +362,14 @@ function rtHasFullData() {
 function rtShowScopeData(data) {
   rtData = data;
   rtSel = null;
+  rtSelection = new Set();
   rtApplyFilterDefaults();
   rtBuildGraph();
   rtRender();
   rtFocusRoot();
   const root = rtDefaultRootNode();
   if (root) {
-    rtSel = root.addr;
+    rtSetSelection([root.addr], root.addr);
     rtRefreshSelection(root);
     rtRender();
     rtRenderEdges();
@@ -370,7 +378,11 @@ function rtShowScopeData(data) {
 function rtSwitchScope(value) {
   if ($("rt-scope")) $("rt-scope").value = value;
   if ($("rt-scope-side")) $("rt-scope-side").value = value;
-  if (value !== "chain") rtChainAddr = "";
+  if (value !== "chain") {
+    rtChainAddr = "";
+    rtChainAddrs = [];
+    rtSelection = new Set();
+  }
   rtSyncScope();
   const needed = value === "chain" ? "all" : value;
   const cached = rtCachedData(needed);
@@ -384,14 +396,23 @@ function rtSwitchScope(value) {
   }
   if (rtFile) rtAnalyze();
 }
-function rtChainRoot() {
-  if (!rtData) return "";
+function rtChainRoots() {
+  if (!rtData) return [];
   const has = (addr) => !!addr && (rtData.nodes || []).some((n) => n.addr === addr);
-  if (has(rtChainAddr)) return rtChainAddr;
-  if (has(rtSel) && rtSel !== "__kdock_lib__") return rtSel;
-  if (has(rtData.entry)) return rtData.entry;
+  const configured = rtChainAddrs.filter(has);
+  if (configured.length) return configured;
+  const selected = [...rtSelection].filter(has);
+  if (selected.length) return selected;
+  if (has(rtSel) && rtSel !== "__kdock_lib__") return [rtSel];
+  if (has(rtData.entry)) return [rtData.entry];
   const main = (rtData.nodes || []).find((n) => n.name === "main");
-  return main ? main.addr : ((rtData.nodes || [])[0] || {}).addr || "";
+  return [main ? main.addr : ((rtData.nodes || [])[0] || {}).addr || ""].filter(Boolean);
+}
+function rtChainRoot() {
+  return rtChainRoots()[0] || "";
+}
+function rtIsChainRoot(addr) {
+  return rtScope() === "chain" && rtChainRoots().includes(addr);
 }
 function rtDefaultRootNode() {
   if (!rtNodes.length) return null;
@@ -400,8 +421,12 @@ function rtDefaultRootNode() {
   return rtNodes.find((n) => n.addr === wanted) || rtNodes.find((n) => n.name === "main") || rtNodes[0];
 }
 function rtChainRootLabel() {
-  const node = rtData && rtAddrNode(rtChainRoot());
-  return node ? `${node.name} · 0x${node.addr}` : rtZh("未选择", "not selected");
+  const roots = rtChainRoots();
+  const node = rtData && rtAddrNode(roots[0]);
+  if (!node) return rtZh("未选择", "not selected");
+  return roots.length > 1
+    ? `${node.name} + ${roots.length - 1} · 0x${node.addr}`
+    : `${node.name} · 0x${node.addr}`;
 }
 function rtSyncScope() {
   const main = rtScope() === "runtime";
@@ -735,15 +760,17 @@ function rtBuildGraph() {
     }
   };
   if (chainScope) {
-    const root = rtChainRoot();
+    const roots = rtChainRoots();
     const dir = rtChainDir();
     const depth = rtChainDepth();
-    rtChainAddr = root;
-    if (dir === "up") walk(root, true, depth, false);
-    else if (dir === "both") {
-      walk(root, false, depth, true);
-      walk(root, true, depth, false);
-    } else walk(root, false, depth, true);
+    rtChainAddr = roots[0] || "";
+    for (const root of roots) {
+      if (dir === "up") walk(root, true, depth, false);
+      else if (dir === "both") {
+        walk(root, false, depth, true);
+        walk(root, true, depth, false);
+      } else walk(root, false, depth, true);
+    }
   } else if (allScope && rtSkeletonEnabled()) {
     const allowedNodes = (rtData.nodes || []).filter((n) => allowed(n.addr));
     const allowedSet = new Set(allowedNodes.map((n) => n.addr));
@@ -1056,21 +1083,40 @@ function rtRender() {
   }
 }
 
+function rtSetSelection(addrs, primary) {
+  const unique = [...new Set((addrs || []).filter((addr) => byAddrHas(addr)))];
+  rtSelection = new Set(unique);
+  rtSel = primary && rtSelection.has(primary) ? primary : (unique[unique.length - 1] || null);
+}
+
+function rtToggleSelectedNode(addr) {
+  if (!byAddrHas(addr)) return;
+  if (rtSelection.has(addr)) {
+    rtSelection.delete(addr);
+    if (rtSel === addr) rtSel = [...rtSelection].at(-1) || null;
+  } else {
+    rtSelection.add(addr);
+    rtSel = addr;
+  }
+}
+
 function rtComputeFocusSets() {
   rtFocusSets = { up: new Set(), down: new Set() };
-  if (!rtSel) return;
+  const roots = [...rtSelection].filter((addr) => byAddrHas(addr));
+  if (!roots.length && rtSel) roots.push(rtSel);
+  if (!roots.length) return;
   const incoming = new Map(rtNodes.map((n) => [n.addr, []]));
   const outgoing = new Map(rtNodes.map((n) => [n.addr, []]));
   const known = new Set(rtNodes.map((n) => n.addr));
-  if (!known.has(rtSel)) return;
   for (const e of rtEdges) {
     if (!known.has(e.from) || !known.has(e.to)) continue;
     outgoing.get(e.from).push(e.to);
     incoming.get(e.to).push(e.from);
   }
-  const visit = (reverse, output) => {
-    const q = [rtSel];
-    output.add(rtSel);
+  const visit = (root, reverse, output) => {
+    if (!known.has(root)) return;
+    const q = [root];
+    output.add(root);
     while (q.length) {
       const addr = q.shift();
       for (const next of (reverse ? incoming.get(addr) : outgoing.get(addr)) || []) {
@@ -1080,27 +1126,32 @@ function rtComputeFocusSets() {
       }
     }
   };
-  visit(true, rtFocusSets.up);
-  visit(false, rtFocusSets.down);
+  for (const root of roots) {
+    visit(root, true, rtFocusSets.up);
+    visit(root, false, rtFocusSets.down);
+  }
 }
 
 function rtApplyNodeFocusClasses() {
-  const hasFocus = !!rtSel && (rtFocusSets.up.size || rtFocusSets.down.size);
+  const hasFocus = rtSelection.size > 0 && (rtFocusSets.up.size || rtFocusSets.down.size);
   for (const el of document.querySelectorAll("#rt-nodes .rtfn")) {
     const addr = el.dataset.addr;
-    el.classList.toggle("sel", addr === rtSel);
-    el.classList.toggle("focus-up", hasFocus && addr !== rtSel && rtFocusSets.up.has(addr));
-    el.classList.toggle("focus-down", hasFocus && addr !== rtSel && rtFocusSets.down.has(addr));
-    const related = addr === rtSel || rtFocusSets.up.has(addr) || rtFocusSets.down.has(addr);
+    const selected = rtSelection.has(addr);
+    el.classList.toggle("sel", selected);
+    el.classList.toggle("primary-sel", selected && addr === rtSel && rtSelection.size > 1);
+    el.classList.toggle("focus-up", hasFocus && !selected && rtFocusSets.up.has(addr));
+    el.classList.toggle("focus-down", hasFocus && !selected && rtFocusSets.down.has(addr));
+    const related = selected || rtFocusSets.up.has(addr) || rtFocusSets.down.has(addr);
     el.classList.toggle("dimmed", hasFocus && !related);
   }
 }
 
 function rtClearSelection() {
   rtSel = null;
+  rtSelection = new Set();
   rtFocusSets = { up: new Set(), down: new Set() };
   for (const el of document.querySelectorAll("#rt-nodes .rtfn")) {
-    el.classList.remove("sel", "focus-up", "focus-down", "dimmed");
+    el.classList.remove("sel", "primary-sel", "focus-up", "focus-down", "dimmed");
   }
   rtRenderEdges();
   rtRefreshSelection(null);
@@ -1177,8 +1228,9 @@ function rtNodeEl(n) {
     + (n.group ? " libgroup" : "")
     + (n.collapsed ? " collapsed" : "")
     + (n.scope === "chain" ? " chainfn" : "")
-    + (n.addr === rtChainRoot() && rtScope() === "chain" ? " chainroot" : "")
-    + (rtSel === n.addr ? " sel" : ""));
+    + (rtIsChainRoot(n.addr) ? " chainroot" : "")
+    + (rtSelection.has(n.addr) ? " sel" : "")
+    + (n.addr === rtSel && rtSelection.size > 1 ? " primary-sel" : ""));
   el.dataset.addr = n.addr;
   el.dataset.kind = n.kind || "business";
   el.style.left = n.x + "px";
@@ -1221,8 +1273,11 @@ function rtNodeEl(n) {
   el.appendChild(bd);
   el.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
-    rtSel = n.addr;
-    rtRefreshSelection(n);
+    const additive = e.ctrlKey || e.metaKey || e.shiftKey;
+    if (additive) rtToggleSelectedNode(n.addr);
+    else rtSetSelection([n.addr], n.addr);
+    const primary = rtSel ? (rtNodes.find((item) => item.addr === rtSel) || rtAddrNode(rtSel)) : null;
+    rtRefreshSelection(primary);
     rtComputeFocusSets();
     rtApplyNodeFocusClasses();
     rtRenderEdges();
@@ -1232,7 +1287,7 @@ function rtNodeEl(n) {
     e.preventDefault();
   });
   el.addEventListener("click", () => {
-    rtRefreshSelection(n);
+    if (rtSelection.has(n.addr)) rtRefreshSelection(n);
     rtSyncScope();
   });
   el.addEventListener("dblclick", (e) => {
@@ -1281,6 +1336,24 @@ function rtRefreshSelection(n) {
   if (!box) return;
   box.textContent = "";
   if (!n) { box.appendChild(rtEl("p", "hint", rtZh("在中间点一个函数，这里显示地址、大小和调用点。", "Select a function on the canvas to inspect address, size and call sites."))); return; }
+  if (rtSelection.size > 1) {
+    box.appendChild(rtEl("div", "cardtitle", rtZh(`已选 ${rtSelection.size} 个函数`, `${rtSelection.size} functions selected`)));
+    const list = rtEl("div", "rtcalls");
+    for (const addr of [...rtSelection].slice(0, 24)) {
+      const node = rtAddrNode(addr);
+      if (!node) continue;
+      const row = rtEl("button", "rtcall" + (addr === rtSel ? " active" : ""));
+      row.appendChild(rtEl("span", "rtcall-a", "0x" + addr));
+      row.appendChild(rtEl("span", "rtcall-n", node.name));
+      row.onclick = () => rtCenter(addr);
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+    box.appendChild(rtEl("p", "hint", rtZh(
+      "Ctrl / Shift + 点击可增减选择；点“拉选中链路”会合并这些函数及其上下游。",
+      "Use Ctrl / Shift + click to add or remove selections; Draw selected chain merges their upstream and downstream paths.",
+    )));
+  }
   if (n.group) {
     box.appendChild(rtEl("div", "cardtitle", rtZh(`库函数汇总 · ${n.libCount} 个`, `Library summary · ${n.libCount}`)));
     box.appendChild(rtEl("div", "rtdet-row", rtZh(`合计 ${n.size || 0} B · ${n.blocks || 0} 个基本块`, `Total ${n.size || 0} B · ${n.blocks || 0} basic blocks`)));
@@ -1353,17 +1426,27 @@ function rtRefreshSelection(n) {
   box.appendChild(btns);
 }
 function rtUseAsChain(addr) {
-  if (!rtData || !byAddrHas(addr)) return toast(rtZh("先分析固件，再选择链路根函数", "Analyze firmware before selecting a chain root"));
-  rtChainAddr = addr;
+  return rtUseAsChainRoots([addr]);
+}
+function rtUseAsChainRoots(addrs) {
+  const roots = [...new Set((addrs || []).filter(byAddrHas))];
+  if (!rtData || !roots.length) {
+    return toast(rtZh("先分析固件，再选择至少一个链路根函数", "Analyze firmware and select at least one chain root first"));
+  }
+  rtChainAddrs = roots;
+  rtChainAddr = roots[0];
   if ($("rt-scope")) $("rt-scope").value = "chain";
   if ($("rt-scope-side")) $("rt-scope-side").value = "chain";
   rtSyncScope();
-  const node = rtAddrNode(addr);
+  const names = roots.map((addr) => {
+    const node = rtAddrNode(addr);
+    return node ? node.name : addr;
+  });
   const chainDir = rtChainDir() === "up" ? rtZh("向上", "upstream")
     : rtChainDir() === "both" ? rtZh("双向", "both directions") : rtZh("向下", "downstream");
   rtLog(rtZh(
-    `链路分析：以 ${node ? node.name : addr} 为根，${chainDir} ${rtChainDepthLabel()}`,
-    `Chain analysis: root ${node ? node.name : addr}, ${chainDir}, ${rtChainDepthLabel()}`,
+    `链路分析：以 ${names.join(" + ")} 为根，${chainDir} ${rtChainDepthLabel()}`,
+    `Chain analysis: roots ${names.join(" + ")}, ${chainDir}, ${rtChainDepthLabel()}`,
   ), "ok");
   // The runtime endpoint only contains main/interrupt reachable functions.
   // Chain mode is a slice of the full-firmware graph, so fetch it when needed.
@@ -1371,9 +1454,9 @@ function rtUseAsChain(addr) {
   if (!full) return rtAnalyze();
   rtData = full;
   rtBuildGraph();
-  rtSel = addr;
+  rtSetSelection(roots, roots[0]);
   rtRender();
-  rtRefreshSelection(rtNodes.find((n) => n.addr === addr) || rtAddrNode(addr));
+  rtRefreshSelection(rtNodes.find((n) => n.addr === roots[0]) || rtAddrNode(roots[0]));
   rtFocusRoot();
   rtRenderEdges();
 }
@@ -1386,7 +1469,8 @@ function rtCenter(addr) {
   const cv = $("rt-canvas");
   rtView.x = cv.clientWidth / 2 - (n.x + 94) * rtView.k;
   rtView.y = cv.clientHeight / 2 - (n.y + 38) * rtView.k;
-  rtSel = addr;
+  if (rtSelection.has(addr)) rtSel = addr;
+  else rtSetSelection([addr], addr);
   rtRefreshSelection(rtAddrNode(addr) || n);
   rtRender();
   rtApplyView();
@@ -1685,9 +1769,11 @@ async function rtInit() {
   if ($("rt-group-cancel")) $("rt-group-cancel").onclick = rtCloseGroupEditor;
   if ($("rt-group-delete")) $("rt-group-delete").onclick = rtDeleteGroupEditor;
   const useChain = () => {
-    const root = (rtSel && !String(rtSel).startsWith("__")) ? rtSel : rtChainRoot();
-    if (!root) return toast(rtZh("先分析固件并选择一个函数", "Analyze firmware and select a function first"));
-    rtUseAsChain(root);
+    const selected = [...rtSelection].filter(byAddrHas);
+    if (!selected.length && rtSel && !String(rtSel).startsWith("__")) selected.push(rtSel);
+    if (!selected.length && rtChainRoot()) selected.push(rtChainRoot());
+    if (!selected.length) return toast(rtZh("先分析固件并选择至少一个函数", "Analyze firmware and select at least one function first"));
+    rtUseAsChainRoots(selected);
   };
   if ($("rt-chain-pick")) $("rt-chain-pick").onclick = useChain;
   if ($("rt-chain-pick-side")) $("rt-chain-pick-side").onclick = useChain;
@@ -1753,3 +1839,4 @@ async function rtInit() {
 window.rtInit = rtInit;
 window.rtAnalyze = rtAnalyze;
 window.rtUseAsChain = rtUseAsChain;
+window.rtUseAsChainRoots = rtUseAsChainRoots;
