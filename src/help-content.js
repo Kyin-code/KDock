@@ -141,8 +141,8 @@ export const HELP_GROUPS = [
       {
         id: "help-upgrade-start",
         title: "连接与目标",
-        zh: "选择串口或 TCP 连接到待升级设备。这里的连接是升级页自己的会话，与传输页主连接相互独立；执行前确认设备处于升级/引导状态。",
-        en: "Connect to the target over serial or TCP. This is an upgrade-page session independent from the main Transfer link; confirm the device is in upgrade/bootloader mode."
+        zh: "这里只处理 KDock 自有 OTA：串口走 cshell + YMODEM，网口走 SVC1 服务通道，文件必须是 .fw。它不是 STM32/ESP 出厂 ROM Bootloader；没有 KDock 服务固件时请去「烧录 → 厂商 ROM Bootloader」。",
+        en: "This page only handles KDock OTA: serial uses cshell + YMODEM, network uses the SVC1 service channel, and the file must be .fw. It is not the STM32/ESP factory ROM bootloader; use Flash → Vendor ROM Bootloader when no KDock service firmware exists."
       },
       {
         id: "help-upgrade-firmware",
@@ -170,14 +170,14 @@ export const HELP_GROUPS = [
       {
         id: "help-flash-programmer",
         title: "烧录器与目标",
-        zh: "选择工具、适配器、接口、速度和目标芯片。参数必须与接线和目标芯片一致；填错目标可能导致连接失败，甚至在擦除后无法继续。先点检测，确认探针可识别。",
-        en: "Choose tool, adapter, interface, speed and target chip. These must match the wiring and MCU; a wrong target can fail after erase. Detect the probe before flashing."
+        zh: "调试探针：选择 OpenOCD / J-Link / pyOCD 等工具、适配器、接口、速度和目标芯片。厂商 ROM Bootloader：STM32 选 USB DFU 或 UART，ESP 选串口 ROM，并按芯片手册进入 BOOT 模式。参数必须与接线和目标芯片一致。",
+        en: "Debug probe: choose OpenOCD / J-Link / pyOCD, adapter, interface, speed and target. Vendor ROM bootloader: use STM32 USB DFU or UART, or ESP serial ROM, and enter BOOT mode as documented by the vendor. Parameters must match the wiring and MCU."
       },
       {
         id: "help-flash-firmware",
         title: "固件与地址",
-        zh: "### 格式\n- .hex / .elf：地址由文件本身携带。\n- .bin：必须填写正确的起始地址。\n- .fw：用于「固件升级」页，不是外部烧录器格式。\n### 联动\n- 器件库和探针信息来自环境配置。\n- 命令预览会随固件格式、地址和烧录参数实时变化。",
-        en: "### Formats\n- .hex / .elf carry their own addresses.\n- .bin requires the correct start address.\n- .fw belongs to Firmware upgrade, not external programmers.\n### Relationships\n- Device database and probe data come from Environment setup.\n- The command preview updates with format, address and programmer settings."
+        zh: "### 格式\n- .hex / .elf：地址由文件本身携带。\n- .bin：必须填写正确的 Flash 地址。\n- ESP ROM 只接受 .bin，多镜像先用 esptool merge_bin 合并。\n- .fw：只用于「固件升级」页的 KDock OTA。\n### 联动\n- 命令预览会随调试探针/厂商 ROM 路径、固件格式和地址实时变化。",
+        en: "### Formats\n- .hex / .elf carry their own addresses.\n- .bin needs the correct Flash address.\n- ESP ROM accepts .bin only; merge multiple images with esptool merge_bin first.\n- .fw belongs only to KDock OTA on the Firmware page.\n### Relationships\n- The command preview updates with probe/vendor-ROM mode, file format and address."
       },
       {
         id: "help-flash-preview",

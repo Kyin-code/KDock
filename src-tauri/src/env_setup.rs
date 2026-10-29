@@ -869,6 +869,21 @@ pub static ITEMS: &[Item] = &[
         plan: Plan::Pip { packages: "pyocd" },
     },
     Item {
+        id: "stm32cubeprog",
+        name: "STM32CubeProgrammer（ST-Link / USB DFU / UART ROM）",
+        kind_cn: "烧录",
+        desc: "ST 官方烧录 CLI。KDock 用它走 ST-Link，也用它连接 STM32 出厂系统 Bootloader：USB DFU（BOOT0=1）或 UART（BOOT0=1，接芯片指定 USART）。",
+        url: "https://www.st.com/en/development-tools/stm32cubeprog.html",
+        required: false,
+        min_version: None,
+        size_mb: 250.0,
+        rules: &[
+            exe("STM32_Programmer_CLI.exe", "C:\\Program Files\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\bin;C:\\Program Files (x86)\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\bin;%ENVDIR%\\STM32CubeProgrammer\\bin;D:\\STM32CubeProgrammer\\bin", "--version", "STM32CubeProgrammer"),
+            glob("C:\\Program Files\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\bin\\STM32_Programmer_CLI.exe", "--version", "STM32CubeProgrammer"),
+        ],
+        plan: Plan::Manual,
+    },
+    Item {
         id: "esptool",
         name: "esptool（ESP32 烧录）",
         kind_cn: "烧录",

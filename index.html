@@ -1965,6 +1965,13 @@
         <!-- 升级参数 -->
         <div class="parampane" data-param="upgrade" hidden>
           <div class="cardtitle">从这里开始</div>
+          <div class="protocol-note">
+            <span class="protocol-badge">KDock OTA</span>
+            <div>
+              <b>自有 Bootloader / App 升级</b>
+              <p id="upg-protocol-note">串口使用 cshell + YMODEM；网口使用 SVC1 服务通道。</p>
+            </div>
+          </div>
           <div class="field">
             <label for="upg-mode">方式</label>
             <select id="upg-mode">
@@ -2493,6 +2500,13 @@
               </div>
             </div>
             <div class="field">
+              <label for="fl-tool-esptool">esptool</label>
+              <div class="inline">
+                <input id="fl-tool-esptool" placeholder="esptool.exe 路径（ESP ROM 烧录）" />
+                <button id="fl-browse-esptool" class="btn icon" title="选 esptool.exe">…</button>
+              </div>
+            </div>
+            <div class="field">
               <label for="fl-tool-wch">WCH-Link</label>
               <div class="inline">
                 <input id="fl-tool-wch" placeholder="wlink.exe 路径（RISC-V）" />
@@ -2520,21 +2534,42 @@
           <div class="field">
             <label for="fl-tool">工具</label>
             <select id="fl-tool">
-              <option value="openocd">OpenOCD</option>
-              <option value="jlink">J-Link Commander</option>
-              <option value="pyocd">pyOCD（DAPLink / CMSIS-DAP / ST-Link）</option>
-              <option value="stm32cli">STM32CubeProgrammer（ST-Link）</option>
-              <option value="netudp">网络设备（UDP 服务，.fw）</option>
-              <option value="wchlink">WCH-Link（RISC-V / wlink）</option>
-              <option value="aurix">Infineon AURIX Flasher</option>
+              <optgroup label="调试探针（SWD / JTAG）">
+                <option value="openocd">OpenOCD</option>
+                <option value="jlink">J-Link Commander</option>
+                <option value="pyocd">pyOCD（DAPLink / CMSIS-DAP / ST-Link）</option>
+                <option value="stm32cli">STM32CubeProgrammer（ST-Link）</option>
+                <option value="wchlink">WCH-Link（RISC-V / wlink）</option>
+                <option value="aurix">Infineon AURIX Flasher</option>
+              </optgroup>
+              <optgroup label="厂商 ROM Bootloader（芯片系统区）">
+                <option value="stm32dfu">STM32 · USB DFU（BOOT0=1）</option>
+                <option value="stm32uart">STM32 · UART ROM（BOOT0=1）</option>
+                <option value="esprom">ESP32 / ESP8266 · 串口 ROM</option>
+              </optgroup>
+              <optgroup label="KDock 自有 OTA">
+                <option value="netudp">网络设备 · SVC1 / .fw</option>
+              </optgroup>
             </select>
           </div>
+          <p class="hint" id="fl-route-hint">调试探针直接通过 SWD/JTAG 写片上 Flash，不依赖设备里的 bootloader。</p>
           <div id="fl-netudp-row" hidden>
             <div class="field"><label for="fl-netudp-host">目标 IP</label><input id="fl-netudp-host" value="192.168.1.100" /></div>
             <div class="field"><label for="fl-netudp-port">端口</label><input id="fl-netudp-port" type="number" value="6666" /></div>
             <div class="field"><label for="fl-netudp-iface">网卡</label><select id="fl-netudp-iface" class="net-iface"></select></div>
           </div>
-          <div class="field">
+          <div id="fl-rom-serial-row" hidden>
+            <div class="field">
+              <label for="fl-rom-port">串口</label>
+              <div class="inline">
+                <select id="fl-rom-port"></select>
+                <button id="fl-rom-refresh" class="btn icon" title="重新扫描串口">↻</button>
+              </div>
+            </div>
+            <div class="field"><label for="fl-rom-baud">波特率</label><input id="fl-rom-baud" type="number" value="115200" /></div>
+          </div>
+          <p class="hint" id="fl-rom-dfu-note" hidden>STM32 USB DFU 不需要串口；BOOT0=1 后复位/上电，进入系统 Bootloader。</p>
+          <div class="field fl-probe-only">
             <label for="fl-adapter">适配器</label>
             <select id="fl-adapter">
               <option value="cmsis-dap">CMSIS-DAP</option>
@@ -2543,23 +2578,23 @@
               <option value="ftdi">FTDI</option>
             </select>
           </div>
-          <div class="field"><label for="fl-iface">接口</label>
+          <div class="field fl-probe-only"><label for="fl-iface">接口</label>
             <select id="fl-iface">
               <option value="swd">SWD</option>
               <option value="jtag">JTAG</option>
             </select>
           </div>
-          <div class="field"><label for="fl-speed">速度</label><input id="fl-speed" type="number" value="4000" class="num" /> kHz</div>
-          <div class="field">
+          <div class="field fl-probe-only"><label for="fl-speed">速度</label><input id="fl-speed" type="number" value="4000" class="num" /> kHz</div>
+          <div class="field fl-probe-only">
             <label for="fl-target">目标芯片</label>
             <input id="fl-target" value="stm32f4x" list="fl-pyocd-targets" />
             <datalist id="fl-pyocd-targets"></datalist>
           </div>
-          <div class="field">
+          <div class="field fl-probe-only">
             <label for="fl-probe">探针 UID</label>
             <input id="fl-probe" placeholder="多探针时填 pyOCD 的唯一 ID（可空）" />
           </div>
-          <div class="field">
+          <div class="field fl-probe-only">
             <label>器件库</label>
             <div class="inline">
               <button id="fl-dev-goto" class="btn small">到中间选型号</button>
@@ -2576,7 +2611,7 @@
           </div>
           <div class="field"><label for="fl-path">路径</label><input id="fl-path" placeholder="选文件后自动填" /></div>
           <p class="hint" id="fl-fw-hint"><code>.hex</code> / <code>.elf</code> 自带地址；<code>.bin</code> 需填写起始地址。<code>.fw</code> 请在「固件升级」页使用。</p>
-          <div class="field"><label for="fl-addr">地址</label><input id="fl-addr" value="0x08000000" /></div>
+          <div class="field" id="fl-file-addr-row"><label for="fl-addr" id="fl-addr-label">地址</label><input id="fl-addr" value="0x08000000" /></div>
           <div class="btnrow">
             <button id="fl-erase" class="btn">擦除</button>
             <button id="fl-do" class="btn primary">烧录</button>

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN" data-lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KDock Flash / ROM Bootloader Vite Test</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { display: block; background: hsl(var(--background)); color: hsl(var(--foreground)); }
+    #test-root {
+      display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 10px;
+      height: 100%; min-width: 0; padding: 10px; overflow: hidden;
+    }
+    #flash-work, #flash-params, #upgrade-params { min-height: 0; }
+    #right { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 10px; min-height: 0; overflow: auto; }
+    #upgrade-params { border-top: 1px solid var(--surface-line); padding-top: 10px; }
+  </style>
+</head>
+<body>
+  <div id="test-root">
+    <div id="flash-work"></div>
+    <div id="right">
+      <div id="flash-params"></div>
+      <div id="upgrade-params"></div>
+    </div>
+  </div>
+  <script type="module">
+    import { FLASH_ROM_TOOLS, flashToolUi } from "/src/flash-rom.js";
+
+    const source = await fetch("/index.html").then((r) => r.text());
+    const parsed = new DOMParser().parseFromString(source, "text/html");
+    const work = parsed.querySelector('[data-work="flash"]');
+    const flash = parsed.querySelector('[data-param="flash"]');
+    const upgrade = parsed.querySelector('[data-param="upgrade"]');
+    if (!work || !flash || !upgrade) throw new Error("Flash / upgrade markup missing");
+    work.hidden = false;
+    flash.hidden = false;
+    upgrade.hidden = false;
+    document.getElementById("flash-work").appendChild(work);
+    document.getElementById("flash-params").appendChild(flash);
+    document.getElementById("upgrade-params").appendChild(upgrade);
+
+    const port = document.getElementById("fl-rom-port");
+    port.innerHTML = '<option value="COM5">COM5 — STM32 VCP</option><option value="COM7">COM7 — ESP32 USB</option>';
+    port.value = "COM5";
+    document.getElementById("fl-rom-baud").value = "115200";
+    document.getElementById("fl-path").value = "D:\\fw\\app.bin";
+    document.getElementById("fl-addr").value = "0x08000000";
+    document.getElementById("upg-protocol-note").textContent =
+      "串口：KDock 自有 cshell + YMODEM，只接受 .fw；不是 STM32/ESP 出厂 ROM 下载器。";
+
+    const hint = {
+      stm32dfu: "STM32 系统 Bootloader · USB DFU：BOOT0=1 后复位/上电，使用 CubeProgrammer 的 USB1。",
+      stm32uart: "STM32 系统 Bootloader · UART：BOOT0=1 后复位/上电，连接芯片指定的 USART。",
+      esprom: "ESP32 / ESP8266 串口 ROM：拉低 GPIO0（BOOT）后复位；只烧 .bin，合并镜像通常从 0x0 开始。",
+      netudp: "这是 KDock 自有 OTA（SVC1 + .fw），不是厂商出厂 ROM Bootloader。",
+    };
+    window.__flashShowTool = (tool) => {
+      const ui = flashToolUi(tool);
+      document.getElementById("fl-tool").value = tool;
+      for (const el of document.querySelectorAll(".fl-probe-only")) el.hidden = !ui.probe;
+      document.getElementById("fl-netudp-row").hidden = !ui.kdockOta;
+      document.getElementById("fl-rom-serial-row").hidden = !ui.serialRom;
+      document.getElementById("fl-rom-dfu-note").hidden = !ui.dfu;
+      document.getElementById("fl-file-addr-row").hidden = ui.kdockOta;
+      document.getElementById("fl-addr-label").textContent = tool === "esprom" ? "Flash 偏移" : "地址";
+      document.getElementById("fl-route-hint").textContent = hint[tool]
+        || "调试探针直接通过 SWD/JTAG 写片上 Flash，不依赖设备里的 bootloader。";
+      document.getElementById("fl-rom-baud").value = tool === "esprom" ? "460800" : "115200";
+      const o = {
+        tool, action: "flash", file: document.getElementById("fl-path").value,
+        addr: tool === "esprom" ? "0x0" : "0x08000000",
+        port: tool === "esprom" ? "COM7" : port.value,
+        baud: Number(document.getElementById("fl-rom-baud").value),
+      };
+      document.getElementById("fl-addr").value = o.addr;
+      const spec = FLASH_ROM_TOOLS[tool];
+      document.getElementById("fl-cmd").textContent = tool === "netudp"
+        ? "KDock OTA · UDP 192.168.1.100:6666 · firmware.fw"
+        : spec
+        ? `${spec.exe} ${spec.mk(o).join(" ")}`
+        : "openocd -f interface/cmsis-dap.cfg -f target/stm32f4x.cfg -c \"program app.bin 0x08000000 verify reset exit\"";
+    };
+    window.__flashShowTool("stm32dfu");
+    document.documentElement.dataset.flashTestReady = "1";
+  </script>
+</body>
+</html>

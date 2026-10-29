@@ -18,6 +18,11 @@
 ## [未发布]
 
 ### 新增
+- **烧录路径拆分与厂商 ROM Bootloader**：明确区分 KDock 自有 OTA（cshell+YMODEM /
+  SVC1+.fw）、调试探针直写（SWD/JTAG）和芯片出厂 ROM Bootloader。烧录页新增
+  STM32 USB DFU、STM32 UART ROM、ESP32/ESP8266 串口 ROM 三条路径，自动生成
+  STM32CubeProgrammer / esptool 命令并补齐串口、波特率、Flash 偏移和 BOOT 模式提示；
+  Agent 的 `flash` 工具同步支持这些模式。
 - **README / 许可 / 翻译收尾**：README 中英文重写为目录、能力、协作、下载、编译、展示图与
   开源说明的短文档；删除旧功能截图，改为 4 张最新界面展示图。补齐运行结构内部图标与
   中英文界面文案，并将 pybingraph 及其 LICENSE/NOTICE、angr/PyVEX 边界和实际

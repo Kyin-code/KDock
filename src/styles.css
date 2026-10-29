@@ -595,6 +595,19 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
   border-radius: 14px; border: 1px solid hsl(var(--border) / 0.55);
   background: var(--surface-1); box-shadow: 0 4px 14px rgba(73, 93, 142, 0.08);
 }
+.protocol-note {
+  display: flex; align-items: flex-start; gap: 9px; margin: 0 0 9px; padding: 9px 10px;
+  border: 1px solid hsl(var(--primary) / .28); border-radius: 10px;
+  background: hsl(var(--primary) / .08);
+}
+.protocol-note b { display: block; font-size: 12px; font-weight: 600; }
+.protocol-note p { margin: 2px 0 0; color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.55; }
+.protocol-badge {
+  flex: 0 0 auto; padding: 2px 7px; border-radius: 999px;
+  background: hsl(var(--primary)); color: hsl(var(--primary-foreground));
+  font-size: 10px; font-weight: 650; letter-spacing: .15px;
+}
+#fl-route-hint { margin: 0 0 8px; padding: 7px 9px; border-radius: 8px; background: var(--surface-2); }
 .agcomposer-meta { min-height: 20px; gap: 10px; }
 .agcomposer-title { color: hsl(var(--foreground)); font-size: 12px; font-weight: 650; letter-spacing: .15px; }
 #ag-usage {

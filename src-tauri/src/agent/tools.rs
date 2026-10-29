@@ -185,13 +185,15 @@ pub fn catalog() -> Vec<ToolDef> {
     );
     push(
         "flash",
-        "用烧录器写片（J-Link / openocd / STM32CubeProgrammer）。",
+        "烧录芯片。调试探针可用 J-Link / openocd / STM32CubeProgrammer；厂商 ROM Bootloader 支持 STM32 USB DFU、STM32 UART 和 ESP 串口。",
         json!({"type":"object","properties":{
-            "tool":{"type":"string","enum":["jlink","openocd","stm32"]},
-            "file":{"type":"string","description":"要烧的 .hex/.bin/.elf"},
+            "tool":{"type":"string","enum":["jlink","openocd","stm32","stm32dfu","stm32uart","esptool"]},
+            "file":{"type":"string","description":"要烧的 .hex/.bin/.elf；esptool 只接受 .bin"},
             "exe":{"type":"string","description":"工具可执行文件路径，不填就按 PATH 找"},
             "device":{"type":"string","description":"芯片型号，如 STM32F407VG"},
-            "addr":{"type":"string","description":"bin 的烧写地址，如 0x08000000"}
+            "addr":{"type":"string","description":"bin 的烧写地址/ESP Flash 偏移，如 STM32 0x08000000、ESP 0x0"},
+            "port":{"type":"string","description":"STM32 UART / ESP 使用的串口，如 COM5"},
+            "baud":{"type":"integer","description":"ESP 串口波特率，默认 460800"}
         },"required":["tool","file"]}),
         false,
     );
@@ -3272,12 +3274,20 @@ fn flash(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
             "stm32" => which("STM32_Programmer_CLI.exe")
                 .or_else(|| which("STM32_Programmer_CLI"))
                 .ok_or("PATH 里没有 STM32_Programmer_CLI.exe，请用 exe 指定全路径")?,
+            "stm32dfu" | "stm32uart" => which("STM32_Programmer_CLI.exe")
+                .or_else(|| which("STM32_Programmer_CLI"))
+                .ok_or("PATH 里没有 STM32_Programmer_CLI.exe，请用 exe 指定全路径")?,
+            "esptool" => which("esptool.exe")
+                .or_else(|| which("esptool"))
+                .ok_or("PATH 里没有 esptool.exe，请用 exe 指定全路径")?,
             other => return Err(format!("不支持的烧录工具 {other}")),
         },
     };
-    let addr = arg_str(args, "addr").unwrap_or_else(|| "0x08000000".into());
+    let addr = arg_str(args, "addr").unwrap_or_else(|| {
+        if tool == "esptool" { "0x0".into() } else { "0x08000000".into() }
+    });
     let device = arg_str(args, "device").unwrap_or_else(|| "STM32F407VG".into());
-    let argv: Vec<String>;
+    let mut argv: Vec<String>;
     match tool.as_str() {
         "jlink" => {
             // 用命令行脚本方式：先写一份临时 script，再让 JLink.exe 跑它
@@ -3306,6 +3316,35 @@ fn flash(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
                 "halt".into(),
                 "-c".into(),
                 format!("program \"{file}\" verify reset exit"),
+            ];
+        }
+        "stm32dfu" | "stm32uart" => {
+            let port = if tool == "stm32dfu" {
+                "USB1".to_string()
+            } else {
+                arg_str(args, "port").ok_or("STM32 UART ROM 烧录需要 port，例如 COM5")?
+            };
+            argv = vec![
+                "-c".into(),
+                format!("port={port}"),
+                "-w".into(),
+                file.clone(),
+            ];
+            if file.to_ascii_lowercase().ends_with(".bin") {
+                argv.push(addr.clone());
+            }
+            argv.extend(["-v".into(), "-rst".into()]);
+        }
+        "esptool" => {
+            if !file.to_ascii_lowercase().ends_with(".bin") {
+                return Err("esptool ROM 烧录只接受 .bin；多镜像请先合并".into());
+            }
+            let port = arg_str(args, "port").ok_or("ESP ROM 烧录需要 port，例如 COM5")?;
+            let baud = arg_u64(args, "baud", 460_800).to_string();
+            argv = vec![
+                "--port".into(), port,
+                "--baud".into(), baud,
+                "write_flash".into(), addr.clone(), file.clone(),
             ];
         }
         _ => {

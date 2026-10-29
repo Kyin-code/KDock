@@ -10,6 +10,7 @@ import "uplot/dist/uPlot.min.css";
 import { initBatch, initCalc } from "./tools-batch-calc.js";
 import { initLogic, laAgentState, laAgentRead, laAgentDecoders, laAgentConfig, laAgentCapture, laAgentSave } from "./logic-analyzer.js";
 import { HELP_GROUPS as HELP_GROUPS_CONTENT, HELP_TITLE_EN } from "./help-content.js";
+import { FLASH_ROM_TOOLS, flashToolUi, isFlashRomTool, isSerialRomTool } from "./flash-rom.js";
 
 const $ = (id) => document.getElementById(id);
 window.kdockToast = (text) => toast(text);
@@ -643,7 +644,7 @@ function applyPorts(ports) {
         })
       : [{ value: "", label: en("（没有检测到串口）") }];
     // 两个页面各有一份串口列表，内容保持一致
-    for (const id of ["ports", "upg-ports", "fl-ports", "sq-ports"]) {
+    for (const id of ["ports", "upg-ports", "fl-ports", "fl-rom-port", "sq-ports"]) {
       const sel = $(id);
       if (!sel) continue;
       const prev = sel.value;
@@ -1032,7 +1033,18 @@ function wirePaneLink(pfx) {
   $(`${pfx}-close`).onclick = doClose;
 }
 wirePaneLink("upg");
-function syncUpgCtl() { syncPaneCtl("upg"); }
+function syncUpgProtocol() {
+  const el = $("upg-protocol-note");
+  if (!el) return;
+  const mode = $("upg-mode").value;
+  el.textContent = en(mode === "serial"
+    ? "串口：KDock 自有 cshell + YMODEM，只接受 .fw；不是 STM32/ESP 出厂 ROM 下载器。"
+    : mode === "udp"
+      ? "UDP：KDock 自有 SVC1 服务通道，按偏移写入 .fw；不是厂商 ROM Bootloader。"
+      : "TCP：KDock 自有 SVC1 服务通道，按偏移写入 .fw；不是厂商 ROM Bootloader。");
+}
+$("upg-mode").addEventListener("change", syncUpgProtocol);
+function syncUpgCtl() { syncPaneCtl("upg"); syncUpgProtocol(); }
 
 // ── 版本下拉框 / 读版本 ──
 function fillVersions(items) {
@@ -2093,9 +2105,10 @@ const FL_TOOLS = {
     },
   },
 };
+Object.assign(FL_TOOLS, FLASH_ROM_TOOLS);
 
 // ---- 烧录工具路径：换电脑时可以在界面上指定，存 localStorage ----
-const FL_CFG_KEYS = ["openocd", "openocd_scripts", "jlink", "stm32cli", "pyocd", "wchlink", "aurix", "extra"];
+const FL_CFG_KEYS = ["openocd", "openocd_scripts", "jlink", "stm32cli", "pyocd", "esptool", "wchlink", "aurix", "extra"];
 let FL_CFG = {};
 function flCfgLoad() {
   try { FL_CFG = JSON.parse(localStorage.getItem("kdock_flash_tools") || "{}") || {}; } catch (_) { FL_CFG = {}; }
@@ -2105,6 +2118,7 @@ function flCfgLoad() {
   $("fl-tool-jlink").value = FL_CFG.jlink;
   $("fl-tool-stm32").value = FL_CFG.stm32cli;
   $("fl-tool-pyocd").value = FL_CFG.pyocd;
+  $("fl-tool-esptool").value = FL_CFG.esptool;
   $("fl-tool-wch").value = FL_CFG.wchlink;
   $("fl-tool-aurix").value = FL_CFG.aurix;
   $("fl-extra").value = FL_CFG.extra;
@@ -2116,6 +2130,7 @@ function flCfgSave() {
     jlink: $("fl-tool-jlink").value.trim(),
     stm32cli: $("fl-tool-stm32").value.trim(),
     pyocd: $("fl-tool-pyocd").value.trim(),
+    esptool: $("fl-tool-esptool").value.trim(),
     wchlink: $("fl-tool-wch").value.trim(),
     aurix: $("fl-tool-aurix").value.trim(),
     extra: $("fl-extra").value.trim(),
@@ -2125,7 +2140,7 @@ function flCfgSave() {
 /** 检测/校验烧录工具：结果回填到输入框，并把"找没找到/版本/来源"写到状态行 */
 async function flDetectTools(clearFirst) {
   if (clearFirst) {
-    for (const id of ["fl-tool-openocd", "fl-tool-scripts", "fl-tool-jlink", "fl-tool-stm32", "fl-tool-pyocd", "fl-tool-wch", "fl-tool-aurix", "fl-extra"]) $(id).value = "";
+    for (const id of ["fl-tool-openocd", "fl-tool-scripts", "fl-tool-jlink", "fl-tool-stm32", "fl-tool-pyocd", "fl-tool-esptool", "fl-tool-wch", "fl-tool-aurix", "fl-extra"]) $(id).value = "";
   }
   flCfgSave();
   $("fl-tool-state").textContent = en("检测中…");
@@ -2135,7 +2150,7 @@ async function flDetectTools(clearFirst) {
     const seg = [];
     const map = [
       ["openocd", "fl-tool-openocd"], ["jlink", "fl-tool-jlink"], ["stm32cli", "fl-tool-stm32"],
-      ["pyocd", "fl-tool-pyocd"], ["wchlink", "fl-tool-wch"], ["aurix", "fl-tool-aurix"],
+      ["pyocd", "fl-tool-pyocd"], ["esptool", "fl-tool-esptool"], ["wchlink", "fl-tool-wch"], ["aurix", "fl-tool-aurix"],
     ];
     for (const pair of map) {
       const key = pair[0], id = pair[1];
@@ -2187,6 +2202,8 @@ function flashOpts(action) {
     netIface: $("fl-netudp-iface") ? $("fl-netudp-iface").value || null : null,
     probe: $("fl-probe") ? $("fl-probe").value.trim() : "",
     extra: $("fl-extra") ? $("fl-extra").value.trim() : "",
+    port: $("fl-rom-port") ? $("fl-rom-port").value : "",
+    baud: $("fl-rom-baud") ? Number($("fl-rom-baud").value) || 460800 : 460800,
   };
 }
 
@@ -2318,11 +2335,37 @@ async function flPickDev(x) {
 function flashSync() {
   const o = flashOpts("flash");
   const t = FL_TOOLS[o.tool];
-  if ($("fl-netudp-row")) $("fl-netudp-row").hidden = o.tool !== "netudp";
+  const ui = flashToolUi(o.tool);
+  for (const el of document.querySelectorAll(".fl-probe-only")) el.hidden = !ui.probe;
+  if ($("fl-netudp-row")) $("fl-netudp-row").hidden = !ui.kdockOta;
+  if ($("fl-rom-serial-row")) $("fl-rom-serial-row").hidden = !ui.serialRom;
+  if ($("fl-rom-dfu-note")) $("fl-rom-dfu-note").hidden = !ui.dfu;
+  if ($("fl-file-addr-row")) $("fl-file-addr-row").hidden = ui.kdockOta;
+  if ($("fl-addr-label")) $("fl-addr-label").textContent = en(o.tool === "esprom" ? "Flash 偏移" : "地址");
+  if ($("fl-rom-port")) $("fl-rom-port").disabled = !ui.serialRom;
+  const hints = {
+    stm32dfu: "STM32 系统 Bootloader · USB DFU：BOOT0=1 后复位/上电，使用 CubeProgrammer 的 USB1。",
+    stm32uart: "STM32 系统 Bootloader · UART：BOOT0=1 后复位/上电，连接芯片指定的 USART。",
+    esprom: "ESP32 / ESP8266 串口 ROM：拉低 GPIO0（BOOT）后复位；只烧 .bin，合并镜像通常从 0x0 开始。",
+    netudp: "这是 KDock 自有 OTA（SVC1 + .fw），不是厂商出厂 ROM Bootloader。",
+  };
+  if ($("fl-route-hint")) $("fl-route-hint").textContent = en(hints[o.tool]
+    || "调试探针直接通过 SWD/JTAG 写片上 Flash，不依赖设备里的 bootloader。");
+  if ($("fl-fw-hint")) {
+    $("fl-fw-hint").textContent = en(o.tool === "esprom"
+      ? "ESP ROM 只接受 .bin；多镜像请先用 esptool merge_bin 合并，再填写合并后的起始偏移。"
+      : ui.rom
+        ? ".hex / .elf 自带地址；.bin 需要填写芯片 Flash 地址。此路径使用厂商出厂 ROM Bootloader。"
+        : ".hex / .elf 自带地址；.bin 需填写起始地址。.fw 请在「固件升级」页使用。");
+  }
   let preview = "";
-  if (o.tool === "netudp") preview = `UDP ${o.netHost}:${o.netPort} · ${o.file || "<选择 .fw 固件>"}`;
-  else if (o.tool === "jlink") preview = `${t.exe} -CommanderScript <临时脚本>\n脚本内容:\n${t.script(o)}`;
-  else preview = `${t.exe} ${t.mk(o).join(" ") }`;
+  try {
+    if (ui.kdockOta) preview = `KDock OTA · UDP ${o.netHost}:${o.netPort} · ${o.file || "<选择 .fw 固件>"}`;
+    else if (o.tool === "jlink") preview = `${t.exe} -CommanderScript <临时脚本>\n脚本内容:\n${t.script(o)}`;
+    else preview = `${t.exe} ${t.mk(o).join(" ") }`;
+  } catch (e) {
+    preview = `${en("配置未完成")}: ${e.message || e}`;
+  }
   $("fl-cmd").textContent = preview;
 }
 
@@ -2362,6 +2405,11 @@ const flYield = () => new Promise((resolve) => requestAnimationFrame(() => setTi
 async function flashAction(action) {
   const o = flashOpts(action);
   const t = FL_TOOLS[o.tool];
+  if (isSerialRomTool(o.tool) && !o.port) return toast("先选择串口");
+  if (o.tool === "esprom" && ["flash", "verify"].includes(action)) {
+    if (!o.file) return toast("先选择固件文件");
+    if (!/\.bin$/i.test(o.file)) return toast("ESP ROM 烧录只接受 .bin；多镜像请先合并");
+  }
   if (o.tool === "netudp") {
     if (action !== "flash") return toast("UDP 网络设备只支持烧录");
     if (!o.file) return toast("先选 .fw 固件");
@@ -2393,6 +2441,7 @@ async function flashAction(action) {
     const exe = o.tool === "openocd" ? (FL_CFG.openocd || t.exe)
       : o.tool === "jlink" ? (FL_CFG.jlink || t.exe)
       : o.tool === "pyocd" ? (FL_CFG.pyocd || t.exe)
+      : o.tool === "esprom" ? (FL_CFG.esptool || t.exe)
       : o.tool === "wchlink" ? (FL_CFG.wchlink || t.exe)
       : o.tool === "aurix" ? (FL_CFG.aurix || t.exe)
       : (FL_CFG.stm32cli || t.exe);
@@ -2408,11 +2457,22 @@ async function flashAction(action) {
 
 function bindFlash() {
   const on = () => flashSync();
-  ["fl-tool", "fl-iface", "fl-speed", "fl-target", "fl-probe", "fl-path", "fl-addr", "fl-extra"].forEach((id) => {
+  ["fl-tool", "fl-iface", "fl-speed", "fl-target", "fl-probe", "fl-path", "fl-addr", "fl-extra", "fl-rom-port", "fl-rom-baud"].forEach((id) => {
     const el = $(id);
     if (el) { el.onchange = on; el.oninput = on; }
   });
-  if ($("fl-tool")) $("fl-tool").onchange = () => { flashSync(); };
+  if ($("fl-tool")) $("fl-tool").onchange = () => {
+    const tool = $("fl-tool").value;
+    const addr = $("fl-addr").value.trim();
+    if (tool === "esprom" && (!addr || addr === "0x08000000")) $("fl-addr").value = "0x0";
+    else if (tool !== "esprom" && addr === "0x0") $("fl-addr").value = "0x08000000";
+    const baud = Number($("fl-rom-baud").value) || 0;
+    if (tool === "esprom" && (!baud || baud === 115200)) $("fl-rom-baud").value = "460800";
+    else if (tool === "stm32uart" && (!baud || baud === 460800)) $("fl-rom-baud").value = "115200";
+    if (isFlashRomTool(tool)) $("fl-dev-pick").textContent = en("ROM Bootloader");
+    flashSync();
+  };
+  if ($("fl-rom-refresh")) $("fl-rom-refresh").onclick = refreshPorts;
   $("fl-fw").onclick = async () => {
     try {
       const p = await dlgOpen({ title: "选择固件（.hex / .elf / .bin / .fw）", multiple: false, directory: false,
@@ -2420,7 +2480,9 @@ function bindFlash() {
       if (!p) return;
       const path0 = typeof p === "string" ? p : p.path;
       $("fl-path").value = path0;
-      if (/\.bin$/i.test(path0) && !$("fl-addr").value) $("fl-addr").value = "0x08000000";
+      if (/\.bin$/i.test(path0) && !$("fl-addr").value) {
+        $("fl-addr").value = $("fl-tool").value === "esprom" ? "0x0" : "0x08000000";
+      }
       // 选完给个反馈：大小 + 需不需要地址
       invoke("file_size", { path: path0 }).then((n) => {
         const kb = (n / 1024).toFixed(1);
@@ -2440,7 +2502,9 @@ function bindFlash() {
   $("fl-reset").onclick = () => flashAction("reset");
   $("fl-path").oninput = () => {
     const p = $("fl-path").value.trim();
-    if (/\.bin$/i.test(p) && !$("fl-addr").value) $("fl-addr").value = "0x08000000";
+    if (/\.bin$/i.test(p) && !$("fl-addr").value) {
+      $("fl-addr").value = $("fl-tool").value === "esprom" ? "0x0" : "0x08000000";
+    }
   };
   $("fl-dev-filter").oninput = flRenderDevs;
   $("fl-src").onchange = flRenderDevs;
@@ -2470,9 +2534,10 @@ function bindFlash() {
   browseTool("fl-browse-jlink", "fl-tool-jlink", false);
   browseTool("fl-browse-stm32", "fl-tool-stm32", false);
   browseTool("fl-browse-pyocd", "fl-tool-pyocd", false);
+  browseTool("fl-browse-esptool", "fl-tool-esptool", false);
   browseTool("fl-browse-wch", "fl-tool-wch", false);
   browseTool("fl-browse-aurix", "fl-tool-aurix", false);
-  for (const id of ["fl-tool-openocd", "fl-tool-scripts", "fl-tool-jlink", "fl-tool-stm32", "fl-tool-pyocd", "fl-tool-wch", "fl-tool-aurix", "fl-extra"]) $(id).oninput = () => flCfgSave();
+  for (const id of ["fl-tool-openocd", "fl-tool-scripts", "fl-tool-jlink", "fl-tool-stm32", "fl-tool-pyocd", "fl-tool-esptool", "fl-tool-wch", "fl-tool-aurix", "fl-extra"]) $(id).oninput = () => flCfgSave();
   $("fl-tool-detect").onclick = () => flDetectTools(false);
   $("fl-tool-clear").onclick = () => flDetectTools(true);
   flashSync();
@@ -12483,6 +12548,38 @@ const EN = {
   "挂给 agent；\n                配置文件：": " . Config file:",
 
   // ============ 升级 / 烧录 / 图表 零星文案 ============
+  "自有 Bootloader / App 升级": "KDock bootloader / app upgrade",
+  "串口：KDock 自有 cshell + YMODEM，只接受 .fw；不是 STM32/ESP 出厂 ROM 下载器。":
+    "Serial: KDock cshell + YMODEM, .fw only; not the STM32/ESP factory ROM loader.",
+  "UDP：KDock 自有 SVC1 服务通道，按偏移写入 .fw；不是厂商 ROM Bootloader。":
+    "UDP: KDock SVC1 service channel, offset-writes .fw; not a vendor ROM bootloader.",
+  "TCP：KDock 自有 SVC1 服务通道，按偏移写入 .fw；不是厂商 ROM Bootloader。":
+    "TCP: KDock SVC1 service channel, offset-writes .fw; not a vendor ROM bootloader.",
+  "调试探针（SWD / JTAG）": "Debug probe (SWD / JTAG)",
+  "厂商 ROM Bootloader（芯片系统区）": "Vendor ROM bootloader (chip system area)",
+  "KDock 自有 OTA": "KDock OTA",
+  "STM32 · USB DFU（BOOT0=1）": "STM32 · USB DFU (BOOT0=1)",
+  "STM32 · UART ROM（BOOT0=1）": "STM32 · UART ROM (BOOT0=1)",
+  "ESP32 / ESP8266 · 串口 ROM": "ESP32 / ESP8266 · serial ROM",
+  "网络设备 · SVC1 / .fw": "Network device · SVC1 / .fw",
+  "调试探针直接通过 SWD/JTAG 写片上 Flash，不依赖设备里的 bootloader。":
+    "The debug probe writes on-chip Flash over SWD/JTAG without relying on a device bootloader.",
+  "STM32 系统 Bootloader · USB DFU：BOOT0=1 后复位/上电，使用 CubeProgrammer 的 USB1。":
+    "STM32 system bootloader · USB DFU: set BOOT0=1 then reset/power-cycle; CubeProgrammer uses USB1.",
+  "STM32 系统 Bootloader · UART：BOOT0=1 后复位/上电，连接芯片指定的 USART。":
+    "STM32 system bootloader · UART: set BOOT0=1 then reset/power-cycle; connect the chip's designated USART.",
+  "ESP32 / ESP8266 串口 ROM：拉低 GPIO0（BOOT）后复位；只烧 .bin，合并镜像通常从 0x0 开始。":
+    "ESP32 / ESP8266 serial ROM: pull GPIO0 low, then reset; flash .bin only, merged images usually start at 0x0.",
+  "这是 KDock 自有 OTA（SVC1 + .fw），不是厂商出厂 ROM Bootloader。":
+    "This is KDock OTA (SVC1 + .fw), not a vendor factory ROM bootloader.",
+  "STM32 USB DFU 不需要串口；BOOT0=1 后复位/上电，进入系统 Bootloader。":
+    "STM32 USB DFU does not use a serial port; set BOOT0=1 and reset/power-cycle to enter the system bootloader.",
+  "ESP ROM 只接受 .bin；多镜像请先用 esptool merge_bin 合并，再填写合并后的起始偏移。":
+    "ESP ROM accepts .bin only; merge multiple images with esptool merge_bin and enter the merged start offset.",
+  ".hex / .elf 自带地址；.bin 需要填写芯片 Flash 地址。此路径使用厂商出厂 ROM Bootloader。":
+    ".hex / .elf carry addresses; .bin needs the chip Flash address. This path uses the vendor factory ROM bootloader.",
+  "Flash 偏移": "Flash offset",
+  "配置未完成": "Configuration incomplete",
   "固件目录 / manifest.json / 单个 .fw 的地址": "firmware folder / manifest.json / a single .fw URL",
   "显示当前目录": "show current directory",
   "等待数据…": "waiting for data…", "设备按": "The device sends",
@@ -13507,6 +13604,8 @@ const EN = {
   "终端 + 串口 + X11 + SFTP 的多合一工具（A 核 / Linux 板子常用）。": "Terminal + serial + X11 + SFTP in one (common for Cortex-A / Linux boards).",
   "DAPLink / CMSIS-DAP（pyOCD）": "DAPLink / CMSIS-DAP (pyOCD)",
   "DAPLink、CMSIS-DAP、ST-Link、J-Link 的调试与烧录 CLI。装好后可运行 pyocd list 检查烧录器；DAPLink 设备通常还需要在 Windows 上正确绑定 HID/WinUSB 驱动。": "Debug and flash CLI for DAPLink, CMSIS-DAP, ST-Link and J-Link. After installing, run pyocd list to check the probe; DAPLink usually also needs the correct HID/WinUSB driver binding on Windows.",
+  "STM32CubeProgrammer（ST-Link / USB DFU / UART ROM）": "STM32CubeProgrammer (ST-Link / USB DFU / UART ROM)",
+  "ST 官方烧录 CLI。KDock 用它走 ST-Link，也用它连接 STM32 出厂系统 Bootloader：USB DFU（BOOT0=1）或 UART（BOOT0=1，接芯片指定 USART）。": "ST's official flashing CLI. KDock uses it with ST-Link and to connect the STM32 factory system bootloader over USB DFU (BOOT0=1) or UART (BOOT0=1 on the documented USART).",
   "esptool（ESP32 烧录）": "esptool (ESP32 flashing)",
   "ESP32 / ESP8266 的烧录、读 MAC、擦除、读 Flash。需要先装 Python。": "Flash, read MAC, erase and read flash on ESP32 / ESP8266. Requires Python.",
   "ESP-IDF（安装管理器）": "ESP-IDF (installation manager)",

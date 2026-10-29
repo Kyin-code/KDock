@@ -1261,6 +1261,18 @@ fn flash_tools_blocking(overrides: Option<serde_json::Value>) -> serde_json::Val
             py_src = "scan";
         }
     }
+    // ---- esptool：ESP32 / ESP8266 出厂串口 ROM Bootloader ----
+    let mut esp = ov("esptool").map(std::path::PathBuf::from).filter(|p| p.is_file());
+    let mut esp_src = if esp.is_some() { "manual" } else { "" };
+    if esp.is_none() {
+        esp = env_setup::find_tool(
+            "esptool.exe",
+            "%ENVDIR%\\esptool;%APPDATA%\\Python\\Python313\\Scripts;%APPDATA%\\Python\\Python312\\Scripts;%APPDATA%\\Python\\Python311\\Scripts;%APPDATA%\\Python\\Python310\\Scripts;%APPDATA%\\Python\\Python39\\Scripts;%LOCALAPPDATA%\\Programs\\Python\\Python313\\Scripts;%LOCALAPPDATA%\\Programs\\Python\\Python312\\Scripts",
+        );
+        if esp.is_some() {
+            esp_src = "scan";
+        }
+    }
     // ---- WCH：优先 wlink（命令行，RISC-V / CH32 全系），退回厂商 GUI ----
     let wch = ov("wchlink")
         .map(std::path::PathBuf::from)
@@ -1273,7 +1285,7 @@ fn flash_tools_blocking(overrides: Option<serde_json::Value>) -> serde_json::Val
         .or_else(|| env_setup::find_tool("AURIXFlasher.exe", "%ENVDIR%\\aurix;C:\\Program Files\\Infineon;C:\\Infineon;C:\\Program Files (x86)\\Infineon"));
     // 版本探测并行跑：pyOCD 是 Python 启动（1s+）、STM32 CLI 也不快。串行时要等它们一个个来，
     // 首开烧录页就卡在 18%。这里最慢的一个决定总耗时。
-    let (ocd_ver, st_ver, py_ver, wch_ver) = std::thread::scope(|s| {
+    let (ocd_ver, st_ver, py_ver, esp_ver, wch_ver) = std::thread::scope(|s| {
         let o = ocd.clone();
         let t_ocd = s.spawn(move || {
             o.as_ref()
@@ -1295,6 +1307,13 @@ fn flash_tools_blocking(overrides: Option<serde_json::Value>) -> serde_json::Val
                 .map(|v| v.trim().to_string())
                 .unwrap_or_default()
         });
+        let espc = esp.clone();
+        let t_esp = s.spawn(move || {
+            espc.as_ref()
+                .and_then(|p| run_capture(p, &["version"], 3000))
+                .map(|v| v.trim().to_string())
+                .unwrap_or_default()
+        });
         let wc = wch.clone();
         let t_wch = s.spawn(move || {
             wc.as_ref()
@@ -1306,6 +1325,7 @@ fn flash_tools_blocking(overrides: Option<serde_json::Value>) -> serde_json::Val
             t_ocd.join().unwrap_or_default(),
             t_st.join().unwrap_or_default(),
             t_py.join().unwrap_or_default(),
+            t_esp.join().unwrap_or_default(),
             t_wch.join().unwrap_or_default(),
         )
     });
@@ -1318,6 +1338,8 @@ fn flash_tools_blocking(overrides: Option<serde_json::Value>) -> serde_json::Val
                       "found": st.is_some(), "from": st_src, "version": st_ver },
         "pyocd": { "exe": py.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
                    "found": py.is_some(), "from": py_src, "version": py_ver },
+        "esptool": { "exe": esp.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+                     "found": esp.is_some(), "from": esp_src, "version": esp_ver },
         "wchlink": { "exe": wch.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
                      "found": wch.is_some(), "from": if wch.is_some() { "scan" } else { "" }, "version": wch_ver },
         "aurix": { "exe": aurix.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
