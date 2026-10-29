@@ -1,6 +1,8 @@
 /* KDock —— 视觉风格：
    HSL 令牌 + 分层半透明 surface + 大圆角 + 柔和阴影 + 亮/暗双主题 */
 :root {
+  --font-ui: "Segoe UI Variable", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   /* 深色底跟着配色走（applyScheme 会按当前色相覆盖；这里给的是"默认海洋蓝"那一档，
      免得 JS 跑起来之前先闪一帧蓝黑） */
   --background: 205 24% 10%;
@@ -143,7 +145,7 @@
 html, body { width: 100%; height: 100%; }
 body {
   /* 字体可在「设置 → 主题与配色」里换（--ui-font 由 JS 写；没设就用原来这一族） */
-  font-family: var(--ui-font, "Segoe UI Variable", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif);
+  font-family: var(--ui-font, var(--font-ui));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-size: 13px; line-height: 1.5;
@@ -399,13 +401,17 @@ html[data-fs="1"] .capbar { display: none; }
 .btnrow > .btn { flex: 1; }
 
 input, select, textarea, button { font: inherit; color: hsl(var(--foreground)); outline: none; }
+input::placeholder, textarea::placeholder {
+  color: hsl(var(--muted-foreground) / 0.72);
+  opacity: 1; font-family: inherit; font-weight: 400; letter-spacing: 0;
+}
 input[type="text"], input[type="number"], input:not([type]), select, textarea {
   width: 100%; height: 30px; padding: 0 10px;
   border: 1px solid hsl(var(--input) / 0.9); border-radius: 10px;
   background: var(--surface-1); color: hsl(var(--foreground));
   transition: border-color .16s ease, box-shadow .16s ease;
 }
-textarea { height: auto; padding: 7px 10px; resize: vertical; font-family: Consolas, "Cascadia Mono", monospace; }
+textarea { height: auto; padding: 7px 10px; resize: vertical; font-family: var(--font-mono); }
 select {
   appearance: none; padding-right: 26px;
   background-image: linear-gradient(45deg, transparent 50%, hsl(var(--muted-foreground)) 50%),
@@ -478,7 +484,7 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid hsl(var(--border) / 0.75); border-radius: 50%;
   background: transparent; color: hsl(var(--muted-foreground));
-  font: 600 10.5px/1 "Segoe UI", sans-serif; letter-spacing: 0; text-transform: none;
+  font: 600 10.5px/1 var(--ui-font, var(--font-ui)); letter-spacing: 0; text-transform: none;
   cursor: pointer;
 }
 .help-f1:hover {
@@ -588,6 +594,24 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
   display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
   border-radius: 14px; border: 1px solid hsl(var(--border) / 0.55);
   background: var(--surface-1); box-shadow: 0 4px 14px rgba(73, 93, 142, 0.08);
+}
+.agcomposer-meta { min-height: 20px; gap: 10px; }
+.agcomposer-title { color: hsl(var(--foreground)); font-size: 12px; font-weight: 650; letter-spacing: .15px; }
+#ag-usage {
+  max-width: 72%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 2px 8px; border-radius: 999px; background: var(--surface-3);
+  color: hsl(var(--muted-foreground)); font-size: 11px; font-variant-numeric: tabular-nums;
+}
+#ag-usage:empty { display: none; }
+#ag-input {
+  min-height: 94px; padding: 12px 14px; resize: vertical;
+  font-family: var(--ui-font, var(--font-ui)); font-size: 14px; line-height: 1.65; letter-spacing: .05px;
+  background: var(--surface-0); border-radius: 12px; caret-color: hsl(var(--primary));
+}
+#ag-input::placeholder { color: hsl(var(--muted-foreground) / 0.78); }
+#ag-input:focus {
+  border-color: hsl(var(--ring) / 0.72);
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.12);
 }
 
 /* 「⋯」面板：把不常用的收进来，按分区竖排 */
@@ -1399,9 +1423,9 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 @keyframes ag-blink { 50% { opacity: 0; } }
 /* 正文里的一点点 markdown：代码、行内代码、粗体 */
-.agmsg .bubble code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 11.5px; background: hsl(var(--accent)); padding: 0 4px; border-radius: 4px; }
+.agmsg .bubble code { font-family: var(--font-mono); font-size: 11.5px; background: hsl(var(--accent)); padding: 0 4px; border-radius: 4px; }
 .agmsg .bubble pre {
-  font-family: Consolas, "Cascadia Mono", monospace; font-size: 11.5px; line-height: 1.5;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5;
   background: var(--surface-0); border: 1px solid var(--surface-line); border-radius: 8px;
   padding: 8px 10px; margin: 6px 0; overflow: auto; max-height: 320px; white-space: pre;
 }
@@ -1454,7 +1478,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   font-size: 11.5px; overflow: hidden;
 }
 .agtool > .th { display: flex; align-items: center; gap: 8px; padding: 6px 9px; cursor: pointer; }
-.agtool > .th .nm { font-family: Consolas, "Cascadia Mono", monospace; color: hsl(var(--primary)); }
+.agtool > .th .nm { font-family: var(--font-mono); color: hsl(var(--primary)); }
 .agtool > .th .st { margin-left: auto; font-size: 11px; color: hsl(var(--muted-foreground)); }
 .agtool.ok > .th .st { color: hsl(var(--success)); }
 .agtool.bad > .th .st { color: hsl(var(--destructive)); }
@@ -1463,7 +1487,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agtool pre {
   margin: 4px 0 0; background: var(--surface-0); border: 1px solid var(--surface-line);
   border-radius: 7px; padding: 7px 9px; max-height: 260px; overflow: auto;
-  font-family: Consolas, "Cascadia Mono", monospace; font-size: 11px; white-space: pre-wrap; word-break: break-all;
+  font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; word-break: break-all;
 }
 .agtool .agargs { margin-top: 4px; }
 .agtool .agargs > summary,
@@ -1532,19 +1556,22 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 
 /* Agent 信息面板：上下文占用 / 工作区 git / token 与花费（参考 opencode 的状态栏信息） */
 .aginfo { display: flex; flex-direction: column; gap: 7px; margin: 2px 0 10px; }
-.aginfo .row { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
-.aginfo .k { flex: 0 0 70px; color: hsl(var(--muted-foreground)); }
+.aginfo .row { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; line-height: 1.55; }
+.aginfo .k { flex: 0 0 72px; color: hsl(var(--muted-foreground)); font-size: 11.5px; letter-spacing: .1px; }
 .aginfo .v {
-  flex: 1; min-width: 0; font-family: Consolas, "Cascadia Mono", monospace;
+  flex: 1; min-width: 0; font-family: inherit; font-variant-numeric: tabular-nums;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .aginfo .v.ok { color: hsl(var(--success)); }
 .aginfo .v.warn { color: hsl(var(--warning)); }
 .aginfo .v.bad { color: hsl(var(--destructive)); }
 .aginfo .bar { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
-.aginfo .bar > i { display: block; height: 100%; width: 0; background: hsl(var(--primary)); transition: width .2s ease; }
+.aginfo .bar > i {
+  display: block; height: 100%; width: 0; background: hsl(var(--primary));
+  transform-origin: left; animation: ag-bar-in .28s ease-out;
+}
 .aginfo .bar.hot > i { background: hsl(var(--warning)); }
-.aginfo .sub { font-size: 11px; color: hsl(var(--muted-foreground)); line-height: 1.5; }
+.aginfo .sub { font-size: 11.5px; color: hsl(var(--muted-foreground)); line-height: 1.6; }
 .aginfo .sep { height: 1px; background: var(--surface-line-soft); margin: 2px 0 1px; }
 .aginfo .costpill {
   display: inline-block; padding: 1px 7px; border-radius: 6px;
@@ -1560,12 +1587,13 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 
 /* 上下文成分：一条堆叠条 + 明细（参考 opencode 的 context 面板） */
 .agctx-bar { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--surface-3); }
-.agctx-bar > i { display: block; height: 100%; }
+.agctx-bar > i { display: block; height: 100%; transform-origin: left; animation: ag-bar-in .28s ease-out; }
+@keyframes ag-bar-in { from { transform: scaleX(0); opacity: .55; } to { transform: scaleX(1); opacity: 1; } }
 .agctx-legend { display: flex; flex-direction: column; gap: 3px; }
 .agctx-legend .r { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
 .agctx-legend .dot { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
 .agctx-legend .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agctx-legend .v { font-family: Consolas, "Cascadia Mono", monospace; color: hsl(var(--muted-foreground)); }
+.agctx-legend .v { font-family: inherit; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
 
 /* 供应商列表（CC Switch 那种：一行一个 profile，带协议徽标和行内操作） */
 .provrow {
@@ -1581,7 +1609,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .provrow .st { flex: 0 0 auto; font-size: 11px; }
 .provrow button { height: 20px; padding: 0 6px; font-size: 11px; border-radius: 6px; }
 
-.agskill { font-family: Consolas, "Cascadia Mono", monospace; font-size: 11.5px; min-height: 120px; }
+.agskill { font-family: var(--font-mono); font-size: 11.5px; min-height: 120px; }
 
 /* Agent 信息页：技能 / MCP 用"行 + 开关"展示，别当普通文本 */
 .agtable { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 6px; }
@@ -1651,11 +1679,20 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agptabs { display: flex; gap: 4px; padding: 3px; border-radius: 10px; background: var(--surface-3); }
 .agptab {
   flex: 1; height: 26px; border: none; border-radius: 8px; background: none;
-  color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 12px;
+  color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 12.5px;
 }
 .agptab:hover { color: hsl(var(--foreground)); }
 .agptab.active { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-weight: 550; }
 .agppane { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0; }
+.agentpane .cardtitle {
+  color: hsl(var(--foreground)); font-size: 12px; font-weight: 600;
+  letter-spacing: .1px; text-transform: none; margin: 12px 0 7px;
+}
+.agentpane #ag-info,
+.agentpane #ag-ctx {
+  padding: 10px 11px; border: 1px solid var(--surface-line); border-radius: 10px;
+  background: var(--surface-2); margin: 0 0 6px;
+}
 
 /* 浏览器页 */
 .agbrurl { flex: 1 1 auto; min-width: 0; }
@@ -1670,7 +1707,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 
 /* 文本页 */
 .agtext {
-  flex: 1 1 auto; min-height: 220px; font-family: Consolas, "Cascadia Mono", monospace;
+  flex: 1 1 auto; min-height: 220px; font-family: var(--font-mono);
   font-size: 12px; line-height: 1.55; resize: vertical;
 }
 
@@ -1859,8 +1896,23 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 
 /* 输入框下面那一行（附件 / 权限 / 模型 / 发送） */
 .agcomposer { gap: 8px; padding-top: 2px; }
-#ag-quick-model { max-width: 250px; }
-#ag-perm { min-width: 92px; }
+.agctl {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  padding: 2px 3px 2px 9px; border: 1px solid var(--surface-line); border-radius: 9px;
+  background: var(--surface-2); color: hsl(var(--muted-foreground));
+}
+.agctl:focus-within { border-color: hsl(var(--primary) / .58); background: var(--surface-1); }
+.agctl:hover { border-color: hsl(var(--primary) / .36); background: var(--surface-3); }
+.agctl-label { flex: 0 0 auto; font-size: 11px; letter-spacing: .15px; }
+.agctl select {
+  height: 26px; padding: 0 25px 0 2px; border: 0; background-color: transparent;
+  box-shadow: none; color: hsl(var(--foreground)); font-size: 12px;
+}
+.agctl select:focus { outline: none; }
+.agctl-model { min-width: 150px; flex: 0 1 280px; }
+#ag-quick-model { width: 100%; max-width: 240px; min-width: 120px; }
+#ag-perm { width: auto; min-width: 76px; }
+.agcomposer > .btn.primary { min-width: 64px; font-weight: 600; }
 
 /* 左栏会话列表（像 codex） */
 .navsub { display: flex; flex-direction: column; gap: 1px; margin: 2px 0 6px 12px; }
@@ -3358,7 +3410,7 @@ html[data-tab="usb"] .params {
 .rtsearchhit:hover, .rtsearchhit.active { background: hsl(var(--primary) / .12); }
 .rtsearchhit b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px Consolas, monospace; }
 .rtsearchhit small { color: hsl(var(--muted-foreground)); font: 10px Consolas, monospace; }
-.rtsearchhit em { grid-column: 1 / -1; font: normal 9.5px/1.4 ui-sans-serif, sans-serif; color: hsl(var(--muted-foreground)); }
+.rtsearchhit em { grid-column: 1 / -1; font: normal 9.5px/1.4 var(--ui-font, var(--font-ui)); color: hsl(var(--muted-foreground)); }
 .rtsearchempty { padding: 10px; color: hsl(var(--muted-foreground)); font-size: 11px; }
 .rtempty {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;

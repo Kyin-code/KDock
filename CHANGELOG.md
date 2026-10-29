@@ -105,6 +105,11 @@
 - **清单防回归测试**：组件 id 唯一、每条至少一个检测规则、pip 规则必须有包名、只能手动装的必须给官网地址。
 
 ### 修复
+- **全局字体与 Agent 交互信息排版**：拆分 UI 字体和等宽字体边界，修复 Agent 输入框及
+  占位符被 `textarea` 强制成代码字体的问题；统一 Agent 运行概览、上下文成分、Token
+  用量、权限和模型控件的字号、行高、对比度、聚焦态和更新动画。新增
+  `npm run test:vite:agent`，检查可见 UI 文本是否全部继承所选字体，并确认代码块和
+  文本编辑器仍使用等宽字体。
 - **DeepSeek Flash 新后端指纹**：补充 `bc19ba97cbe016479903222bb1578db6` 到
   `DeepSeek-V4.1-Flash` 的模型级映射。公开记录只确认模型口径和 `deepseek-flash`
   别名，无法确认更细的日期版 checkpoint，因此保留 `system_fingerprint` 供后续核验。

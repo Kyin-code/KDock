@@ -6878,7 +6878,7 @@ function applyUiScale() {
   root.dataset.uiScale = scale.toFixed(3);
   const id = localStorage.getItem("kdock_ui_font") || "system";
   const fam = (UI_FONTS.find((x) => x[0] === id) || UI_FONTS[0])[2];
-  if (fam) root.style.setProperty("--ui-font", fam);
+  if (fam) root.style.setProperty("--ui-font", `${fam}, var(--font-ui)`);
   else root.style.removeProperty("--ui-font");
   syncParamStrip();
 }
@@ -11786,8 +11786,9 @@ async function bindAgentEvents() {
     const p = ev.payload || {};
     if (agMeta && p.session !== agMeta.id) return;
     const el = agEl("ag-usage");
-    const cache = p.cacheHit || p.cacheMiss ? ` · ${en("缓存命中")} ${p.cacheHit || 0}` : "";
-    if (el) el.textContent = `in ${p.prompt} / out ${p.completion} tokens${cache}`;
+    const cache = p.cacheHit || p.cacheMiss ? ` · ${en("缓存命中")} ${agK(p.cacheHit || 0)}` : "";
+    if (el) el.textContent =
+      `${en("输入")} ${agK(p.prompt || 0)} · ${en("输出")} ${agK(p.completion || 0)} tokens${cache}`;
     agRefreshPricing();
     agRenderInfo();
   });
@@ -12491,8 +12492,10 @@ const EN = {
   "（还没对话，点 ＋）": "(no sessions yet — click ＋)", "（无标题）": "(untitled)",
   "（还没选对话）": "(no session selected)", " 轮": " turns",
   "把目标说出来，KDock 会和你一起推进。": "Tell KDock what you want to get done.",
+  "给 Agent": "To Agent",
+  "运行概览": "Runtime overview",
   "先在设置里选择一个模型。": "Choose a model in Settings first.",
-  "说说你想完成什么…": "What would you like to get done?",
+  "说明目标、现象或贴一段日志；Enter 发送，Shift+Enter 换行": "Describe the goal, symptom or paste a log; Enter sends, Shift+Enter adds a line",
   "显示知识库管理页面": "Show the knowledge-base admin page",
   "全屏显示知识库对话页面": "Show the knowledge-base chat page full width",
   "… 还有 ": "… ", " 个对话（点开）": " more sessions (click to show)",

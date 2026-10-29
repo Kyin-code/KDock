@@ -909,12 +909,12 @@
           </div>
           <div class="vsplit" id="ag-chat-grip" title="拖动调整对话区高度（双击复位）"></div>
           <div class="inpane">
-            <div class="trow">
-              <span class="lb">说点什么</span>
+            <div class="trow agcomposer-meta">
+              <span class="lb agcomposer-title">给 Agent</span>
               <span class="grow"></span>
               <span id="ag-usage" class="lb" title="上一轮的 token 用量"></span>
             </div>
-            <textarea id="ag-input" rows="3" placeholder="说说你想完成什么…"></textarea>
+            <textarea id="ag-input" rows="3" placeholder="说明目标、现象或贴一段日志；Enter 发送，Shift+Enter 换行"></textarea>
             <div id="ag-cmd-hint" class="hint" hidden>
               <code>/goal &lt;目标&gt;</code> 设定长期目标（每轮都带上，<code>/goal clear</code> 清除）·
               <code>/compact</code> 压缩上下文 · <code>/new</code> 新会话 ·
@@ -923,14 +923,20 @@
             </div>
             <div class="trow agcomposer">
               <button id="ag-attach" class="btn small" title="附上本机文件：复制进会话工作区，agent 就能读它">📎 文件</button>
-              <select id="ag-perm" class="tight" title="agent 的权限：只读 / 危险动作先问 / 全自动">
-                <option value="read">只读</option>
-                <option value="ask" selected>需要批准</option>
-                <option value="auto">自动</option>
-              </select>
+              <label class="agctl">
+                <span class="agctl-label">权限</span>
+                <select id="ag-perm" class="tight" title="agent 的权限：只读 / 危险动作先问 / 全自动">
+                  <option value="read">只读</option>
+                  <option value="ask" selected>需要批准</option>
+                  <option value="auto">自动</option>
+                </select>
+              </label>
               <span class="grow"></span>
               <span id="ag-model-busy" class="spin" hidden title="正在取模型状态（AMD 那边约 20 秒）"></span>
-              <select id="ag-quick-model" class="tight" title="这轮用哪个模型（参数去设置里改）"></select>
+              <label class="agctl agctl-model">
+                <span class="agctl-label">模型</span>
+                <select id="ag-quick-model" class="tight" title="这轮用哪个模型（参数去设置里改）"></select>
+              </label>
               <button id="ag-send" class="btn primary">发送</button>
             </div>
           </div>
@@ -1758,7 +1764,7 @@
 
           <!-- ② Agent 信息（上）+ 技能 / MCP（下） -->
           <div class="agppane" data-agpane="skills">
-            <div class="cardtitle">Agent 信息</div>
+            <div class="cardtitle">运行概览</div>
             <div id="ag-info" class="aginfo"></div>
             <div class="cardtitle">上下文成分</div>
             <div id="ag-ctx" class="aginfo"></div>

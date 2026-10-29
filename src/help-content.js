@@ -671,8 +671,8 @@ export const HELP_GROUPS = [
       {
         id: "help-settings-theme",
         title: "主题与配色",
-        zh: "选择亮/暗主题、主色、界面缩放和字体。配色变量会同步到图表、画布、日志和帮助页面；极端缩放后建议检查一次窄窗布局。",
-        en: "Choose light/dark mode, accent, UI scale and font. Theme variables apply to charts, canvases, logs and help; verify compact layouts after extreme scaling."
+        zh: "选择亮/暗主题、主色、界面缩放和字体。UI 字体作用于菜单、对话、表单、占位符、状态和信息面板；代码块、日志、地址与文本编辑器保留等宽字体。配色变量会同步到图表、画布、日志和帮助页面；极端缩放后建议检查一次窄窗布局。",
+        en: "Choose light/dark mode, accent, UI scale and font. The UI font applies to menus, chat, forms, placeholders, status and information panels; code, logs, addresses and text editors keep a monospace font. Theme variables apply to charts, canvases, logs and help; verify compact layouts after extreme scaling."
       },
       {
         id: "help-settings-model",

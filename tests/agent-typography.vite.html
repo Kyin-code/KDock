@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN" data-lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KDock Agent Typography Vite Test</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { display: flex; background: hsl(var(--background)); color: hsl(var(--foreground)); }
+    #test-root {
+      display: grid; grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 10px; flex: 1; min-width: 0; min-height: 0; padding: 10px;
+    }
+    #test-root > .workpane { min-width: 0; min-height: 0; }
+    #test-root > .parampane { min-height: 0; overflow: auto; padding: 10px; }
+  </style>
+</head>
+<body>
+  <div id="test-root"></div>
+  <script type="module">
+    const source = await fetch("/index.html").then((r) => r.text());
+    const parsed = new DOMParser().parseFromString(source, "text/html");
+    const root = document.getElementById("test-root");
+    const work = parsed.querySelector('[data-work="agent"]');
+    const params = parsed.querySelector('[data-param="agent"]');
+    if (!work || !params) throw new Error("Agent markup missing from index.html");
+    work.hidden = false;
+    params.hidden = false;
+    root.append(work, params);
+
+    document.getElementById("ag-title").textContent = "检查交互文案和字体";
+    document.getElementById("ag-turns").textContent = "3 轮";
+    document.getElementById("ag-usage").textContent = "输入 18.4K · 输出 1.3K tokens · 缓存命中 12.1K";
+    document.getElementById("ag-quick-model").innerHTML =
+      '<option>DeepSeek-V4.1-Flash · deepseek-flash</option><option>GLM-5.3-Flash</option>';
+
+    document.getElementById("ag-chat").innerHTML = `
+      <div class="agwelcome">
+        <div class="agwelcome-title">Work with KDock</div>
+        <div class="agwelcome-sub">把目标说出来，KDock 会和你一起推进。</div>
+      </div>
+      <div class="agmsg user">
+        <div class="head"><span class="who">你</span></div>
+        <div class="bubble">检查一下字体有没有统一，尤其是输入框和 Agent 信息。</div>
+      </div>
+      <div class="agmsg assistant">
+        <div class="head"><span class="who">KDock</span></div>
+        <div class="bubble">会检查 <code>UI 字体</code>、占位符、动态状态和代码字体的边界。</div>
+        <div class="agmeta">DeepSeek-V4.1-Flash · 刚刚</div>
+      </div>
+      <div class="agtool ok">
+        <div class="th"><span class="nm">workspace_check</span><span class="st">完成</span></div>
+        <div class="bd"><pre>exit code: 0\n9 tests passed</pre></div>
+      </div>`;
+
+    document.getElementById("ag-info").innerHTML = `
+      <div class="row"><span class="k">上下文</span><span class="v">18.4K / 119.8K（15%）</span></div>
+      <div class="bar"><i style="width:15%"></i></div>
+      <div class="row"><span class="k">工作区</span><span class="v">KDock</span></div>
+      <div class="row"><span class="k">Git</span><span class="v ok">main · 干净 · 398d03f</span></div>
+      <div class="sep"></div>
+      <div class="row"><span class="k">Token</span><span class="v">输入 18.4K / 输出 1.3K</span></div>
+      <div class="row"><span class="k">缓存命中</span><span class="v ok">65.8%（12.1K / 18.4K）</span></div>
+      <div class="row"><span class="k">模型指纹</span><span class="v">DeepSeek-V4.1-Flash</span></div>
+      <div class="row"><span class="k">出字速度</span><span class="v ok">36.2 tok/s 最近 · 31.8 tok/s 平均</span></div>
+      <div class="row"><span class="k">花费</span><span class="v"><span class="costpill offpeak">¥0.12</span></span></div>`;
+
+    document.getElementById("ag-ctx").innerHTML = `
+      <div class="agctx-bar">
+        <i style="width:18%;background:#8b98a8"></i>
+        <i style="width:46%;background:#4f8cff"></i>
+        <i style="width:11%;background:#3ddc97"></i>
+        <i style="width:25%;background:var(--surface-3)"></i>
+      </div>
+      <div class="agctx-legend">
+        <div class="r"><span class="dot" style="background:#8b98a8"></span><span class="n">系统提示</span><span class="v">3.3K · 18%</span></div>
+        <div class="r"><span class="dot" style="background:#4f8cff"></span><span class="n">工具定义</span><span class="v">8.5K · 46%</span></div>
+        <div class="r"><span class="dot" style="background:#3ddc97"></span><span class="n">用户消息</span><span class="v">2.0K · 11%</span></div>
+      </div>
+      <div class="sub">其中指导文件 800 · 技能索引 1.2K</div>
+      <div class="sub">本机估算 18.4K · 模型上报 18.1K · 窗口预算 119.8K</div>`;
+
+    document.documentElement.dataset.typographyReady = "1";
+  </script>
+</body>
+</html>
