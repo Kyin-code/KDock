@@ -26,9 +26,15 @@ struct Registry {
 
 #[derive(Debug, Deserialize)]
 struct AtlasFamily {
+    #[serde(default)]
+    #[cfg_attr(not(test), allow(dead_code))]
+    id: String,
     display_name: String,
     #[serde(default, rename = "match")]
     match_terms: Vec<String>,
+    #[serde(default)]
+    #[cfg_attr(not(test), allow(dead_code))]
+    model_ids: Vec<String>,
     source: String,
 }
 
@@ -261,5 +267,31 @@ mod tests {
         assert_eq!(compute(&p, "glm-5.3", "").family, "GLM");
         assert_eq!(compute(&p, "mimo-v2.5", "").family, "Xiaomi MiMo V2.x");
         assert_eq!(compute(&p, "deepseek-flash", "").family, "DeepSeek");
+    }
+
+    #[test]
+    fn atlas_snapshot_has_unique_and_complete_coverage() {
+        let atlas = atlas();
+        let modeldna_ids: std::collections::BTreeSet<_> = atlas
+            .modeldna_families
+            .iter()
+            .map(|family| family.id.as_str())
+            .collect();
+        let provenance_ids: std::collections::BTreeSet<_> = atlas
+            .provenance_families
+            .iter()
+            .map(|family| family.id.as_str())
+            .collect();
+        let model_ids: Vec<_> = atlas
+            .provenance_families
+            .iter()
+            .flat_map(|family| family.model_ids.iter().map(String::as_str))
+            .collect();
+        let unique_model_ids: std::collections::BTreeSet<_> = model_ids.iter().copied().collect();
+
+        assert_eq!(modeldna_ids.len(), 32);
+        assert_eq!(provenance_ids.len(), 39);
+        assert_eq!(model_ids.len(), 184);
+        assert_eq!(unique_model_ids.len(), 184);
     }
 }
