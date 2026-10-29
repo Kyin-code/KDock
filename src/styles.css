@@ -3377,6 +3377,20 @@ html[data-tab="usb"] .params {
 .rtempty span { font-size: 11.5px; max-width: 380px; line-height: 1.6; }
 .rtempty .btn { pointer-events: auto; margin-top: 4px; }
 .rtfn { width: 188px; cursor: default; }
+.rtfn.chainfn .nbd { display: none; }
+.rtfn.chainfn .nhd { padding: 6px 8px; min-height: 30px; }
+.rtlane {
+  position: absolute; z-index: 0; width: 216px; border-radius: 12px;
+  border: 1px solid hsl(var(--primary) / .07);
+  background: hsl(var(--primary) / .022); pointer-events: none;
+}
+.rtlane.alt { background: hsl(var(--primary) / .045); }
+.rtlvl {
+  position: absolute; z-index: 0; width: 188px; padding: 3px 0 5px;
+  border-bottom: 1px solid hsl(var(--primary) / .28);
+  color: hsl(var(--muted-foreground)); font: 700 10px/1.2 Consolas, monospace;
+  letter-spacing: .06em; text-transform: uppercase; pointer-events: none; user-select: none;
+}
 .rtfn .nhd { cursor: move; gap: 5px; }
 .rtfn .rtfn-name { flex: 1; min-width: 0; font-family: Consolas, "Cascadia Mono", monospace; font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rtfn .nhd { color: hsl(var(--primary)); }
@@ -3413,6 +3427,7 @@ html[data-tab="usb"] .params {
 .rtlink.focus { stroke: hsl(var(--primary) / .9); stroke-width: 2.5; }
 .rtlink.route-up { stroke: hsl(var(--warning) / .95); stroke-width: 2.6; }
 .rtlink.route-down { stroke: hsl(var(--success) / .95); stroke-width: 2.6; }
+.rtlink.span-jump { opacity: .28; stroke-dasharray: 4 5; stroke-width: 1.35; }
 .rtlink.dim { opacity: .11; }
 .rtfn .nbd { padding: 5px 8px 7px; }
 .rtfn .rtaddr { font-family: Consolas, monospace; font-size: 10px; color: hsl(var(--primary)); opacity: .88; }

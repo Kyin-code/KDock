@@ -16,6 +16,7 @@ let rtSel = null;
 let rtChainAddr = "";
 let rtChainAddrs = [];
 let rtSelection = new Set();
+let rtLevelGuides = [];
 let rtView = { x: 46, y: 32, k: 1 };
 let rtNodes = [];
 let rtEdges = [];
@@ -897,8 +898,123 @@ function rtBuildGraph() {
   rtNodes.forEach((n) => rtPosCache.set(n.addr, { x: n.x, y: n.y }));
 }
 
+function rtLayoutCallChain(outgoing, incoming) {
+  const by = new Map(rtNodes.map((n) => [n.addr, n]));
+  const roots = rtChainRoots().filter((addr) => by.has(addr));
+  if (!roots.length) return;
+  const dir = rtChainDir();
+  const downward = new Map(roots.map((addr) => [addr, 0]));
+  const upward = new Map(roots.map((addr) => [addr, 0]));
+
+  const relax = (map, reverse, delta) => {
+    const queue = [...roots];
+    const queued = new Set(queue);
+    while (queue.length) {
+      const addr = queue.shift();
+      queued.delete(addr);
+      const base = map.get(addr) || 0;
+      for (const next of (reverse ? incoming.get(addr) : outgoing.get(addr)) || []) {
+        if (!by.has(next)) continue;
+        const candidate = base + delta;
+        const old = map.get(next);
+        if (old != null && (delta > 0 ? candidate >= old : candidate <= old)) continue;
+        map.set(next, candidate);
+        if (!queued.has(next)) { queued.add(next); queue.push(next); }
+      }
+    }
+  };
+
+  if (dir === "down" || dir === "both") relax(downward, false, 1);
+  if (dir === "up" || dir === "both") relax(upward, true, -1);
+
+  const depth = new Map();
+  for (const node of rtNodes) {
+    const down = downward.get(node.addr);
+    const up = upward.get(node.addr);
+    if (dir === "down") depth.set(node.addr, down ?? 0);
+    else if (dir === "up") depth.set(node.addr, up ?? 0);
+    else if (down == null) depth.set(node.addr, up ?? 0);
+    else if (up == null) depth.set(node.addr, down);
+    else depth.set(node.addr, Math.abs(up) <= Math.abs(down) ? up : down);
+  }
+
+  const groups = new Map();
+  for (const node of rtNodes) {
+    const level = depth.get(node.addr) || 0;
+    if (!groups.has(level)) groups.set(level, []);
+    groups.get(level).push(node);
+  }
+
+  const rootOrder = new Map(roots.map((addr, index) => [addr, index]));
+  const rowGap = 58;
+  const cellW = 236;
+  const maxCount = Math.max(...[...groups.values()].map((list) => list.length));
+  const provisional = new Map();
+  const ordered = [];
+  const levels = [...groups.keys()].sort((a, b) => a - b);
+
+  const positionGroup = (level) => {
+    const list = groups.get(level);
+    list.sort((a, b) => {
+      if (level === 0) {
+        const ai = rootOrder.has(a.addr) ? rootOrder.get(a.addr) : 1e9;
+        const bi = rootOrder.has(b.addr) ? rootOrder.get(b.addr) : 1e9;
+        return ai - bi || a.name.localeCompare(b.name);
+      }
+      const peers = level > 0 ? incoming.get(a.addr) : outgoing.get(a.addr);
+      const peersB = level > 0 ? incoming.get(b.addr) : outgoing.get(b.addr);
+      const avg = (node, candidates) => {
+        const values = (candidates || [])
+          .filter((addr) => {
+            const d = depth.get(addr);
+            return level > 0 ? d != null && d < level : d != null && d > level;
+          })
+          .map((addr) => provisional.get(addr))
+          .filter(Number.isFinite);
+        return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 1e12;
+      };
+      return avg(a, peers) - avg(b, peersB) || a.name.localeCompare(b.name);
+    });
+    const top = 52 + (maxCount - list.length) * rowGap / 2;
+    list.forEach((node, index) => {
+      provisional.set(node.addr, top + index * rowGap);
+    });
+    ordered.push({ level, list, top });
+  };
+
+  if (groups.has(0)) positionGroup(0);
+  for (const level of levels.filter((value) => value > 0)) positionGroup(level);
+  for (const level of levels.filter((value) => value < 0).sort((a, b) => b - a)) positionGroup(level);
+
+  const minLevel = Math.min(...levels);
+  rtLevelGuides = ordered
+    .sort((a, b) => a.level - b.level)
+    .map(({ level, list, top }) => {
+      const bottom = top + Math.max(0, list.length - 1) * rowGap + 76;
+      return {
+        level,
+        x: 54 + (level - minLevel) * cellW,
+        y: Math.max(16, top - 34),
+        laneY: Math.max(36, top - 14),
+        height: bottom - top + 32,
+        count: list.length,
+        alt: Math.abs(level) % 2 === 1,
+      };
+    });
+  for (const { level, list, top } of ordered) {
+    const x = 54 + (level - minLevel) * cellW;
+    list.forEach((node, index) => {
+      node.component = 0;
+      node.depth = level;
+      node.x = x;
+      node.y = Math.round(top + index * rowGap);
+    });
+  }
+}
+
 function rtLayout(fresh) {
   if (!rtNodes.length) return;
+  rtLevelGuides = [];
   const layered = ($("rt-layout") && $("rt-layout").value) !== "compact";
   const by = new Map(rtNodes.map((n) => [n.addr, n]));
   const outgoing = new Map(rtNodes.map((n) => [n.addr, []]));
@@ -911,6 +1027,10 @@ function rtLayout(fresh) {
   const depth = new Map();
   const chainMode = rtScope() === "chain";
   const chainRoot = chainMode ? rtChainRoot() : "";
+  if (layered && chainMode) {
+    rtLayoutCallChain(outgoing, incoming);
+    return;
+  }
   if (layered) {
     const undirected = new Map(rtNodes.map((n) => [n.addr, new Set()]));
     for (const e of rtEdges) {
@@ -1071,6 +1191,21 @@ function rtRender() {
   while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
   const empty = $("rt-empty");
   if (empty) empty.hidden = !!rtNodes.length;
+  for (const guide of rtLevelGuides) {
+    const lane = rtEl("div", "rtlane" + (guide.alt ? " alt" : ""));
+    lane.style.left = (guide.x - 14) + "px";
+    lane.style.top = guide.laneY + "px";
+    lane.style.height = guide.height + "px";
+    wrap.appendChild(lane);
+  }
+  for (const guide of rtLevelGuides) {
+    const level = guide.level;
+    const label = level === 0 ? "L0" : level > 0 ? `L+${level}` : `L${level}`;
+    const el = rtEl("div", "rtlvl", `${label} · ${guide.count}`);
+    el.style.left = guide.x + "px";
+    el.style.top = guide.y + "px";
+    wrap.appendChild(el);
+  }
   for (const n of rtNodes) wrap.appendChild(rtNodeEl(n));
   rtComputeFocusSets();
   rtApplyNodeFocusClasses();
@@ -1192,10 +1327,12 @@ function rtRenderEdges() {
     const incident = !!(focus && (e.from === focus || e.to === focus));
     const routeUp = hasFocus && rtFocusSets.up.has(e.from) && rtFocusSets.up.has(e.to);
     const routeDown = hasFocus && rtFocusSets.down.has(e.from) && rtFocusSets.down.has(e.to);
+    const depthSpan = Math.abs((a.depth ?? 0) - (b.depth ?? 0));
+    const crossLevel = chainMode && depthSpan !== 1;
     // "Selected" means the complete upstream and downstream routes, not only
     // the two edges touching the selected node.
     if (mode === "none" || (!chainMode && mode === "selected" && hasFocus && !routeUp && !routeDown)) continue;
-    const ax = a.x + 188, ay = a.y + 38, bx = b.x, byy = b.y + 38;
+    const ax = a.x + 188, ay = rtNodeCenterY(a), bx = b.x, byy = rtNodeCenterY(b);
     const bend = Math.max(36, Math.abs(bx - ax) * 0.38);
     const d = bx >= ax
       ? `M ${ax} ${ay} C ${ax + bend} ${ay}, ${bx - bend} ${byy}, ${bx} ${byy}`
@@ -1212,7 +1349,8 @@ function rtRenderEdges() {
       + (routeUp ? " route-up" : "")
       + (routeDown ? " route-down" : "")
       + (incident ? " focus" : "")
-      + (hasFocus && !routeUp && !routeDown ? " dim" : "");
+      + (hasFocus && !routeUp && !routeDown ? " dim" : "")
+      + (crossLevel && !incident ? " span-jump" : "");
     p.setAttribute("class", cls);
     const tip = document.createElementNS(SQ_NS, "title");
     tip.textContent = `${a.name} → ${b.name}${e.count > 1 ? ` ×${e.count}` : ""}`;
@@ -1233,6 +1371,7 @@ function rtNodeEl(n) {
     + (n.addr === rtSel && rtSelection.size > 1 ? " primary-sel" : ""));
   el.dataset.addr = n.addr;
   el.dataset.kind = n.kind || "business";
+  el.dataset.depth = String(n.depth ?? 0);
   el.style.left = n.x + "px";
   el.style.top = n.y + "px";
   const hd = rtEl("div", "nhd");
@@ -1300,12 +1439,22 @@ function rtNodeEl(n) {
 function rtApplyView() {
   const nodes = $("rt-nodes"), edges = $("rt-edges-g");
   if (!nodes || !edges) return;
+  const cv = $("rt-canvas");
+  if (cv) {
+    // Hidden overflow containers can still be scrolled by focus/scrollIntoView,
+    // which shifts the transformed node layer out of the visible canvas.
+    cv.scrollLeft = 0;
+    cv.scrollTop = 0;
+  }
   nodes.style.transform = `translate(${rtView.x}px, ${rtView.y}px) scale(${rtView.k})`;
   edges.setAttribute("transform", `translate(${rtView.x} ${rtView.y}) scale(${rtView.k})`);
 }
 function rtScreenToWorld(clientX, clientY) {
   const cv = $("rt-canvas"), r = cv.getBoundingClientRect(), ui = uiScaleValue();
   return { x: ((clientX - r.left) / ui - rtView.x) / rtView.k, y: ((clientY - r.top) / ui - rtView.y) / rtView.k };
+}
+function rtNodeCenterY(node) {
+  return node.y + (rtScope() === "chain" ? 16 : 38);
 }
 function rtFit() {
   if (!rtNodes.length || !$("rt-canvas")) return;
@@ -1327,7 +1476,7 @@ function rtFocusRoot() {
   if (!cv) return;
   rtView.k = Math.min(0.86, Math.max(0.62, cv.clientWidth / 1180));
   rtView.x = cv.clientWidth / 2 - (root.x + 94) * rtView.k;
-  rtView.y = cv.clientHeight / 2 - (root.y + 38) * rtView.k;
+  rtView.y = cv.clientHeight / 2 - rtNodeCenterY(root) * rtView.k;
   rtApplyView();
 }
 
@@ -1457,8 +1606,8 @@ function rtUseAsChainRoots(addrs) {
   rtSetSelection(roots, roots[0]);
   rtRender();
   rtRefreshSelection(rtNodes.find((n) => n.addr === roots[0]) || rtAddrNode(roots[0]));
-  rtFocusRoot();
   rtRenderEdges();
+  rtFit();
 }
 function byAddrHas(addr) {
   return !!(rtData && addr && (rtData.nodes || []).some((n) => n.addr === addr));
@@ -1468,7 +1617,7 @@ function rtCenter(addr) {
   if (!n || !$("rt-canvas")) return;
   const cv = $("rt-canvas");
   rtView.x = cv.clientWidth / 2 - (n.x + 94) * rtView.k;
-  rtView.y = cv.clientHeight / 2 - (n.y + 38) * rtView.k;
+  rtView.y = cv.clientHeight / 2 - rtNodeCenterY(n) * rtView.k;
   if (rtSelection.has(addr)) rtSel = addr;
   else rtSetSelection([addr], addr);
   rtRefreshSelection(rtAddrNode(addr) || n);

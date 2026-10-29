@@ -97,6 +97,42 @@ try {
   if (!multiRootLabel.includes("+ 1")) {
     throw new Error(`Multi-root label is incorrect: ${multiRootLabel}`);
   }
+  const levelColumns = await page.evaluate(() => {
+    const columns = {};
+    for (const el of document.querySelectorAll("#rt-nodes .rtfn")) {
+      const depth = el.dataset.depth;
+      if (!columns[depth]) columns[depth] = new Set();
+      columns[depth].add(el.style.left);
+    }
+    return Object.fromEntries(Object.entries(columns).map(([depth, values]) => [depth, [...values]]));
+  });
+  for (const [depth, columns] of Object.entries(levelColumns)) {
+    if (columns.length !== 1) {
+      throw new Error(`Level ${depth} spans multiple columns: ${columns.join(", ")}`);
+    }
+  }
+  const multiChainGeometry = await page.evaluate(() => {
+    const canvas = document.querySelector("#rt-canvas");
+    const c = canvas.getBoundingClientRect();
+    const nodes = [...document.querySelectorAll("#rt-nodes .rtfn")].map((el) => el.getBoundingClientRect());
+    const visible = nodes.filter((r) => r.bottom >= c.top && r.top <= c.bottom && r.right >= c.left && r.left <= c.right).length;
+    return {
+      canvasScrollTop: canvas.scrollTop,
+      totalNodes: nodes.length,
+      visibleNodes: visible,
+    };
+  });
+  if (multiChainGeometry.canvasScrollTop !== 0) {
+    throw new Error(`Canvas internal scroll was not reset: ${multiChainGeometry.canvasScrollTop}`);
+  }
+  if (multiChainGeometry.visibleNodes !== multiChainGeometry.totalNodes) {
+    throw new Error(
+      `Auto-fit left nodes outside the canvas: ${multiChainGeometry.visibleNodes}/${multiChainGeometry.totalNodes}`,
+    );
+  }
+  if (process.env.KDOCK_RT_SCREENSHOT) {
+    await page.screenshot({ path: resolve(root, process.env.KDOCK_RT_SCREENSHOT), fullPage: true });
+  }
   await page.locator("#rt-chain-back-side").click();
   await page.waitForFunction(() => document.querySelector("#rt-scope")?.value === "all");
 
@@ -205,6 +241,8 @@ try {
     chainTarget: "lfs_init",
     multiSelectRoots: multiRootNames,
     multiChainVisible: multiChainNames.length,
+    levelColumns,
+    multiChainGeometry,
     chainVisible: chainNames.length,
     returnedToFullVisible: returnedNames.length,
     searchTarget: "lfs_init",
