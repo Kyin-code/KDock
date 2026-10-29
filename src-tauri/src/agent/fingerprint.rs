@@ -205,6 +205,19 @@ mod tests {
     }
 
     #[test]
+    fn maps_new_deepseek_flash_backend_fingerprint() {
+        let p = provider("deepseek-flash");
+        let f = compute(
+            &p,
+            "deepseek-flash",
+            "bc19ba97cbe016479903222bb1578db6",
+        );
+        assert_eq!(f.name, "DeepSeek-V4.1-Flash");
+        assert_eq!(f.family, "DeepSeek");
+        assert_eq!(f.family_source, "provenance-kit");
+    }
+
+    #[test]
     fn maps_known_kimi_fingerprints_to_checkpoint_names() {
         let p = provider("kimi-k2.5");
         assert_eq!(

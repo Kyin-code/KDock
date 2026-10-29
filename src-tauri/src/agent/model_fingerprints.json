@@ -20,6 +20,14 @@
         "https://github.com/olimorris/codecompanion.nvim/issues/3373"
       ]
     },
+    "bc19ba97cbe016479903222bb1578db6": {
+      "vendor": "deepseek",
+      "model": "DeepSeek-V4.1-Flash",
+      "sources": [
+        "https://github.com/lexsimoes/ai-dev-template/issues/51",
+        "https://github.com/lexsimoes/promptpro/issues/2"
+      ]
+    },
     "fpv0_293876d1": {
       "vendor": "kimi",
       "model": "moonshot-v1-8k",

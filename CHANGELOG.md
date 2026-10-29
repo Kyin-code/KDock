@@ -105,6 +105,9 @@
 - **清单防回归测试**：组件 id 唯一、每条至少一个检测规则、pip 规则必须有包名、只能手动装的必须给官网地址。
 
 ### 修复
+- **DeepSeek Flash 新后端指纹**：补充 `bc19ba97cbe016479903222bb1578db6` 到
+  `DeepSeek-V4.1-Flash` 的模型级映射。公开记录只确认模型口径和 `deepseek-flash`
+  别名，无法确认更细的日期版 checkpoint，因此保留 `system_fingerprint` 供后续核验。
 - **模型指纹库同步（2026-10-30）**：重新读取 ModelDNA 与 Cisco Model Provenance Kit
   公开快照，确认 32 个架构家族、39 个 provenance 家族和 184 个唯一 canonical 基础
   模型均保持完整；补充快照唯一性回归测试并更新对照表日期与覆盖数量。
