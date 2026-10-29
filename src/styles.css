@@ -3379,6 +3379,8 @@ html[data-tab="usb"] .params {
 .rtfn { width: 188px; cursor: default; }
 .rtfn.levelfn .nbd { display: none; }
 .rtfn.levelfn .nhd { padding: 6px 8px; min-height: 30px; }
+.rtfn.levelfn { box-shadow: none; border-radius: 7px; }
+.rtfn.levelfn.sel, .rtfn.levelfn.chainroot { box-shadow: 0 0 0 2px hsl(var(--primary) / .3); }
 .rtlane {
   position: absolute; z-index: 0; width: 216px; border-radius: 12px;
   border: 1px solid hsl(var(--primary) / .07);

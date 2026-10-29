@@ -337,9 +337,13 @@ try {
     nodes: await page.locator("#rt-nodes .rtfn").count(),
     levels: await page.locator("#rt-nodes .rtlvl").count(),
     compact: await page.locator("#rt-nodes .rtfn.levelfn").count(),
+    edgePaths: await page.locator("#rt-edges-g .rtlink").count(),
   };
   if (!runtimeExpanded.levels || runtimeExpanded.compact !== runtimeExpanded.nodes) {
     throw new Error(`Runtime expanded layout is not level-based: ${JSON.stringify(runtimeExpanded)}`);
+  }
+  if (runtimeExpanded.edgePaths > 24) {
+    throw new Error(`Runtime edges were not batched: ${runtimeExpanded.edgePaths} SVG paths`);
   }
 
   await page.locator("#rt-scope").selectOption("all");
@@ -351,9 +355,13 @@ try {
     nodes: await page.locator("#rt-nodes .rtfn").count(),
     levels: await page.locator("#rt-nodes .rtlvl").count(),
     compact: await page.locator("#rt-nodes .rtfn.levelfn").count(),
+    edgePaths: await page.locator("#rt-edges-g .rtlink").count(),
   };
   if (!fullExpanded.levels || fullExpanded.compact !== fullExpanded.nodes) {
     throw new Error(`Full-firmware expanded layout is not level-based: ${JSON.stringify(fullExpanded)}`);
+  }
+  if (fullExpanded.edgePaths > 24) {
+    throw new Error(`Full-firmware edges were not batched: ${fullExpanded.edgePaths} SVG paths`);
   }
 
   console.log(JSON.stringify({

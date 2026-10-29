@@ -35,6 +35,7 @@ let rtGroupEditId = null;
 let rtSearchHits = [];
 let rtSearchIndex = -1;
 let rtFocusSets = { up: new Set(), down: new Set() };
+let rtEdgeFrame = 0;
 const rtPosCache = new Map();
 
 const RT_LIB_RE = /^(?:__|_(?:exit|start|init|fini)|mem(?:cpy|move|set|cmp|chr)|str(?:cpy|ncpy|cat|ncat|cmp|ncmp|len|chr|rchr|str|tok|dup)|(?:v?sn?printf|printf|puts|putchar|fwrite|fread|fflush|stdio|exit|atexit|abort|raise|malloc|free|realloc|calloc|qsort|bsearch|rand|srand|atoi|atol|strtol|strtoul|abs|labs|div|ldiv|clock|time|getenv|sysconf)(?:$|_))/i;
@@ -1326,6 +1327,7 @@ function rtComputeFocusSets() {
 
 function rtApplyNodeFocusClasses() {
   const hasFocus = rtSelection.size > 0 && (rtFocusSets.up.size || rtFocusSets.down.size);
+  const dimAllowed = rtNodes.length <= 1200;
   for (const el of document.querySelectorAll("#rt-nodes .rtfn")) {
     const addr = el.dataset.addr;
     const selected = rtSelection.has(addr);
@@ -1334,7 +1336,7 @@ function rtApplyNodeFocusClasses() {
     el.classList.toggle("focus-up", hasFocus && !selected && rtFocusSets.up.has(addr));
     el.classList.toggle("focus-down", hasFocus && !selected && rtFocusSets.down.has(addr));
     const related = selected || rtFocusSets.up.has(addr) || rtFocusSets.down.has(addr);
-    el.classList.toggle("dimmed", hasFocus && !related);
+    el.classList.toggle("dimmed", dimAllowed && hasFocus && !related);
   }
 }
 
@@ -1347,6 +1349,14 @@ function rtClearSelection() {
   }
   rtRenderEdges();
   rtRefreshSelection(null);
+}
+
+function rtScheduleEdges() {
+  if (rtEdgeFrame) return;
+  rtEdgeFrame = requestAnimationFrame(() => {
+    rtEdgeFrame = 0;
+    rtRenderEdges();
+  });
 }
 
 function rtRenderEdges() {
@@ -1378,6 +1388,7 @@ function rtRenderEdges() {
   const mode = ($("rt-edge-mode") && $("rt-edge-mode").value) || "selected";
   const focus = rtSel || (chainMode ? rtChainRoot() : "");
   const hasFocus = !!focus && rtFocusSets.up.has(focus);
+  const groups = new Map();
   for (const e of rtEdges) {
     const a = by.get(e.from), b = by.get(e.to);
     if (!a || !b) continue;
@@ -1386,21 +1397,20 @@ function rtRenderEdges() {
     const routeDown = hasFocus && rtFocusSets.down.has(e.from) && rtFocusSets.down.has(e.to);
     const depthSpan = Math.abs((a.depth ?? 0) - (b.depth ?? 0));
     const crossLevel = rtLevelGuides.length > 0 && depthSpan !== 1;
-    // "Selected" means the complete upstream and downstream routes, not only
-    // the two edges touching the selected node.
-    if (mode === "none" || (!chainMode && mode === "selected" && hasFocus && !routeUp && !routeDown)) continue;
+    // "Selected" means the complete upstream and downstream routes. When
+    // nothing is selected, render no edges instead of materialising thousands
+    // of paths that the compositor has to rebuild on every interaction.
+    if (mode === "none") continue;
+    if (mode === "selected") {
+      if (!hasFocus) continue;
+      if (!routeUp && !routeDown) continue;
+    }
     const ax = a.x + 188, ay = rtNodeCenterY(a), bx = b.x, byy = rtNodeCenterY(b);
     const bend = Math.max(36, Math.abs(bx - ax) * 0.38);
     const d = bx >= ax
       ? `M ${ax} ${ay} C ${ax + bend} ${ay}, ${bx - bend} ${byy}, ${bx} ${byy}`
       : `M ${ax} ${ay} C ${ax + bend} ${ay - 70}, ${bx - bend} ${byy + 70}, ${bx} ${byy}`;
-    const p = document.createElementNS(SQ_NS, "path");
-    p.setAttribute("d", d);
     const markerId = incident ? "rt-arrow-focus" : routeUp ? "rt-arrow-up" : routeDown ? "rt-arrow-down" : "rt-arrow";
-    p.setAttribute("marker-end", `url(#${markerId})`);
-    p.dataset.src = a.name;
-    p.dataset.dst = b.name;
-    if (e.count > 1) p.dataset.count = String(e.count);
     const cls = "seqedge rtlink"
       + (rtIsLib(a.name) || rtIsLib(b.name) || a.group || b.group ? " lib" : "")
       + (routeUp ? " route-up" : "")
@@ -1408,9 +1418,20 @@ function rtRenderEdges() {
       + (incident ? " focus" : "")
       + (hasFocus && !routeUp && !routeDown ? " dim" : "")
       + (crossLevel && !incident ? " span-jump" : "");
-    p.setAttribute("class", cls);
+    const key = markerId + "|" + cls;
+    if (!groups.has(key)) groups.set(key, { markerId, cls, paths: [], count: 0 });
+    const group = groups.get(key);
+    group.paths.push(d);
+    group.count += 1;
+  }
+  for (const group of groups.values()) {
+    const p = document.createElementNS(SQ_NS, "path");
+    p.setAttribute("d", group.paths.join(" "));
+    p.setAttribute("marker-end", `url(#${group.markerId})`);
+    p.setAttribute("class", group.cls);
+    p.dataset.count = String(group.count);
     const tip = document.createElementNS(SQ_NS, "title");
-    tip.textContent = `${a.name} → ${b.name}${e.count > 1 ? ` ×${e.count}` : ""}`;
+    tip.textContent = rtZh(`${group.count} 条调用线`, `${group.count} call edges`);
     p.appendChild(tip);
     edgeG.appendChild(p);
   }
@@ -1762,12 +1783,12 @@ function rtBindCanvas() {
       const el = document.querySelector(`.rtfn[data-addr="${n.addr}"]`);
       if (el) { el.style.left = n.x + "px"; el.style.top = n.y + "px"; }
       rtPosCache.set(n.addr, { x: n.x, y: n.y });
-      rtRenderEdges();
+      rtScheduleEdges();
     }
   });
   const end = () => {
     const clickCleared = !!(rtDrag && rtDrag.pan && !rtDrag.moved);
-    if (rtDrag && !rtDrag.pan) rtRenderEdges();
+    if (rtDrag && !rtDrag.pan) rtScheduleEdges();
     rtDrag = null;
     cv.classList.remove("panning");
     if (clickCleared) rtClearSelection();
