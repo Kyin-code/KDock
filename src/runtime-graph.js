@@ -350,8 +350,8 @@ function rtChainDir() {
   return ($("rt-chain-dir") && $("rt-chain-dir").value) || "down";
 }
 function rtChainDepth() {
-  const raw = Number(($("rt-chain-depth") && $("rt-chain-depth").value) || "3");
-  return Number.isFinite(raw) ? raw : 3;
+  const raw = Number(($("rt-chain-depth") && $("rt-chain-depth").value) || "2");
+  return Number.isFinite(raw) ? raw : 2;
 }
 function rtChainDepthLabel() {
   const d = rtChainDepth();
@@ -701,6 +701,7 @@ function rtRenderGroups() {
 function rtApplyFilterDefaults() {
   if ($("rt-hide-lib")) $("rt-hide-lib").checked = true;
   if ($("rt-skeleton")) $("rt-skeleton").checked = true;
+  if ($("rt-app-only")) $("rt-app-only").checked = true;
   if ($("rt-show-interrupts")) $("rt-show-interrupts").checked = false;
   if ($("rt-layout") && !$("rt-layout").value) $("rt-layout").value = "layered";
   rtSyncScope();
@@ -741,6 +742,10 @@ function rtBuildGraph() {
   const allowed = (addr) => {
     if (!byAddr.has(addr)) return false;
     if (!allScope && !chainScope && !mainSet.has(addr) && !irqSet.has(addr)) return false;
+    if (chainScope && $("rt-app-only") && $("rt-app-only").checked) {
+      const node = byAddr.get(addr);
+      if (!rtChainRoots().includes(addr) && rtGroupForNode(node)) return false;
+    }
     return kindFilter === "all" || kindOf(addr) === kindFilter;
   };
   const visible = new Set();
@@ -946,14 +951,30 @@ function rtLayoutCallChain(outgoing, incoming) {
   }
 
   const rootOrder = new Map(roots.map((addr, index) => [addr, index]));
-  const rowGap = 58;
-  const cellW = 236;
-  const maxCount = Math.max(...[...groups.values()].map((list) => list.length));
-  const provisional = new Map();
-  const ordered = [];
+  const rowGap = 48;
+  const subColumnW = 220;
+  const levelGap = 34;
   const levels = [...groups.keys()].sort((a, b) => a - b);
+  const countByLevel = new Map(levels.map((level) => [level, groups.get(level).length]));
+  const canvasW = ($("rt-canvas") && $("rt-canvas").clientWidth) || 1200;
+  const canvasH = ($("rt-canvas") && $("rt-canvas").clientHeight) || 700;
+  let rowLimit = 18;
+  let bestScale = -1;
+  for (let rows = 16; rows <= 40; rows++) {
+    let width = Math.max(1, levels.length - 1) * levelGap;
+    for (const level of levels) width += Math.ceil(countByLevel.get(level) / rows) * subColumnW;
+    const height = rows * rowGap;
+    const scale = Math.min((canvasW - 80) / width, (canvasH - 90) / height);
+    if (scale > bestScale) {
+      bestScale = scale;
+      rowLimit = rows;
+    }
+  }
 
-  const positionGroup = (level) => {
+  const provisional = new Map();
+  const records = [];
+
+  const arrangeGroup = (level) => {
     const list = groups.get(level);
     list.sort((a, b) => {
       if (level === 0) {
@@ -975,39 +996,52 @@ function rtLayoutCallChain(outgoing, incoming) {
       };
       return avg(a, peers) - avg(b, peersB) || a.name.localeCompare(b.name);
     });
-    const top = 52 + (maxCount - list.length) * rowGap / 2;
+    const columns = Math.max(1, Math.ceil(list.length / rowLimit));
+    const rowsPerColumn = Math.ceil(list.length / columns);
     list.forEach((node, index) => {
-      provisional.set(node.addr, top + index * rowGap);
+      const row = index % rowsPerColumn;
+      provisional.set(node.addr, row * rowGap);
     });
-    ordered.push({ level, list, top });
+    records.push({ level, list, columns, rowsPerColumn });
   };
 
-  if (groups.has(0)) positionGroup(0);
-  for (const level of levels.filter((value) => value > 0)) positionGroup(level);
-  for (const level of levels.filter((value) => value < 0).sort((a, b) => b - a)) positionGroup(level);
+  if (groups.has(0)) arrangeGroup(0);
+  for (const level of levels.filter((value) => value > 0)) arrangeGroup(level);
+  for (const level of levels.filter((value) => value < 0).sort((a, b) => b - a)) arrangeGroup(level);
 
-  const minLevel = Math.min(...levels);
-  rtLevelGuides = ordered
+  let x = 54;
+  const byLevel = new Map(records.map((record) => [record.level, record]));
+  for (const level of levels) {
+    const record = byLevel.get(level);
+    record.x = x;
+    x += record.columns * subColumnW + levelGap;
+  }
+
+  rtLevelGuides = records
     .sort((a, b) => a.level - b.level)
-    .map(({ level, list, top }) => {
-      const bottom = top + Math.max(0, list.length - 1) * rowGap + 76;
-      return {
-        level,
-        x: 54 + (level - minLevel) * cellW,
-        y: Math.max(16, top - 34),
-        laneY: Math.max(36, top - 14),
-        height: bottom - top + 32,
-        count: list.length,
-        alt: Math.abs(level) % 2 === 1,
-      };
-    });
-  for (const { level, list, top } of ordered) {
-    const x = 54 + (level - minLevel) * cellW;
+    .map(({ level, list, columns, rowsPerColumn, x: levelX }) => ({
+      level,
+      x: levelX,
+      laneX: levelX - 14,
+      laneWidth: columns * subColumnW - 12,
+      y: Math.max(16, 52 + (rowLimit - rowsPerColumn) * rowGap / 2 - 34),
+      laneY: Math.max(36, 52 + (rowLimit - rowsPerColumn) * rowGap / 2 - 14),
+      height: rowsPerColumn * rowGap + 26,
+      count: list.length,
+      columns,
+      alt: Math.abs(level) % 2 === 1,
+    }));
+
+  for (const record of records) {
+    const { level, list, rowsPerColumn } = record;
+    const top = 52 + (rowLimit - rowsPerColumn) * rowGap / 2;
     list.forEach((node, index) => {
+      const column = Math.floor(index / rowsPerColumn);
+      const row = index % rowsPerColumn;
       node.component = 0;
       node.depth = level;
-      node.x = x;
-      node.y = Math.round(top + index * rowGap);
+      node.x = record.x + column * subColumnW;
+      node.y = Math.round(top + row * rowGap);
     });
   }
 }
@@ -1193,8 +1227,9 @@ function rtRender() {
   if (empty) empty.hidden = !!rtNodes.length;
   for (const guide of rtLevelGuides) {
     const lane = rtEl("div", "rtlane" + (guide.alt ? " alt" : ""));
-    lane.style.left = (guide.x - 14) + "px";
+    lane.style.left = guide.laneX + "px";
     lane.style.top = guide.laneY + "px";
+    lane.style.width = guide.laneWidth + "px";
     lane.style.height = guide.height + "px";
     wrap.appendChild(lane);
   }
@@ -1204,6 +1239,10 @@ function rtRender() {
     const el = rtEl("div", "rtlvl", `${label} · ${guide.count}`);
     el.style.left = guide.x + "px";
     el.style.top = guide.y + "px";
+    el.style.width = guide.laneWidth + "px";
+    if (guide.columns > 1) {
+      el.textContent += rtZh(` · ${guide.columns} 列`, ` · ${guide.columns} cols`);
+    }
     wrap.appendChild(el);
   }
   for (const n of rtNodes) wrap.appendChild(rtNodeEl(n));
@@ -1361,11 +1400,13 @@ function rtRenderEdges() {
 
 function rtNodeEl(n) {
   const outCount = n.calls ? n.calls.filter((c) => rtAddrNode(c.addr)).length : 0;
+  const chainLibrary = n.scope === "chain" && (n.kind === "library" || rtIsLib(n.name));
   const el = rtEl("div", "seqnode rtfn"
     + (n.scope === "irq" ? " irq" : "")
     + (n.group ? " libgroup" : "")
     + (n.collapsed ? " collapsed" : "")
     + (n.scope === "chain" ? " chainfn" : "")
+    + (chainLibrary ? " chainlib" : "")
     + (rtIsChainRoot(n.addr) ? " chainroot" : "")
     + (rtSelection.has(n.addr) ? " sel" : "")
     + (n.addr === rtSel && rtSelection.size > 1 ? " primary-sel" : ""));
@@ -1375,7 +1416,11 @@ function rtNodeEl(n) {
   el.style.left = n.x + "px";
   el.style.top = n.y + "px";
   const hd = rtEl("div", "nhd");
-  hd.appendChild(rtEl("span", "nkind", n.group ? "LIB" : n.scope === "irq" ? "IRQ" : n.scope === "chain" ? "LINK" : "FUNC"));
+  hd.appendChild(rtEl("span", "nkind",
+    n.group ? "LIB"
+      : n.scope === "irq" ? "IRQ"
+      : n.scope === "chain" ? (chainLibrary ? "LIB" : "APP")
+      : "FUNC"));
   hd.appendChild(rtEl("span", "rtfn-name", n.name));
   if (outCount) {
     const fold = rtEl("button", "rtfold", n.collapsed ? "+" : "−");
@@ -1469,6 +1514,10 @@ function rtFit() {
 
 function rtFocusRoot() {
   if (!rtNodes.length) return;
+  if (rtScope() === "chain") {
+    rtFit();
+    return;
+  }
   const chain = rtScope() === "chain";
   const entry = rtScope() === "runtime" ? rtData && rtData.entry : chain ? rtChainRoot() : "";
   const root = rtNodes.find((n) => (entry && n.addr === entry) || (!chain && rtScope() === "all" && n.name === "main")) || rtNodes[0];
@@ -1955,7 +2004,7 @@ async function rtInit() {
     }
     if (rtData) { rtBuildGraph(); rtRender(); rtFocusRoot(); }
   };
-  for (const id of ["rt-show-interrupts", "rt-main-only", "rt-show-addr", "rt-layout", "rt-filter-kind", "rt-edge-mode", "rt-color-scope"]) {
+  for (const id of ["rt-show-interrupts", "rt-main-only", "rt-show-addr", "rt-layout", "rt-filter-kind", "rt-app-only", "rt-edge-mode", "rt-color-scope"]) {
     const el = $(id); if (el) el.onchange = () => {
       if ($("rt-scope-side")) $("rt-scope-side").value = rtScope();
       if (rtData) { rtBuildGraph(); rtRender(); rtFocusRoot(); }

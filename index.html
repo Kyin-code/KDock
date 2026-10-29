@@ -1497,8 +1497,8 @@
               <span class="lb">深度</span>
               <select id="rt-chain-depth" class="tight" title="从根函数向外展开的层数">
                 <option value="1">1 层</option>
-                <option value="2">2 层</option>
-                <option value="3" selected>3 层</option>
+                <option value="2" selected>2 层</option>
+                <option value="3">3 层</option>
                 <option value="5">5 层</option>
                 <option value="8">8 层</option>
                 <option value="-1">全部</option>
@@ -1508,6 +1508,7 @@
             </span>
             <label class="chk" title="递归展开 main 可达调用"><input type="checkbox" id="rt-show-interrupts" /> 中断</label>
             <label class="chk" title="先显示 main 入口和组件入口，点击节点逐步展开"><input type="checkbox" id="rt-skeleton" checked /> 入口骨架</label>
+            <label class="chk" title="链路中隐藏 HAL / CMSIS / C 库等系统函数，优先显示应用逻辑"><input type="checkbox" id="rt-app-only" checked /> 应用逻辑</label>
             <label class="chk" title="勾选后收起库函数下游分支；取消勾选立即展开"><input type="checkbox" id="rt-hide-lib" checked /> 折叠库函数</label>
             <span class="rtsep"></span>
             <label class="chk"><input type="checkbox" id="rt-show-addr" checked /> 地址</label>

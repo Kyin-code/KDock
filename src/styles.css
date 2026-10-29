@@ -3410,6 +3410,9 @@ html[data-tab="usb"] .params {
 }
 .rtfn.dimmed { opacity: .24; }
 .rtfn.chainfn { border-color: hsl(var(--primary) / .35); }
+.rtfn.chainfn:not(.chainlib) { border-color: hsl(var(--primary) / .62); }
+.rtfn.chainfn.chainlib { opacity: .58; border-style: dashed; background: hsl(var(--muted) / .28); }
+.rtfn.chainfn.chainlib .nhd { color: hsl(var(--muted-foreground)); }
 .rtfn.chainroot { border-color: hsl(var(--primary)); border-width: 2px; box-shadow: 0 0 0 3px hsl(var(--primary) / .2), 0 8px 20px hsl(var(--primary) / .16); }
 .rtfn.chainroot .nhd { color: hsl(var(--primary)); }
 .rtfold {

@@ -159,6 +159,71 @@ try {
       + `(initial=${initialNames.length}, chain=${chainNames.length}, returned=${returnedNames.length})`,
     );
   }
+
+  const mainNode = fixture.nodes.find((node) => node.name === "main");
+  if (
+    mainNode
+    && fixture.nodes.some((node) => node.name === "fsm_init")
+    && fixture.nodes.some((node) => node.name === "XC7K160T_FSM")
+  ) {
+    await page.evaluate((addr) => window.rtUseAsChain(addr), mainNode.addr);
+    await page.waitForFunction(() => document.querySelector("#rt-scope")?.value === "chain");
+    await page.locator("#rt-chain-dir").selectOption("down");
+    if ((await page.locator("#rt-chain-depth").inputValue()) !== "2") {
+      throw new Error("main chain default depth is not 2");
+    }
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const mainChainNames = await nodeNames();
+    for (const expected of ["fsm_init", "XC7K160T_FSM"]) {
+      if (!mainChainNames.includes(expected)) {
+        throw new Error(`main chain is missing ${expected}`);
+      }
+    }
+    const mainChainLevels = await page.evaluate(() => {
+      const counts = {};
+      const columns = {};
+      for (const el of document.querySelectorAll("#rt-nodes .rtfn")) {
+        const depth = el.dataset.depth;
+        counts[depth] = (counts[depth] || 0) + 1;
+        if (!columns[depth]) columns[depth] = new Set();
+        columns[depth].add(el.style.left);
+      }
+      const canvas = document.querySelector("#rt-canvas").getBoundingClientRect();
+      const rects = [...document.querySelectorAll("#rt-nodes .rtfn")].map((el) => el.getBoundingClientRect());
+      return {
+        counts,
+        columns: Object.fromEntries(Object.entries(columns).map(([depth, values]) => [depth, values.size])),
+        visible: rects.filter((r) => r.bottom >= canvas.top && r.top <= canvas.bottom && r.right >= canvas.left && r.left <= canvas.right).length,
+      };
+    });
+    if (mainChainLevels.visible !== mainChainNames.length) {
+      throw new Error(
+        `main chain auto-fit is incomplete: ${mainChainLevels.visible}/${mainChainNames.length}`,
+      );
+    }
+    if (process.env.KDOCK_RT_MAIN_SCREENSHOT) {
+      await page.screenshot({ path: resolve(root, process.env.KDOCK_RT_MAIN_SCREENSHOT), fullPage: true });
+    }
+    await page.locator("#rt-chain-depth").selectOption("3");
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const depth3Names = await nodeNames();
+    const depth3Columns = await page.evaluate(() => {
+      const columns = {};
+      for (const el of document.querySelectorAll("#rt-nodes .rtfn")) {
+        const depth = el.dataset.depth;
+        if (!columns[depth]) columns[depth] = new Set();
+        columns[depth].add(el.style.left);
+      }
+      return Object.fromEntries(Object.entries(columns).map(([depth, values]) => [depth, values.size]));
+    });
+    await page.locator("#rt-chain-back-side").click();
+    await page.waitForFunction(() => document.querySelector("#rt-scope")?.value === "all");
+    console.log(JSON.stringify({
+      mainChainDefault: { nodes: mainChainNames.length, levels: mainChainLevels },
+      mainChainDepth3: { nodes: depth3Names.length, columns: depth3Columns },
+    }));
+  }
+
   for (const scopeSelector of ["#rt-scope", "#rt-scope-side"]) {
     await page.evaluate((addr) => window.rtUseAsChain(addr), chainTarget.addr);
     await page.waitForFunction(() => document.querySelector("#rt-scope")?.value === "chain");
