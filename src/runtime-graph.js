@@ -601,6 +601,7 @@ function rtExpandEverything() {
   rtSkeletonOpen.clear();
   rtSkeletonClosed.clear();
   if ($("rt-skeleton")) $("rt-skeleton").checked = false;
+  if ($("rt-app-only")) $("rt-app-only").checked = false;
   if ($("rt-hide-lib")) $("rt-hide-lib").checked = false;
   if (rtData) {
     rtBuildGraph();
@@ -742,7 +743,7 @@ function rtBuildGraph() {
   const allowed = (addr) => {
     if (!byAddr.has(addr)) return false;
     if (!allScope && !chainScope && !mainSet.has(addr) && !irqSet.has(addr)) return false;
-    if (chainScope && $("rt-app-only") && $("rt-app-only").checked) {
+    if ((chainScope || mode === "runtime") && $("rt-app-only") && $("rt-app-only").checked) {
       const node = byAddr.get(addr);
       if (!rtChainRoots().includes(addr) && rtGroupForNode(node)) return false;
     }
@@ -903,11 +904,11 @@ function rtBuildGraph() {
   rtNodes.forEach((n) => rtPosCache.set(n.addr, { x: n.x, y: n.y }));
 }
 
-function rtLayoutCallChain(outgoing, incoming) {
+function rtLayoutLevelColumns(outgoing, incoming, roots, direction) {
   const by = new Map(rtNodes.map((n) => [n.addr, n]));
-  const roots = rtChainRoots().filter((addr) => by.has(addr));
+  roots = roots.filter((addr) => by.has(addr));
   if (!roots.length) return;
-  const dir = rtChainDir();
+  const dir = direction;
   const downward = new Map(roots.map((addr) => [addr, 0]));
   const upward = new Map(roots.map((addr) => [addr, 0]));
 
@@ -1062,7 +1063,24 @@ function rtLayout(fresh) {
   const chainMode = rtScope() === "chain";
   const chainRoot = chainMode ? rtChainRoot() : "";
   if (layered && chainMode) {
-    rtLayoutCallChain(outgoing, incoming);
+    rtLayoutLevelColumns(outgoing, incoming, rtChainRoots(), rtChainDir());
+    return;
+  }
+  if (layered && rtScope() === "runtime") {
+    const roots = [];
+    if (rtData && rtData.entry && by.has(rtData.entry)) roots.push(rtData.entry);
+    for (const irq of (rtData && rtData.interrupts) || []) {
+      if (by.has(irq.addr)) roots.push(irq.addr);
+    }
+    if (!roots.length) {
+      for (const node of rtNodes) if (!incoming.get(node.addr).length) roots.push(node.addr);
+    }
+    rtLayoutLevelColumns(outgoing, incoming, roots, "down");
+    return;
+  }
+  if (layered && rtScope() === "all" && !rtSkeletonEnabled()) {
+    const roots = rtNodes.filter((node) => !incoming.get(node.addr).length).map((node) => node.addr);
+    rtLayoutLevelColumns(outgoing, incoming, roots.length ? roots : [rtNodes[0].addr], "down");
     return;
   }
   if (layered) {
@@ -1367,7 +1385,7 @@ function rtRenderEdges() {
     const routeUp = hasFocus && rtFocusSets.up.has(e.from) && rtFocusSets.up.has(e.to);
     const routeDown = hasFocus && rtFocusSets.down.has(e.from) && rtFocusSets.down.has(e.to);
     const depthSpan = Math.abs((a.depth ?? 0) - (b.depth ?? 0));
-    const crossLevel = chainMode && depthSpan !== 1;
+    const crossLevel = rtLevelGuides.length > 0 && depthSpan !== 1;
     // "Selected" means the complete upstream and downstream routes, not only
     // the two edges touching the selected node.
     if (mode === "none" || (!chainMode && mode === "selected" && hasFocus && !routeUp && !routeDown)) continue;
@@ -1400,13 +1418,15 @@ function rtRenderEdges() {
 
 function rtNodeEl(n) {
   const outCount = n.calls ? n.calls.filter((c) => rtAddrNode(c.addr)).length : 0;
-  const chainLibrary = n.scope === "chain" && (n.kind === "library" || rtIsLib(n.name));
+  const levelLayout = rtLevelGuides.length > 0;
+  const levelLibrary = levelLayout && (n.kind === "library" || rtIsLib(n.name));
   const el = rtEl("div", "seqnode rtfn"
     + (n.scope === "irq" ? " irq" : "")
     + (n.group ? " libgroup" : "")
     + (n.collapsed ? " collapsed" : "")
     + (n.scope === "chain" ? " chainfn" : "")
-    + (chainLibrary ? " chainlib" : "")
+    + (levelLayout ? " levelfn" : "")
+    + (levelLibrary ? " chainlib" : "")
     + (rtIsChainRoot(n.addr) ? " chainroot" : "")
     + (rtSelection.has(n.addr) ? " sel" : "")
     + (n.addr === rtSel && rtSelection.size > 1 ? " primary-sel" : ""));
@@ -1419,7 +1439,8 @@ function rtNodeEl(n) {
   hd.appendChild(rtEl("span", "nkind",
     n.group ? "LIB"
       : n.scope === "irq" ? "IRQ"
-      : n.scope === "chain" ? (chainLibrary ? "LIB" : "APP")
+      : n.scope === "chain" ? (levelLibrary ? "LIB" : "APP")
+      : levelLayout ? (levelLibrary ? "LIB" : "APP")
       : "FUNC"));
   hd.appendChild(rtEl("span", "rtfn-name", n.name));
   if (outCount) {
@@ -1499,7 +1520,7 @@ function rtScreenToWorld(clientX, clientY) {
   return { x: ((clientX - r.left) / ui - rtView.x) / rtView.k, y: ((clientY - r.top) / ui - rtView.y) / rtView.k };
 }
 function rtNodeCenterY(node) {
-  return node.y + (rtScope() === "chain" ? 16 : 38);
+  return node.y + (rtLevelGuides.length ? 16 : 38);
 }
 function rtFit() {
   if (!rtNodes.length || !$("rt-canvas")) return;
@@ -1514,7 +1535,7 @@ function rtFit() {
 
 function rtFocusRoot() {
   if (!rtNodes.length) return;
-  if (rtScope() === "chain") {
+  if (rtLevelGuides.length) {
     rtFit();
     return;
   }

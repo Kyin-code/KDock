@@ -16,6 +16,35 @@ if (!existsSync(fixturePath)) {
 }
 
 const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
+const runtimeFixture = (() => {
+  const main = fixture.nodes.find((node) => node.name === "main");
+  if (!main) return fixture;
+  const byAddr = new Map(fixture.nodes.map((node) => [node.addr, node]));
+  const reachable = new Set([main.addr]);
+  const queue = [main.addr];
+  while (queue.length) {
+    const node = byAddr.get(queue.shift());
+    for (const call of node?.calls || []) {
+      if (byAddr.has(call.addr) && !reachable.has(call.addr)) {
+        reachable.add(call.addr);
+        queue.push(call.addr);
+      }
+    }
+  }
+  const nodes = fixture.nodes
+    .filter((node) => reachable.has(node.addr))
+    .map((node) => ({ ...node, mainReachable: true }));
+  return {
+    ...fixture,
+    entry: main.addr,
+    entryName: "main",
+    roots: [main.addr],
+    nodes,
+    mainReachable: [...reachable],
+    interruptReachable: [],
+    interrupts: [],
+  };
+})();
 const chainTarget = fixture.nodes.find((node) => node.name === "lfs_init");
 if (!chainTarget) throw new Error("Fixture does not contain lfs_init");
 const multiRootNames = [
@@ -45,21 +74,24 @@ try {
 
   browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 1500, height: 950 } });
-  await page.addInitScript((runtimeFixture) => {
-    window.__KDOCK_RT_FIXTURE__ = runtimeFixture;
+  await page.addInitScript(({ fullFixture, runtimeData }) => {
+    window.__KDOCK_RT_FIXTURE__ = fullFixture;
+    window.__KDOCK_RT_RUNTIME__ = runtimeData;
     window.__TAURI_INTERNALS__ = {
-      invoke: async (cmd) => {
+      invoke: async (cmd, args) => {
         if (cmd === "runtime_analyzer_status") {
           return { installed: true, version: "vite-mock", path: "vite-mock" };
         }
-        if (cmd === "runtime_analyze") return window.__KDOCK_RT_FIXTURE__;
+        if (cmd === "runtime_analyze") {
+          return args?.scope === "runtime" ? window.__KDOCK_RT_RUNTIME__ : window.__KDOCK_RT_FIXTURE__;
+        }
         return null;
       },
       transformCallback: () => 1,
       unregisterCallback: () => {},
       convertFileSrc: (path) => path,
     };
-  }, fixture);
+  }, { fullFixture: fixture, runtimeData: runtimeFixture });
 
   await page.goto(`http://127.0.0.1:${port}/tests/runtime-graph.vite.html`);
   await page.waitForFunction(() => document.documentElement.dataset.viteTestReady === "1", null, {
@@ -296,6 +328,34 @@ try {
     throw new Error("Escape did not clear selection");
   }
 
+  await page.locator("#rt-scope").selectOption("runtime");
+  await page.waitForFunction(() => document.querySelector("#rt-scope")?.value === "runtime");
+  await page.waitForFunction(() => document.querySelectorAll("#rt-nodes .rtfn").length > 0);
+  await page.locator("#rt-expand").click();
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const runtimeExpanded = {
+    nodes: await page.locator("#rt-nodes .rtfn").count(),
+    levels: await page.locator("#rt-nodes .rtlvl").count(),
+    compact: await page.locator("#rt-nodes .rtfn.levelfn").count(),
+  };
+  if (!runtimeExpanded.levels || runtimeExpanded.compact !== runtimeExpanded.nodes) {
+    throw new Error(`Runtime expanded layout is not level-based: ${JSON.stringify(runtimeExpanded)}`);
+  }
+
+  await page.locator("#rt-scope").selectOption("all");
+  await page.waitForFunction(() => document.querySelector("#rt-scope")?.value === "all");
+  await page.waitForFunction(() => document.querySelectorAll("#rt-nodes .rtfn").length > 0);
+  await page.locator("#rt-expand").click();
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const fullExpanded = {
+    nodes: await page.locator("#rt-nodes .rtfn").count(),
+    levels: await page.locator("#rt-nodes .rtlvl").count(),
+    compact: await page.locator("#rt-nodes .rtfn.levelfn").count(),
+  };
+  if (!fullExpanded.levels || fullExpanded.compact !== fullExpanded.nodes) {
+    throw new Error(`Full-firmware expanded layout is not level-based: ${JSON.stringify(fullExpanded)}`);
+  }
+
   console.log(JSON.stringify({
     ok: true,
     fixture: fixturePath,
@@ -312,6 +372,8 @@ try {
     returnedToFullVisible: returnedNames.length,
     searchTarget: "lfs_init",
     clearMethods: ["blank-canvas", "Escape"],
+    runtimeExpanded,
+    fullExpanded,
   }, null, 2));
 } finally {
   await browser?.close();

@@ -3377,8 +3377,8 @@ html[data-tab="usb"] .params {
 .rtempty span { font-size: 11.5px; max-width: 380px; line-height: 1.6; }
 .rtempty .btn { pointer-events: auto; margin-top: 4px; }
 .rtfn { width: 188px; cursor: default; }
-.rtfn.chainfn .nbd { display: none; }
-.rtfn.chainfn .nhd { padding: 6px 8px; min-height: 30px; }
+.rtfn.levelfn .nbd { display: none; }
+.rtfn.levelfn .nhd { padding: 6px 8px; min-height: 30px; }
 .rtlane {
   position: absolute; z-index: 0; width: 216px; border-radius: 12px;
   border: 1px solid hsl(var(--primary) / .07);
@@ -3410,9 +3410,9 @@ html[data-tab="usb"] .params {
 }
 .rtfn.dimmed { opacity: .24; }
 .rtfn.chainfn { border-color: hsl(var(--primary) / .35); }
-.rtfn.chainfn:not(.chainlib) { border-color: hsl(var(--primary) / .62); }
-.rtfn.chainfn.chainlib { opacity: .58; border-style: dashed; background: hsl(var(--muted) / .28); }
-.rtfn.chainfn.chainlib .nhd { color: hsl(var(--muted-foreground)); }
+.rtfn.levelfn:not(.chainlib) { border-color: hsl(var(--primary) / .62); }
+.rtfn.levelfn.chainlib { opacity: .58; border-style: dashed; background: hsl(var(--muted) / .28); }
+.rtfn.levelfn.chainlib .nhd { color: hsl(var(--muted-foreground)); }
 .rtfn.chainroot { border-color: hsl(var(--primary)); border-width: 2px; box-shadow: 0 0 0 3px hsl(var(--primary) / .2), 0 8px 20px hsl(var(--primary) / .16); }
 .rtfn.chainroot .nhd { color: hsl(var(--primary)); }
 .rtfold {
