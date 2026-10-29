@@ -45,6 +45,57 @@ fn analyzer_log_path() -> PathBuf {
     std::env::temp_dir().join("kdock-bingraph.log")
 }
 
+fn cache_path_is_usable(path: &Path) -> bool {
+    if !path.to_string_lossy().is_ascii() {
+        return false;
+    }
+    if std::fs::create_dir_all(path).is_err() {
+        return false;
+    }
+    let probe = path.join(format!(".write-test-{}", std::process::id()));
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// angr's RTDB/LMDB layer fails when its path contains non-ASCII characters.
+/// Keep the cache outside the firmware directory and prefer locations that
+/// remain ASCII even when the Windows account name is localized.
+fn rtdb_cache_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+    if let Ok(dir) = app.path().app_cache_dir() {
+        candidates.push(dir.join("rtdb"));
+    }
+    candidates.push(std::env::temp_dir().join("kdock-rtdb"));
+    #[cfg(windows)]
+    if let Some(public) = std::env::var_os("PUBLIC") {
+        candidates.push(PathBuf::from(public).join("KDock").join("rtdb"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("rtdb-cache"));
+        }
+    }
+    if let Ok(dir) = std::env::current_dir() {
+        candidates.push(dir.join(".rtdb-cache"));
+    }
+    for candidate in candidates {
+        if cache_path_is_usable(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    Err("无法创建纯 ASCII 的 RTDB 缓存目录。请将 KDock 安装到英文路径，或设置可写的 PUBLIC 目录。".into())
+}
+
 fn resource_roots(app: &tauri::AppHandle) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(p) = app.path().resource_dir() {
@@ -197,11 +248,13 @@ fn ensure(
         .append(true)
         .open(analyzer_log_path())
         .map_err(|e| format!("创建分析器日志失败：{e}"))?;
+    let rtdb = rtdb_cache_dir(app)?;
     let mut cmd = Command::new(&py);
     cmd.arg(pkg.join("run.py"))
         .arg("--root").arg(&root_s).arg("server").arg("--port").arg(port.to_string())
         .env("BINGRAPH_NATIVE_BLOB_SPECS", blob_spec)
         .env("BINGRAPH_NATIVE_VECTOR_BASE", vector_base)
+        .env("RTDB_BASE", rtdb)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::from(logfile));

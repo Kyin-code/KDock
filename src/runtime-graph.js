@@ -35,6 +35,7 @@ let rtGroupEditId = null;
 let rtSearchHits = [];
 let rtSearchIndex = -1;
 let rtFocusSets = { up: new Set(), down: new Set() };
+let rtRtosEntries = new Map();
 let rtEdgeFrame = 0;
 const rtPosCache = new Map();
 
@@ -243,6 +244,7 @@ function rtResetDataCache() {
   rtSkeletonOpen.clear();
   rtSkeletonClosed.clear();
   rtFocusSets = { up: new Set(), down: new Set() };
+  rtRtosEntries = new Map();
   rtSearchHits = [];
   rtSearchIndex = -1;
   if ($("rt-search-results")) $("rt-search-results").hidden = true;
@@ -717,6 +719,14 @@ function rtBuildGraph() {
   rtNodes = []; rtEdges = [];
   if (!rtData) return;
   const byAddr = new Map((rtData.nodes || []).map((n) => [n.addr, n]));
+  rtRtosEntries = new Map();
+  for (const node of rtData.nodes || []) {
+    for (const call of node.calls || []) {
+      if (String(call.kind || "").startsWith("rtos-")) {
+        rtRtosEntries.set(call.addr, call.kind);
+      }
+    }
+  }
   const showIrq = !!($("rt-show-interrupts") && $("rt-show-interrupts").checked);
   const mainSet = new Set(rtData.mainReachable || []);
   const irqSet = new Set(rtData.interruptReachable || []);
@@ -896,8 +906,19 @@ function rtBuildGraph() {
       // 同一对函数可能被调用很多次；画布上合成一条线，详情里仍保留全部调用点。
       const key = src + ">" + c.addr;
       const edge = edgeMap.get(key);
-      if (edge) edge.count += 1;
-      else edgeMap.set(key, { from: src, to: c.addr, site: c.site, order: c.order || 0, mnemonic: c.mnemonic || "", count: 1 });
+      if (edge) {
+        edge.count += 1;
+        if (String(c.kind || "").startsWith("rtos-")) {
+          edge.kind = c.kind;
+          edge.via = c.via || "";
+        }
+      } else {
+        edgeMap.set(key, {
+          from: src, to: c.addr, site: c.site, order: c.order || 0,
+          mnemonic: c.mnemonic || "", kind: c.kind || "call",
+          via: c.via || "", count: 1,
+        });
+      }
     }
   }
   rtEdges = [...edgeMap.values()];
@@ -1417,6 +1438,7 @@ function rtRenderEdges() {
       + (routeDown ? " route-down" : "")
       + (incident ? " focus" : "")
       + (hasFocus && !routeUp && !routeDown ? " dim" : "")
+      + (String(e.kind || "").startsWith("rtos-") ? " rtos" : "")
       + (crossLevel && !incident ? " span-jump" : "");
     const key = markerId + "|" + cls;
     if (!groups.has(key)) groups.set(key, { markerId, cls, paths: [], count: 0 });
@@ -1459,6 +1481,7 @@ function rtNodeEl(n) {
   const hd = rtEl("div", "nhd");
   hd.appendChild(rtEl("span", "nkind",
     n.group ? "LIB"
+      : rtRtosEntries.has(n.addr) ? "TASK"
       : n.scope === "irq" ? "IRQ"
       : n.scope === "chain" ? (levelLibrary ? "LIB" : "APP")
       : levelLayout ? (levelLibrary ? "LIB" : "APP")
@@ -1623,6 +1646,9 @@ function rtRefreshSelection(n) {
     : n.scope === "function" ? ["fn", rtZh("函数", "FUNC")]
     : n.scope === "chain" ? ["chain", rtZh("链路", "LINK")] : ["ok", "main"];
   top.appendChild(rtEl("span", "rtbadge " + scopeBadge[0], scopeBadge[1]));
+  if (rtRtosEntries.has(n.addr)) {
+    top.appendChild(rtEl("span", "rtbadge rtos", rtZh("RTOS 入口", "RTOS entry")));
+  }
   box.appendChild(top);
   box.appendChild(rtEl("div", "rtdet-row", rtZh("地址 ", "Address ") + "0x" + n.addr));
   box.appendChild(rtEl("div", "rtdet-row", rtZh(`大小 ${n.size || 0} B · ${n.blocks || 0} 个基本块`, `Size ${n.size || 0} B · ${n.blocks || 0} basic blocks`)));
@@ -1640,7 +1666,10 @@ function rtRefreshSelection(n) {
     for (const c of n.calls.slice(0, 24)) {
       const r = rtEl("button", "rtcall");
       r.appendChild(rtEl("span", "rtcall-a", "0x" + c.site));
-      r.appendChild(rtEl("span", "rtcall-n", c.name));
+      const suffix = String(c.kind || "").startsWith("rtos-")
+        ? rtZh(` · ${c.via || "RTOS"} 注册`, ` · registered by ${c.via || "RTOS"}`)
+        : "";
+      r.appendChild(rtEl("span", "rtcall-n", c.name + suffix));
       r.onclick = () => rtRevealNode(c.addr);
       list.appendChild(r);
     }

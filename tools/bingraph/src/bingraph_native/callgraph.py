@@ -128,13 +128,229 @@ def _symbol_sizes(project: Project) -> dict[int, int]:
     return sizes
 
 
+# RTOS entry points are usually registered as function pointers. A normal
+# static call graph only records the call to xTaskCreate/osThreadNew itself and
+# therefore loses every task body. These APIs put the entry function in a
+# register before the registration call; ARM targets used by embedded firmware
+# can be resolved reliably from the immediately preceding literal load.
+_RTOS_ENTRYPOINTS: dict[str, tuple[int, str]] = {
+    "xTaskCreate": (0, "task"),
+    "xTaskCreateStatic": (0, "task"),
+    "xTaskCreatePinnedToCore": (0, "task"),
+    "xTaskCreateAffinitySet": (0, "task"),
+    "xTaskCreateStaticPinnedToCore": (0, "task"),
+    "xTaskCreateStaticAffinitySet": (0, "task"),
+    "osThreadNew": (0, "task"),
+    "pthread_create": (2, "thread"),
+    "tx_thread_create": (2, "thread"),
+    "_txe_thread_create": (2, "thread"),
+    "rt_thread_create": (1, "thread"),
+    "rt_thread_init": (1, "thread"),
+    "k_thread_create": (3, "thread"),
+    "task_create": (1, "task"),
+}
+
+
+def _canonical_function_addr(cfg: object, value: int) -> int | None:
+    """Map a Thumb pointer (possibly address|1) back to a CFG function."""
+    normalized = int(value) & ~1
+    matches = [
+        int(addr)
+        for addr in cfg.functions
+        if (int(addr) & ~1) == normalized
+    ]
+    if not matches:
+        return None
+    named = [
+        addr
+        for addr in matches
+        if not _function_name(cfg, addr).startswith("sub_")
+    ]
+    return (named or matches)[0]
+
+
+def _argument_register(project: Project, index: int) -> str | None:
+    """Return the ABI register used by the first integer arguments."""
+    arch = str(getattr(project.arch, "name", "")).lower()
+    if "arm" in arch or "thumb" in arch:
+        return f"r{index}" if index < 4 else None
+    if "aarch64" in arch:
+        return f"x{index}" if index < 8 else None
+    if "amd64" in arch or "x86_64" in arch:
+        return ("rdi", "rsi", "rdx", "rcx", "r8", "r9")[index] if index < 6 else None
+    if arch in {"mips32", "mips64"}:
+        return f"a{index}" if index < 4 else None
+    return None
+
+
+def _resolve_register_value(
+    project: Project,
+    instructions: list[object],
+    instruction_index: int,
+    register: str,
+    depth: int = 0,
+) -> int | None:
+    """Resolve a simple PC-relative literal/move chain before a call."""
+    if depth > 4:
+        return None
+    start = max(0, instruction_index - 24)
+    for index in range(instruction_index - 1, start - 1, -1):
+        instruction = instructions[index]
+        try:
+            written = {
+                instruction.reg_name(reg)
+                for reg in instruction.regs_access()[1]
+            }
+        except (AttributeError, TypeError, ValueError):
+            written = set()
+        if register not in written:
+            continue
+
+        mnemonic = instruction.mnemonic.lower()
+        operands = instruction.operands
+        if mnemonic.startswith(("mov", "ldr", "adr", "add")):
+            if not operands:
+                return None
+
+            if mnemonic.startswith("mov") and len(operands) >= 2:
+                source = operands[1]
+                if getattr(source, "type", None) == 2:  # IMM
+                    return int(source.imm)
+                if getattr(source, "type", None) == 1:  # REG
+                    source_name = instruction.reg_name(source.reg)
+                    if source_name != register:
+                        return _resolve_register_value(
+                            project, instructions, index, source_name, depth + 1
+                        )
+                    return None
+
+            if mnemonic.startswith("ldr") and len(operands) >= 2:
+                source = operands[1]
+                if getattr(source, "type", None) != 3:  # MEM
+                    return None
+                memory = source.mem
+                base_name = instruction.reg_name(memory.base)
+                if base_name != "pc":
+                    return None
+                pc = instruction.address + (4 if project.arch.is_thumb else 8)
+                if project.arch.is_thumb:
+                    pc &= ~3
+                literal_addr = pc + int(memory.disp)
+                try:
+                    raw = project.loader.memory.load(literal_addr, 4)
+                except Exception:
+                    return None
+                return int.from_bytes(raw, "little")
+
+            if mnemonic.startswith("adr") and len(operands) >= 2:
+                offset = getattr(operands[1], "imm", None)
+                if offset is None:
+                    return None
+                pc = instruction.address + (4 if project.arch.is_thumb else 8)
+                if project.arch.is_thumb:
+                    pc &= ~3
+                return pc + int(offset)
+
+            if mnemonic.startswith("add") and len(operands) >= 3:
+                base = operands[1]
+                offset = operands[2]
+                if (
+                    getattr(base, "type", None) == 1
+                    and instruction.reg_name(base.reg) == "pc"
+                    and getattr(offset, "type", None) == 2
+                ):
+                    pc = instruction.address + (4 if project.arch.is_thumb else 8)
+                    if project.arch.is_thumb:
+                        pc &= ~3
+                    return pc + int(offset.imm)
+
+        return None
+    return None
+
+
+@lru_cache(maxsize=16)
+def _rtos_registration_calls(
+    project: Project, cfg: object
+) -> dict[int, list[tuple[int, int, str, str, str]]]:
+    """Recover call edges introduced by RTOS task/thread registration APIs."""
+    result: dict[int, list[tuple[int, int, str, str, str]]] = {}
+    sizes = _symbol_sizes(project)
+    disassembler = (
+        project.arch.capstone_thumb
+        if getattr(project.arch, "is_thumb", False)
+        else project.arch.capstone
+    )
+    for source, direct_calls in _symbol_direct_calls(project, cfg).items():
+        registrations = []
+        for site, target, _ in direct_calls:
+            api_name = _function_name(cfg, target)
+            spec = _RTOS_ENTRYPOINTS.get(api_name)
+            if spec is None:
+                continue
+            arg_index, entry_kind = spec
+            register = _argument_register(project, arg_index)
+            if register is None:
+                continue
+            registrations.append((site, api_name, register, entry_kind))
+        if not registrations:
+            continue
+
+        normalized_source = int(source) & ~1
+        function = cfg.functions.get(source)
+        size = max(
+            sizes.get(normalized_source, 0),
+            int(function.size) if function is not None else 0,
+        )
+        if size <= 0:
+            continue
+        try:
+            raw = project.loader.memory.load(normalized_source, size)
+        except Exception:
+            continue
+        instructions = list(disassembler.disasm(bytes(raw), normalized_source))
+        instruction_indexes = {
+            int(instruction.address): index
+            for index, instruction in enumerate(instructions)
+        }
+
+        recovered = []
+        for site, api_name, register, entry_kind in registrations:
+            instruction_index = instruction_indexes.get(int(site))
+            if instruction_index is None:
+                continue
+            pointer = _resolve_register_value(
+                project, instructions, instruction_index, register
+            )
+            if pointer is None:
+                continue
+            entry_addr = _canonical_function_addr(cfg, pointer)
+            if entry_addr is None or entry_addr == source:
+                continue
+            entry_name = _function_name(cfg, entry_addr)
+            recovered.append(
+                (
+                    int(site),
+                    entry_addr,
+                    f"{api_name}({entry_name})",
+                    f"rtos-{entry_kind}",
+                    api_name,
+                )
+            )
+        if recovered:
+            result[int(source)] = recovered
+    return result
+
+
 def _augmented_callgraph(project: Project, cfg: object, callgraph: object) -> object:
-    """Return CFGFast's call graph plus recovered direct-call edges."""
+    """Return CFGFast's graph plus direct and RTOS registration edges."""
     graph = callgraph.copy()
     for function_addr, calls in _symbol_direct_calls(project, cfg).items():
         for _, target, _ in calls:
             if target in cfg.functions or (target & ~1) in cfg.functions:
                 graph.add_edge(function_addr, target)
+    for function_addr, calls in _rtos_registration_calls(project, cfg).items():
+        for _, target, _, kind, via in calls:
+            graph.add_edge(function_addr, target, kind=kind, via=via)
     return graph
 
 
@@ -202,7 +418,7 @@ def runtime_graph_json(
         function = cfg.functions.get(func_addr)
         if function is None:
             return []
-        all_calls: list[tuple[int, int, str]] = []
+        all_calls: list[tuple[int, int, str, str, str]] = []
         for site in sorted(function.get_call_sites()):
             target = function.get_call_target(site)
             if target is None or target not in cfg.functions or target == func_addr:
@@ -233,24 +449,35 @@ def runtime_graph_json(
                         int(call_insn.address),
                         int(target),
                         f"{call_insn.mnemonic} {call_insn.op_str}".strip(),
+                        "call",
+                        "",
                     )
                 )
         scanned_calls = _symbol_direct_calls(project, cfg)
-        all_calls.extend(
+        for site, target, mnemonic in (
             scanned_calls.get(int(func_addr))
             or scanned_calls.get(int(func_addr) & ~1)
+            or []
+        ):
+            all_calls.append((site, target, mnemonic, "call", ""))
+        registrations = _rtos_registration_calls(project, cfg)
+        all_calls.extend(
+            registrations.get(int(func_addr))
+            or registrations.get(int(func_addr) & ~1)
             or []
         )
         # CFGFast can report the same edge from both the block entry and the
         # actual instruction. Keep one record per concrete call instruction.
-        calls: list[tuple[int, int, str]] = []
-        for call_site, target, mnemonic in sorted(all_calls, key=lambda item: item[0]):
+        calls: list[tuple[int, int, str, str, str]] = []
+        for call_site, target, mnemonic, kind, via in sorted(
+            all_calls, key=lambda item: item[0]
+        ):
             if any(
                 previous_target == target and abs(previous_site - call_site) <= 1
-                for previous_site, previous_target, _ in calls
+                for previous_site, previous_target, _, _, _ in calls
             ):
                 continue
-            calls.append((call_site, target, mnemonic))
+            calls.append((call_site, target, mnemonic, kind, via))
         return [
             {
                 "site": f"{site:x}",
@@ -258,8 +485,10 @@ def runtime_graph_json(
                 "name": _function_name(cfg, target),
                 "order": order,
                 "mnemonic": mnemonic or "call",
+                "kind": kind,
+                "via": via,
             }
-            for order, (site, target, mnemonic) in enumerate(calls, start=1)
+            for order, (site, target, mnemonic, kind, via) in enumerate(calls, start=1)
         ]
 
     main_reachable = nx.descendants(callgraph, entry) | {entry}
@@ -360,6 +589,13 @@ def all_functions_json(project: Project, filepath: str) -> dict[str, object]:
         for _, target, _ in calls:
             if target in cfg.functions:
                 all_addrs.add(target)
+    registrations = _rtos_registration_calls(project, cfg)
+    for source, calls in registrations.items():
+        if source in cfg.functions:
+            all_addrs.add(source)
+        for _, target, _, _, _ in calls:
+            if target in cfg.functions:
+                all_addrs.add(target)
     nodes = []
     symbol_sizes = _symbol_sizes(project)
     # The list endpoint is a browsing view. Sending no instruction text keeps
@@ -419,6 +655,33 @@ def all_functions_json(project: Project, filepath: str) -> dict[str, object]:
                     "name": by_addr[target_s]["name"],
                     "order": 0,
                     "mnemonic": mnemonic,
+                    "kind": "call",
+                    "via": "",
+                }
+            )
+    for source, calls in registrations.items():
+        source_s = f"{source:x}"
+        if source_s not in by_addr:
+            continue
+        seen = {
+            (call["site"], call["addr"])
+            for call in by_addr[source_s]["calls"]
+        }
+        for site, target, mnemonic, kind, via in calls:
+            target_s = f"{target:x}"
+            key = (f"{site:x}", target_s)
+            if target_s not in by_addr or key in seen:
+                continue
+            seen.add(key)
+            by_addr[source_s]["calls"].append(
+                {
+                    "site": f"{site:x}",
+                    "addr": target_s,
+                    "name": by_addr[target_s]["name"],
+                    "order": 0,
+                    "mnemonic": mnemonic,
+                    "kind": kind,
+                    "via": via,
                 }
             )
     scanned_sources = set(scanned)
@@ -431,7 +694,15 @@ def all_functions_json(project: Project, filepath: str) -> dict[str, object]:
         source_s, target_s = f"{source:x}", f"{target:x}"
         if source_s in by_addr and target_s in by_addr:
             by_addr[source_s]["calls"].append(
-                {"site": "", "addr": target_s, "name": by_addr[target_s]["name"], "order": 0, "mnemonic": ""}
+                {
+                    "site": "",
+                    "addr": target_s,
+                    "name": by_addr[target_s]["name"],
+                    "order": 0,
+                    "mnemonic": "",
+                    "kind": "call",
+                    "via": "",
+                }
             )
     # Build the target set once. The previous O(n^2 * edges) scan was visibly
     # slow on larger firmware images (1300+ functions).

@@ -3432,8 +3432,10 @@ html[data-tab="usb"] .params {
 .rtlink.focus { stroke: hsl(var(--primary) / .9); stroke-width: 2.5; }
 .rtlink.route-up { stroke: hsl(var(--warning) / .95); stroke-width: 2.6; }
 .rtlink.route-down { stroke: hsl(var(--success) / .95); stroke-width: 2.6; }
+.rtlink.rtos { stroke-dasharray: 7 4; stroke-width: 2; }
 .rtlink.span-jump { opacity: .28; stroke-dasharray: 4 5; stroke-width: 1.35; }
 .rtlink.dim { opacity: .11; }
+.rtbadge.rtos { color: hsl(var(--primary)); border-color: hsl(var(--primary) / .35); background: hsl(var(--primary) / .1); }
 .rtfn .nbd { padding: 5px 8px 7px; }
 .rtfn .rtaddr { font-family: Consolas, monospace; font-size: 10px; color: hsl(var(--primary)); opacity: .88; }
 .rtfn .rtmeta { font-size: 10px; color: hsl(var(--muted-foreground)); margin-top: 2px; }

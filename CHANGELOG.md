@@ -38,6 +38,10 @@
 - **完整函数范围补扫**：MDK 优化镜像中 angr 可能错误截断函数边界。分析器现在按 ELF
   符号大小补扫可执行段内的 `BL/BLX`，并合并回调用图。样例 `MainLoop` 从错误的
   `200 B / 7` 个可见调用恢复为 `1968 B / 112` 个直接调用，循环体内的工作函数重新可见。
+- **RTOS 任务注册边恢复**：静态解析 `xTaskCreate`、`xTaskCreateStatic`、`osThreadNew`
+  等注册 API 的函数指针参数，把任务入口接回调用图。FreeRTOS 优先级翻转样例实测恢复
+  `freertos_demo → start_task → task1/task2/task3`，并额外识别空闲任务和定时器任务；
+  任务注册边在画布上使用虚线，节点标记为 `TASK`。
 - **单条链路分析**：在全固件或运行链图中选中任意函数后，可一键拉出“向下调用 / 向上调用者 /
   双向”链路，并限制 1 / 2 / 3 / 5 / 8 层或全部深度。链路模式只保留相关函数，根节点高亮；
   选中节点会突出完整上下游路径，点击画布空白或按 Esc 可清除高亮。
@@ -74,9 +78,9 @@
   自动布局、安全边界、常见问题、回归基线）；新增 78 项 Python distributions 的
   `tools/bingraph/THIRD_PARTY_NOTICES.md`，并在 `NOTICE` 中明确 Python / pybingraph / angr /
   Cytoscape / LibVEX GPL 边界。
-- **Vite 前端冒烟测试**：新增 `npm run test:vite`，用本机 Edge 无窗口运行真实页面，
-  mock 仅替代 Tauri IPC；覆盖入口骨架、MainLoop 折叠/展开、搜索跳转、空白点击与
-  `Esc` 清除高亮。
+- **Vite 前端冒烟测试**：新增 `npm run test:vite` 与 `npm run test:vite:rtos`，用本机
+  Edge 无窗口运行真实页面，mock 仅替代 Tauri IPC；覆盖入口骨架、MainLoop 折叠/展开、
+  搜索跳转、空白点击、`Esc` 清除高亮，以及 RTOS 任务链和注册边渲染。
 - **统一进程树回收**：Windows 上所有外部子进程（ADB server、tshark、USBPcap、sigrok、
   FFmpeg、SSH、GDB、MCP 等）统一登记到 kill-on-close Job Object。正常退出和强制结束 KDock
   都会回收整棵进程树，避免 portable 目录里的 exe/dll 被残留进程锁住。
@@ -108,6 +112,9 @@
 - **运行结构连续 500 / 重启后仍失败**：Rust 不再把 Windows `\\?\D:\...` 扩展路径传给
   angr（其 RTDB 会报 “No writable directory found”）；分析失败会停掉坏进程并自动重启
   重试一次，HTTP 错误会透传 Python 的具体原因和本地日志路径。
+- **中文路径导致 RTDB 初始化失败**：分析器启动时自动选择可写的纯 ASCII 缓存目录并
+  设置 `RTDB_BASE`，不再依赖固件所在目录或用户目录的字符集；U 盘/中文工程路径下也可
+  正常分析，且不会在固件目录内生成缓存。
 - **运行结构导航与布局**：全固件/运行链/链路数据按当前文件与 BIN 参数缓存在前端，
   链路切回全固件或运行链时不再重新分析；中央空态选择按钮不再被画布拖拽捕获；大图
   首屏使用入口骨架，展开后按弱连通分量、调用深度和父节点重心整理，不再铺成网格。

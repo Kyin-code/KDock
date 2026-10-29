@@ -1,0 +1,88 @@
+{
+  "filepath": ".rtos-test.axf",
+  "entry": "8006f21",
+  "entryName": "main",
+  "totalFunctions": 7,
+  "totalCalls": 9,
+  "roots": ["8006f21"],
+  "mainReachable": ["8006f21", "8003109", "8007e39", "8007f9d", "8008049", "8008085", "8009441"],
+  "interruptReachable": [],
+  "interrupts": [],
+  "nodes": [
+    {
+      "addr": "8006f21",
+      "name": "main",
+      "size": 460,
+      "blocks": 28,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": [
+        { "site": "8006f6a", "addr": "8003109", "name": "freertos_demo", "order": 1, "mnemonic": "bl freertos_demo", "kind": "call", "via": "" }
+      ]
+    },
+    {
+      "addr": "8003109",
+      "name": "freertos_demo",
+      "size": 106,
+      "blocks": 2,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": [
+        { "site": "8003168", "addr": "8009441", "name": "xTaskCreate", "order": 1, "mnemonic": "bl xTaskCreate", "kind": "call", "via": "" },
+        { "site": "8003168", "addr": "8007e39", "name": "start_task", "order": 2, "mnemonic": "xTaskCreate(start_task)", "kind": "rtos-task", "via": "xTaskCreate" }
+      ]
+    },
+    {
+      "addr": "8007e39",
+      "name": "start_task",
+      "size": 94,
+      "blocks": 2,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": [
+        { "site": "8007e5c", "addr": "8009441", "name": "xTaskCreate", "order": 1, "mnemonic": "bl xTaskCreate", "kind": "call", "via": "" },
+        { "site": "8007e5c", "addr": "8007f9d", "name": "task1", "order": 2, "mnemonic": "xTaskCreate(task1)", "kind": "rtos-task", "via": "xTaskCreate" },
+        { "site": "8007e70", "addr": "8009441", "name": "xTaskCreate", "order": 3, "mnemonic": "bl xTaskCreate", "kind": "call", "via": "" },
+        { "site": "8007e70", "addr": "8008049", "name": "task2", "order": 4, "mnemonic": "xTaskCreate(task2)", "kind": "rtos-task", "via": "xTaskCreate" },
+        { "site": "8007e84", "addr": "8009441", "name": "xTaskCreate", "order": 5, "mnemonic": "bl xTaskCreate", "kind": "call", "via": "" },
+        { "site": "8007e84", "addr": "8008085", "name": "task3", "order": 6, "mnemonic": "xTaskCreate(task3)", "kind": "rtos-task", "via": "xTaskCreate" }
+      ]
+    },
+    {
+      "addr": "8007f9d",
+      "name": "task1",
+      "size": 68,
+      "blocks": 2,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": []
+    },
+    {
+      "addr": "8008049",
+      "name": "task2",
+      "size": 42,
+      "blocks": 2,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": []
+    },
+    {
+      "addr": "8008085",
+      "name": "task3",
+      "size": 80,
+      "blocks": 2,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": []
+    },
+    {
+      "addr": "8009441",
+      "name": "xTaskCreate",
+      "size": 96,
+      "blocks": 3,
+      "mainReachable": true,
+      "block_nodes": [],
+      "calls": []
+    }
+  ]
+}

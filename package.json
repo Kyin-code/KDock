@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:vite": "node tests/runtime-graph.vite-smoke.mjs",
+    "test:vite:rtos": "node tests/runtime-rtos.vite-smoke.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

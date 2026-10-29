@@ -193,8 +193,8 @@ export const HELP_GROUPS = [
       {
         id: "help-runtime-start",
         title: "分析器与输入",
-        zh: "### 用途\n分析 ELF/PE/AXF/OUT/BIN 的函数、调用边、中断和 CFG。\n### 首次使用\n分析器随正式包分发；缺失时到「环境配置 → 固件运行结构分析器」准备。\n### 联动\n- 分析结果会缓存在后端，Agent 可用 runtime_graph_query 查询 calls/callers。\n- 全固件、运行链和单条链路使用同一份分析结果，不重复运行 angr。",
-        en: "### Purpose\nAnalyze functions, call edges, interrupts and CFG in ELF/PE/AXF/OUT/BIN files.\n### First use\nThe analyzer ships with release builds; prepare it from Environment setup if missing.\n### Relationships\n- The result is cached in Rust and Agent runtime_graph_query can inspect calls/callers.\n- Full firmware, runtime chain and single-chain views reuse the same analysis."
+        zh: "### 用途\n分析 ELF/PE/AXF/OUT/BIN 的函数、调用边、中断和 CFG。\n### RTOS\n可恢复 `xTaskCreate`、`xTaskCreateStatic`、`osThreadNew`、ThreadX / RT-Thread 等任务注册入口；注册边显示为虚线，入口节点标记 `TASK`。\n### 首次使用\n分析器随正式包分发；缺失时到「环境配置 → 固件运行结构分析器」准备。\n### 联动\n- 分析结果会缓存在后端，Agent 可用 runtime_graph_query 查询 calls/callers。\n- 全固件、运行链和单条链路使用同一份分析结果，不重复运行 angr。",
+        en: "### Purpose\nAnalyze functions, call edges, interrupts and CFG in ELF/PE/AXF/OUT/BIN files.\n### RTOS\nTask registration through `xTaskCreate`, `xTaskCreateStatic`, `osThreadNew`, ThreadX and RT-Thread is recovered as a dashed edge; entry nodes are marked `TASK`.\n### First use\nThe analyzer ships with release builds; prepare it from Environment setup if missing.\n### Relationships\n- The result is cached in Rust and Agent runtime_graph_query can inspect calls/callers.\n- Full firmware, runtime chain and single-chain views reuse the same analysis."
       },
       {
         id: "help-runtime-elf",

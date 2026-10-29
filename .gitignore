@@ -13,4 +13,5 @@
 # Local analyzer build artefacts
 __pycache__/
 *.py[cod]
+.rtdb-cache/
 
