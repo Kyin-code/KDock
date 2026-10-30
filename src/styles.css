@@ -461,6 +461,12 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 .chk { display: inline-flex; align-items: center; gap: 5px; color: hsl(var(--muted-foreground)); font-size: 12.5px; white-space: nowrap; cursor: pointer; }
 /* 参数区里的长勾选项（"反向控制（点画面 = 点手机）"这种）：窄窗下让人换行，别顶出右边界 */
 .parampane .trow > label.chk { white-space: normal; min-width: 0; overflow-wrap: anywhere; }
+.parampane .chk { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.parampane .chk > input { flex: 0 0 auto; }
+.parampane .chk > span { min-width: 0; overflow-wrap: anywhere; }
+.parampane .trow:has(> label.chk #fl-tftp-write) { flex: 1 1 12rem; min-width: 12rem; }
+.params .parampane[data-param="files"] .trow:has(#fl-tftp-write) { flex: 1 1 100%; }
+.parampane .field { max-width: 100%; }
 .lb { color: hsl(var(--muted-foreground)); font-size: 12.5px; white-space: nowrap; }
 
 .adv { margin: 2px 0 8px; }
@@ -479,6 +485,11 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
   color: hsl(var(--muted-foreground)); font-size: 11.5px; letter-spacing: .6px;
   text-transform: uppercase; margin: 14px 0 8px;
 }
+.cardtitle > :first-child { min-width: 0; }
+.btcol .cardtitle > .btbadge { flex: 0 0 auto; }
+.btcol .cardtitle { row-gap: 4px; }
+.cardtitle.scopemeashead { flex-wrap: wrap; min-height: 20px; row-gap: 4px; }
+.cardtitle.scopemeashead > .grow { min-width: 8px; }
 .cardtitle:first-child, .card .cardtitle { margin-top: 0; }
 .help-f1 {
   flex: 0 0 auto; width: 17px; height: 17px; padding: 0;
@@ -801,7 +812,7 @@ html.kb-focus[data-tab="kb"] .parampane.kbpane #kb-chat-host { height: auto; fle
   display: grid; grid-template-columns: auto auto; align-items: center;
   gap: 1px 9px; min-width: 0;
 }
-.scopeidentity > b { font-size: 14px; letter-spacing: .01em; }
+.scopeidentity > b { min-width: 0; overflow-wrap: anywhere; font-size: 14px; letter-spacing: .01em; }
 .scopeeyebrow {
   grid-column: 1 / -1; color: hsl(var(--primary));
   font: 650 9.5px/1.2 var(--font-mono); letter-spacing: .16em;
@@ -823,8 +834,8 @@ html.kb-focus[data-tab="kb"] .parampane.kbpane #kb-chat-host { height: auto; fle
   border-bottom: 1px solid var(--surface-line-soft);
   background: var(--surface-2);
 }
-.scopestagehead > div { display: flex; align-items: center; gap: 9px; min-width: 0; }
-.scopestagehead b { font-size: 12.5px; }
+.scopestagehead > div { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1 1 auto; }
+.scopestagehead b { min-width: 0; overflow-wrap: anywhere; font-size: 12.5px; }
 .scopestatus {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: hsl(var(--muted-foreground)); font-size: 11.5px;
@@ -1150,7 +1161,9 @@ html.kb-focus[data-tab="kb"] .parampane.kbpane #kb-chat-host { height: auto; fle
   user-select: none;
 }
 .tb-left, .tb-right { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.tb-right { justify-content: flex-end; }
+.tb-right { justify-content: flex-end; flex: 0 1 auto; align-items: center; }
+.tb-right > * { min-width: 0; }
+#status-chip, #ip-location-chip { flex: 0 1 auto; min-width: 0; }
 .tb-brand { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 650; color: hsl(var(--foreground)); }
 .tb-logo {
   width: 18px; height: 18px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center;
@@ -2400,6 +2413,26 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   display: flex; align-items: center; gap: 6px; margin: 0;
   padding: 0 1px 2px; min-height: 26px;
   color: hsl(var(--foreground)); font-size: 12px; letter-spacing: .02em; text-transform: none;
+  flex-wrap: wrap; row-gap: 4px;
+}
+.btcol .cardtitle > .grow { flex: 1 1 0; min-width: 0; width: auto; height: auto; }
+.btcol .cardtitle > .btcolacts { margin-left: auto; flex-basis: min(100%, 18rem); }
+.btcol .cardtitle { min-height: 58px; align-content: flex-start; }
+.btcol .btcolacts > .btn { white-space: nowrap; }
+.btcol .cardtitle > .btbadge, .btcol .cardtitle > .btcoltitle, .btcol .cardtitle > .btcolacts { align-self: center; }
+.btcol .cardtitle > .btcolacts { flex-wrap: wrap; }
+.btcol .cardtitle > .btcolacts { min-height: 24px; }
+.btcol .cardtitle .btn.small { margin-left: 0; }
+.btcol .cardtitle > .btcoltitle { min-width: 0; overflow-wrap: anywhere; }
+.btcol .cardtitle > .grow { flex: 1 1 8px; min-width: 0; }
+.btcolacts { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.btcolacts > .btn { flex: 0 0 auto; }
+@container app (max-width: 980px) {
+  .btcol .cardtitle { flex-wrap: wrap; overflow: visible; align-content: flex-start; min-height: 58px; }
+  .btcol .cardtitle > .btcoltitle { flex: 1 1 auto; }
+  .btcol .cardtitle > .grow { display: none; }
+  .btcol .cardtitle > .btcolacts { flex: 0 1 auto; }
+  .btcolacts { flex-wrap: wrap; justify-content: flex-end; }
 }
 .btbadge {
   display: inline-flex; align-items: center; height: 20px; padding: 0 7px;
@@ -3249,6 +3282,8 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   }
   .params .parampane[data-param="link"] select { max-width: 9rem; }
   .params .parampane[data-param="link"] input[type="number"] { max-width: 7.5rem; }
+  .params .parampane[data-param="link"] { min-width: 0; }
+  .params .parampane[data-param="link"] > * { min-width: 0; }
   /* "自定义"三个字收掉，留勾 + 输入框（勾有悬停提示） */
   /* 自定义波特率整格收掉（窄窗只留核心那几个）：要改特殊波特率把窗口拉宽，或用标题栏「▭」展开成宽屏布局 */
   .params .parampane[data-param="link"] .field:has(label[for="baud-custom-chk"]) { display: none; }
@@ -3357,15 +3392,19 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   .params .parampane[data-param="files"] > .hint { display: none; }
   .params .parampane[data-param="files"] > div[data-flm]:not([hidden]) { display: contents; }
   .params .parampane[data-param="files"] .field {
-    display: flex; align-items: center; gap: 6px; margin: 0; flex: 0 0 auto; grid-template-columns: none;
+    display: flex; align-items: center; gap: 6px; margin: 0; flex: 1 1 18rem; min-width: 0; grid-template-columns: none;
   }
   .params .parampane[data-param="files"] .field > label { flex: 0 0 auto; margin: 0; }
-  .params .parampane[data-param="files"] .field > .inline { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  .params .parampane[data-param="files"] .field > .inline { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1 1 auto; }
   .params .parampane[data-param="files"] .btnrow {
     display: flex; flex-direction: row; flex-wrap: nowrap; margin: 0; flex: 0 0 auto;
   }
   .params .parampane[data-param="files"] select { max-width: 9rem; }
-  .params .parampane[data-param="files"] input { max-width: 11rem; }
+  .params .parampane[data-param="files"] input { min-width: 8rem; max-width: 100%; flex: 1 1 auto; }
+  .params .parampane[data-param="files"] .btn { min-width: 0; }
+  .params .parampane[data-param="files"] input#fl-save-dir,
+  .params .parampane[data-param="files"] input#fl-dir { flex-basis: 12rem; }
+  html[data-tab="files"] .split > .params { max-height: min(42cqh, var(--param-max, 38cqh)); }
 
   /* 3) 命令表：把"常用命令 + ? + ✎ 编辑指令表"那一行收掉（只留下面那个搜索框），
         命令行压矮一点，同样一条带子里能多看几条 */
@@ -3390,7 +3429,10 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
 }
 @container app (max-width: 760px) {
   .params .parampane[data-param="files"] .field > label { display: none; }
-  .params .parampane[data-param="files"] input { max-width: 8rem; }
+  .params .parampane[data-param="files"] .field { flex-basis: 100%; }
+  .params .parampane[data-param="files"] input { max-width: none; }
+  .params .parampane[data-param="files"] .btnrow { flex-wrap: wrap; }
+  .params .parampane[data-param="files"] .btnrow > .btn { flex: 1 1 7rem; min-width: 0; }
 }
 /* （快捷发送的内联添加行已经改成弹窗，相关样式撤掉） */
 /* 命令表那个小标题行（「常用命令」+ ? + ✎ 编辑指令表）：右栏一窄，标题自己省略，

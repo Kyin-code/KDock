@@ -1241,9 +1241,9 @@ async function flList() {
       o.textContent = `${noTxt}${it.is_dir ? "DIR " : "FILE"}   ${String(it.size).padStart(10)}   ${it.name}`;
       sel.appendChild(o);
     }
-    if (!items.length) sel.innerHTML = '<option value="">（空目录）</option>';
+    if (!items.length) sel.innerHTML = '<option value="">' + en("（空目录）") + '</option>';
     else sel.selectedIndex = 0;      // 动态塞进去的 option 不会自动选中第一项
-    flState(`${items.length} 项`);
+    flState(`${items.length} ${en("项")}`);
     pushSys(`[文件] ${dir} 共 ${items.length} 项`);
     for (const it of items) {
       pushSys(`[文件]   ${it.is_dir ? "D" : "F"} ${String(it.size).padStart(10)}  ${it.name}`);
@@ -1605,6 +1605,7 @@ function showPane(tab) {
   document.documentElement.dataset.tab = tab;      // 窄窗样式要按"当前这一页"决定收不收那条参数带（如计算器）
   document.documentElement.classList.toggle("kb-focus", tab === "kb" && kbFocus);
   if (tab === "runtime" && window.rtInit) window.rtInit();
+  if (window.kdockSyncDataLang) window.kdockSyncDataLang();
   syncParamStrip();
   if (tab === "upgrade") syncUpgCtl();
   if (tab === "datacalc") initCalc();          // 折叠区块的初始化在 initCalc 里（只有一次）
@@ -2188,7 +2189,7 @@ async function flDetectTools(clearFirst) {
     $("fl-tool-state").textContent = seg.join("  ·  ");
     pushSys("[烧录] 工具: " + seg.join(" | "));
   } catch (e) {
-    $("fl-tool-state").textContent = "检测失败: " + e;
+    $("fl-tool-state").textContent = en("检测失败: ") + e;
   }
 }
 
@@ -2570,7 +2571,7 @@ function flashBootstrap() {
     flLoadPyocdTargets();            // 后台补 pyOCD 芯片名，不拖慢进度条
     flBootSet(92, "整理器件列表…");
     await flYield();
-    flBootSet(100, "器件库就绪");
+  flBootSet(100, en("器件库就绪"));
     await new Promise((r) => setTimeout(r, 250));
     flBootHide();
   })().catch((e) => {
@@ -3458,7 +3459,7 @@ function adbState(text, cls) {
 function adbLog(text) {
   const box = $("adb-log");
   if (!box) return;
-  const lines = String(text).replace(/\r\n/g, "\n").split("\n");
+  const lines = en(String(text)).replace(/\r\n/g, "\n").split("\n");
   for (const l of lines) {
     if (!l.trim() && lines.length > 1) continue;
     box.textContent += `[${new Date().toLocaleTimeString()}] ${l}\n`;
@@ -3690,9 +3691,9 @@ function adbOnShow() {
 async function adbInit() {
   const st = await invoke("adb_status").catch((e) => ({ ok: false, path: "", version: String(e) }));
   if (!st.ok) {
-    adbState("没找到 adb", "err");
-    adbLog("没找到 adb.exe —— 到「环境配置 → Android Platform Tools（adb）」点一键安装。");
-    if ($("adb-hint")) $("adb-hint").textContent = "没找到 adb.exe：到「环境配置」一键安装，或者把 platform-tools 目录加到 PATH。";
+    adbState(en("没找到 adb"), "err");
+    adbLog(en("没找到 adb.exe —— 到「环境配置 → Android Platform Tools（adb）」点一键安装。"));
+    if ($("adb-hint")) $("adb-hint").textContent = en("没找到 adb.exe：到「环境配置」一键安装，或者把 platform-tools 目录加到 PATH。");
     return;
   }
   adbLog(`adb：${st.path}\n${st.version || ""}`);
@@ -6687,13 +6688,13 @@ async function __envRuntimeRefresh() {
   if (!el) return null;
   try {
     const s = await invoke("runtime_analyzer_status");
-    el.textContent = s.installed ? "已就绪" : "未准备";
+    el.textContent = s.installed ? en("已就绪") : en("未准备");
     el.className = "rtbadge " + (s.installed ? "ok" : "bad");
-    el.title = s.path || "点击「准备 / 更新分析器」";
+    el.title = s.path || en("点击「准备 / 更新分析器」");
     if ($("env-rt-open")) $("env-rt-open").disabled = !s.installed;
     return s;
   } catch (e) {
-    el.textContent = "检测失败";
+    el.textContent = en("检测失败");
     el.className = "rtbadge bad";
     el.title = String(e);
     return null;
@@ -6704,9 +6705,9 @@ async function __envRuntimePrepare() {
   if (!btn) return;
   const old = btn.textContent;
   btn.disabled = true;
-  btn.textContent = "准备中…（首次需下载 ~500 MB）";
-  if (state) { state.textContent = "准备中…"; state.className = "rtbadge warn"; }
-  envLog("开始准备固件运行结构分析器。KDock 会自带 Python 3.13，不使用系统 Python。");
+  btn.textContent = en("准备中…（首次需下载 ~500 MB）");
+  if (state) { state.textContent = en("准备中…"); state.className = "rtbadge warn"; }
+  envLog(en("开始准备固件运行结构分析器。KDock 会自带 Python 3.13，不使用系统 Python。"));
   try {
     const r = await invoke("runtime_prepare");
     envLog(r.message || "分析器已准备完成");
@@ -6758,7 +6759,10 @@ function bindEnv() {
     if (p.text) envLog(p.text);
   });
   // 切语言时这一页是运行时画的，得自己重画一遍
-  window.kdockOnLang(() => { if (envData) { envRenderGrid(); envRenderFirst(); } });
+  window.kdockOnLang(() => {
+    __envRuntimeBind();
+    if (envData) { envRenderGrid(); envRenderFirst(); }
+  });
   envRefresh();
 }
 
@@ -7415,6 +7419,36 @@ function langWalk() {
   let n;
   while ((n = w.nextNode())) {
     if (n.nodeType === 1) {
+      // 页面级双语文案：比依赖整句中文查表可靠，带参数的标题和运行时空态也不会漏。
+      if (n.dataset.en) {
+        if (LANG === "en" && n.childNodes.length > 1) {
+          if (!n.dataset.zhHtml) n.dataset.zhHtml = n.innerHTML;
+          n.textContent = n.dataset.en;
+        } else if (LANG === "en" && n.firstChild && n.firstChild.nodeType === Node.TEXT_NODE) {
+          const raw = n.firstChild.nodeValue;
+          const lead = raw.match(/^\s*/)?.[0] || "";
+          n.dataset.zhText = n.dataset.zhText || raw;
+          n.firstChild.nodeValue = lead + n.dataset.en;
+        } else if (LANG === "zh" && n.dataset.zhText != null && n.firstChild && n.firstChild.nodeType === Node.TEXT_NODE) {
+          n.firstChild.nodeValue = n.dataset.zhText;
+        }
+        if (LANG === "zh") delete n.dataset.zhText;
+      }
+      if (n.dataset.enPh) {
+        if (LANG === "en") { n.dataset.zhPh = n.dataset.zhPh || n.placeholder; n.placeholder = n.dataset.enPh; }
+        else if (n.dataset.zhPh != null) { n.placeholder = n.dataset.zhPh; }
+        if (LANG === "zh") delete n.dataset.zhPh;
+      }
+      if (n.dataset.enTitle) {
+        if (LANG === "en") {
+          if (n.dataset.zhTip == null) n.dataset.zhTip = n.dataset.tip || n.getAttribute("title") || "";
+          n.dataset.tip = n.dataset.enTitle;
+          n.removeAttribute("title");
+        } else if (n.dataset.zhTip) {
+          n.dataset.tip = n.dataset.zhTip;
+          delete n.dataset.zhTip;
+        }
+      }
       if (n.placeholder) {
         const ph = EN[n.placeholder] || EN[n.placeholder.trim().replace(/\s+/g, " ")];
         if (LANG === "en" && ph) { n.dataset.zhPh = n.dataset.zhPh || n.placeholder; n.placeholder = ph; }
@@ -7442,6 +7476,37 @@ function langWalk() {
     }
   }
 }
+
+/** data-en 文案的独立同步入口：供独立模块在绘制完成后调用，不受本轮 DOM 扫描方向影响。 */
+function syncDataLang() {
+  const en = LANG === "en";
+  for (const el of document.querySelectorAll("[data-en], [data-en-ph]")) {
+    if (el.dataset.en && el.childNodes.length > 1) {
+      if (en) {
+        if (!el.dataset.zhHtml) el.dataset.zhHtml = el.innerHTML;
+        el.textContent = el.dataset.en;
+      } else if (el.dataset.zhHtml) {
+        el.innerHTML = el.dataset.zhHtml;
+        delete el.dataset.zhHtml;
+      }
+    } else if (el.dataset.en && el.firstChild && el.firstChild.nodeType === Node.TEXT_NODE) {
+      if (en) {
+        const raw = el.firstChild.nodeValue;
+        const lead = raw.match(/^\s*/)?.[0] || "";
+        el.dataset.zhText = el.dataset.zhText || raw;
+        el.firstChild.nodeValue = lead + el.dataset.en;
+      } else if (el.dataset.zhText != null) {
+        el.firstChild.nodeValue = el.dataset.zhText;
+        delete el.dataset.zhText;
+      }
+    }
+    if (el.dataset.enPh) {
+      if (en) { el.dataset.zhPh = el.dataset.zhPh || el.placeholder; el.placeholder = el.dataset.enPh; }
+      else if (el.dataset.zhPh != null) { el.placeholder = el.dataset.zhPh; delete el.dataset.zhPh; }
+    }
+  }
+}
+window.kdockSyncDataLang = syncDataLang;
 
 // ---------------- 上下文帮助（F1 / 标题栏 / 设置 / 各分区的 ?） ----------------
 const HELP_PAGE_LABEL = {
@@ -12289,6 +12354,12 @@ async function bindAgentEvents() {
 let LANG = localStorage.getItem("kdock_lang") === "zh" ? "zh" : "en";
 const EN = {
   "调试": "Debug", "设备": "Device", "工具": "Tools",
+  "（空目录）": "(empty folder)", "项": "item(s)", "已就绪": "Ready", "未准备": "Not prepared",
+  "未找到便携分析器：去环境配置 → 固件运行结构分析器 准备。": "Portable analyzer not found; prepare it in Environment setup → Firmware runtime analyzer.",
+  "准备中…": "Preparing…", "准备中…（首次需下载 ~500 MB）": "Preparing… (first run downloads about 500 MB)",
+  "开始准备固件运行结构分析器。KDock 会自带 Python 3.13，不使用系统 Python。": "Preparing the firmware runtime analyzer. KDock bundles Python 3.13 and does not use system Python.",
+  "检测失败": "Detection failed", "检测失败: ": "Detection failed: ", "器件库就绪": "Device library ready",
+  "点击「准备 / 更新分析器」": "click Prepare / update analyzer",
   // 安卓 ADB：无线调试（Android 11+）
   "无线调试": "Wireless debugging", "无线调试（Android 11+）": "Wireless debugging (Android 11+)",
   "找设备": "Find devices",
@@ -14228,6 +14299,7 @@ const EN = {
   "选一台设备": "Pick a device", "投屏中（抓屏轮询）": "Mirroring (screencap polling)",
   "投屏已停止": "Mirror stopped", "投屏失败: ": "Mirror failed: ",
   "没找到 adb": "adb not found", "已找到 adb": "adb found",
+  "没找到 adb.exe —— 到「环境配置 → Android Platform Tools（adb）」点一键安装。": "adb.exe not found — install Android Platform Tools (adb) from Environment setup.",
   "没找到 adb.exe：到「环境配置」一键安装，或者把 platform-tools 目录加到 PATH。": "adb.exe not found: install it from Environment setup, or add the platform-tools folder to PATH.",
   "先点「连接」（FTP/FTPS 要登录；TFTP 只是记一下地址）": "Hit Connect first (FTP/FTPS log in; for TFTP it just remembers the address)",
   "（TFTP 没有列表：直接填路径取/送）": "(TFTP has no listing: type a path to get/send)",
@@ -14277,12 +14349,23 @@ const en = (t) => (LANG === "en" && EN[t]) ? EN[t] : t;
 const langHooks = [];
 window.kdockT = en;
 window.kdockOnLang = (fn) => { if (typeof fn === "function") langHooks.push(fn); };
+// 供独立模块（运行结构 / 逻辑分析等）把参数化日志一并翻译：
+// 只翻译整条匹配，避免把路径或用户文本误替换。
+window.kdockTranslateText = (text) => {
+  if (LANG !== "en") return text;
+  const s = String(text);
+  return EN[s] || s.replace(
+    /^(未找到便携分析器：去环境配置 → 固件运行结构分析器 准备。|便携分析器就绪：|选择固件失败：|已选择 )/,
+    (m) => EN[m] || m,
+  );
+};
 function applyLang(lang) {
   LANG = lang === "en" ? "en" : "zh";
   localStorage.setItem("kdock_lang", LANG);
   uiPrefsSave();
   document.documentElement.dataset.lang = LANG;
   langWalk();
+  syncDataLang();
   // 菜单栏那 5 个按钮的文字（它们是 bind 时写进去的，切语言要跟着刷）
   const labels = ["文件", "编辑", "视图", "窗口", "帮助"];
   document.querySelectorAll("#tb-menu .tb-menu-btn").forEach((b, i) => { if (labels[i]) b.textContent = en(labels[i]); });

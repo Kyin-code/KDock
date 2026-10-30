@@ -132,11 +132,35 @@ function rtLog(text, kind) {
   const box = $("rt-log");
   if (!box) return;
   const line = rtEl("div", "l" + (kind ? " " + kind : ""));
-  line.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+  const raw = `[${new Date().toLocaleTimeString()}] ${text}`;
+  line.dataset.zh = raw;
+  line.textContent = raw;
   box.appendChild(line);
   while (box.children.length > 500) box.firstChild.remove();
   box.scrollTop = box.scrollHeight;
+  if (document.documentElement.dataset.lang === "en") rtRelocalizeLogs();
 }
+function rtRelocalizeLogs() {
+  const box = $("rt-log");
+  if (!box) return;
+  for (const line of box.children) {
+    if (!line.dataset.zh) {
+      const prefix = String(line.textContent || "").match(/^\[[^\]]*\]\s*/)?.[0] || "";
+      line.dataset.zh = String(line.textContent || "");
+      if (!prefix) continue;
+    }
+    const original = String(line.dataset.zh);
+    const body = original.replace(/^\[[^\]]*\]\s*/, "");
+    const shown = document.documentElement.dataset.lang === "en" && window.kdockTranslateText
+      ? window.kdockTranslateText(body)
+      : body;
+    const leadEnd = original.indexOf(body);
+    line.textContent = leadEnd >= 0 ? original.slice(0, leadEnd) + String(shown) + original.slice(leadEnd + body.length) : original;
+  }
+}
+window.__rtRelocalizeLogs = rtRelocalizeLogs;
+window.__rtLog = rtLog;
+// 首次构造时语言可能还在切换；日志行保存原文，后续切语言/render 时能统一重放。
 function rtSetState(text, kind) {
   const e = $("rt-state");
   if (!e) return;
@@ -1988,14 +2012,21 @@ async function rtFind() {
 }
 
 async function rtInit() {
-  if (rtReady) { rtRefreshAnalyzer(); return; }
+  if (rtReady) { rtRelocalizeLogs(); rtRefreshAnalyzer(); return; }
+  rtRelocalizeLogs();
   rtReady = true;
   const last = localStorage.getItem("kdock_rt_last_file") || "";
   if (last) { rtFile = last; rtRoot = last.replace(/[\\/][^\\/]*$/, ""); rtSetFileName(); }
   const st = await rtRefreshAnalyzer();
   if (st && st.installed) rtLog(rtZh("便携分析器就绪：", "Portable analyzer ready: ") + st.version);
   else rtLog(rtZh("未找到便携分析器：去环境配置 → 固件运行结构分析器 准备。", "Portable analyzer not found; prepare it in Environment setup → Firmware runtime analyzer."), "err");
+  if (document.documentElement.dataset.lang === "en") rtRelocalizeLogs();
   const pick = $("rt-file"), pick2 = $("rt-empty-pick"), pick3 = $("rt-pick-side"), run = $("rt-run");
+  // 初始化时按当前语言同步一次静态双语文案；这些节点由独立模块管理，
+  // main.js 的 langWalk 不一定能在它们首次渲染前扫描到。
+  if (window.kdockSyncDataLang) window.kdockSyncDataLang();
+  rtRelocalizeLogs();
+  rtSetFileName();
   for (const b of [pick, pick2, pick3]) if (b) b.onclick = rtPickFile;
   if (run) run.onclick = rtAnalyze;
   if ($("rt-tidy")) $("rt-tidy").onclick = () => { rtLayout(true); rtNodes.forEach((n) => rtPosCache.set(n.addr, { x: n.x, y: n.y })); rtRender(); rtFocusRoot(); };

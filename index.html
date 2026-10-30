@@ -430,27 +430,27 @@
             </div>
             <!-- 缓存：所有持久化数据一览 + 按类删除 -->
             <div class="setpane" data-setpane="netip" hidden>
-              <div class="cardtitle">公网 IP 归属</div>
+              <div class="cardtitle" data-en="Public IP location">公网 IP 归属</div>
               <div id="netip-summary" class="aginfo"></div>
-              <p class="hint">顶栏只显示国家/地区，不显示实际公网 IP；软件也不会持久化公网 IP。
+              <p class="hint" data-en="The title bar shows only the country/region, never the actual public IP; KDock does not persist your public IP. Probes are awakened by Windows network changes and run only after an adapter, default route or proxy change. Cached data is shown first.">顶栏只显示国家/地区，不显示实际公网 IP；软件也不会持久化公网 IP。
                 由 Windows 网络变化事件唤醒，仅在网卡、默认路由或代理配置变化后探测；界面始终先显示缓存。</p>
-              <div class="cardtitle">请求预算</div>
+              <div class="cardtitle" data-en="Request budget">请求预算</div>
               <div id="netip-budget" class="aginfo"></div>
-              <p class="hint">每日总计最多 100 次，跨软件重启累计；达到上限后当天不再进行归属地探测。</p>
-              <div class="cardtitle">触发与重试</div>
+              <p class="hint" data-en="At most 100 requests per day; usage persists across restarts. No location probes run after the daily limit is reached.">每日总计最多 100 次，跨软件重启累计；达到上限后当天不再进行归属地探测。</p>
+              <div class="cardtitle" data-en="Triggers and retries">触发与重试</div>
               <div class="trow">
-                <label class="lb" for="netip-retry">断网重试次数</label>
+                <label class="lb" for="netip-retry" data-en="Retries after network loss">断网重试次数</label>
                 <input id="netip-retry" class="tight" type="number" min="0" max="10" step="1" />
-                <label class="lb" for="netip-debounce">防抖（毫秒）</label>
+                <label class="lb" for="netip-debounce" data-en="Debounce (ms)">防抖（毫秒）</label>
                 <input id="netip-debounce" class="tight" type="number" min="200" max="60000" step="100" />
               </div>
               <div class="trow">
-                <button id="netip-save" class="btn small primary">保存设置</button>
-                <button id="netip-refresh" class="btn small">手动刷新</button>
+                <button id="netip-save" class="btn small primary" data-en="Save settings">保存设置</button>
+                <button id="netip-refresh" class="btn small" data-en="Refresh now">手动刷新</button>
                 <span class="grow"></span>
                 <span id="netip-state" class="lb"></span>
               </div>
-              <p class="hint">重试次数最多 10 次，仅用于手动刷新；自动探测采用 5s / 15s / 60s / 180s / 300s 指数退避，本地网络检查不消耗额度。</p>
+              <p class="hint" data-en="Retries are limited to 10 and apply only to manual refreshes. Automatic probes use 5s / 15s / 60s / 180s / 300s backoff; local network checks do not consume the quota.">重试次数最多 10 次，仅用于手动刷新；自动探测采用 5s / 15s / 60s / 180s / 300s 指数退避，本地网络检查不消耗额度。</p>
             </div>
             <div class="setpane" data-setpane="cache" hidden>
               <div class="cardtitle">持久化数据（缓存）
@@ -597,10 +597,10 @@
               <div class="cardtitle">MCP 服务</div>
               <div id="set-mcp-list" class="agentlist"></div>
               <div class="field"><label for="set-mcp-id">ID</label><input id="set-mcp-id" placeholder="exa" /></div>
-              <div class="field"><label for="set-mcp-url">远程 URL</label><input id="set-mcp-url" placeholder="https://mcp.exa.ai/mcp?exaApiKey=..." /></div>
-              <div class="field"><label for="set-mcp-cmd">本地命令</label><input id="set-mcp-cmd" placeholder="npx / node / 你的 mcp server.exe（远程模式留空）" /></div>
+              <div class="field"><label for="set-mcp-url" data-en="Remote URL">远程 URL</label><input id="set-mcp-url" placeholder="https://mcp.exa.ai/mcp?exaApiKey=..." /></div>
+              <div class="field"><label for="set-mcp-cmd" data-en="Local command">本地命令</label><input id="set-mcp-cmd" placeholder="npx / node / 你的 mcp server.exe（远程模式留空）" data-en-ph="npx / node / your mcp server.exe (leave blank for remote mode)" /></div>
               <div class="field"><label for="set-mcp-args">参数</label><input id="set-mcp-args" placeholder="-y @modelcontextprotocol/server-filesystem C:\\data" /></div>
-              <div class="field"><label for="set-mcp-env">环境 / 请求头</label><input id="set-mcp-env" placeholder="EXA_API_KEY=... 或 Authorization=Bearer ...（每行一个）" /></div>
+              <div class="field"><label for="set-mcp-env" data-en="Environment / headers">环境 / 请求头</label><input id="set-mcp-env" placeholder="EXA_API_KEY=... 或 Authorization=Bearer ...（每行一个）" data-en-ph="EXA_API_KEY=... or Authorization=Bearer ... (one per line)" /></div>
               <div class="trow">
                 <button id="set-mcp-save" class="btn small primary">保存</button>
                 <button id="set-mcp-test" class="btn small">测一测</button>
@@ -608,9 +608,9 @@
                 <span class="grow"></span>
                 <button id="set-mcp-open" class="btn small">打开配置目录</button>
               </div>
-              <p class="hint">支持远程 Streamable HTTP（填 URL）和本地 stdio（填命令）。「测一测」会真的握手并列出工具；
+              <p class="hint"><span data-en="Remote Streamable HTTP (URL) and local stdio (command) are supported. Test performs a real handshake and lists tools. Enabled servers expose tools to the agent as mcp__<id>__<tool>. Remote headers and local environment variables share the field above. Config file:">支持远程 Streamable HTTP（填 URL）和本地 stdio（填命令）。「测一测」会真的握手并列出工具；
                 启用中的服务，工具会以 <code>mcp__&lt;id&gt;__&lt;tool&gt;</code> 挂给 agent。
-                远程请求头用于 Authorization 等，本地命令的环境变量也走同一栏。配置文件：<code id="set-mcp-path"></code></p>
+                远程请求头用于 Authorization 等，本地命令的环境变量也走同一栏。配置文件：</span><code id="set-mcp-path"></code></p>
             </div>
 
             <!-- 知识库：两个页面地址 -->
@@ -867,11 +867,11 @@
         <!-- 环境配置：驱动 / 工具链 一键检测与安装 -->
         <div class="workpane envpane" data-work="env" hidden>
           <div class="trow envpane-head">
-            <span class="lb">开机必需</span>
-            <span class="lb">固件运行结构分析器：随 KDock 分发的 Python 3.13 + angr；不需要系统 Python / uv / Graphviz</span>
+            <span class="lb" data-en="Required">开机必需</span>
+            <span class="lb" data-en="Firmware runtime analyzer: Python 3.13 + angr bundled with KDock; no system Python, uv or Graphviz required">固件运行结构分析器：随 KDock 分发的 Python 3.13 + angr；不需要系统 Python / uv / Graphviz</span>
             <span class="grow"></span>
-            <span id="env-rt-state" class="rtbadge off">检测中…</span>
-            <button id="env-rt-prepare" class="btn small primary">准备 / 更新分析器</button>
+              <span id="env-rt-state" class="rtbadge off" data-en="Checking…">检测中…</span>
+            <button id="env-rt-prepare" class="btn small primary" data-en="Prepare / update analyzer">准备 / 更新分析器</button>
             <button id="env-rt-open" class="btn small" title="打开分析器所在目录">定位</button>
           </div>          <div class="trow">
             <span class="lb">环境配置</span>
@@ -984,7 +984,7 @@
             <div>
               <span class="batcheyebrow">LINE PIPELINE</span>
               <b>批量文本</b>
-              <span class="batchsub">输入 → 实时处理 → 结果 / 逐行发送</span>
+              <span class="batchsub" data-en="Input → live processing → results / line-by-line send">输入 → 实时处理 → 结果 / 逐行发送</span>
             </div>
             <span class="grow"></span>
             <span id="bt-count" class="batchcount"></span>
@@ -993,10 +993,12 @@
           <!-- 左右两个编辑器都带"行号栏 + 底部状态栏"（跟 IDE、跟参考站一样） -->
           <div class="btgrid grow">
             <div class="btcol" id="bt-in-col">
-              <div class="cardtitle"><span class="btbadge input">输入</span>输入（一行一条）<span class="grow"></span>
-                <button id="bt-import" class="btn small" title="从文件读进来；也可以把文件直接拖到下面这个框上">导入…</button>
-                <button id="bt-sample" class="btn small">示例</button>
-                <button id="bt-clear" class="btn small danger">清空</button>
+              <div class="cardtitle"><span class="btbadge input">输入</span><span class="btcoltitle" data-en="Input (one per line)">输入（一行一条）</span><span class="grow"></span>
+                <span class="btcolacts">
+                  <button id="bt-import" class="btn small" title="从文件读进来；也可以把文件直接拖到下面这个框上">导入…</button>
+                  <button id="bt-sample" class="btn small">示例</button>
+                  <button id="bt-clear" class="btn small danger">清空</button>
+                </span>
               </div>
               <div class="bted">
                 <div class="btln" id="bt-in-ln" aria-hidden="true"></div>
@@ -1006,9 +1008,11 @@
             </div>
             <div class="btarrow"><span>→</span></div>
             <div class="btcol">
-              <div class="cardtitle"><span class="btbadge output">结果</span>处理结果<span class="grow"></span>
-                <button id="bt-copy" class="btn small">复制</button>
-                <button id="bt-download" class="btn small">另存为</button>
+              <div class="cardtitle"><span class="btbadge output">结果</span><span class="btcoltitle" data-en="Processing result">处理结果</span><span class="grow"></span>
+                <span class="btcolacts">
+                  <button id="bt-copy" class="btn small">复制</button>
+                  <button id="bt-download" class="btn small">另存为</button>
+                </span>
               </div>
               <div class="bted">
                 <div class="btln" id="bt-out-ln" aria-hidden="true"></div>
@@ -1037,7 +1041,7 @@
             <div id="bt-diff-body" class="btdiffbody"></div>
           </div>
           <div class="trow btsendbar">
-            <div class="btsendtitle"><b>发送队列</b><span>逐行发到当前主连接</span></div>
+            <div class="btsendtitle"><b data-en="Send queue">发送队列</b><span data-en="Send lines to the current main link">逐行发到当前主连接</span></div>
             <button id="bt-send" class="btn small primary" title="按下面的间隔，一行一行发到串口">逐行发送</button>
             <label class="chk"><input type="checkbox" id="bt-with-end" checked /> 每行带走当前行尾</label>
             <label class="chk">间隔 <input type="number" id="bt-gap" class="num" min="0" max="60000" value="200" /> ms</label>
@@ -1498,21 +1502,21 @@
         <!-- 运行结构：main 调用树 / 中断外挂 / 库函数折叠 / 自动分层布局 -->
         <div class="workpane rtwork" data-work="runtime" hidden>
           <div class="trow">
-            <span class="lb">固件</span>
-            <button id="rt-file" class="btn small primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-file-binary"></use></svg>选择 ELF / BIN…</button>
-            <span id="rt-file-name" class="lb rtfile">还没有选择固件</span>
+            <span class="lb" data-en="Firmware">固件</span>
+            <button id="rt-file" class="btn small primary" data-en="Select ELF / BIN…"><svg class="btn-ico" aria-hidden="true"><use href="#ni-file-binary"></use></svg>选择 ELF / BIN…</button>
+            <span id="rt-file-name" class="lb rtfile" data-en="No firmware selected">还没有选择固件</span>
             <span class="grow"></span>
             <div class="rtsearchbox">
               <svg class="rtsearchico" aria-hidden="true"><use href="#ni-search"></use></svg>
               <input id="rt-search-input" type="search" autocomplete="off" spellcheck="false" placeholder="搜索函数名 / 地址" />
-              <button id="rt-search-btn" class="btn small" title="按函数名或地址查找">查找</button>
+              <button id="rt-search-btn" class="btn small" title="按函数名或地址查找" data-en="Find">查找</button>
               <div id="rt-search-results" class="rtsearchresults" hidden></div>
             </div>
-            <button id="rt-tidy" class="btn small" title="按调用深度自动分层，重新排版"><svg class="btn-ico" aria-hidden="true"><use href="#ni-layers"></use></svg>整理</button>
-            <button id="rt-fit" class="btn small" title="缩放到合适大小"><svg class="btn-ico" aria-hidden="true"><use href="#ni-fit"></use></svg>适应</button>
-            <button id="rt-expand" class="btn small" title="展开所有折叠分支"><svg class="btn-ico" aria-hidden="true"><use href="#ni-plus"></use></svg>展开全部</button>
-            <button id="rt-collapse" class="btn small" title="折叠选中分支；未选中时折叠所有有下游的分支"><svg class="btn-ico" aria-hidden="true"><use href="#ni-minus"></use></svg>收起分支</button>
-            <span id="rt-state" class="dot">未分析</span>
+            <button id="rt-tidy" class="btn small" title="按调用深度自动分层，重新排版" data-en="Tidy"><svg class="btn-ico" aria-hidden="true"><use href="#ni-layers"></use></svg>整理</button>
+            <button id="rt-fit" class="btn small" title="缩放到合适大小" data-en="Fit"><svg class="btn-ico" aria-hidden="true"><use href="#ni-fit"></use></svg>适应</button>
+            <button id="rt-expand" class="btn small" title="展开所有折叠分支" data-en="Expand all"><svg class="btn-ico" aria-hidden="true"><use href="#ni-plus"></use></svg>展开全部</button>
+            <button id="rt-collapse" class="btn small" title="折叠选中分支；未选中时折叠所有有下游的分支" data-en="Collapse branches"><svg class="btn-ico" aria-hidden="true"><use href="#ni-minus"></use></svg>收起分支</button>
+            <span id="rt-state" class="dot" data-en="Not analyzed">未分析</span>
           </div>
           <div class="trow rtfilter">
             <span class="lb">范围</span>
@@ -1540,10 +1544,10 @@
               <button id="rt-chain-pick" class="btn small" title="用当前选中的全部函数作为链路根；Ctrl / Shift 点击可多选"><svg class="btn-ico" aria-hidden="true"><use href="#ni-flow"></use></svg>拉选中链路</button>
               <button id="rt-chain-back" class="btn small" title="回到全固件图；直接使用本地缓存，不重新分析"><svg class="btn-ico" aria-hidden="true"><use href="#ni-arrow-left"></use></svg>返回全固件</button>
             </span>
-            <label class="chk" title="递归展开 main 可达调用"><input type="checkbox" id="rt-show-interrupts" /> 中断</label>
+            <label class="chk" title="递归展开 main 可达调用"><input type="checkbox" id="rt-show-interrupts" /> <span data-en="Interrupts">中断</span></label>
             <label class="chk" title="先显示 main 入口和组件入口，点击节点逐步展开"><input type="checkbox" id="rt-skeleton" checked /> 入口骨架</label>
-            <label class="chk" title="链路中隐藏 HAL / CMSIS / C 库等系统函数，优先显示应用逻辑"><input type="checkbox" id="rt-app-only" checked /> 应用逻辑</label>
-            <label class="chk" title="勾选后收起库函数下游分支；取消勾选立即展开"><input type="checkbox" id="rt-hide-lib" checked /> 折叠库函数</label>
+            <label class="chk" title="链路中隐藏 HAL / CMSIS / C 库等系统函数，优先显示应用逻辑"><input type="checkbox" id="rt-app-only" checked /> <span data-en="Application logic">应用逻辑</span></label>
+            <label class="chk" title="勾选后收起库函数下游分支；取消勾选立即展开"><input type="checkbox" id="rt-hide-lib" checked /> <span data-en="Collapse libraries">折叠库函数</span></label>
             <span class="rtsep"></span>
             <label class="chk"><input type="checkbox" id="rt-show-addr" checked /> 地址</label>
             <span class="grow"></span>
@@ -1555,9 +1559,9 @@
               <div id="rt-nodes" class="seqnodes"></div>
               <div id="rt-empty" class="rtempty">
                 <div class="rtempty-icon"><svg class="rtempty-svg" aria-hidden="true"><use href="#ni-runtime"></use></svg></div>
-                <b>选择一个固件，查看运行结构</b>
-                <span>全固件函数一览、main 调用链、中断作用域和单函数链路；库函数自动折叠。</span>
-                <button id="rt-empty-pick" class="btn primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-file-binary"></use></svg>选择 ELF / BIN</button>
+              <b data-en="Select firmware to inspect runtime structure">选择一个固件，查看运行结构</b>
+              <span data-en="Full firmware functions, main runtime chains, interrupt scopes and focused call chains; libraries are summarized.">全固件函数一览、main 调用链、中断作用域和单函数链路；库函数自动折叠。</span>
+              <button id="rt-empty-pick" class="btn primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-file-binary"></use></svg><span data-en="Select ELF / BIN">选择 ELF / BIN</span></button>
               </div>
               <div class="seqhint lb">滚轮缩放 · 拖动画布 · 点击空白或按 Esc 取消高亮 · 点击函数看详情</div>
             </div>
@@ -1565,8 +1569,8 @@
           <div class="vsplit" id="rt-log-grip" title="拖动调整日志高度"></div>
           <div class="framebox logbox" id="rt-logbox">
             <div class="trow logbar">
-              <span class="lb">分析日志</span><span class="grow"></span>
-              <button id="rt-log-clear" class="btn small">清空</button>
+              <span class="lb" data-en="Analysis log">分析日志</span><span class="grow"></span>
+              <button id="rt-log-clear" class="btn small" data-en="Clear">清空</button>
             </div>
             <div id="rt-log" class="seqlog scrollable lognum"></div>
           </div>
@@ -1608,7 +1612,7 @@
           <div class="trow scopetoolbar">
             <div class="scopeidentity">
               <span class="scopeeyebrow">RIGOL · SCPI</span>
-              <b>波形工作台</b>
+              <b data-en="Waveform workspace">波形工作台</b>
               <span id="sc-model" class="scopemodel"></span>
             </div>
             <span class="grow"></span>
@@ -1625,15 +1629,15 @@
           </div>
           <div class="scopestage grow">
             <div class="scopestagehead">
-              <div><b>波形视图</b><span id="sc-wave-state" class="scopestatus"></span></div>
+              <div><b data-en="Waveform view">波形视图</b><span id="sc-wave-state" class="scopestatus"></span></div>
               <span id="sc-stage-status" class="scopelive">未连接</span>
             </div>
             <div id="sc-plot-wrap" class="scopeplotwrap grow">
               <div id="sc-plot" class="chartbox"></div>
               <div id="sc-empty" class="scopeempty">
                 <span class="scopeemptyicon">⌁</span>
-                <b>还没有波形</b>
-                <span>连上示波器后点「读波形」。支持屏幕数据和 12k / 120k 深存储。</span>
+                <b data-en="No waveform yet">还没有波形</b>
+                <span data-en="Connect the scope, then click Read waveform. Screen data and 12k / 120k deep memory are supported.">连上示波器后点「读波形」。支持屏幕数据和 12k / 120k 深存储。</span>
               </div>
             </div>
             <img id="sc-shot" class="shot grow" alt="" hidden />
@@ -2130,7 +2134,7 @@
             <button id="fl-del" class="btn small danger" title="删掉列表里选中的那一个（目录也能删，非空目录会被拒绝）">删除选中</button>
           </div>
           <div class="cardtitle">取回本机</div>
-          <div class="field"><label for="fl-save-dir">下载到</label><input id="fl-save-dir" placeholder="本机目录" /></div>
+          <div class="field"><label for="fl-save-dir" data-en="Save to">下载到</label><input id="fl-save-dir" placeholder="本机目录" data-en-ph="Local folder" /></div>
           <div class="btnrow"><button id="fl-pull" class="btn">传回本机</button></div>
           <div class="cardtitle">发到设备</div>
           <div class="field">
@@ -2154,7 +2158,7 @@
               </div>
             </div>
             <div class="field"><label for="fl-tftp-port">端口</label><input id="fl-tftp-port" type="number" value="69" /></div>
-            <div class="trow"><label class="chk" title="打开后允许设备把文件写进来（慎用：会落到根目录下）"><input type="checkbox" id="fl-tftp-write" /> 允许写入</label></div>
+            <div class="trow"><label class="chk" title="打开后允许设备把文件写进来（慎用：会落到根目录下）"><input type="checkbox" id="fl-tftp-write" /> <span data-en="Allow writes">允许写入</span></label></div>
             <div class="btnrow">
               <button id="fl-tftp-go" class="btn small primary">启动</button>
               <button id="fl-tftp-stop" class="btn small">停止</button>
@@ -2443,15 +2447,15 @@
 
         <!-- 运行结构参数 -->
         <div class="parampane" data-param="runtime" hidden>
-          <div class="cardtitle">分析目标</div>
+          <div class="cardtitle" data-en="Analysis target">分析目标</div>
           <div id="rt-file-card" class="rtfilecard">
             <b id="rt-side-name">未选择固件</b>
             <span id="rt-side-path">选择 ELF 后可按 main 生成运行结构；BIN 需要基址与架构。</span>
           </div>
           <div class="field"><label>分析器</label><span id="rt-side-analyzer" class="rtbadge off">检测中…</span></div>
           <div class="btnrow">
-            <button id="rt-run" class="btn primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-play"></use></svg>分析运行结构</button>
-            <button id="rt-pick-side" class="btn small"><svg class="btn-ico" aria-hidden="true"><use href="#ni-file-binary"></use></svg>选择固件</button>
+            <button id="rt-run" class="btn primary" data-en="Analyze runtime"><svg class="btn-ico" aria-hidden="true"><use href="#ni-play"></use></svg>分析运行结构</button>
+            <button id="rt-pick-side" class="btn small" data-en="Select firmware"><svg class="btn-ico" aria-hidden="true"><use href="#ni-file-binary"></use></svg>选择固件</button>
           </div>
           <details class="adv rtelfhelp">
             <summary>如何生成 ELF（MDK / CMake）</summary>
@@ -2470,16 +2474,16 @@
             <summary>裸机 BIN 必须填写</summary>
             <div class="field"><label>基址</label><input id="rt-bin-base" placeholder="0x08000000" /></div>
             <div class="field"><label>架构</label><select id="rt-bin-arch"><option value="ARMCortexM">ARM Cortex-M</option><option value="ARMEL">ARM little-endian</option><option value="ARMCortexA">ARM Cortex-A</option><option value="MIPS32">MIPS32</option></select></div>
-            <div class="field"><label>入口</label><input id="rt-bin-entry" placeholder="0x08000101（可留空）" /></div>
-            <div class="field"><label>向量表</label><input id="rt-vector-base" placeholder="自动发现，可覆盖" /></div>
+            <div class="field"><label>入口</label><input id="rt-bin-entry" placeholder="0x08000101（可留空）" data-en-ph="0x08000101 (optional)" /></div>
+            <div class="field"><label data-en="Vector table">向量表</label><input id="rt-vector-base" placeholder="自动发现，可覆盖" data-en-ph="Auto-detected; can override" /></div>
             <p class="hint">BIN 没有符号表时无法可靠找到 main。优先使用 ELF；只有 BIN 时请在符号表中按地址查看 CFG。</p>
           </details>
-          <div class="cardtitle">显示策略</div>
+          <div class="cardtitle" data-en="Display strategy">显示策略</div>
           <div class="field"><label>分析范围</label><select id="rt-scope-side"><option value="all">全固件函数</option><option value="runtime">main 运行链</option><option value="chain">函数调用链路</option></select></div>
           <div class="field"><label>布局</label><select id="rt-layout"><option value="layered">按调用分层</option><option value="compact">紧凑网格</option></select></div>
           <div class="field"><label>函数筛选</label><select id="rt-filter-kind"><option value="all">全部函数</option><option value="business">仅业务函数</option><option value="library">仅库函数</option><option value="irq">仅中断</option><option value="isolated">仅孤立函数</option></select></div>
           <div class="field"><label>连线</label><select id="rt-edge-mode" title="大图建议只突出选中节点的上下游链路"><option value="all">全部调用线</option><option value="selected" selected>选中上下游</option><option value="none">不画线</option></select></div>
-          <label class="chk"><input type="checkbox" id="rt-color-scope" checked /> 按作用域着色</label>
+          <label class="chk"><input type="checkbox" id="rt-color-scope" checked /> <span data-en="Color by scope">按作用域着色</span></label>
           <div class="cardtitle">折叠分组<span class="grow"></span><button id="rt-group-add" class="btn small">＋ 新建</button></div>
           <p class="hint">启用的分组会按名称或地址识别函数，并默认收起其下游分支；设置保存在本机。</p>
           <div id="rt-groups" class="rtgroups"></div>
@@ -2493,14 +2497,14 @@
               <button id="rt-group-delete" class="btn small danger">删除</button>
             </div>
           </div>
-          <div class="cardtitle">链路分析</div>
+          <div class="cardtitle" data-en="Chain analysis">链路分析</div>
           <div class="rtchaincard">
-            <div class="rtdet-row">根：<b id="rt-chain-root-side">main</b></div>
+            <div class="rtdet-row"><span data-en="Root:">根：</span><b id="rt-chain-root-side">main</b></div>
             <p class="hint">在全固件或运行链里点击函数；Ctrl / Shift 点击可多选。链路内点其他节点只查看详情，不会改变根。</p>
-            <button id="rt-chain-pick-side" class="btn small primary"><svg class="btn-ico" aria-hidden="true"><use href="#ni-flow"></use></svg>拉选中链路</button>
-            <button id="rt-chain-back-side" class="btn small"><svg class="btn-ico" aria-hidden="true"><use href="#ni-arrow-left"></use></svg>返回全固件</button>
+            <button id="rt-chain-pick-side" class="btn small primary" data-en="Draw selected chain"><svg class="btn-ico" aria-hidden="true"><use href="#ni-flow"></use></svg>拉选中链路</button>
+            <button id="rt-chain-back-side" class="btn small" data-en="Back to full firmware"><svg class="btn-ico" aria-hidden="true"><use href="#ni-arrow-left"></use></svg>返回全固件</button>
           </div>
-          <div class="cardtitle">选中函数</div>
+          <div class="cardtitle" data-en="Selected function">选中函数</div>
           <div id="rt-fn-card"><p class="hint">在中间点一个函数，这里显示地址、大小和调用点。</p></div>
         </div>
         <!-- 烧录参数 -->
@@ -2538,34 +2542,34 @@
             <div class="field">
               <label for="fl-tool-pyocd">pyOCD</label>
               <div class="inline">
-                <input id="fl-tool-pyocd" placeholder="pyocd.exe 路径（CMSIS-DAP / WCH-Link / ST-Link）" />
+                <input id="fl-tool-pyocd" placeholder="pyocd.exe 路径（CMSIS-DAP / WCH-Link / ST-Link）" data-en-ph="pyocd.exe path (CMSIS-DAP / WCH-Link / ST-Link)" />
                 <button id="fl-browse-pyocd" class="btn icon" title="选 pyocd.exe">…</button>
               </div>
             </div>
             <div class="field">
               <label for="fl-tool-esptool">esptool</label>
               <div class="inline">
-                <input id="fl-tool-esptool" placeholder="esptool.exe 路径（ESP ROM 烧录）" />
+                <input id="fl-tool-esptool" placeholder="esptool.exe 路径（ESP ROM 烧录）" data-en-ph="esptool.exe path (ESP ROM flashing)" />
                 <button id="fl-browse-esptool" class="btn icon" title="选 esptool.exe">…</button>
               </div>
             </div>
             <div class="field">
               <label for="fl-tool-wch">WCH-Link</label>
               <div class="inline">
-                <input id="fl-tool-wch" placeholder="wlink.exe 路径（RISC-V）" />
+                <input id="fl-tool-wch" placeholder="wlink.exe 路径（RISC-V）" data-en-ph="wlink.exe path (RISC-V)" />
                 <button id="fl-browse-wch" class="btn icon" title="选 wlink.exe">…</button>
               </div>
             </div>
             <div class="field">
               <label for="fl-tool-aurix">AURIX Flasher</label>
               <div class="inline">
-                <input id="fl-tool-aurix" placeholder="AURIXFlasher.exe 路径" />
+                <input id="fl-tool-aurix" placeholder="AURIXFlasher.exe 路径" data-en-ph="AURIXFlasher.exe path" />
                 <button id="fl-browse-aurix" class="btn icon" title="选 AURIXFlasher.exe">…</button>
               </div>
             </div>
             <div class="field">
               <label for="fl-extra">附加参数</label>
-              <input id="fl-extra" placeholder="可选，追加到工具命令末尾" />
+              <input id="fl-extra" placeholder="可选，追加到工具命令末尾" data-en-ph="Optional; appended to the tool command" />
             </div>
             <div class="btnrow">
               <button id="fl-tool-detect" class="btn small">自动检测</button>
@@ -2635,7 +2639,7 @@
           </div>
           <div class="field fl-probe-only">
             <label for="fl-probe">探针 UID</label>
-            <input id="fl-probe" placeholder="多探针时填 pyOCD 的唯一 ID（可空）" />
+            <input id="fl-probe" placeholder="多探针时填 pyOCD 的唯一 ID（可空）" data-en-ph="pyOCD unique ID when using multiple probes (optional)" />
           </div>
           <div class="field fl-probe-only">
             <label>器件库</label>
@@ -2685,25 +2689,25 @@
           <div class="cardtitle">通道</div>
           <div id="sc-channels" class="scchans"></div>
 
-          <div class="cardtitle">自动测量<span class="grow"></span>
-            <label class="chk" title="每 2 秒重测一次"><input type="checkbox" id="sc-meas-auto" /> 连续</label>
-            <button id="sc-meas" class="btn small">测一次</button></div>
+          <div class="cardtitle scopemeashead"><span data-en="Auto measure">自动测量</span><span class="grow"></span>
+            <label class="chk" title="每 2 秒重测一次"><input type="checkbox" id="sc-meas-auto" /> <span data-en="Continuous">连续</span></label>
+            <button id="sc-meas" class="btn small" data-en="Measure once">测一次</button></div>
           <div class="field"><label for="sc-meas-ch">通道</label>
             <select id="sc-meas-ch" class="tight wide"></select></div>
           <div id="sc-meas-out" class="aginfo"></div>
 
-          <div class="cardtitle">时基 / 触发</div>
+          <div class="cardtitle" data-en="Timebase / trigger">时基 / 触发</div>
           <div class="trow">
-            <span class="lb">时基</span>
+            <span class="lb" data-en="Timebase">时基</span>
             <select id="sc-tb" class="tight grow"></select>
             <button id="sc-tb-apply" class="btn small">应用</button>
           </div>
           <div class="trow">
-            <span class="lb">触发源</span>
+            <span class="lb" data-en="Trigger source">触发源</span>
             <select id="sc-trig-src" class="tight grow"></select>
           </div>
           <div class="trow">
-            <span class="lb">电平 V</span>
+            <span class="lb" data-en="Level V">电平 V</span>
             <input id="sc-trig-lev" class="num" type="number" step="0.1" />
             <button id="sc-trig-apply" class="btn small">应用</button>
           </div>
@@ -2711,7 +2715,7 @@
             <button id="sc-run" class="btn small primary">RUN</button>
             <button id="sc-stop" class="btn small">STOP</button>
             <span class="grow"></span>
-            <button id="sc-aut" class="btn small" title="让示波器自己找档位和时基（:AUT）">自动设置</button>
+            <button id="sc-aut" class="btn small" title="让示波器自己找档位和时基（:AUT）" data-en="Autoset">自动设置</button>
           </div>
           <div class="btnrow">
             <button id="sc-idn" class="btn small">*IDN?</button>
@@ -2934,11 +2938,11 @@
           <div id="la-dec-results" class="ladecresults"></div>
           <p class="hint">缩小时波形上的标签会自动避让；完整结果始终在这里。</p>
 
-          <div class="cardtitle">DSView 解码</div>
+          <div class="cardtitle" data-en="DSView decoding">DSView 解码</div>
           <div class="btnrow">
             <select id="la-dsv-dec" class="tight" title="DSView 自带解码器"></select>
             <input id="la-dsv-params" placeholder="rxtx=D0,baudrate=115200" />
-            <button id="la-dsv-run" class="btn small">解码</button>
+            <button id="la-dsv-run" class="btn small" data-en="Decode">解码</button>
           </div>
           <pre id="la-dsv-out" class="hint" style="max-height:180px;overflow:auto;white-space:pre-wrap"></pre>
 
