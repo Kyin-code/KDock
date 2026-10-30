@@ -15,3 +15,6 @@ __pycache__/
 *.py[cod]
 .rtdb-cache/
 
+
+# Local-only design notes (kept out of the repository)
+docs/07-视频带宽计算算法.md
