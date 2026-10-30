@@ -1126,6 +1126,17 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .navsec { background: none; border: none; border-radius: 0; padding: 0; margin-bottom: 6px; }
 .navsec .navgroup { padding: 8px 14px 4px; }
 .navitem { border-radius: 0 10px 10px 0; padding: 0 12px 0 14px; }
+.navadvanced-toggle { margin-top: 2px; }
+.navadvanced-toggle.has-active { color: hsl(var(--primary)); }
+.navcount {
+  flex: 0 0 auto; min-width: 19px; height: 17px; padding: 0 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px; background: var(--surface-3); color: hsl(var(--muted-foreground));
+  font-size: 10px; font-weight: 650; letter-spacing: 0;
+}
+.navchev { flex: 0 0 auto; margin-left: auto; opacity: .68; font-size: 10px; }
+.navadvanced .navgroup { padding-left: 26px; }
+.navadvanced .navitem { padding-left: 27px; }
 /* 日志框：默认高度 + 拖拽把手 */
 .framebox.logbox { flex: 0 0 auto; height: 148px; min-height: 66px; }
 .framebox.logbox .seqlog { flex: 1 1 auto; min-height: 0; max-height: none; overflow: auto; }
@@ -2967,6 +2978,7 @@ html.noparam .split > .params, html.noparam .split > #gutter-r { display: none; 
   html.railopen .navgroup { height: auto; padding: 10px 11px 4px; margin: 0; background: none; font-size: 11px; letter-spacing: .7px; }
   html.railopen .navitem { justify-content: flex-start; padding: 0 11px; gap: 9px; }
   html.railopen .navitem > span { display: inline; }
+  html.railopen .navcount { display: inline-flex; }
   html.railopen .navsub { display: flex; }
   html.railopen .navrow .navmini { display: inline-flex; }
 }

@@ -11,6 +11,7 @@ import { initBatch, initCalc } from "./tools-batch-calc.js";
 import { initLogic, laAgentState, laAgentRead, laAgentDecoders, laAgentConfig, laAgentCapture, laAgentSave } from "./logic-analyzer.js";
 import { HELP_GROUPS as HELP_GROUPS_CONTENT, HELP_TITLE_EN } from "./help-content.js";
 import { FLASH_ROM_TOOLS, flashToolUi, isFlashRomTool, isSerialRomTool } from "./flash-rom.js";
+import { ADVANCED_TABS, initAdvancedNav, openAdvancedNavFor } from "./nav-advanced.js";
 
 const $ = (id) => document.getElementById(id);
 window.kdockToast = (text) => toast(text);
@@ -1592,6 +1593,9 @@ function syncParamStrip() {
 function showPane(tab) {
   const btn = document.querySelector(`.navitem[data-tab="${tab}"]`);
   if (btn) document.querySelectorAll(".navitem").forEach((b) => b.classList.toggle("active", b === btn));
+  const advToggle = document.getElementById("nav-advanced-toggle");
+  if (advToggle) advToggle.classList.toggle("has-active", ADVANCED_TABS.has(tab));
+  if (ADVANCED_TABS.has(tab)) openAdvancedNavFor(tab, true);
   const work = WORK_OF[tab] || tab;
   document.querySelectorAll("[data-work]").forEach((p) => { p.hidden = p.dataset.work !== work; });
   if (work === "agent") agUnreadClear();      // 切过来就算看过了，清掉未读角标
@@ -1893,6 +1897,7 @@ function bindTabs() {
     const b = document.querySelector('.navitem[data-tab="debug"]');
     if (b) b.hidden = true;
   }
+  initAdvancedNav();
   // 开局先把右栏对到当前页 —— 以前只有"点一下左导航"才会调 showPane，
   // 所以冷启动时右边是空的（连接参数、统计全都不见），得先点别的页再点回来才出来。
   const act = document.querySelector(".navitem.active[data-tab]");
@@ -12179,6 +12184,7 @@ const EN = {
   "本会话都允许": "Allow for this session",
   "已允许": "Allowed", "已拒绝": "Denied",
   "传输": "Transfer", "命令表": "Commands", "固件升级": "Firmware", "烧录": "Flash",
+  "高级工具": "Advanced tools", "开发": "Develop", "效率": "Productivity",
   "文件管理": "Files", "实时图表": "Charts", "中控编排": "Flow", "示波器": "Scope",
   "屏幕捕获": "Capture", "逻辑分析仪": "Logic",
   "批量文本": "Batch text", "计算器": "Calculator",

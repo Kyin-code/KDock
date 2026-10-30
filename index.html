@@ -674,7 +674,6 @@
             <button id="ag-ws-new" class="navmini" title="新建工作区（选一个目录）"><svg class="navico" aria-hidden="true"><use href="#ni-folder-plus"></use></svg></button>
           </div>
           <div id="ag-nav-tree" class="navsub"></div>
-          <button class="navitem" data-tab="kb" title="知识库"><svg class="navico" aria-hidden="true"><use href="#ni-book"></use></svg><span>知识库</span></button>
         </div>
         <div class="navsec">
           <div class="navgroup">设备</div>
@@ -682,7 +681,6 @@
           <button class="navitem" data-tab="flash"><svg class="navico" aria-hidden="true"><use href="#ni-chip"></use></svg><span>烧录</span></button>
           <button class="navitem" data-tab="files"><svg class="navico" aria-hidden="true"><use href="#ni-files"></use></svg><span>文件管理</span></button>
           <button class="navitem" data-tab="runtime" title="固件运行结构：main 调用树 / 中断 / 库函数折叠 / 自动布局"><svg class="navico" aria-hidden="true"><use href="#ni-runtime"></use></svg><span>运行结构</span></button>
-          <button class="navitem" data-tab="adb" title="安卓设备：adb 设备 / shell / 推拉文件 / 装 APK / 投屏与反向控制（scrcpy 也在这页）"><svg class="navico" aria-hidden="true"><use href="#ni-phone"></use></svg><span>安卓 ADB</span></button>
         </div>
         <div class="navsec">
           <div class="navgroup">环境</div>
@@ -690,16 +688,31 @@
         </div>
 
         <div class="navsec">
-          <div class="navgroup">工具</div>
-          <button class="navitem" data-tab="chart"><svg class="navico" aria-hidden="true"><use href="#ni-chart"></use></svg><span>实时图表</span></button>
-          <button class="navitem" data-tab="seq"><svg class="navico" aria-hidden="true"><use href="#ni-flow"></use></svg><span>中控编排</span></button>
-          <button class="navitem" data-tab="batch" title="多行文本批量处理 / 逐行发到串口"><svg class="navico" aria-hidden="true"><use href="#ni-text"></use></svg><span>批量文本</span></button>
-          <button class="navitem" data-tab="calc" title="程序员计算器：表达式、32 位控制板、历史记录"><svg class="navico" aria-hidden="true"><use href="#ni-calc"></use></svg><span>计算器</span></button>
-          <button class="navitem" data-tab="datacalc" title="文件校验 / 哈希、浮点、进制字节序、AES / RSA"><svg class="navico" aria-hidden="true"><use href="#ni-hash"></use></svg><span>数据计算</span></button>
-          <button class="navitem" data-tab="scope"><svg class="navico" aria-hidden="true"><use href="#ni-scope"></use></svg><span>示波器</span></button>
-          <button class="navitem" data-tab="capture" title="屏幕共享：本机桌面 / VNC（可控制键鼠）/ RTSP / RTMP / H.264（FFmpeg 解码），支持全屏与快捷键"><svg class="navico" aria-hidden="true"><use href="#ni-screen"></use></svg><span>屏幕共享</span></button>
-          <button class="navitem" data-tab="debug" title="内嵌调试：GDB（MI）+ GDB Server（openocd / J-Link）"><svg class="navico" aria-hidden="true"><use href="#ni-debug"></use></svg><span>调试</span></button>
-          <button class="navitem" data-tab="logic"><svg class="navico" aria-hidden="true"><use href="#ni-logic"></use></svg><span>逻辑分析仪</span></button>
+          <button id="nav-advanced-toggle" class="navitem navadvanced-toggle" title="展开低频开发、测量和效率工具">
+            <svg class="navico" aria-hidden="true"><use href="#ni-layers"></use></svg>
+            <span>高级工具</span>
+            <span id="nav-advanced-count" class="navcount">11</span>
+            <span class="navchev">▸</span>
+          </button>
+          <div id="nav-advanced" class="navadvanced" hidden>
+            <div class="navgroup">开发</div>
+            <button class="navitem" data-tab="cmds"><svg class="navico" aria-hidden="true"><use href="#ni-terminal"></use></svg><span>命令表</span></button>
+            <button class="navitem" data-tab="kb" title="知识库"><svg class="navico" aria-hidden="true"><use href="#ni-book"></use></svg><span>知识库</span></button>
+            <button class="navitem" data-tab="adb" title="安卓设备：adb 设备 / shell / 推拉文件 / 装 APK / 投屏与反向控制（scrcpy 也在这页）"><svg class="navico" aria-hidden="true"><use href="#ni-phone"></use></svg><span>安卓 ADB</span></button>
+            <button class="navitem" data-tab="debug" title="内嵌调试：GDB（MI）+ GDB Server（openocd / J-Link）"><svg class="navico" aria-hidden="true"><use href="#ni-debug"></use></svg><span>调试</span></button>
+
+            <div class="navgroup">测量</div>
+            <button class="navitem" data-tab="scope"><svg class="navico" aria-hidden="true"><use href="#ni-scope"></use></svg><span>示波器</span></button>
+            <button class="navitem" data-tab="logic"><svg class="navico" aria-hidden="true"><use href="#ni-logic"></use></svg><span>逻辑分析仪</span></button>
+            <button class="navitem" data-tab="capture" title="屏幕共享：本机桌面 / VNC（可控制键鼠）/ RTSP / RTMP / H.264（FFmpeg 解码），支持全屏与快捷键"><svg class="navico" aria-hidden="true"><use href="#ni-screen"></use></svg><span>屏幕共享</span></button>
+
+            <div class="navgroup">效率</div>
+            <button class="navitem" data-tab="chart"><svg class="navico" aria-hidden="true"><use href="#ni-chart"></use></svg><span>实时图表</span></button>
+            <button class="navitem" data-tab="seq"><svg class="navico" aria-hidden="true"><use href="#ni-flow"></use></svg><span>中控编排</span></button>
+            <button class="navitem" data-tab="batch" title="多行文本批量处理 / 逐行发到串口"><svg class="navico" aria-hidden="true"><use href="#ni-text"></use></svg><span>批量文本</span></button>
+            <button class="navitem" data-tab="calc" title="程序员计算器：表达式、32 位控制板、历史记录"><svg class="navico" aria-hidden="true"><use href="#ni-calc"></use></svg><span>计算器</span></button>
+            <button class="navitem" data-tab="datacalc" title="文件校验 / 哈希、浮点、进制字节序、AES / RSA"><svg class="navico" aria-hidden="true"><use href="#ni-hash"></use></svg><span>数据计算</span></button>
+          </div>
         </div>
         <div class="navfoot">
           <button id="nav-settings" class="navitem" title="配色与设置"><svg class="navico" aria-hidden="true"><use href="#ni-settings"></use></svg><span>设置</span></button>

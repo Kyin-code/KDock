@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN" data-lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KDock All Pages Vite Test</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { display: block; background: hsl(var(--background)); color: hsl(var(--foreground)); }
+    #ui-root { width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="ui-root"></div>
+  <script type="module">
+    import { initAdvancedNav, openAdvancedNavFor } from "/src/nav-advanced.js";
+
+    const source = await fetch("/index.html").then((r) => r.text());
+    const parsed = new DOMParser().parseFromString(source, "text/html");
+    const split = parsed.querySelector("main.split");
+    if (!split) throw new Error("Main split markup missing");
+    const root = document.getElementById("ui-root");
+    root.appendChild(split);
+
+    const advanced = initAdvancedNav();
+    const debugBtn = document.querySelector('.navitem[data-tab="debug"]');
+    if (debugBtn) debugBtn.hidden = true;
+    advanced.refreshCount();
+
+    const WORK_OF = {
+      link: "shell", upgrade: "shell", files: "files", cmds: "shell",
+      chart: "chart", seq: "seq", flash: "flash", scope: "scope",
+      capture: "capture", logic: "logic", debug: "debug", agent: "agent",
+      env: "env", usb: "usb", kb: "kb", adb: "adb",
+    };
+    const pages = [...document.querySelectorAll(".navitem[data-tab]")]
+      .map((el) => el.dataset.tab)
+      .filter((v, i, a) => a.indexOf(v) === i);
+
+    window.__showAllPagesPage = (tab) => {
+      const work = WORK_OF[tab] || tab;
+      document.querySelectorAll("[data-work]").forEach((el) => { el.hidden = el.dataset.work !== work; });
+      document.querySelectorAll("[data-param]").forEach((el) => { el.hidden = el.dataset.param !== tab; });
+      document.querySelectorAll(".navitem[data-tab]").forEach((el) => {
+        el.classList.toggle("active", el.dataset.tab === tab);
+      });
+      document.documentElement.dataset.tab = tab;
+      if (!pages.includes(tab)) {
+        throw new Error(`Unknown page ${tab}`);
+      }
+      openAdvancedNavFor(tab, false);
+      return { tab, work };
+    };
+
+    window.__allPages = pages;
+    document.documentElement.dataset.allPagesReady = "1";
+  </script>
+</body>
+</html>
