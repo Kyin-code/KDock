@@ -170,6 +170,7 @@
           <div class="modalnav">
             <button class="modaltab active" data-set="general">通用</button>
             <button class="modaltab" data-set="theme">主题与配色</button>
+            <button class="modaltab" data-set="shortcuts">快捷键</button>
             <button class="modaltab" data-set="model">模型与供应商</button>
             <button class="modaltab" data-set="skills">技能</button>
             <button class="modaltab" data-set="tools">工具</button>
@@ -220,6 +221,10 @@
                 <select id="ui-font" class="tight"></select>
               </div>
               <p class="hint">整体按倍数缩放（控件 / 文本 / 字号一起变），并自动叠加系统的显示缩放；字体只替换正文那一族。</p>
+            </div>
+            <div class="setpane" data-setpane="shortcuts" hidden>
+              <div class="cardtitle">快捷键</div>
+              <div id="set-shortcuts"></div>
             </div>
             <div class="setpane" data-setpane="model" hidden>
               <div class="segtabs" id="ag-prov-tabs">

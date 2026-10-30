@@ -405,12 +405,13 @@ input::placeholder, textarea::placeholder {
   color: hsl(var(--muted-foreground) / 0.72);
   opacity: 1; font-family: inherit; font-weight: 400; letter-spacing: 0;
 }
-input[type="text"], input[type="number"], input:not([type]), select, textarea {
+input[type="text"], input[type="search"], input[type="number"], input[type="password"], input:not([type]), select, textarea {
   width: 100%; height: 30px; padding: 0 10px;
   border: 1px solid hsl(var(--input) / 0.9); border-radius: 10px;
   background: var(--surface-1); color: hsl(var(--foreground));
   transition: border-color .16s ease, box-shadow .16s ease;
 }
+input[type="search"] { appearance: none; -webkit-appearance: none; }
 textarea { height: auto; padding: 7px 10px; resize: vertical; font-family: var(--font-mono); }
 select {
   appearance: none; padding-right: 26px;
@@ -1987,6 +1988,67 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .modalcontent .hint { font-size: 11.5px; line-height: 1.6; margin: 2px 0 10px; color: hsl(var(--muted-foreground)); }
 .modalcontent .cardtitle + .hint { margin-top: -4px; }
 .modalcontent .trow.grow { flex: 1 1 auto; min-width: 0; }
+/* 设置 → 快捷键：动作清单 + 键帽 + 冲突提示，按 JetBrains 的配置习惯排列。 */
+.sc-toolbar {
+  display: flex; align-items: center; gap: 8px; padding: 9px 10px;
+  border: 1px solid var(--surface-line); border-radius: 11px; background: var(--surface-2);
+}
+.sc-search { flex: 1 1 auto; min-width: 160px; max-width: 430px; height: 30px !important; }
+.sc-custom-count {
+  flex: 0 0 auto; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--surface-line); color: hsl(var(--muted-foreground));
+  font: 10.5px/1.55 var(--font-mono);
+}
+.sc-summary { margin: 9px 2px 7px; color: hsl(var(--muted-foreground)); font-size: 11.5px; }
+.sc-message { min-height: 0; margin: 0 2px 7px; font-size: 11.5px; }
+.sc-message:empty { display: none; }
+.sc-message.ok { color: hsl(var(--success)); }
+.sc-message.err { color: hsl(var(--destructive)); }
+.sc-message.recording { color: hsl(var(--primary)); }
+.sc-groups { display: flex; flex-direction: column; gap: 12px; }
+.sc-group { display: flex; flex-direction: column; gap: 5px; }
+.sc-group-title {
+  padding: 3px 2px; color: hsl(var(--muted-foreground));
+  font-size: 10.5px; font-weight: 650; letter-spacing: .09em; text-transform: uppercase;
+}
+.sc-action {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 48px;
+  align-items: center; gap: 12px; min-height: 58px; padding: 9px 11px;
+  border: 1px solid var(--surface-line); border-radius: 10px; background: var(--surface-1);
+  transition: border-color .15s ease, background .15s ease;
+}
+.sc-action:focus-within, .sc-action:hover { border-color: hsl(var(--primary) / .32); background: var(--surface-2); }
+.sc-action-copy { display: grid; gap: 2px; min-width: 0; }
+.sc-action-copy b { font-size: 12.5px; font-weight: 600; }
+.sc-action-copy span { color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.45; }
+.sc-binding { display: grid; justify-items: end; gap: 2px; min-width: 126px; }
+.shortcutkey {
+  min-width: 82px; height: 28px; padding: 0 9px; cursor: pointer;
+  border: 1px solid hsl(var(--border)); border-radius: 7px;
+  background: var(--surface-3); color: hsl(var(--foreground));
+  box-shadow: inset 0 -2px 0 hsl(var(--background) / .35);
+  font: 600 11.5px/1 var(--font-mono);
+}
+.shortcutkey:hover { border-color: hsl(var(--primary) / .55); color: hsl(var(--primary)); }
+.shortcutkey.recording {
+  min-width: 118px; color: hsl(var(--primary)); border-color: hsl(var(--primary));
+  background: hsl(var(--primary) / .1);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / .1);
+}
+.sc-default { color: hsl(var(--muted-foreground)); font: 9.5px/1.35 var(--font-mono); }
+.sc-reset { width: 44px; padding: 0 5px !important; }
+.sc-empty {
+  padding: 34px 12px; text-align: center; color: hsl(var(--muted-foreground));
+  border: 1px dashed var(--surface-line); border-radius: 10px;
+}
+.sc-footnote { margin-top: 12px !important; }
+@container app (max-width: 700px) {
+  .sc-toolbar { flex-wrap: wrap; }
+  .sc-search { max-width: none; flex-basis: 100%; }
+  .sc-action { grid-template-columns: minmax(0, 1fr) 112px; gap: 8px; }
+  .sc-action .sc-reset { grid-column: 2; justify-self: end; }
+  .sc-binding { min-width: 108px; }
+}
 /* 上下文预设小按钮 */
 .chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .chipbtn {

@@ -868,12 +868,11 @@ export function initBatch(opts) {
     const n = $id(id);
     if (n) n.onchange = btDiffRender;
   }
+  // F7 / Shift+F7 由全局快捷键动作分发器执行，避免自定义绑定后同一按键被处理两次。
   document.addEventListener("keydown", (e) => {
     const pane = document.querySelector('.workpane[data-work="batch"]');
-    if (!pane || pane.hidden) return;
-    if ($id("bt-diff").hidden) return;
-    if (e.key === "F7") { e.preventDefault(); btDiffGo(e.shiftKey ? -1 : 1); }
-    else if (e.key === "Escape") { e.preventDefault(); btDiffOpen(false); }
+    if (!pane || pane.hidden || $id("bt-diff").hidden) return;
+    if (e.key === "Escape") { e.preventDefault(); btDiffOpen(false); }
   });
   // 导入 / 示例（导入也能直接把文件拖到左边那个框上）
   $id("bt-import").onclick = () => btImportFile("");

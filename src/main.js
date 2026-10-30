@@ -12,6 +12,7 @@ import { initLogic, laAgentState, laAgentRead, laAgentDecoders, laAgentConfig, l
 import { HELP_GROUPS as HELP_GROUPS_CONTENT, HELP_TITLE_EN } from "./help-content.js";
 import { FLASH_ROM_TOOLS, flashToolUi, isFlashRomTool, isSerialRomTool } from "./flash-rom.js";
 import { ADVANCED_TABS, initAdvancedNav, openAdvancedNavFor } from "./nav-advanced.js";
+import { createShortcutManager, mountShortcutSettings } from "./shortcuts.js";
 
 const $ = (id) => document.getElementById(id);
 window.kdockToast = (text) => toast(text);
@@ -3429,8 +3430,7 @@ async function bindCapture() {
     if (document.documentElement.dataset.tab !== "capture") return;
     const t = e.target;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-    if (e.key === "F11") { e.preventDefault(); capSetFullscreen(!capFs); }
-    else if (e.key === "Escape" && capFs) { e.preventDefault(); capSetFullscreen(false); }
+    if (e.key === "Escape" && capFs) { e.preventDefault(); capSetFullscreen(false); }
   });
   capSetSrc($("cap-src").value);
   // 枚举显示器要过 DXGI，启动时也要花点时间 —— 留到第一次进「屏幕共享」页再列（见 showPane）
@@ -7025,6 +7025,11 @@ function bindTheme() {
 let uiPrefsReady = false;     // 读完之后才允许往回写，免得启动时用旧值把文件覆盖掉
 let uiPrefsLast = "";
 function uiPrefsSnapshot() {
+  let shortcuts = {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem("kdock_shortcuts") || "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) shortcuts = parsed;
+  } catch (_) {}
   return {
     theme: localStorage.getItem("kdock_theme") || "dark",
     scheme: localStorage.getItem("kdock_scheme") || "ocean",
@@ -7032,12 +7037,13 @@ function uiPrefsSnapshot() {
     fontScale: localStorage.getItem("kdock_font_scale") || "normal",
     zoom: localStorage.getItem("kdock_ui_zoom") || "1",
     font: localStorage.getItem("kdock_ui_font") || "system",
+    shortcuts,
   };
 }
 function uiPrefsSave() {
   if (!uiPrefsReady) return;
   const p = uiPrefsSnapshot();
-  const key = [p.theme, p.scheme, p.lang, p.fontScale, p.zoom, p.font].join("|");
+  const key = [p.theme, p.scheme, p.lang, p.fontScale, p.zoom, p.font, JSON.stringify(p.shortcuts)].join("|");
   if (key === uiPrefsLast) return;      // 没变就不写盘
   uiPrefsLast = key;
   invoke("ui_prefs_set", { prefs: p }).catch(() => {});
@@ -7057,6 +7063,9 @@ async function uiPrefsLoad() {
   if (p.fontScale) localStorage.setItem("kdock_font_scale", p.fontScale);
   if (p.zoom) localStorage.setItem("kdock_ui_zoom", p.zoom);
   if (p.font) localStorage.setItem("kdock_ui_font", p.font);
+  if (p.shortcuts && typeof p.shortcuts === "object" && !Array.isArray(p.shortcuts)) {
+    localStorage.setItem("kdock_shortcuts", JSON.stringify(p.shortcuts));
+  }
   uiPrefsReady = true;
   applyTheme(localStorage.getItem("kdock_theme") || "dark");   // 里面会带上 applyScheme
   applyScheme(localStorage.getItem("kdock_scheme") || "ocean");
@@ -7064,7 +7073,7 @@ async function uiPrefsLoad() {
   applyUiScale();
   syncUiScaleControls();
   const s2 = uiPrefsSnapshot();
-  uiPrefsLast = [s2.theme, s2.scheme, s2.lang, s2.fontScale, s2.zoom, s2.font].join("|");
+  uiPrefsLast = [s2.theme, s2.scheme, s2.lang, s2.fontScale, s2.zoom, s2.font, JSON.stringify(s2.shortcuts)].join("|");
 }
 
 /** Agent 对话区高度：拖动它上面那条把手（和传输页的输出框一个路子），双击复位。 */
@@ -7453,6 +7462,7 @@ const HELP_PAGE_ROOT = {
 const HELP_SETTINGS_ROOT = {
   general: "help-settings-general",
   theme: "help-settings-theme",
+  shortcuts: "help-settings-shortcuts",
   model: "help-settings-model",
   skills: "help-settings-skills",
   tools: "help-settings-tools",
@@ -7672,10 +7682,7 @@ function bindHelp() {
   m.addEventListener("click", (e) => { if (e.target === m) closeHelp(); });
   if ($("set-help-open")) $("set-help-open").onclick = () => openHelp();
   document.addEventListener("keydown", (e) => {
-    if (e.key === "F1") {
-      e.preventDefault();
-      openHelp();
-    } else if (e.key === "Escape" && !m.hidden) {
+    if (e.key === "Escape" && !m.hidden) {
       e.preventDefault();
       closeHelp();
     }
@@ -7691,6 +7698,103 @@ function bindHelp() {
   });
 }
 
+// ---------------- 可配置快捷键：动作 → 组合键 → 设置页编辑器 ----------------
+const PRIMARY_SHORTCUT_PAGES = ["link", "usb", "agent", "upgrade", "flash", "files", "runtime", "env"];
+let shortcutManager = null;
+let shortcutSettingsUi = null;
+
+function shortcutCurrentTab() {
+  return document.documentElement.dataset.tab || "link";
+}
+
+function shortcutCyclePage(delta) {
+  const current = shortcutCurrentTab();
+  const index = PRIMARY_SHORTCUT_PAGES.indexOf(current);
+  const base = index >= 0 ? index : (delta > 0 ? -1 : 0);
+  const next = (base + delta + PRIMARY_SHORTCUT_PAGES.length) % PRIMARY_SHORTCUT_PAGES.length;
+  showPane(PRIMARY_SHORTCUT_PAGES[next]);
+}
+
+function syncShortcutHints() {
+  if (!shortcutManager) return;
+  const setElementTip = (el, text) => {
+    if (!el) return;
+    el.title = text;
+    el.dataset.tip = text;
+  };
+  const setTip = (id, text) => setElementTip($(id), text);
+  const settingsKey = shortcutManager.labelFor("app.settings");
+  const helpKey = shortcutManager.labelFor("app.help");
+  const nextDiff = shortcutManager.labelFor("batch.nextDiff");
+  const prevDiff = shortcutManager.labelFor("batch.prevDiff");
+  const fullscreen = shortcutManager.labelFor("capture.fullscreen");
+  setTip("tb-settings", `${en("设置")} (${settingsKey})`);
+  setTip("nav-settings", `${en("设置")} (${settingsKey})`);
+  setTip("bt-diff-open", en("跟 IDE 一样把左右两份文本并排比对") + ` (${nextDiff} / ${prevDiff})`);
+  setTip("bt-diff-prev", `${en("上一处")} (${prevDiff})`);
+  setTip("bt-diff-next", `${en("下一处")} (${nextDiff})`);
+  setTip("cap-fs", en("全屏") + ` (${fullscreen})`);
+  document.querySelectorAll(".help-f1").forEach((el) => setElementTip(el, `${en("帮助")} (${helpKey})`));
+  document.documentElement.dataset.shortcutHelp = helpKey;
+}
+
+function bindShortcuts() {
+  shortcutManager = createShortcutManager({
+    handlers: {
+      "app.settings": () => openSettings("general"),
+      "app.shortcuts": () => openSettings("shortcuts"),
+      "app.help": () => openHelp(),
+      "nav.next": () => shortcutCyclePage(1),
+      "nav.prev": () => shortcutCyclePage(-1),
+      "nav.link": () => showPane("link"),
+      "nav.monitor": () => showPane("usb"),
+      "nav.agent": () => showPane("agent"),
+      "nav.flash": () => showPane("flash"),
+      "nav.files": () => showPane("files"),
+      "nav.runtime": () => showPane("runtime"),
+      "nav.env": () => showPane("env"),
+      "nav.upgrade": () => showPane("upgrade"),
+      "transfer.clear": () => $("clear").click(),
+      "transfer.focus": () => {
+        showPane("link");
+        setTimeout(() => $("tx").focus(), 0);
+      },
+      "agent.new": () => {
+        showPane("agent");
+        agNewSession().catch((e) => toast(String(e)));
+      },
+      "agent.focus": () => {
+        showPane("agent");
+        setTimeout(() => agEl("ag-input").focus(), 0);
+      },
+      "batch.nextDiff": () => $("bt-diff-next").click(),
+      "batch.prevDiff": () => $("bt-diff-prev").click(),
+      "capture.fullscreen": () => capSetFullscreen(!capFs),
+    },
+    canRun: (id) => {
+      const tab = shortcutCurrentTab();
+      if (id === "transfer.clear") return tab === "link";
+      if (id === "batch.nextDiff" || id === "batch.prevDiff") {
+        return tab === "batch" && !!$("bt-diff") && !$("bt-diff").hidden;
+      }
+      if (id === "capture.fullscreen") return tab === "capture";
+      return true;
+    },
+  });
+  shortcutManager.install();
+  shortcutManager.subscribe(uiPrefsSave);
+  shortcutSettingsUi = mountShortcutSettings({
+    root: $("set-shortcuts"),
+    manager: shortcutManager,
+    getLang: () => LANG,
+  });
+  syncShortcutHints();
+  window.kdockOnLang(() => {
+    shortcutSettingsUi?.refresh();
+    syncShortcutHints();
+  });
+}
+
 // ---------------- 设置弹窗（供应商/模型、主题配色、通用、关于） ----------------
 function openSettings(section) {
   const m = document.getElementById("settings-modal");
@@ -7703,6 +7807,7 @@ function openSettings(section) {
   if (section === "model" && !agNewProfile) agLoadConfig();
   // 打开模型页先落在「使用」面板；实时负载**不主动拉**（等用户展开免费模型那块再拉）
   if (section === "model") agProvTab("use");
+  if (section === "shortcuts" && shortcutSettingsUi) shortcutSettingsUi.refresh();
   if (section === "about") agLoadTools();
   if (section === "help") buildHelpIndex();
   if (section === "netip") { bindNetip(); netipLoad(); }
@@ -7724,6 +7829,7 @@ function bindSettings() {
       document.querySelectorAll(".setpane").forEach((p) => { p.hidden = p.dataset.setpane !== b.dataset.set; });
       if (b.dataset.set === "model" && !agNewProfile) agLoadConfig();
       if (b.dataset.set === "model") agProvTab("use");
+      if (b.dataset.set === "shortcuts" && shortcutSettingsUi) shortcutSettingsUi.refresh();
       if (b.dataset.set === "about") agLoadTools();
       if (b.dataset.set === "cache") { cacheRender(); bindCache(); }
       // 技能页：**重新扫一遍再画** —— 用户可能是"打开技能目录、往里丢了一个 SKILL.md"
@@ -7764,7 +7870,6 @@ function bindSettings() {
   m.addEventListener("click", (e) => { if (e.target === m) closeSettings(); });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !m.hidden) closeSettings();
-    if (e.key === "," && (e.ctrlKey || e.metaKey)) { e.preventDefault(); openSettings("general"); }
   });
   const zh = document.getElementById("set-lang-zh");
   const enb = document.getElementById("set-lang-en");
@@ -14286,7 +14391,7 @@ function tbMenuDefs() {
     ]},
     { label: "帮助", items: [
       { t: "功能帮助…", k: "F1", run: () => openHelp(HELP_PAGE_ROOT[helpCurrentPage()]) },
-      { t: "快捷键", run: () => { pushSys("[帮助] F1 当前页帮助 / Enter 发送 / Shift+Enter 换行 · Ctrl+L 清屏 · 中控里 Delete 删选中节点或连线 · 画布滚轮缩放 · 标题栏双击最大化"); toast("快捷键已写到输出区"); } },
+    { t: "快捷键", run: () => { pushSys("[帮助] F1 当前页帮助 / Ctrl+, 设置 / Ctrl+Alt+K 快捷键设置 / Ctrl+PageUp·PageDown 切常用页 / Ctrl+Alt+L 清屏 / F7·Shift+F7 文本差异 / F11 屏幕全屏；完整清单和自定义见设置 → 快捷键"); toast("快捷键已写到输出区"); } },
       { t: "关于 KDock", run: () => { pushSys("[关于] KDock · 串口/网络调试 + openocd/J-Link 烧录 + 中控编排（Tauri 2 + Rust）"); toast("KDock"); } },
     ]},
   ];
@@ -14486,6 +14591,7 @@ async function main() {
   bindNetip();
   bindNetipEvents();
   bindHelp();
+  bindShortcuts();
   bindCache();
   bindAgent();
   bindAgentEvents();

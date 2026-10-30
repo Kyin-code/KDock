@@ -13,8 +13,8 @@ export const HELP_GROUPS = [
       {
         id: "help-shortcuts",
         title: "快捷键与通用操作",
-        zh: "### 快捷键\n- F1：当前页面帮助。\n- Ctrl+,：打开设置。\n- Ctrl+L：清空传输日志。\n- Enter：发送；Shift+Enter：换行。\n- 画布：滚轮缩放、拖动平移；中控里 Delete 删除选中项。\n### 通用规则\n- 带「?」的卡片可以单独打开说明。\n- 长任务会同时写分析/安装日志；失败时优先看日志尾部和提示的临时文件路径。",
-        en: "### Shortcuts\n- F1: help for the current page.\n- Ctrl+,: open Settings.\n- Ctrl+L: clear the transfer log.\n- Enter: send; Shift+Enter: newline.\n- Canvas: wheel to zoom, drag to pan; Delete removes the selected workflow item.\n### General rules\n- Cards with ? open their own help section.\n- Long tasks write progress to a log; check its tail and any temporary-file path on failure."
+        zh: "### 默认快捷键\n- F1：当前页面帮助。\n- Ctrl+,：打开设置。\n- Ctrl+Alt+K：打开快捷键设置。\n- Ctrl+Alt+1…8：跳转到常用页面。\n- Ctrl+PageUp / Ctrl+PageDown：切换常用页面。\n- Ctrl+Alt+L：清空传输日志（仅传输页）。\n- Ctrl+Alt+T：聚焦发送输入框。\n- Ctrl+Alt+N：新建 Agent 会话；Ctrl+Alt+A：聚焦 Agent 输入框。\n- F7 / Shift+F7：批量文本比对里跳下一处 / 上一处差异。\n- F11：屏幕共享全屏；Esc 退出全屏或关闭当前弹层。\n### 自定义\n所有全局动作都可在「设置 → 快捷键」搜索、录制、停用或恢复默认；冲突组合会被拒绝保存。动作以当前绑定为准，页面控件上的快捷键提示也会随设置更新。\n### 输入规则\n普通字母/数字必须搭配 Ctrl 或 Alt；F1、F7、F11 等功能键可以单独使用，避免抢占输入框里的普通按键。\n### 通用规则\n- 带「?」的卡片可以单独打开说明。\n- 长任务会同时写分析/安装日志；失败时优先看日志尾部和提示的临时文件路径。",
+        en: "### Default shortcuts\n- F1: help for the current page.\n- Ctrl+,: open Settings.\n- Ctrl+Alt+K: open Keyboard shortcuts.\n- Ctrl+Alt+1…8: jump to primary pages.\n- Ctrl+PageUp / Ctrl+PageDown: cycle primary pages.\n- Ctrl+Alt+L: clear the transfer log (Transfer only).\n- Ctrl+Alt+T: focus the send box.\n- Ctrl+Alt+N: new Agent session; Ctrl+Alt+A: focus the Agent composer.\n- F7 / Shift+F7: next / previous difference in Batch text comparison.\n- F11: Screen share fullscreen; Esc exits fullscreen or closes the current overlay.\n### Customization\nSearch, record, disable or reset every global action in Settings → Keyboard shortcuts. Conflicting chords are rejected. Controls display the current bindings and update with your changes.\n### Input rule\nPlain letters/numbers require Ctrl or Alt; function keys such as F1, F7 and F11 may be used alone so ordinary typing is never stolen.\n### General rules\n- Cards with ? open their own help section.\n- Long tasks write progress to a log; check its tail and any temporary-file path on failure."
       },
       {
         id: "help-pages",
@@ -675,6 +675,12 @@ export const HELP_GROUPS = [
         en: "Choose light/dark mode, accent, UI scale and font. The UI font applies to menus, chat, forms, placeholders, status and information panels; code, logs, addresses and text editors keep a monospace font. Theme variables apply to charts, canvases, logs and help; verify compact layouts after extreme scaling."
       },
       {
+        id: "help-settings-shortcuts",
+        title: "快捷键",
+        zh: "### 配置方式\n- 搜索动作名称、说明或当前组合键。\n- 点键帽后直接按下新组合键；Esc 取消，Backspace / Delete 停用。\n- 每个动作可以单独恢复，也可以全部恢复默认。\n### 冲突与范围\n同一个组合键只能绑定一个动作，冲突时不会保存。清空传输日志、批量文本差异和屏幕全屏只在对应页面生效；应用、帮助、页面导航和 Agent 动作可以全局使用。\n### 持久化\n自定义值保存到界面偏好，并同步到应用数据目录；升级或切换开发版/正式版后仍会恢复。",
+        en: "### Configure\n- Search by action name, description or current chord.\n- Click a keycap and press the new chord; Esc cancels, Backspace / Delete disables.\n- Reset one action or all actions to defaults.\n### Conflicts and scope\nOne chord can run only one action; conflicts are rejected. Clear transfer log, Batch text diff navigation and Screen share fullscreen are page-scoped; application, help, navigation and Agent actions are global.\n### Persistence\nCustom bindings are saved in UI preferences and the app data directory, so they survive upgrades and dev/release builds."
+      },
+      {
         id: "help-settings-model",
         title: "模型与供应商",
         zh: "管理 OpenAI 兼容/Anthropic 供应商、API Key、模型、温度、可选思考强度和价格。一个 profile 可以声明多个思考档位并设默认值；Agent 底栏会列出这些档位，选择按会话保存。\n### 思考强度测试\n「测试真实思考强度」会对每个勾选档位真实发一次小请求，记录接口可见的 reasoning、首字延迟、出字耗时和 token。隐藏 CoT 的接口显示 0 字只表示未暴露，不代表没有思考。",
@@ -729,6 +735,7 @@ export const HELP_GROUPS = [
 export const HELP_TITLE_EN = {
   "Work with KDock": "Work with KDock",
   "快捷键与通用操作": "Shortcuts and common actions",
+  "快捷键": "Shortcuts",
   "页面之间怎么联动": "How pages work together",
   "连接与参数": "Connection and parameters",
   "收发区与显示": "Traffic and display",

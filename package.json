@@ -15,6 +15,7 @@
     "test:vite:reasoning": "node tests/reasoning-effort.vite-smoke.mjs",
     "test:vite:pages": "node tests/all-pages.vite-smoke.mjs",
     "test:vite:ui": "node tests/ui-polish.vite-smoke.mjs",
+    "test:vite:shortcuts": "node tests/shortcuts.vite-smoke.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
