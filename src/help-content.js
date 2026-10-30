@@ -480,8 +480,8 @@ export const HELP_GROUPS = [
       {
         id: "help-scope-timebase",
         title: "时基、触发与波形",
-        zh: "设置时间范围、触发源、电平、模式以及 RUN/STOP。波形读取会按当前时基和通道生成数据；AUTO 设置可能改变通道档位和触发。",
-        en: "Set timebase, trigger source, level, mode and RUN/STOP. Waveform reads use current timebase/channels; AUTO may change scale and trigger settings."
+        zh: "设置时间范围、触发源、电平、模式以及 RUN/STOP。波形读取会按当前时基和通道生成数据；中央舞台负责波形/截屏视图，右上角状态会同步连接结果。AUTO 设置可能改变通道档位和触发。",
+        en: "Set timebase, trigger source, level, mode and RUN/STOP. Waveform reads use current timebase/channels. The central stage hosts wave/screenshot views and mirrors connection state; AUTO may change scale and trigger settings."
       },
       {
         id: "help-scope-scpi",
@@ -549,8 +549,8 @@ export const HELP_GROUPS = [
       {
         id: "help-batch-main",
         title: "输入与处理",
-        zh: "逐行处理多行文本：去重、排序、前后缀、编号、搜索替换、JSON/正则等。处理只改变当前编辑内容，不会自动写回设备。",
-        en: "Process multiline text row by row: deduplicate, sort, prefix/suffix, number, search/replace, JSON, regex and more. Processing changes the editor only."
+        zh: "左侧输入、右侧查看结果，逐行处理多行文本：去重、排序、前后缀、编号、搜索替换、JSON/正则等。处理只改变当前编辑内容，不会自动写回设备；发送由底部队列单独控制。",
+        en: "Input on the left and inspect results on the right. Process multiline text row by row: deduplicate, sort, prefix/suffix, number, search/replace, JSON, regex and more. Processing changes only the editor; the bottom queue controls sending."
       },
       {
         id: "help-batch-send",

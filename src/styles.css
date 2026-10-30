@@ -789,9 +789,97 @@ html.kb-focus[data-tab="kb"] .split > .params {
 html.kb-focus[data-tab="kb"] .parampane.kbpane { flex: 1 1 auto; min-height: 0; }
 html.kb-focus[data-tab="kb"] .parampane.kbpane #kb-chat-host { height: auto; flex: 1 1 auto; min-height: 0; }
 
-/* 示波器页：波形 / 截屏 两个视图 + 每通道一张卡片 */
-#sc-plot { margin-top: 8px; }
+/* 示波器页：仪器式工作台。上方操作条 + 中间波形舞台 + 右侧通道卡片。 */
+.workpane[data-work="scope"] { overflow: hidden; }
+.scopetoolbar {
+  flex: 0 0 auto; gap: 8px; padding: 10px 12px;
+  border: 1px solid var(--surface-line); border-radius: 14px;
+  background: var(--surface-1);
+}
+.scopeidentity {
+  display: grid; grid-template-columns: auto auto; align-items: center;
+  gap: 1px 9px; min-width: 0;
+}
+.scopeidentity > b { font-size: 14px; letter-spacing: .01em; }
+.scopeeyebrow {
+  grid-column: 1 / -1; color: hsl(var(--primary));
+  font: 650 9.5px/1.2 var(--font-mono); letter-spacing: .16em;
+}
+.scopemodel {
+  min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+  color: hsl(var(--muted-foreground)); font: 11px/1.3 var(--font-mono);
+  white-space: nowrap;
+}
+.scopestage {
+  display: flex; flex-direction: column; min-height: 280px; overflow: hidden;
+  border: 1px solid var(--surface-line); border-radius: 15px;
+  background: var(--surface-1);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .12);
+}
+.scopestagehead {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 42px; padding: 7px 12px 7px 14px;
+  border-bottom: 1px solid var(--surface-line-soft);
+  background: var(--surface-2);
+}
+.scopestagehead > div { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.scopestagehead b { font-size: 12.5px; }
+.scopestatus {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: hsl(var(--muted-foreground)); font-size: 11.5px;
+}
+.scopelive {
+  display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--surface-line); background: var(--surface-3);
+  color: hsl(var(--muted-foreground)); font-size: 11px;
+}
+.scopelive::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: hsl(var(--muted-foreground)); box-shadow: 0 0 0 3px hsl(var(--muted-foreground) / .1);
+}
+.scopelive.ok { color: hsl(var(--success)); border-color: hsl(var(--success) / .35); background: hsl(var(--success) / .09); }
+.scopelive.ok::before { background: hsl(var(--success)); box-shadow: 0 0 0 3px hsl(var(--success) / .12); }
+.scopelive.err { color: hsl(var(--destructive)); border-color: hsl(var(--destructive) / .35); background: hsl(var(--destructive) / .09); }
+.scopelive.err::before { background: hsl(var(--destructive)); box-shadow: 0 0 0 3px hsl(var(--destructive) / .12); }
+.scopeplotwrap {
+  position: relative; display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden;
+  background:
+    linear-gradient(hsl(var(--primary) / .045) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--primary) / .045) 1px, transparent 1px),
+    radial-gradient(circle at 50% 42%, hsl(var(--primary) / .08), transparent 58%),
+    hsl(var(--tint-h) 22% 10%);
+  background-size: 28px 28px, 28px 28px, auto, auto;
+}
+.scopeplotwrap::after {
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  box-shadow: inset 0 0 80px rgba(0, 0, 0, .24);
+}
+#sc-plot {
+  position: absolute; inset: 0; z-index: 1;
+  width: 100%; height: 100%; min-height: 0; margin: 0;
+}
+#sc-plot .uplot { width: 100% !important; height: 100% !important; }
+#sc-plot .u-legend {
+  padding: 7px 10px 0 !important; background: transparent;
+  border: 0; font-family: var(--font-mono);
+}
+#sc-plot .u-legend .u-marker { border-radius: 2px; }
 #sc-shot { align-self: center; margin: auto; image-rendering: auto; background: #000; }
+.scopeempty {
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
+  padding: 24px; color: hsl(var(--muted-foreground)); text-align: center;
+  background: radial-gradient(circle at 50% 44%, hsl(var(--primary) / .08), transparent 38%);
+}
+.scopeempty b { color: hsl(var(--foreground)); font-size: 14px; font-weight: 600; }
+.scopeempty > span:last-child { max-width: 390px; font-size: 12px; line-height: 1.65; }
+.scopeemptyicon {
+  display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 3px;
+  border: 1px solid hsl(var(--primary) / .34); border-radius: 14px;
+  background: hsl(var(--primary) / .08); color: hsl(var(--primary));
+  font: 26px/1 var(--font-mono); box-shadow: inset 0 0 18px hsl(var(--primary) / .08);
+}
 .scchans { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
 .scchan {
   padding: 8px 10px 10px; border-radius: 10px;
@@ -2217,22 +2305,85 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .spin[hidden] { display: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* 批量文本：左输入 → 右结果 */
-.btgrid { display: grid; grid-template-columns: 1fr 22px 1fr; gap: 8px; min-height: 0; }
-.btcol { display: flex; flex-direction: column; gap: 6px; min-height: 0; min-width: 0; }
-.btcol .cardtitle { display: flex; align-items: center; gap: 6px; margin-top: 0; }
+/* 批量文本：输入 → 处理 → 结果/发送，做成清晰的双栏流水线。 */
+.workpane[data-work="batch"] { gap: 8px; overflow: hidden; }
+.batchhero {
+  flex: 0 0 auto; align-items: center; gap: 10px; padding: 11px 13px;
+  border: 1px solid var(--surface-line); border-radius: 14px;
+  background:
+    linear-gradient(110deg, hsl(var(--primary) / .1), transparent 54%),
+    var(--surface-1);
+}
+.batchhero > div:first-child { display: grid; gap: 1px; min-width: 0; }
+.batcheyebrow {
+  color: hsl(var(--primary)); font: 650 9.5px/1.2 var(--font-mono); letter-spacing: .16em;
+}
+.batchhero b { font-size: 14px; }
+.batchsub { color: hsl(var(--muted-foreground)); font-size: 11.5px; }
+.batchcount {
+  flex: 0 0 auto; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid hsl(var(--primary) / .3); background: hsl(var(--primary) / .08);
+  color: hsl(var(--primary)); font: 11px/1.45 var(--font-mono);
+}
+.btgrid {
+  flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr) 34px minmax(0, 1fr);
+  gap: 10px; min-height: 220px;
+}
+.btcol {
+  display: flex; flex-direction: column; gap: 7px; min-height: 0; min-width: 0;
+  padding: 9px; border: 1px solid var(--surface-line); border-radius: 14px;
+  background: var(--surface-1); box-shadow: 0 8px 22px rgba(0, 0, 0, .08);
+}
+.btcol .cardtitle {
+  display: flex; align-items: center; gap: 6px; margin: 0;
+  padding: 0 1px 2px; min-height: 26px;
+  color: hsl(var(--foreground)); font-size: 12px; letter-spacing: .02em; text-transform: none;
+}
+.btbadge {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 7px;
+  border-radius: 6px; font: 650 9.5px/1 var(--font-mono); letter-spacing: .08em;
+}
+.btbadge.input { color: hsl(var(--primary)); background: hsl(var(--primary) / .12); }
+.btbadge.output { color: hsl(var(--success)); background: hsl(var(--success) / .12); }
 .btarea {
   flex: 1 1 auto; min-height: 200px; resize: none; padding: 8px 10px;
-  border: 1px solid var(--surface-line); border-radius: 10px; background: var(--surface-1);
+  border: 1px solid var(--surface-line-soft); border-radius: 9px; background: var(--surface-0);
   font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; line-height: 1.55;
 }
-.btarrow { display: flex; align-items: center; justify-content: center; color: hsl(var(--muted-foreground)); opacity: .6; }
+.btarrow {
+  display: flex; align-items: center; justify-content: center;
+  color: hsl(var(--primary)); opacity: .8;
+}
+.btarrow > span {
+  display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%;
+  border: 1px solid hsl(var(--primary) / .34); background: hsl(var(--primary) / .08);
+  font: 15px/1 var(--font-mono); box-shadow: 0 5px 14px hsl(var(--primary) / .1);
+}
+.btsendbar {
+  flex: 0 0 auto; gap: 9px; padding: 9px 11px;
+  border: 1px solid var(--surface-line); border-radius: 12px; background: var(--surface-1);
+}
+.btsendtitle { display: grid; gap: 0; min-width: 132px; }
+.btsendtitle b { font-size: 12px; }
+.btsendtitle span { color: hsl(var(--muted-foreground)); font-size: 10.5px; }
+.btstate {
+  max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: hsl(var(--muted-foreground)); font-size: 11.5px;
+}
+.workpane[data-work="batch"] > .hint {
+  flex: 0 0 auto; margin-top: -2px; font-size: 11px;
+}
 
 /* 编辑器：行号栏（不可编辑，跟着文本一起滚）+ 底部状态栏（行/列、选中、字符/字节、编码、行尾） */
 .bted {
   display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto;
   flex: 1 1 auto; min-height: 200px;
   border: 1px solid var(--surface-line); border-radius: 10px; background: var(--surface-1); overflow: hidden;
+  transition: border-color .16s ease, box-shadow .16s ease;
+}
+.bted:focus-within {
+  border-color: hsl(var(--ring) / .68);
+  box-shadow: 0 0 0 2px hsl(var(--ring) / .12);
 }
 .btln {
   padding: 8px 8px 8px 10px; text-align: right; min-width: 2.2rem;

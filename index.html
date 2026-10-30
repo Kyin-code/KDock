@@ -975,16 +975,20 @@
 
         <!-- 批量文本：多行处理 + 逐行发到串口 -->
         <div class="workpane" data-work="batch" hidden>
-          <div class="trow">
-            <span class="lb">批量文本</span>
+          <div class="trow batchhero">
+            <div>
+              <span class="batcheyebrow">LINE PIPELINE</span>
+              <b>批量文本</b>
+              <span class="batchsub">输入 → 实时处理 → 结果 / 逐行发送</span>
+            </div>
             <span class="grow"></span>
-            <span id="bt-count" class="lb"></span>
+            <span id="bt-count" class="batchcount"></span>
             <button id="bt-diff-open" class="btn small" title="跟 IDE 一样把左右两份文本并排比对（F7 / Shift+F7 跳差异，Esc 退出）">比对</button>
           </div>
           <!-- 左右两个编辑器都带"行号栏 + 底部状态栏"（跟 IDE、跟参考站一样） -->
           <div class="btgrid grow">
             <div class="btcol" id="bt-in-col">
-              <div class="cardtitle">输入（一行一条）<span class="grow"></span>
+              <div class="cardtitle"><span class="btbadge input">输入</span>输入（一行一条）<span class="grow"></span>
                 <button id="bt-import" class="btn small" title="从文件读进来；也可以把文件直接拖到下面这个框上">导入…</button>
                 <button id="bt-sample" class="btn small">示例</button>
                 <button id="bt-clear" class="btn small danger">清空</button>
@@ -995,9 +999,9 @@
                 <div class="btstatus" id="bt-in-status"></div>
               </div>
             </div>
-            <div class="btarrow">→</div>
+            <div class="btarrow"><span>→</span></div>
             <div class="btcol">
-              <div class="cardtitle">结果<span class="grow"></span>
+              <div class="cardtitle"><span class="btbadge output">结果</span>处理结果<span class="grow"></span>
                 <button id="bt-copy" class="btn small">复制</button>
                 <button id="bt-download" class="btn small">另存为</button>
               </div>
@@ -1027,12 +1031,13 @@
             </div>
             <div id="bt-diff-body" class="btdiffbody"></div>
           </div>
-          <div class="trow">
+          <div class="trow btsendbar">
+            <div class="btsendtitle"><b>发送队列</b><span>逐行发到当前主连接</span></div>
             <button id="bt-send" class="btn small primary" title="按下面的间隔，一行一行发到串口">逐行发送</button>
             <label class="chk"><input type="checkbox" id="bt-with-end" checked /> 每行带走当前行尾</label>
             <label class="chk">间隔 <input type="number" id="bt-gap" class="num" min="0" max="60000" value="200" /> ms</label>
             <span class="grow"></span>
-            <span id="bt-state" class="lb"></span>
+            <span id="bt-state" class="btstate"></span>
           </div>
           <p class="hint">一行一行发到当前串口（每行按上面的行尾设置），发完自动停；发送中再点一次就停下。</p>
         </div>
@@ -1595,9 +1600,12 @@
 
         <!-- 示波器 -->
         <div class="workpane" data-work="scope" hidden>
-          <div class="trow">
-            <span class="lb">示波器</span>
-            <span id="sc-model" class="lb"></span>
+          <div class="trow scopetoolbar">
+            <div class="scopeidentity">
+              <span class="scopeeyebrow">RIGOL · SCPI</span>
+              <b>波形工作台</b>
+              <span id="sc-model" class="scopemodel"></span>
+            </div>
             <span class="grow"></span>
             <button id="sc-view-wave" class="btn small primary">波形</button>
             <button id="sc-view-shot" class="btn small">截屏</button>
@@ -1609,10 +1617,22 @@
             </select>
             <label class="chk" title="每 2 秒自动重读一次"><input type="checkbox" id="sc-wave-auto" /> 自动刷新</label>
             <button id="sc-wave" class="btn small primary">读波形</button>
-            <span id="sc-wave-state" class="lb"></span>
           </div>
-          <div id="sc-plot" class="chartbox grow"></div>
-          <img id="sc-shot" class="shot grow" alt="" hidden />
+          <div class="scopestage grow">
+            <div class="scopestagehead">
+              <div><b>波形视图</b><span id="sc-wave-state" class="scopestatus"></span></div>
+              <span id="sc-stage-status" class="scopelive">未连接</span>
+            </div>
+            <div id="sc-plot-wrap" class="scopeplotwrap grow">
+              <div id="sc-plot" class="chartbox"></div>
+              <div id="sc-empty" class="scopeempty">
+                <span class="scopeemptyicon">⌁</span>
+                <b>还没有波形</b>
+                <span>连上示波器后点「读波形」。支持屏幕数据和 12k / 120k 深存储。</span>
+              </div>
+            </div>
+            <img id="sc-shot" class="shot grow" alt="" hidden />
+          </div>
           <div id="sc-shot-bar" class="trow" hidden>
             <span id="sc-shot-info" class="lb"></span>
             <span class="grow"></span>

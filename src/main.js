@@ -2666,9 +2666,15 @@ function scRow(k, v, cls) {
 
 function scStatus(t, cls) {
   const el = $("sc-state");
-  if (!el) return;
-  el.textContent = t;
-  el.className = "dot" + (cls ? " " + cls : "");
+  if (el) {
+    el.textContent = t;
+    el.className = "dot" + (cls ? " " + cls : "");
+  }
+  const stage = $("sc-stage-status");
+  if (stage) {
+    stage.textContent = t;
+    stage.className = "scopelive" + (cls ? " " + cls : "");
+  }
 }
 
 /** SCPI 控制台的记录（只留最后 80 条，免得越堆越多） */
@@ -2967,6 +2973,8 @@ function scDraw() {
   const box = $("sc-plot");
   if (!box) return;
   const nums = Object.keys(scWaves).map(Number).sort((a, b) => a - b);
+  const empty = $("sc-empty");
+  if (empty) empty.hidden = nums.length > 0;
   if (!nums.length) return;
   const w = box.clientWidth || 600, h = box.clientHeight || 300;
   const base = scWaves[nums[0]];
@@ -3000,9 +3008,11 @@ function scDraw() {
 /** 波形 / 截屏 两个视图来回切 */
 function scSetView(name) {
   scView = name;
+  if ($("sc-plot-wrap")) $("sc-plot-wrap").hidden = name !== "wave";
   if ($("sc-plot")) $("sc-plot").hidden = name !== "wave";
   if ($("sc-shot")) $("sc-shot").hidden = name !== "shot";
   if ($("sc-shot-bar")) $("sc-shot-bar").hidden = name !== "shot" || !scShotData;
+  if ($("sc-empty")) $("sc-empty").hidden = name !== "wave" || Object.keys(scWaves).length > 0;
   if ($("sc-view-wave")) $("sc-view-wave").classList.toggle("primary", name === "wave");
   if ($("sc-view-shot")) $("sc-view-shot").classList.toggle("primary", name === "shot");
   if (name === "wave") scResizePlot();
