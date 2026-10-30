@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN" data-lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KDock Reasoning Effort Vite Test</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { background: hsl(var(--background)); color: hsl(var(--foreground)); }
+    #test-root { width: min(720px, 94vw); height: 94vh; margin: 2vh auto; overflow: auto; padding: 18px; }
+  </style>
+</head>
+<body>
+  <div id="test-root"></div>
+  <script type="module">
+    const source = await fetch("/index.html").then((r) => r.text());
+    const parsed = new DOMParser().parseFromString(source, "text/html");
+    const pane = parsed.querySelector('[data-setpane="model"]');
+    if (!pane) throw new Error("Provider panel markup missing");
+    pane.hidden = false;
+    const advanced = pane.querySelector('[data-provtab-pane="new"]');
+    if (!advanced) throw new Error("Advanced provider pane markup missing");
+    advanced.hidden = false;
+    document.getElementById("test-root").appendChild(pane);
+
+    const modes = [
+      ["none", "关闭思考"], ["minimal", "极低"], ["low", "低"], ["medium", "中"],
+      ["high", "高"], ["xhigh", "极高"], ["max", "最大"], ["ultra", "超强"],
+    ];
+    const box = document.getElementById("ag-p-reasoning-modes");
+    for (const [value, label] of modes) {
+      const row = document.createElement("label");
+      row.className = "effortchip";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = value;
+      cb.checked = value === "low" || value === "high";
+      row.append(cb, document.createTextNode(label));
+      box.appendChild(row);
+    }
+    const sel = document.getElementById("ag-p-reasoning");
+    sel.innerHTML =
+      '<option value="">跟随模型默认</option><option value="low">低</option><option value="high">高</option>';
+    sel.value = "high";
+    const result = document.getElementById("ag-p-reason-result");
+    result.hidden = false;
+    result.innerHTML = `
+      <div class="reasonhead">真实请求观察（不是隐藏 CoT 的绝对证明）</div>
+      <div class="reasonrow"><b>低</b><span>思考 184 字 · 首字 420ms · 出字 880ms · 96 tok</span><small>先拆成 37 × 40 + 37 × 3。</small></div>
+      <div class="reasonrow"><b>高</b><span>思考 612 字 · 首字 1100ms · 出字 2360ms · 244 tok</span><small>比较三种算法后，直接相乘更稳定。</small></div>`;
+    document.documentElement.dataset.reasoningReady = "1";
+  </script>
+</body>
+</html>

@@ -356,20 +356,21 @@
                   <input id="ag-p-res" class="num" type="number" value="8192" title="单次回复最多多少 token" />
                   <span class="hint">留 2048~8192 就行</span>
                 </div>
-                <div class="field"><label for="ag-p-reasoning">思考强度</label>
+                <div class="field"><label>可用思考强度</label>
+                  <div id="ag-p-reasoning-modes" class="effortchips"></div>
+                </div>
+                <p class="hint">只勾选这个供应商/模型确认支持的档位。Agent 面板会按这里列出可选值；不同厂商未支持的档位可能返回 400。</p>
+                <div class="field"><label for="ag-p-reasoning">默认思考强度</label>
                   <select id="ag-p-reasoning">
                     <option value="">跟随模型默认</option>
-                    <option value="none">关闭思考</option>
-                    <option value="minimal">极低</option>
-                    <option value="low">低</option>
-                    <option value="medium">中</option>
-                    <option value="high">高</option>
-                    <option value="xhigh">极高</option>
-                    <option value="max">最大</option>
-                    <option value="ultra">超强</option>
                   </select>
-                  <span class="hint">OpenAI 兼容发 reasoning_effort；Anthropic 转成 thinking budget</span>
                 </div>
+                <div class="trow">
+                  <button id="ag-p-reason-test" class="btn small">测试真实思考强度</button>
+                  <span id="ag-p-reason-test-state" class="lb"></span>
+                </div>
+                <div id="ag-p-reason-result" class="reasonresult" hidden></div>
+                <p class="hint">测试会对每个已勾选档位真实发一次小请求（会产生少量 token 费用），记录接口可见的思考正文、首字延迟、出字耗时和 token。隐藏 CoT 的厂商可能显示 0 字；这只能说明未暴露，不代表没有思考。</p>
                 <div class="field"><label for="ag-p-price-cur">价格</label>
                   <select id="ag-p-price-cur" class="tight">
                     <option value="USD">美元 / 百万 token</option>
@@ -933,6 +934,10 @@
               </label>
               <span class="grow"></span>
               <span id="ag-model-busy" class="spin" hidden title="正在取模型状态（AMD 那边约 20 秒）"></span>
+              <label class="agctl" id="ag-reasoning-wrap" hidden>
+                <span class="agctl-label">思考</span>
+                <select id="ag-reasoning" title="本会话的思考强度"></select>
+              </label>
               <label class="agctl agctl-model">
                 <span class="agctl-label">模型</span>
                 <select id="ag-quick-model" class="tight" title="这轮用哪个模型（参数去设置里改）"></select>

@@ -594,6 +594,12 @@ fn parse_plain(text: &str) -> Result<ChatOut, String> {
         .and_then(|c| c.as_str())
         .unwrap_or("")
         .to_string();
+    out.reasoning = msg
+        .get("reasoning_content")
+        .or_else(|| msg.get("reasoning"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     if let Some(calls) = msg.get("tool_calls").and_then(|c| c.as_array()) {
         for (i, call) in calls.iter().enumerate() {
             let id = call

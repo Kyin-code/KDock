@@ -55,6 +55,10 @@ fn default_max_messages() -> u32 { 40 }
 fn default_true() -> bool { true }
 fn default_kind() -> String { "openai".into() }
 
+pub const REASONING_EFFORTS: &[&str] = &[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+];
+
 /// 按百万 token 计价的模型价格。峰价 / 谷价分开存，币种由用户选。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelPricing {
@@ -145,13 +149,17 @@ impl Provider {
         let mut out: Vec<String> = Vec::new();
         for v in &self.reasoning_efforts {
             let s = v.trim();
-            if !s.is_empty() && !out.iter().any(|x| x == s) { out.push(s.to_string()); }
+            if REASONING_EFFORTS.contains(&s) && !out.iter().any(|x| x == s) {
+                out.push(s.to_string());
+            }
         }
         let single = self.reasoning_effort.trim();
-        if !single.is_empty() && !out.iter().any(|x| x == single) { out.push(single.to_string()); }
+        if REASONING_EFFORTS.contains(&single) && !out.iter().any(|x| x == single) {
+            out.push(single.to_string());
+        }
         self.reasoning_efforts = out;
-        if self.reasoning_effort.trim().is_empty() {
-            self.reasoning_effort = self.reasoning_efforts.first().cloned().unwrap_or_default();
+        if !REASONING_EFFORTS.contains(&self.reasoning_effort.trim()) {
+            self.reasoning_effort.clear();
         }
     }
     pub fn reasoning_effort(&self) -> Option<&str> {
@@ -177,6 +185,20 @@ impl Provider {
         let max_tokens = self.reserve_output.max(2_048);
         Some(requested.min(max_tokens.saturating_sub(1_024)).max(1_024))
     }
+
+    /// 会话选择的档位优先；不在该 profile 声明的列表里时回退到 profile 默认。
+    pub fn effective_reasoning_effort(&self, requested: &str) -> String {
+        let requested = requested.trim();
+        if !requested.is_empty()
+            && REASONING_EFFORTS.contains(&requested)
+            && (self.reasoning_efforts.is_empty()
+                || self.reasoning_efforts.iter().any(|v| v == requested))
+        {
+            requested.to_string()
+        } else {
+            self.reasoning_effort.trim().to_string()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -196,11 +218,19 @@ pub fn load_providers(app: &AppHandle) -> ProviderConfig {
         Ok(p) => p,
         Err(_) => return ProviderConfig::default(),
     };
-    read_json(&path).unwrap_or_default()
+    let mut cfg: ProviderConfig = read_json(&path).unwrap_or_default();
+    for provider in &mut cfg.providers {
+        provider.normalize_efforts();
+    }
+    cfg
 }
 
 pub fn save_providers(app: &AppHandle, cfg: &ProviderConfig) -> Result<(), String> {
-    write_json(&providers_path(app)?, cfg)
+    let mut normalized = cfg.clone();
+    for provider in &mut normalized.providers {
+        provider.normalize_efforts();
+    }
+    write_json(&providers_path(app)?, &normalized)
 }
 
 pub fn find_provider(cfg: &ProviderConfig, id: Option<&str>) -> Option<Provider> {
@@ -439,6 +469,9 @@ pub struct SessionMeta {
     pub provider_id: String,
     #[serde(default)]
     pub model: String,
+    /// 本会话覆盖的思考强度；空=采用 provider 默认。
+    #[serde(default)]
+    pub reasoning_effort: String,
     /// 这次会话的工作区（文件工具的根）
     #[serde(default)]
     pub workspace: String,
@@ -646,6 +679,7 @@ pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<Sess
         updated: ts,
         provider_id: String::new(),
         model: String::new(),
+        reasoning_effort: String::new(),
         workspace: workspace.to_string(),
         ws: String::new(),
         last_tokens: 0,
@@ -1831,5 +1865,27 @@ mod tests {
         let normalized = remove_migrated_body(&crlf, "kyin-identity", &crlf_body);
         assert!(!normalized.contains("秘密正文"));
         assert!(normalized.contains("## keep"));
+    }
+
+    #[test]
+    fn provider_effort_lists_are_normalized_and_session_override_is_bounded() {
+        let mut provider: Provider = serde_json::from_value(serde_json::json!({
+            "id": "p", "name": "p", "endpoint": "https://example.invalid", "model": "m",
+            "reasoning_efforts": ["low", "bogus", "high", "low"],
+            "reasoning_effort": "medium"
+        }))
+        .unwrap();
+        provider.normalize_efforts();
+        assert_eq!(
+            provider.reasoning_efforts,
+            vec!["low".to_string(), "high".to_string(), "medium".to_string()]
+        );
+        assert_eq!(provider.reasoning_effort, "medium");
+        assert_eq!(provider.effective_reasoning_effort("high"), "high");
+        assert_eq!(provider.effective_reasoning_effort("ultra"), "medium");
+        assert_eq!(provider.effective_reasoning_effort("bogus"), "medium");
+        provider.reasoning_effort.clear();
+        provider.normalize_efforts();
+        assert!(provider.reasoning_effort.is_empty(), "空默认要继续表示不发送 reasoning_effort");
     }
 }

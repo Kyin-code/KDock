@@ -12,6 +12,7 @@
     "test:vite:agent": "node tests/agent-typography.vite-smoke.mjs",
     "test:flash": "node tests/flash-rom.unit.mjs",
     "test:vite:flash": "node tests/flash-bootloader.vite-smoke.mjs",
+    "test:vite:reasoning": "node tests/reasoning-effort.vite-smoke.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

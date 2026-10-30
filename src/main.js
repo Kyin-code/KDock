@@ -8178,6 +8178,7 @@ async function mdAddModel() {
     model: m.id,
     api_key_ref: id,
     temperature: 0.2,
+    reasoning_efforts: agRecommendedEfforts(m.id, m.reasoning),
     reasoning_effort: m.reasoning ? "medium" : "",
     context_window: m.ctx,
     reserve_output: Math.max(1024, Math.min(m.out || 8192, 65536)),
@@ -9138,6 +9139,10 @@ function agRenderInfo() {
         agMeta.fingerprint_system,
       ].filter(Boolean).join(" · ")
     : "";
+  const reasonEffort = (agMeta && agMeta.reasoning_effort) || (prov && prov.reasoning_effort) || "";
+  const reasonText = reasonEffort
+    ? en(agReasoningName(reasonEffort) || reasonEffort)
+    : en("模型默认");
   const showRateColor = pricing.peak_enabled && !!agPricingStatus && !!costText;
   const costHtml = !costText ? "—" : showRateColor
     ? `<span class="costpill ${agPricingStatus.peak ? "peak" : "offpeak"}" title="${en("北京时间")} ${AG_PEAK_WINDOWS}；${en("周末与法定节假日为谷价")}">${costText}</span>`
@@ -9165,6 +9170,7 @@ function agRenderInfo() {
     `<div class="row"><span class="k">Git</span>${gitLine}</div>` +
     `<div class="sep"></div>` +
     row("Token", `${en("输入")} ${agK(inTok)} / ${en("输出")} ${agK(outTok)}`) +
+    row("思考强度", reasonText) +
     row("缓存命中", hit + miss > 0 ? `${hitRate}%（${agK(hit)} / ${agK(hit + miss)}）` : "—", hitRate >= 50 ? "ok" : "") +
     row("模型指纹", fp
       ? `<span title="${agEscape(fpTitle)}">${en("当前为")} ${agEscape(fp)}</span>`
@@ -9264,6 +9270,7 @@ async function agOpenSession(id) {
     agUpdateHeader();
     agBuildRail();
     agRenderTree();
+    agSyncReasoningControl();
     agRenderInfo();
     agRefreshGit();        // 每个会话的工作区可能不一样
     agRefreshBreakdown();
@@ -9286,6 +9293,7 @@ async function agNewSession(wsId) {
     agOpenWs[ws] = true;
     await agLoadTree();
     await agOpenSession(agMeta.id);
+    agSyncReasoningControl();
     agEl("ag-input").focus();
     toast("新对话已建好");
   } catch (e) {
@@ -9625,6 +9633,7 @@ function agFlushStream() {
 
 async function bindAgent() {
   if (!agEl("ag-chat")) return;
+  agInitReasoningModes();
   await agLoadConfig();
   await agLoadTree();
   // 打开最近一个对话；一个都没有才新建
@@ -9811,6 +9820,8 @@ async function bindAgent() {
       agEl("ag-p-endpoint").value = p.endpoint;
       agEl("ag-p-model").value = p.model;
       agEl("ag-p-ctx").value = p.ctx;
+      agSetReasoningModes(agRecommendedEfforts(p.model, false),
+        agRecommendedEfforts(p.model, false).includes("medium") ? "medium" : "");
       agFillPricingForm(agPriceFallback(p.model));
       if (agEl("ag-p-peak-enabled")) agEl("ag-p-peak-enabled").checked = /deepseek/i.test(p.model);
       if (agEl("ag-p-kind")) agEl("ag-p-kind").value = p.kind || "openai";
@@ -9826,6 +9837,49 @@ async function bindAgent() {
   if (agEl("ag-prov-import")) agEl("ag-prov-import").onclick = agImportProviders;
   if (agEl("ag-prov-export")) agEl("ag-prov-export").onclick = agExportProviders;
   if (agEl("ag-prov-testall")) agEl("ag-prov-testall").onclick = agTestAllProviders;
+  if (agEl("ag-p-reason-test")) {
+    agEl("ag-p-reason-test").onclick = async () => {
+      const probe = agFormProvider();
+      const efforts = probe.reasoning_efforts || [];
+      const state = agEl("ag-p-reason-test-state");
+      const box = agEl("ag-p-reason-result");
+      if (!probe.endpoint || !probe.model) return toast("先填地址和模型名");
+      if (!efforts.length) return toast("先在「可用思考强度」里至少勾一个档位");
+      agEl("ag-p-reason-test").disabled = true;
+      if (state) state.textContent = en("测试中…每个档位会真实请求一次");
+      if (box) { box.hidden = true; box.innerHTML = ""; }
+      try {
+        const r = await invoke("agent_probe_reasoning", {
+          provider: probe, apiKey: agFormKey(), efforts,
+        });
+        if (state) state.textContent = `${r.results.length} ${en("个档位完成")}`;
+        if (box) {
+          box.hidden = false;
+          const head = document.createElement("div");
+          head.className = "reasonhead";
+          head.textContent = en("真实请求观察（不是隐藏 CoT 的绝对证明）");
+          box.appendChild(head);
+          for (const item of r.results) {
+            const row = document.createElement("div");
+            row.className = "reasonrow" + (item.ok ? "" : " bad");
+            row.innerHTML =
+              `<b>${agEscape(agReasoningName(item.effort) || item.effort)}</b>` +
+              (item.ok
+                ? `<span>${en("思考")} ${item.reasoning_chars} ${en("字")} · ${en("首字")} ${item.first_ms}ms · ${en("出字")} ${item.gen_ms}ms · ${item.completion_tokens} tok</span>` +
+                  (item.reasoning_preview ? `<small>${agEscape(item.reasoning_preview)}</small>` : `<small>${en("接口未暴露思考正文")}</small>`)
+                : `<span>${agEscape(item.error || "失败")}</span>`);
+            box.appendChild(row);
+          }
+        }
+      } catch (e) {
+        if (state) state.textContent = en("测试失败");
+        if (box) { box.hidden = false; box.textContent = String(e); }
+        toast(String(e));
+      } finally {
+        agEl("ag-p-reason-test").disabled = false;
+      }
+    };
+  }
   if (agEl("ag-prov-amd-add")) {
     agEl("ag-prov-amd-add").onclick = async () => {
       try {
@@ -9945,10 +9999,17 @@ async function agUseProvider(id, silent) {
   } catch (e) { toast(String(e)); return; }
   // 会话自己也有"用哪个 profile"的记忆，不一起改的话上下文面板/压缩判断还是旧模型的口径
   const sid = agMeta && agMeta.id;
+  let switched = null;
   if (sid) {
-    await invoke("agent_session_set_provider", { id: sid, providerId: id }).catch(() => {});
+    switched = await invoke("agent_session_set_provider", { id: sid, providerId: id }).catch(() => null);
+    if (switched && agMeta) {
+      agMeta.provider_id = switched.provider || agMeta.provider_id;
+      agMeta.model = switched.model || agMeta.model;
+      agMeta.reasoning_effort = switched.reasoning_effort || "";
+    }
   }
   await agLoadConfig();
+  agSyncReasoningControl();
   agRefreshPricing(true);
   if (!silent) {
     const p = (agCfg.providers || []).find((x) => x.id === id);
@@ -10023,6 +10084,7 @@ function agFormProvider() {
     model: agEl("ag-p-model").value.trim(),
     api_key_ref: (agEl("ag-p-id").value || "").trim(),
     temperature: Number(agEl("ag-p-temp").value) || 0.2,
+    reasoning_efforts: agSelectedReasoningEfforts(),
     reasoning_effort: agEl("ag-p-reasoning") ? agEl("ag-p-reasoning").value : "",
     context_window: Number(agEl("ag-p-ctx").value) || 128000,
     reserve_output: Number(agEl("ag-p-res").value) || 8192,
@@ -10097,11 +10159,66 @@ function agTrName(name) {
 /** 出字速度：每个 profile 一条 {last, avg, tokens, ms, samples} */
 let agSpeed = {};
 const fmtTps = (v) => (v > 0 ? (v >= 100 ? Math.round(v) : v.toFixed(1)) + " tok/s" : "");
-const AG_REASONING_NAMES = {
-  none: "关闭思考", minimal: "极低", low: "低", medium: "中",
-  high: "高", xhigh: "极高", max: "最大", ultra: "超强",
-};
+const AG_REASONING_OPTIONS = [
+  ["none", "关闭思考"], ["minimal", "极低"], ["low", "低"], ["medium", "中"],
+  ["high", "高"], ["xhigh", "极高"], ["max", "最大"], ["ultra", "超强"],
+];
+const AG_REASONING_NAMES = Object.fromEntries(AG_REASONING_OPTIONS);
 const agReasoningName = (v) => AG_REASONING_NAMES[String(v || "")] || "";
+
+function agSelectedReasoningEfforts() {
+  return [...document.querySelectorAll("#ag-p-reasoning-modes input:checked")]
+    .map((el) => el.value)
+    .filter(Boolean);
+}
+
+function agSyncReasoningDefaultOptions(selected) {
+  const sel = agEl("ag-p-reasoning");
+  const modes = agSelectedReasoningEfforts();
+  if (!sel) return;
+  const want = selected == null ? sel.value : selected;
+  sel.innerHTML = '<option value="">跟随模型默认</option>';
+  for (const mode of modes) {
+    const o = document.createElement("option");
+    o.value = mode;
+    o.textContent = en(agReasoningName(mode) || mode);
+    sel.appendChild(o);
+  }
+  sel.value = modes.includes(want) ? want : "";
+}
+
+function agSetReasoningModes(modes, selected) {
+  const box = agEl("ag-p-reasoning-modes");
+  if (!box) return;
+  const chosen = new Set((modes || []).filter((v) => AG_REASONING_NAMES[v]));
+  box.innerHTML = "";
+  for (const [value, label] of AG_REASONING_OPTIONS) {
+    const lb = document.createElement("label");
+    lb.className = "effortchip";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = value;
+    cb.checked = chosen.has(value);
+    cb.onchange = () => agSyncReasoningDefaultOptions(value);
+    lb.append(cb, document.createTextNode(en(label)));
+    box.appendChild(lb);
+  }
+  agSyncReasoningDefaultOptions(selected || "");
+}
+
+function agInitReasoningModes() {
+  const box = agEl("ag-p-reasoning-modes");
+  if (!box || box.dataset.ready) return;
+  box.dataset.ready = "1";
+  agSetReasoningModes([], "");
+}
+
+function agRecommendedEfforts(model, knownReasoning) {
+  if (knownReasoning) return ["low", "medium", "high"];
+  return /(?:reason|thinking|deepseek|glm|kimi|qwen3|o[134](?:-|$)|gpt-5)/i.test(String(model || ""))
+    ? ["low", "medium", "high"]
+    : [];
+}
 
 /** 模型名 → 那一行的状态短标签（只有 AMD 的模型有；其它厂商没有状态可查） */
 function agModelStatus(p) {
@@ -10126,6 +10243,40 @@ function agModelOptionText(p) {
   return bits.join(" · ");
 }
 
+function agActiveProvider() {
+  const id = (agCfg && agCfg.activeId)
+    || (agMeta && agMeta.provider_id)
+    || "";
+  return ((agCfg && agCfg.providers) || []).find((p) => p.id === id) || null;
+}
+
+function agSyncReasoningControl() {
+  const wrap = agEl("ag-reasoning-wrap");
+  const sel = agEl("ag-reasoning");
+  const p = agActiveProvider();
+  if (!wrap || !sel) return;
+  const modes = (p && p.reasoning_efforts) || [];
+  if (!modes.length) {
+    wrap.hidden = true;
+    sel.innerHTML = "";
+    return;
+  }
+  wrap.hidden = false;
+  const current = agMeta ? (agMeta.reasoning_effort || "") : "";
+  const defaultText = p.reasoning_effort
+    ? `${en("供应商默认")} · ${en(agReasoningName(p.reasoning_effort) || p.reasoning_effort)}`
+    : en("供应商默认");
+  sel.innerHTML = `<option value="">${agEscape(defaultText)}</option>`;
+  for (const mode of modes) {
+    const o = document.createElement("option");
+    o.value = mode;
+    o.textContent = en(agReasoningName(mode) || mode);
+    sel.appendChild(o);
+  }
+  sel.value = modes.includes(current) ? current : "";
+  sel.disabled = agRunning;
+}
+
 async function agLoadQuickModels() {
   const sel = agEl("ag-quick-model");
   if (!sel || !agCfg) return;
@@ -10144,6 +10295,7 @@ async function agLoadQuickModels() {
   sel.appendChild(more);
   sel.value = agCfg.activeId || agCfg.providers[0].id;
   agSyncModelBusy();
+  agSyncReasoningControl();
 }
 
 /** 正在取 AMD 状态时，下拉旁边转圈（其它厂商不发这个请求，也就不转） */
@@ -10165,6 +10317,22 @@ function bindQuickModels() {
     }
     await agUseProvider(sel.value);
   };
+  const reasoning = agEl("ag-reasoning");
+  if (reasoning) {
+    reasoning.onchange = async () => {
+      if (!agMeta) return toast("先建一个会话");
+      try {
+        const r = await invoke("agent_session_set_reasoning", {
+          id: agMeta.id, effort: reasoning.value,
+        });
+        agMeta.reasoning_effort = r.reasoning_effort || "";
+        toast(`${en("本会话思考强度：")}${agReasoningName(agMeta.reasoning_effort) || en("供应商默认")}`);
+      } catch (e) {
+        toast(String(e));
+        agSyncReasoningControl();
+      }
+    };
+  }
 }
 
 function agFillProvider(id) {
@@ -10181,7 +10349,7 @@ function agFillProvider(id) {
   agEl("ag-p-ctx").value = p.context_window;
   agEl("ag-p-res").value = p.reserve_output;
   agEl("ag-p-temp").value = p.temperature;
-  if (agEl("ag-p-reasoning")) agEl("ag-p-reasoning").value = p.reasoning_effort || "";
+  agSetReasoningModes(p.reasoning_efforts || [], p.reasoning_effort || "");
   agEl("ag-p-tools").checked = !!p.supports_tools;
   agEl("ag-p-stream").checked = !!p.supports_stream;
   agFillPricingForm(agEffectivePricing(p));
@@ -10205,6 +10373,7 @@ async function agSaveProvider() {
     model: agEl("ag-p-model").value.trim(),
     api_key_ref: id,
     temperature: Number(agEl("ag-p-temp").value) || 0.2,
+    reasoning_efforts: agSelectedReasoningEfforts(),
     reasoning_effort: agEl("ag-p-reasoning") ? agEl("ag-p-reasoning").value : "",
     context_window: Number(agEl("ag-p-ctx").value) || 128000,
     reserve_output: Number(agEl("ag-p-res").value) || 8192,
@@ -11533,6 +11702,7 @@ async function agSyncRunning() {
     agState(agRunning ? en("思考中…") : en("空闲"), agRunning ? "ok" : "");
     if (agEl("ag-stop")) agEl("ag-stop").hidden = !agRunning;
     agSetSendDisabled(agRunning);
+    agSyncReasoningControl();
   } catch (_) {}
 }
 
@@ -12453,6 +12623,19 @@ const EN = {
   "agent 的权限：只读 / 危险动作先问 / 全自动": "Agent permission: read-only / ask before risky actions / fully automatic",
   "只读": "Read-only", "需要批准": "Ask", "自动": "Auto",
   "思考强度": "Reasoning effort", "跟随模型默认": "Use model default",
+  "可用思考强度": "Available reasoning efforts",
+  "只勾选这个供应商/模型确认支持的档位。Agent 面板会按这里列出可选值；不同厂商未支持的档位可能返回 400。":
+    "Select only the efforts this provider/model supports. The Agent panel lists these values; unsupported values may return HTTP 400.",
+  "默认思考强度": "Default reasoning effort",
+  "测试真实思考强度": "Test real reasoning efforts",
+  "测试中…每个档位会真实请求一次": "Testing… each effort sends one real request",
+  "个档位完成": "efforts completed",
+  "真实请求观察（不是隐藏 CoT 的绝对证明）": "Observed from real requests (not proof of hidden CoT volume)",
+  "测试会对每个已勾选档位真实发一次小请求（会产生少量 token 费用），记录接口可见的思考正文、首字延迟、出字耗时和 token。隐藏 CoT 的厂商可能显示 0 字；这只能说明未暴露，不代表没有思考。":
+    "The test sends one small real request per selected effort (a small token charge) and records exposed reasoning, first-token latency, generation time and tokens. A hidden-CoT API showing 0 chars only means it was not exposed.",
+  "思考": "thought", "字": "chars", "首字": "first token", "出字": "generation", "接口未暴露思考正文": "API did not expose reasoning text",
+  "供应商默认": "Provider default", "本会话思考强度：": "Session reasoning effort: ",
+  "测试失败": "test failed", "模型默认": "model default",
   "关闭思考": "Disable thinking", "极低": "Minimal", "低": "Low", "中": "Medium",
   "高": "High", "极高": "Extra high", "最大": "Max", "超强": "Ultra",
   "OpenAI 兼容发 reasoning_effort；Anthropic 转成 thinking budget":

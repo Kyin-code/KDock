@@ -336,9 +336,10 @@ fn link_snapshot(app: &AppHandle, session: Option<&str>) -> Value {
 #[tauri::command]
 pub fn agent_provider_save(
     app: AppHandle,
-    provider: Provider,
+    mut provider: Provider,
     make_active: bool,
 ) -> Result<Value, String> {
+    provider.normalize_efforts();
     let mut cfg = store::load_providers(&app);
     let id = provider.id.trim().to_string();
     if id.is_empty() {
@@ -456,6 +457,82 @@ pub fn agent_probe_chat(
     }
     let key = form_key(&app, &provider, api_key);
     ping_once(&provider, &key)
+}
+
+/// 对同一模型实际发出多档思考请求，记录响应里可见的 reasoning、耗时和 token。
+/// 注意：很多厂商只返回最终答案、不暴露隐藏 CoT；这种情况下只能证明请求参数和
+/// 延迟/输出差异，不能把 reasoning 字符数当成模型内部真实思考量的绝对证明。
+#[tauri::command]
+pub fn agent_probe_reasoning(
+    app: AppHandle,
+    provider: Provider,
+    api_key: Option<String>,
+    efforts: Option<Vec<String>>,
+) -> Result<Value, String> {
+    if provider.endpoint.trim().is_empty() {
+        return Err("先填地址（endpoint）".into());
+    }
+    if provider.model.trim().is_empty() {
+        return Err("先填模型名".into());
+    }
+    let key = form_key(&app, &provider, api_key);
+    probe_reasoning_core(provider, &key, efforts)
+}
+
+fn probe_reasoning_core(
+    mut provider: Provider,
+    key: &str,
+    efforts: Option<Vec<String>>,
+) -> Result<Value, String> {
+    provider.normalize_efforts();
+    let mut requested = efforts.unwrap_or_default();
+    requested.retain(|v| store::REASONING_EFFORTS.contains(&v.trim()));
+    let mut seen = std::collections::BTreeSet::new();
+    requested.retain(|v| seen.insert(v.clone()));
+    if requested.is_empty() {
+        requested = if provider.reasoning_effort.trim().is_empty() {
+            vec![String::new()]
+        } else {
+            vec![provider.reasoning_effort.clone()]
+        };
+    }
+    let prompt = "请先认真比较三种解法，再只回答最终数字：37 × 43 = ?";
+    let mut results = Vec::new();
+    for effort in requested {
+        let mut p = provider.clone();
+        p.reasoning_effort = effort.clone();
+        p.reserve_output = p.reserve_output.clamp(1_024, 4_096);
+        let messages = vec![json!({ "role": "user", "content": prompt })];
+        let stop = AtomicBool::new(false);
+        match llm::chat(&p, key, &messages, &[], &stop, &mut llm::NullSink) {
+            Ok(out) => results.push(json!({
+                "effort": if effort.is_empty() { "default" } else { effort.as_str() },
+                "ok": true,
+                "reasoning_chars": out.reasoning.chars().count(),
+                "reasoning_preview": out.reasoning.chars().take(240).collect::<String>(),
+                "answer": out.content.chars().take(160).collect::<String>(),
+                "finish": out.finish,
+                "prompt_tokens": out.usage.prompt_tokens,
+                "completion_tokens": out.usage.completion_tokens,
+                "first_ms": out.first_ms,
+                "gen_ms": out.gen_ms,
+                "response_model": out.response_model,
+                "system_fingerprint": out.system_fingerprint,
+            })),
+            Err(e) => results.push(json!({
+                "effort": if effort.is_empty() { "default" } else { effort.as_str() },
+                "ok": false,
+                "error": e,
+            })),
+        }
+    }
+    Ok(json!({
+        "prompt": prompt,
+        "provider": provider.id,
+        "model": provider.model,
+        "results": results,
+        "note": "真实请求结果；若 reasoning_chars=0，说明接口没有暴露思考正文，不能据此判定没有思考。"
+    }))
 }
 
 /// 表单里没填 Key 就退回密钥库里存的那把（改完别的字段直接测也能用）
@@ -783,6 +860,7 @@ pub fn agent_session_new(
     }
     if let Some(p) = cfg.providers.iter().find(|p| p.id == meta.provider_id) {
         meta.model = p.model.clone();
+        meta.reasoning_effort = p.reasoning_effort.clone();
     }
     store::session_update_meta(&app, &meta)?;
     Ok(meta)
@@ -826,13 +904,51 @@ pub fn agent_session_set_provider(
         .iter()
         .find(|x| x.id == provider_id)
         .ok_or("找不到这个供应商 profile")?;
-    if meta.provider_id != provider_id {
+    let effort_supported = meta.reasoning_effort.is_empty()
+        || p.reasoning_efforts.iter().any(|v| v == &meta.reasoning_effort);
+    if meta.provider_id != provider_id || !effort_supported {
+        let provider_changed = meta.provider_id != provider_id;
         meta.provider_id = provider_id;
         meta.model = p.model.clone();
+        if provider_changed || !effort_supported {
+            meta.reasoning_effort = p.reasoning_effort.clone();
+        }
         meta.updated = now_ms();
         store::session_update_meta(&app, &meta)?;
     }
-    Ok(json!({ "ok": true, "provider": meta.provider_id, "model": meta.model }))
+    Ok(json!({
+        "ok": true,
+        "provider": meta.provider_id,
+        "model": meta.model,
+        "reasoning_effort": meta.reasoning_effort
+    }))
+}
+
+#[tauri::command]
+pub fn agent_session_set_reasoning(
+    app: AppHandle,
+    id: String,
+    effort: String,
+) -> Result<Value, String> {
+    let mut meta = store::session_meta_of(&app, &id).ok_or("找不到这个会话")?;
+    let cfg = store::load_providers(&app);
+    let provider = cfg
+        .providers
+        .iter()
+        .find(|x| x.id == meta.provider_id)
+        .ok_or("找不到这个供应商 profile")?;
+    let requested = effort.trim();
+    if !requested.is_empty()
+        && !provider.reasoning_efforts.iter().any(|v| v == requested)
+    {
+        return Err(format!("这个模型没有启用思考强度 {}", requested));
+    }
+    if meta.reasoning_effort != requested {
+        meta.reasoning_effort = requested.to_string();
+        meta.updated = now_ms();
+        store::session_update_meta(&app, &meta)?;
+    }
+    Ok(json!({ "ok": true, "reasoning_effort": meta.reasoning_effort }))
 }
 
 #[tauri::command]
@@ -2555,7 +2671,7 @@ pub fn agent_send(
         g.insert(session_id.clone(), handle.clone());
     }
     // 占坑成功后再解析 provider/密钥：失败要把坑还回去
-    let (provider, key) = match resolve_provider(&app, want.as_deref()) {
+    let (mut provider, key) = match resolve_provider(&app, want.as_deref()) {
         Ok(v) => v,
         Err(e) => {
             if let Ok(mut g) = st.runs.lock() {
@@ -2564,6 +2680,8 @@ pub fn agent_send(
             return Err(e);
         }
     };
+    provider.reasoning_effort =
+        provider.effective_reasoning_effort(&meta.reasoning_effort);
     let app2 = app.clone();
     std::thread::spawn(move || run_turn(app2, session_id, provider, key, text, handle));
     Ok(json!({ "ok": true }))
@@ -3108,5 +3226,78 @@ mod tests {
         a.pending.lock().unwrap().push("only-a".into());
         assert_eq!(a.pending.lock().unwrap().len(), 1);
         assert!(b.pending.lock().unwrap().is_empty(), "补充消息不能串到另一个会话");
+    }
+
+    #[test]
+    fn reasoning_probe_sends_each_effort_and_records_visible_reasoning() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 4096];
+                let body_start;
+                loop {
+                    let n = stream.read(&mut buf).unwrap();
+                    raw.extend_from_slice(&buf[..n]);
+                    if let Some(pos) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                        body_start = pos + 4;
+                        break;
+                    }
+                }
+                let head = String::from_utf8_lossy(&raw[..body_start]);
+                let len = head.lines()
+                    .find_map(|line| line.strip_prefix("Content-Length: "))
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                while raw.len() < body_start + len {
+                    let n = stream.read(&mut buf).unwrap();
+                    raw.extend_from_slice(&buf[..n]);
+                }
+                let body: Value = serde_json::from_slice(&raw[body_start..body_start + len]).unwrap();
+                seen.push(body.get("reasoning_effort").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                let response = serde_json::json!({
+                    "id": "probe",
+                    "model": "mock-model",
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": "1591",
+                            "reasoning_content": "先分解乘法，再合并结果"
+                        },
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20}
+                }).to_string();
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response.len(), response
+                );
+                stream.write_all(reply.as_bytes()).unwrap();
+            }
+            seen
+        });
+
+        let provider: Provider = serde_json::from_value(json!({
+            "id": "mock", "name": "mock",
+            "endpoint": format!("http://127.0.0.1:{port}/v1"),
+            "model": "mock-model", "supports_stream": false,
+            "reserve_output": 2048,
+            "reasoning_efforts": ["low", "high"],
+            "reasoning_effort": "high"
+        })).unwrap();
+        let result = probe_reasoning_core(
+            provider,
+            "test-key",
+            Some(vec!["low".into(), "high".into()]),
+        ).unwrap();
+        assert_eq!(result["results"][0]["reasoning_chars"], 11);
+        assert_eq!(result["results"][1]["reasoning_chars"], 11);
+        assert_eq!(server.join().unwrap(), vec!["low".to_string(), "high".to_string()]);
     }
 }

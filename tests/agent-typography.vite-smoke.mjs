@@ -95,6 +95,9 @@ try {
   if (!layout.labels.includes("权限") || !layout.labels.includes("模型")) {
     throw new Error(`Agent composer labels are incomplete: ${layout.labels.join(", ")}`);
   }
+  if (!layout.labels.includes("思考") || await page.locator("#ag-reasoning").isHidden()) {
+    throw new Error(`Agent reasoning selector is missing: ${layout.labels.join(", ")}`);
+  }
 
   const fontAudit = await page.evaluate(() => {
     const mono = "code, pre, .agtext, .agskill, .agtool .nm";

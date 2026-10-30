@@ -71,8 +71,8 @@ export const HELP_GROUPS = [
       {
         id: "help-agent-chat",
         title: "对话",
-        zh: "### 用途\n用自然语言描述目标，Agent 会读取工作区、调用工具、执行验证并汇报。\n### 操作\n- 输入后 Enter 发送，Shift+Enter 换行。\n- 可在输入框下方切换权限：只读 / 需批准 / 自动。\n- 停止按钮中断当前回合。\n### 联动\n- 工具包括传输、设备文件、固件、烧录、逻辑分析仪、示波器、运行结构、工作区和技能。\n- 修改设备、运行命令、写文件等动作受权限控制。\n- 「上下文成分」「Agent 信息」展示本次运行的成本和上下文来源。\n### 注意\n- 新会话才会完整采用最新的技能和工具开关配置。",
-        en: "### Purpose\nDescribe a goal; the Agent reads the workspace, calls tools, verifies work and reports.\n### Usage\n- Enter sends, Shift+Enter inserts a newline.\n- Switch permission below the composer: read-only / ask / auto.\n- Stop interrupts the current turn.\n### Relationships\n- Tools cover links, device files, firmware, flashing, Logic analyzer, Scope, Runtime graph, workspace and skills.\n- Device changes, commands and file writes are permission-gated.\n- Agent info and Context breakdown show cost and context sources.\n### Note\n- New sessions fully adopt the latest skill and tool switch settings."
+        zh: "### 用途\n用自然语言描述目标，Agent 会读取工作区、调用工具、执行验证并汇报。\n### 操作\n- 输入后 Enter 发送，Shift+Enter 换行。\n- 可在输入框下方切换权限：只读 / 需批准 / 自动。\n- 供应商声明多个思考档位后，底栏会出现「思考」下拉；选择按当前会话保存。\n- 模型下拉切换 profile；对话内补发消息会在当前回合的下一个边界并入。\n### 联动\n- 「上下文成分」「运行概览」展示成本、上下文来源和建议思考档位。\n- 修改设备、运行命令、写文件等动作受权限控制。",
+        en: "### Purpose\nDescribe a goal; the Agent reads the workspace, calls tools, verifies work and reports.\n### Usage\n- Enter sends, Shift+Enter inserts a newline.\n- Switch permission below the composer: read-only / ask / auto.\n- When a provider declares several reasoning efforts, a Thinking selector appears and is stored per session.\n- The model selector switches profiles; extra messages are merged at the next turn boundary.\n### Relationships\n- Context breakdown and Runtime overview show cost, context sources and the selected effort.\n- Device changes, commands and file writes are permission-gated."
       },
       {
         id: "help-agent-workspace",
@@ -677,8 +677,8 @@ export const HELP_GROUPS = [
       {
         id: "help-settings-model",
         title: "模型与供应商",
-        zh: "管理 OpenAI 兼容/Anthropic 供应商、API Key、模型、温度、思考强度和价格。测试和拉模型使用当前表单值；保存后新回合生效。价格影响费用估算，不影响请求本身。",
-        en: "Manage OpenAI-compatible/Anthropic providers, API keys, models, temperature, reasoning effort and prices. Test/list use current form values; prices affect estimates only."
+        zh: "管理 OpenAI 兼容/Anthropic 供应商、API Key、模型、温度、可选思考强度和价格。一个 profile 可以声明多个思考档位并设默认值；Agent 底栏会列出这些档位，选择按会话保存。\n### 思考强度测试\n「测试真实思考强度」会对每个勾选档位真实发一次小请求，记录接口可见的 reasoning、首字延迟、出字耗时和 token。隐藏 CoT 的接口显示 0 字只表示未暴露，不代表没有思考。",
+        en: "Manage OpenAI-compatible/Anthropic providers, API keys, models, temperature, available reasoning efforts and prices. One profile can declare several efforts plus a default; the Agent composer lists them and stores the choice per session.\n### Reasoning test\nTest real reasoning efforts sends one small real request per selected effort and records exposed reasoning, first-token latency, generation time and tokens. A hidden-CoT API showing 0 chars means only that reasoning text was not exposed."
       },
       {
         id: "help-settings-skills",

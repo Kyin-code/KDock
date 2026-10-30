@@ -34,6 +34,12 @@
     document.getElementById("ag-usage").textContent = "输入 18.4K · 输出 1.3K tokens · 缓存命中 12.1K";
     document.getElementById("ag-quick-model").innerHTML =
       '<option>DeepSeek-V4.1-Flash · deepseek-flash</option><option>GLM-5.3-Flash</option>';
+    const reasoningWrap = document.getElementById("ag-reasoning-wrap");
+    const reasoning = document.getElementById("ag-reasoning");
+    reasoningWrap.hidden = false;
+    reasoning.innerHTML =
+      '<option value="">供应商默认 · 中</option><option value="low">低</option><option value="high">高</option>';
+    reasoning.value = "high";
 
     document.getElementById("ag-chat").innerHTML = `
       <div class="agwelcome">
