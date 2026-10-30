@@ -16,6 +16,7 @@
     "test:vite:pages": "node tests/all-pages.vite-smoke.mjs",
     "test:vite:ui": "node tests/ui-polish.vite-smoke.mjs",
     "test:vite:shortcuts": "node tests/shortcuts.vite-smoke.mjs",
+    "test:vite:session": "node tests/agent-session.vite-smoke.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

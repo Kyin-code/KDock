@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN" data-lang="zh" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KDock Agent Session Meta Vite Test</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body>
+  <section class="agentpane" style="width:720px;height:560px;margin:24px auto">
+    <div class="aghead"><b id="ag-title">新会话</b><span id="ag-turns"></span></div>
+    <div id="ag-chat" class="agentchat">
+      <div class="agmsg user"><div class="head"><span class="who">你</span></div><div class="bubble">检查标题即时刷新</div></div>
+      <div class="agmsg assistant"><div class="head"><span class="who">Agent</span></div><div class="bubble">收到。</div></div>
+    </div>
+  </section>
+  <script type="module">
+    import { mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "/src/agent-session.js";
+
+    const before = { id: "session-live", title: "新会话", user_name: "", agent_name: "" };
+    const incoming = {
+      id: "session-live", title: "修复首轮会话标题", user_name: "任工", agent_name: "KDock",
+      turns: 1,
+    };
+    const after = mergeSessionMeta(before, incoming);
+    document.getElementById("ag-title").textContent = after.title;
+    document.getElementById("ag-turns").textContent = `${after.turns} 轮`;
+    const speakers = document.querySelectorAll("#ag-chat .agmsg .who");
+    speakers[0].textContent = sessionSpeaker(after, "user");
+    speakers[1].textContent = sessionSpeaker(after, "assistant");
+
+    const other = mergeSessionMeta(after, { id: "another-session", title: "不应覆盖" });
+    window.__agentSessionMeta = {
+      before,
+      incoming,
+      after,
+      other,
+      changed: sessionMetaDisplayChanged(before, after),
+      unchanged: sessionMetaDisplayChanged(after, { ...after }),
+    };
+    document.documentElement.dataset.agentSessionReady = "1";
+  </script>
+</body>
+</html>

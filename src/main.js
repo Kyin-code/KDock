@@ -13,6 +13,7 @@ import { HELP_GROUPS as HELP_GROUPS_CONTENT, HELP_TITLE_EN } from "./help-conten
 import { FLASH_ROM_TOOLS, flashToolUi, isFlashRomTool, isSerialRomTool } from "./flash-rom.js";
 import { ADVANCED_TABS, initAdvancedNav, openAdvancedNavFor } from "./nav-advanced.js";
 import { createShortcutManager, mountShortcutSettings } from "./shortcuts.js";
+import { mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "./agent-session.js";
 
 const $ = (id) => document.getElementById(id);
 window.kdockToast = (text) => toast(text);
@@ -8511,9 +8512,7 @@ function agMsgNode(kind, text, ev) {
   head.className = "head";
   const who = document.createElement("span");
   who.className = "who";
-  who.textContent = kind === "user" ? ((agMeta && agMeta.user_name) || "你")
-    : kind === "assistant" ? ((agMeta && agMeta.agent_name) || "Agent")
-    : kind === "err" ? "出错" : "系统";
+  who.textContent = sessionSpeaker(agMeta, kind);
   head.appendChild(who);
   const body = document.createElement("div");
   body.className = "bubble";
@@ -12172,7 +12171,18 @@ async function bindAgentEvents() {
     agEvents.push({ type: "user", text: p.text });
     agRender();
   });
-  await agOn("agent://session", () => { agLoadTree(); });
+  await agOn("agent://session", async (ev) => {
+    const incoming = ev.payload || {};
+    const current = agMeta;
+    const sameSession = !!current && incoming.id === current.id;
+    const next = sameSession ? mergeSessionMeta(current, incoming) : current;
+    const displayChanged = sameSession && sessionMetaDisplayChanged(current, next);
+    if (sameSession) agSetMeta(next, "session-event");
+    await agLoadTree();
+    // 标题和角色名都在 DOM 创建时读取 meta，不能只刷新左侧树；
+    // 当前会话必须重画消息，否则要切走再切回才会看到新称呼。
+    if (displayChanged && agMeta && agMeta.id === incoming.id) agRender();
+  });
   await agOn("agent://toast", (ev) => {
     const t = (ev.payload && ev.payload.text) || "";
     if (t) toast(t);
