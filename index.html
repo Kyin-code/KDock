@@ -175,7 +175,7 @@
             <button class="modaltab" data-set="skills">技能</button>
             <button class="modaltab" data-set="tools">工具</button>
             <button class="modaltab" data-set="mcp">MCP</button>
-            <button class="modaltab" data-set="kb">知识库</button>
+            <button class="modaltab" data-set="kb">浏览器</button>
             <button class="modaltab" data-set="netip">网络与代理</button>
             <button class="modaltab" data-set="cache">缓存</button>
             <button class="modaltab" data-set="help">帮助</button>
@@ -613,19 +613,18 @@
                 远程请求头用于 Authorization 等，本地命令的环境变量也走同一栏。配置文件：</span><code id="set-mcp-path"></code></p>
             </div>
 
-            <!-- 知识库：两个页面地址 -->
+            <!-- 共享内部浏览器：浏览器页与 Agent 浏览器共用同一个当前页面 -->
             <div class="setpane" data-setpane="kb" hidden>
-              <div class="cardtitle">知识库页面</div>
-              <div class="field"><label for="set-kb-mgmt">管理页面</label>
-                <input id="set-kb-mgmt" placeholder="https://…（知识库后台 / 数据集管理页）" /></div>
-              <div class="field"><label for="set-kb-chat">对话页面</label>
-                <input id="set-kb-chat" placeholder="https://…（问答 / 聊天页）" /></div>
+              <div class="cardtitle">共享浏览器首页</div>
+              <div class="field"><label for="set-kb-home">首页</label>
+                <input id="set-kb-home" placeholder="https://…（可留空）" /></div>
               <div class="trow">
                 <button id="set-kb-save" class="btn small primary">保存</button>
-                <button id="set-kb-go" class="btn small">去知识库页</button>
+                <button id="set-kb-go" class="btn small">打开浏览器</button>
                 <span class="grow"></span>
                 <span id="set-kb-state" class="lb"></span>
               </div>
+              <p class="hint">浏览器页和 Agent 右栏共用同一页面、登录状态和导航历史。</p>
             </div>
 
           </div>
@@ -702,7 +701,7 @@
           <div id="nav-advanced" class="navadvanced" hidden>
             <div class="navgroup">开发</div>
             <button class="navitem" data-tab="cmds"><svg class="navico" aria-hidden="true"><use href="#ni-terminal"></use></svg><span>命令表</span></button>
-            <button class="navitem" data-tab="kb" title="知识库"><svg class="navico" aria-hidden="true"><use href="#ni-book"></use></svg><span>知识库</span></button>
+            <button class="navitem" data-tab="kb" title="共享内部浏览器"><svg class="navico" aria-hidden="true"><use href="#ni-book"></use></svg><span>浏览器</span></button>
             <button class="navitem" data-tab="adb" title="安卓设备：adb 设备 / shell / 推拉文件 / 装 APK / 投屏与反向控制（scrcpy 也在这页）"><svg class="navico" aria-hidden="true"><use href="#ni-phone"></use></svg><span>安卓 ADB</span></button>
             <button class="navitem" data-tab="debug" title="内嵌调试：GDB（MI）+ GDB Server（openocd / J-Link）"><svg class="navico" aria-hidden="true"><use href="#ni-debug"></use></svg><span>调试</span></button>
 
@@ -1443,19 +1442,18 @@
           </details>
         </div>
 
-        <!-- 知识库：中间那块贴"管理页面"（内置浏览器 = WebView2 子视图），右栏贴"对话页面"。
-             两个地址都在 设置 → 知识库 里填；没填时点页面中间就会跳到设置。-->
+        <!-- 共享内部浏览器：一块 WebView2，Agent 浏览器和本页同步。 -->
         <div class="workpane kbpane" data-work="kb" hidden>
-          <!-- 地址栏独占一行（宽度整行给输入框），按钮另起一行 -->
           <div class="trow kbaddrrow">
-            <span class="lb kblb">管理页面</span>
-            <input id="kb-url" class="dirinput grow" placeholder="https://…（知识库后台 / 数据集管理页）" />
+            <span class="lb kblb">浏览器</span>
+            <input id="kb-url" class="dirinput grow" placeholder="输入网址或域名" />
           </div>
           <div class="trow kbaddrbtns">
             <button id="kb-open" class="btn primary">打开</button>
+            <button id="kb-back" class="btn small" title="后退">←</button>
             <button id="kb-reload" class="btn small" title="重新加载">↻ 重新加载</button>
             <button id="kb-external" class="btn small" title="用系统浏览器打开（登录 / 下载这类它更顺手）">↗ 系统浏览器</button>
-            <button id="kb-save" class="btn small" title="把这个地址存成「管理页面」默认（设置 → 知识库）">存为默认</button>
+            <button id="kb-save" class="btn small" title="存为共享浏览器首页">存为首页</button>
             <span class="grow"></span>
             <span id="kb-state" class="lb"></span>
           </div>
@@ -1790,23 +1788,23 @@
             <button class="agptab" data-agp="browser">浏览器</button>
           </div>
 
-          <!-- ① 浏览器（agent 也能用：browser_open / browser_read / browser_find） -->
+          <!-- ① 共享浏览器：与浏览器页同一 WebView2，URL / 登录态 / 历史同步 -->
           <div class="agppane" data-agpane="browser" hidden>
             <div class="trow">
-              <input id="ag-br-url" class="agbrurl" placeholder="https:// 或直接输域名" />
+              <input id="ag-br-url" class="agbrurl" placeholder="输入网址或域名" />
               <button id="ag-br-go" class="btn small primary">打开</button>
             </div>
             <div class="trow">
               <button id="ag-br-back" class="btn small" title="上一个页面">←</button>
               <button id="ag-br-ext" class="btn small" title="用系统浏览器打开">↗</button>
-              <button id="ag-br-src" class="btn small" title="看 HTML 源码">源码</button>
+              <button id="ag-br-show" class="btn small" title="在浏览器页查看共享页面">在浏览器打开</button>
+              <button id="ag-br-src" class="btn small" title="查看当前页 HTML 源码">源码</button>
               <span class="grow"></span>
               <span id="ag-br-state" class="lb"></span>
             </div>
             <div class="agbrtitle" id="ag-br-title"></div>
-            <pre id="ag-br-body" class="agbrbody">（agent 打开网页后这里会同步显示；也可以自己填网址打开）</pre>
-            <div class="cardtitle">页面里的链接</div>
-            <div id="ag-br-links" class="agentlist"></div>
+            <p class="hint">这里是共享内部浏览器的导航状态。浏览器页负责显示真实网页，Agent 的 browser_* 工具也操作同一页面。</p>
+            <pre id="ag-br-body" class="agbrbody">（读取当前页后可在这里查看正文 / 源码）</pre>
           </div>
 
           <!-- ② Agent 信息（上）+ 技能 / MCP（下） -->
@@ -2377,22 +2375,11 @@
           <p class="hint">左边是「文件校验 / 浮点 / 进制字节序 / AES / RSA」。AES 与 RSA 走系统的 WebCrypto（浏览器内实现，不发到网上）；密钥只在你本机的框里，不写盘。</p>
         </div>
 
-        <!-- 知识库参数：右栏 = 对话页面（也是内置浏览器） -->
+        <!-- 浏览器页使用整块工作区；右栏只保留共享浏览器入口。 -->
         <div class="parampane kbpane" data-param="kb" hidden>
-          <div class="trow kbaddrrow">
-            <span class="lb kblb">对话页面</span>
-            <input id="kb-chat-url" class="dirinput grow" placeholder="https://…（问答 / 聊天页）" />
-          </div>
-          <div class="trow kbaddrbtns">
-            <button id="kb-chat-open" class="btn small primary">打开</button>
-            <button id="kb-chat-reload" class="btn small" title="重新加载">↻</button>
-            <span class="grow"></span>
-            <button id="kb-chat-focus" class="btn small" title="切换全屏与并排">管理</button>
-            <button id="kb-chat-save" class="btn small" title="把这个地址存成「对话页面」默认（设置 → 知识库）">存为默认</button>
-          </div>
-          <div id="kb-chat-host" class="kbhost grow">
-            <div class="placeholder kbempty" id="kb-chat-empty"></div>
-          </div>
+          <div class="cardtitle">共享浏览器</div>
+          <p class="hint">完整页面显示在中间工作区。地址、登录状态、Cookie 和后退历史由这一块共享浏览器维护。</p>
+          <button class="btn small" data-kb-focus-main>在中间打开</button>
         </div>
 
         <!-- 图表参数 -->

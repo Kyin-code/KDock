@@ -119,19 +119,13 @@ export const HELP_GROUPS = [
     ],
   },
   {
-    title: "知识库",
+    title: "共享浏览器",
     items: [
       {
-        id: "help-kb-chat",
-        title: "对话页面",
-        zh: "内嵌知识库对话页面。地址和焦点设置来自「设置 → 知识库」；顶部「管理/全屏」用于切换管理页和对话页。加载的是外部 WebView，账号和数据由对应知识库服务管理。",
-        en: "Embedded knowledge-base chat. Its URL and focus setting come from Settings → Knowledge base; Manage/Fullscreen switches between admin and chat pages. The external WebView and account are managed by that service."
-      },
-      {
-        id: "help-kb-admin",
-        title: "管理页面",
-        zh: "知识库后台上传文档、切分、索引和测试检索。KDock 只负责嵌入页面，不读取或修改知识库内容；页面里的链接可以用 Agent 的 browser_* 工具继续读取。",
-        en: "The knowledge-base admin page uploads documents, chunks, indexes and tests retrieval. KDock only embeds it and does not modify its data; Agent browser_* tools can continue reading page links."
+        id: "help-kb-shared",
+        title: "共享浏览器",
+        zh: "浏览器页和 Agent 右栏共用同一个 WebView2：地址、登录态、Cookie 和导航历史完全一致。\n### 操作\n- 在浏览器页输入网址并按 Enter，或在 Agent 浏览器面板打开。\n- 页面里的链接和站内跳转保留在当前共享视图中。\n- \"在浏览器打开\" 切回完整页面；\"源码\" 读取当前渲染页的 HTML。\n### Agent\n- browser_open / browser_navigate 导航这块共享视图。\n- browser_read 读取当前 DOM 正文（包括登录后、脚本渲染后的内容）；browser_find 在正文中查找。\n### 注意\n- 这是外部网页，账号和数据由对应服务管理；KDock 不保存网页正文为知识库。\n- 设置里的首页只决定默认地址，不另建第二个页面。",
+        en: "Browser and the Agent side panel share one WebView2: URL, login state, cookies and navigation history are identical.\n### Use\n- Enter a URL on the Browser page or open it in the Agent browser panel.\n- Links and in-site navigation stay in the shared view.\n- \"Open in browser\" shows the full page; \"Source\" reads the rendered HTML.\n### Agent\n- browser_open / browser_navigate drive this shared view.\n- browser_read reads the current DOM text, including logged-in and script-rendered content; browser_find searches it.\n### Notes\n- This is an external webpage; the service owns its account and data. KDock does not store page content as a knowledge base.\n- The home URL in Settings is only the default address; it does not create a second page."
       },
     ],
   },
@@ -706,9 +700,9 @@ export const HELP_GROUPS = [
       },
       {
         id: "help-settings-kb",
-        title: "知识库 URL",
-        zh: "分别配置对话页和管理页地址；它们是内嵌 WebView，不是 KDock 自己保存的文档。地址变更后返回知识库页面重新加载。",
-        en: "Configure chat and admin URLs separately. These are embedded WebViews, not documents stored by KDock. Return to Knowledge base to reload after changes."
+        title: "共享浏览器首页",
+        zh: "配置浏览器页和 Agent 浏览器共用的默认首页。它只是起始地址；登录态、Cookie 和当前页面由共享 WebView2 维护。",
+        en: "Configure the shared default home page for Browser and the Agent browser. It is only a starting URL; login state, cookies and the current page live in the shared WebView2."
       },
       {
         id: "help-settings-netip",
@@ -751,8 +745,7 @@ export const HELP_TITLE_EN = {
   "MCP 服务": "MCP servers",
   "页面里的链接": "Links on the page",
   "工具、权限与审批": "Tools, permissions and approvals",
-  "对话页面": "Chat page",
-  "管理页面": "Admin page",
+  "共享浏览器": "Shared browser",
   "连接与目标": "Connection and target",
   "固件包与来源": "Firmware package and source",
   "升级过程与失败处理": "Upgrade process and failures",
@@ -833,7 +826,7 @@ export const HELP_TITLE_EN = {
   "技能管理": "Skill management",
   "工具开关": "Tool switches",
   "MCP 管理": "MCP management",
-  "知识库 URL": "Knowledge-base URLs",
+  "共享浏览器首页": "Shared browser home", "在浏览器打开": "Open in browser",
   "网络与公网归属": "Network and public-IP location",
   "持久化数据与清理": "Persistent data and cleanup",
   "帮助入口": "Help access",

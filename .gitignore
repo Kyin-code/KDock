@@ -3,6 +3,7 @@
 /node_modules
 .idea/
 *.log
+test-results/
 
 
 # Generated portable analyzer (hundreds of MB; release CI builds it)

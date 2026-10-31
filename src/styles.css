@@ -760,14 +760,11 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
 .chartbox .u-legend { font-size: 11.5px; }
 
 /* ==========================================================================
-   知识库页：中间 + 右栏各贴一个内置浏览器（WebView2 子视图），
-   这里只负责"那块占位区"的尺寸与空态提示 —— 子视图会精确盖在上面。
+   浏览器页：一块共享 WebView2，Agent 侧栏与它同步。
+   这里只负责占位区的尺寸与空态提示。
    ========================================================================== */
 .kbpane { gap: 8px; }
-/* 右栏那块要占满整列（不然只按 min-height 160px 显示，对话页会很矮） */
 .parampane.kbpane { flex: 1 1 auto; min-height: 0; }
-/* 右栏本身是"按内容高度滚动"的容器，普通 flex:1 在这里长不起来 —— 直接按视口算一个稳的高 */
-.parampane.kbpane #kb-chat-host { flex: 1 1 auto; height: max(160px, calc(calc(var(--app-vh) * 100) - 300px)); }
 /* 地址栏：一行只放"标签 + 输入框"（宽度全给输入框），按钮另起一行；
    整行高度按 1.5 倍放大，好点也好认。 */
 .kbaddrrow { padding: 8px 0 10px; gap: 10px; }
@@ -790,16 +787,7 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
 .kbhost > .kbempty .kbbtn { pointer-events: none; }
 .kbpane #kb-url { min-width: 12rem; }
 
-/* 知识库专注模式：保留左侧导航，把对话页铺满其余区域；参数区里的「管理」切回并排。 */
-html.kb-focus[data-tab="kb"] .split { grid-template-columns: var(--nav-w, 152px) 5px minmax(0, 1fr); }
-html.kb-focus[data-tab="kb"] .split > .work,
-html.kb-focus[data-tab="kb"] .split > #gutter-r { display: none; }
-html.kb-focus[data-tab="kb"] .split > .params {
-  grid-column: 3 / -1; grid-row: 1; display: flex; flex-direction: column;
-  max-height: none; overflow: hidden; padding: 12px 14px 14px;
-}
-html.kb-focus[data-tab="kb"] .parampane.kbpane { flex: 1 1 auto; min-height: 0; }
-html.kb-focus[data-tab="kb"] .parampane.kbpane #kb-chat-host { height: auto; flex: 1 1 auto; min-height: 0; }
+/* 共享浏览器占满中间工作区；右栏仅保留导航入口。 */
 
 /* 示波器页：仪器式工作台。上方操作条 + 中间波形舞台 + 右侧通道卡片。 */
 .workpane[data-work="scope"] { overflow: hidden; }

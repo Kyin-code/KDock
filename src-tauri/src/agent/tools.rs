@@ -486,7 +486,7 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
     // ── host：JS 那边实现 ───────────────────────────────────────────
     push(
         "browser_open",
-        "用内置浏览器打开一个网页（抓下来抽正文，页面同时会显示在右侧「浏览器」里）。",
+        "在 KDock 共享内部浏览器中打开网页；浏览器页和 Agent 浏览器显示同一页面。",
         json!({"type":"object","properties":{
             "url":{"type":"string","description":"网址，可以不带 https://"}
         },"required":["url"]}),
@@ -494,11 +494,19 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
     );
     push(
         "browser_read",
-        "读「当前页」的正文（browser_open 之后用；不传 url 就是当前页）。",
+        "读取共享内部浏览器当前页的真实 DOM 正文（登录和 JS 渲染后的内容也能读）。",
         json!({"type":"object","properties":{
             "url":{"type":"string","description":"可选，先抓这个再读"},
             "max_chars":{"type":"integer","description":"最多返回多少字，默认 12000"}
         }}),
+        false,
+    );
+    push(
+        "browser_navigate",
+        "让共享内部浏览器在当前标签页跳转；不抓静态正文，保留登录态和页面脚本。",
+        json!({"type":"object","properties":{
+            "url":{"type":"string","description":"网址，可以不带 https://"}
+        },"required":["url"]}),
         false,
     );
     push(
@@ -2292,6 +2300,7 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "browser_open" => browser_open(ctx, args),
         "browser_read" => browser_read(ctx, args),
         "browser_find" => browser_find(ctx, args),
+        "browser_navigate" => browser_navigate(ctx, args),
         "workspace_list" => workspace_list(ctx, args),
         "workspace_read" => workspace_read(ctx, args),
         "workspace_write" => workspace_write(ctx, args),
@@ -3474,86 +3483,57 @@ fn history_search(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     ))
 }
 
-fn set_page(ctx: &ToolCtx, page: super::browser::Page) {
-    if let Ok(mut g) = ctx.state.page.lock() {
-        if let Some(old) = g.insert(ctx.session.to_string(), page.clone()) {
-            if let Ok(mut h) = ctx.state.history.lock() {
-                let history = h.entry(ctx.session.to_string()).or_default();
-                history.push(old);
-                if history.len() > 30 {
-                    history.remove(0);
-                }
-            }
-        }
-    }
-    let _ = ctx.app.emit(
-        "agent://browser",
-        json!({ "session": ctx.session, "page": page }),
-    );
-}
-
 fn browser_open(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let url = arg_str(args, "url").ok_or("缺少 url")?;
-    let page = super::browser::fetch(&url)?;
-    let chars = page.text.chars().count();
-    let links = page.links.len();
-    let out = format!(
-        "已打开 {}\n标题：{}\n正文 {} 字 / {} 个链接\n--- 正文开头 ---\n{}",
-        page.url,
-        page.title,
-        chars,
-        links,
-        page.text.chars().take(3000).collect::<String>()
-    );
-    set_page(ctx, page);
+    crate::shared_browser::open(ctx.app, "browser", &url)?;
+    let out = format!("已在共享内部浏览器打开 {url}");
     Ok(out)
+}
+
+fn browser_navigate(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let url = arg_str(args, "url").ok_or("缺少 url")?;
+    crate::shared_browser::open(ctx.app, "browser", &url)?;
+    Ok(format!("共享内部浏览器已跳转到 {url}"))
 }
 
 fn browser_read(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     if let Some(url) = arg_str(args, "url") {
-        let page = super::browser::fetch(&url)?;
-        set_page(ctx, page);
+        crate::shared_browser::open(ctx.app, "browser", &url)?;
     }
     let max = arg_u64(args, "max_chars", 12_000) as usize;
-    let g = ctx
-        .state
-        .page
-        .lock()
-        .map_err(|_| "page mutex".to_string())?;
-    let page = g
-        .get(ctx.session)
-        .ok_or("还没有打开任何网页，先 browser_open")?;
-    let body: String = page.text.chars().take(max).collect();
-    let more = if page.text.chars().count() > max {
-        "\n…(截断)"
-    } else {
-        ""
-    };
-    Ok(format!(
-        "{}\n标题：{}\n--- 正文 ---\n{}{}",
-        page.url, page.title, body, more
-    ))
+    if crate::shared_browser::current_url("browser").is_some() {
+        let raw = crate::shared_browser::read_dom_json("browser")?;
+        let page: crate::shared_browser::Page = serde_json::from_str(&raw)
+            .map_err(|e| format!("读当前页失败：{e}"))?;
+        let body: String = page.text.chars().take(max).collect();
+        let more = if page.text.chars().count() > max { "\n…(截断)" } else { "" };
+        return Ok(format!("{}\n标题：{}\n--- 正文 ---\n{}{}", page.url, page.title, body, more));
+    }
+    Err("共享浏览器还没有打开页面，先 browser_open".into())
 }
 
-fn browser_find(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+
+fn browser_find(_ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let needle = arg_str(args, "text").ok_or("缺少 text")?;
     if needle.is_empty() {
         return Err("text 不能为空".into());
     }
     let max_hits = arg_u64(args, "max_hits", 5) as usize;
-    let g = ctx
-        .state
-        .page
-        .lock()
-        .map_err(|_| "page mutex".to_string())?;
-    let page = g
-        .get(ctx.session)
-        .ok_or("还没有打开任何网页，先 browser_open")?;
-    let text = &page.text;
+    // 直接读取共享 WebView2 当前 DOM，登录后与脚本渲染内容都算当前页。
+    if crate::shared_browser::current_url("browser").is_some() {
+        let raw = crate::shared_browser::read_dom_json("browser")?;
+        let page: crate::shared_browser::Page = serde_json::from_str(&raw)
+            .map_err(|e| format!("读当前页失败：{e}"))?;
+        return find_in_text(&page.url, &page.text, &needle, max_hits);
+    }
+    Err("共享浏览器还没有打开页面，先 browser_open".into())
+}
+
+fn find_in_text(url: &str, text: &str, needle: &str, max_hits: usize) -> Result<String, String> {
     let mut out = Vec::new();
     let mut pos = 0usize;
     while out.len() < max_hits {
-        let Some(rel) = text[pos..].find(&needle) else {
+        let Some(rel) = text[pos..].find(needle) else {
             break;
         };
         let at = pos + rel;
@@ -3565,11 +3545,11 @@ fn browser_find(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         pos = end.max(at + needle.len());
     }
     if out.is_empty() {
-        return Ok(format!("当前页 {} 里没有找到「{needle}」", page.url));
+        return Ok(format!("当前页 {} 里没有找到「{needle}」", url));
     }
     Ok(format!(
         "在 {} 里找到 {} 处：\n{}",
-        page.url,
+        url,
         out.len(),
         out.join("\n")
     ))

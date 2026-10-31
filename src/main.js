@@ -1603,7 +1603,6 @@ function showPane(tab) {
   if (work === "agent") agUnreadClear();      // 切过来就算看过了，清掉未读角标
   document.querySelectorAll("[data-param]").forEach((p) => { p.hidden = p.dataset.param !== tab; });
   document.documentElement.dataset.tab = tab;      // 窄窗样式要按"当前这一页"决定收不收那条参数带（如计算器）
-  document.documentElement.classList.toggle("kb-focus", tab === "kb" && kbFocus);
   if (tab === "runtime" && window.rtInit) window.rtInit();
   if (window.kdockSyncDataLang) window.kdockSyncDataLang();
   syncParamStrip();
@@ -1634,7 +1633,7 @@ function showPane(tab) {
   if (tab === "env") envRefresh();
   if (tab === "usb") usbOnShow();
   if (tab === "scope") { scSetView(scView); scResizePlot(); }
-  kbSyncSoon();                                 // 知识库页：进来就贴、离开就收（详见 kbSync）
+  kbSyncSoon();                                 // 浏览器页：进来就贴、离开就收（详见 kbSync）
   if (LANG === "en") langWalk();   // 这一页里"切过来才渲染"的文字（提示语/空态）再扫一遍
 }
 
@@ -1643,17 +1642,27 @@ function showPane(tab) {
 const DEBUG_UI = false;
 
 /* ==========================================================================
-   知识库页：中间 = 管理页面，右栏 = 对话页面
-   两块都用**内置浏览器**渲染 —— 真身是后端 kbview.rs 贴在主窗口上的 WebView2 子视图，
-   这里只负责：算占位区坐标、让子视图跟着布局走、没配地址时把人引到设置。
-   两个地址只存本机（localStorage），不进仓库、不上传。
+   浏览器页：一块共享内部浏览器（后端 kbview.rs 的 WebView2 子视图）。
+   页面、登录态和导航历史由浏览器页与 Agent 浏览器共同使用。
    ========================================================================== */
-const KB_MGMT_KEY = "kdock_kb_mgmt";
-const KB_CHAT_KEY = "kdock_kb_chat";
-let kbLastPlace = {};            // kind -> "x,y,w,h|url"，用来判断"要不要真的动它"
+const KB_HOME_KEY = "kdock_browser_home";
+const KB_LEGACY_MGMT_KEY = "kdock_kb_mgmt";
+const KBB_KIND = "browser";
+let kbLastPlace = "";            // "x,y,w,h|url"，用来判断"要不要真的动它"
 let kbSyncing = false;
+let kbWasCreated = false;
+let kbUrl = localStorage.getItem(KB_HOME_KEY) || "";
+// 旧版知识库只有管理页地址；迁移到共享浏览器后立即清掉旧键，避免用户
+// 清空新首页时旧地址又在下次启动时复活。
+const kbLegacyHome = (localStorage.getItem(KB_LEGACY_MGMT_KEY) || "").trim();
+if (kbLegacyHome) {
+  if (!kbUrl) {
+    kbUrl = kbLegacyHome;
+    localStorage.setItem(KB_HOME_KEY, kbLegacyHome);
+  }
+  localStorage.removeItem(KB_LEGACY_MGMT_KEY);
+}
 
-const kbGet = (key) => (localStorage.getItem(key) || "").trim();
 
 /** 地址补全：没写协议就按 https 来（Dify 这类都是 https） */
 function kbNorm(u) {
@@ -1662,7 +1671,14 @@ function kbNorm(u) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : "https://" + s;
 }
 
-/** 知识库页现在露着吗（还得不是在弹窗后面 —— 子视图是原生层，会盖住弹窗） */
+/** 浏览页和 Agent 共用的入口：已有视图就导航，否则先建一块隐藏视图。 */
+async function kbOpenUrl(url) {
+  await invoke("kb_open", { kind: KBB_KIND, url });
+  kbWasCreated = true;
+  kbLastPlace = "";
+}
+
+/** 浏览器页现在露着吗（还得不是在弹窗后面 —— 子视图是原生层，会盖住弹窗） */
 function kbVisible() {
   const pane = document.querySelector('[data-work="kb"]');
   if (!pane || pane.hidden) return false;
@@ -1684,23 +1700,32 @@ function kbRect(id) {
   return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) };
 }
 
-async function kbPlace(kind, hostId, url, emptyId, force) {
+async function kbPlace(hostId, url, emptyId, force) {
+  // 没有首页又没有当前页时，不要保留一块空的原生视图。
+  if (!url) {
+    if (kbWasCreated) await invoke("kb_hide", { kind: KBB_KIND }).catch(() => {});
+    kbLastPlace = "";
+    return;
+  }
   const empty = document.getElementById(emptyId);
   const r = kbRect(hostId);
   if (!url || !r) {
-    if (kbLastPlace[kind]) { await invoke("kb_hide", { kind }).catch(() => {}); kbLastPlace[kind] = ""; }
-    if (empty && !empty.hidden) { /* 空态文案由 kbEmptyText 管 */ }
+    if (url) { await invoke("kb_hide", { kind: KBB_KIND }).catch(() => {}); }
+    kbLastPlace = "";
     return;
   }
   if (empty) empty.hidden = true;
-  const key = `${r.x},${r.y},${r.w},${r.h}|${url}`;
-  if (!force && kbLastPlace[kind] === key) return;      // 位置和地址都没变：这条不折腾
-  kbLastPlace[kind] = key;
+  const live = await invoke("kb_current_url", { kind: KBB_KIND }).catch(() => "");
+  const key = `${r.x},${r.y},${r.w},${r.h}|${live || url}`;
+  if (!force && kbLastPlace === key) return;
   try {
-    await invoke("kb_show", { kind, url, x: r.x, y: r.y, w: r.w, h: r.h });
+    // 已有页面时只移动大小并显示，不重新导航，保留登录跳转。
+    await invoke("kb_show", { kind: KBB_KIND, url, x: r.x, y: r.y, w: r.w, h: r.h });
+    kbLastPlace = key;
+    kbWasCreated = true;
     kbStateText("");
   } catch (e) {
-    kbLastPlace[kind] = "";
+    kbLastPlace = "";
     kbStateText(String(e).slice(0, 80), "err");
     toast(String(e));
   }
@@ -1716,28 +1741,14 @@ function kbStateText(t, cls) {
 
 /** 空态那块提示（没配地址 / 还没建起来） */
 function kbEmptyText() {
-  const mgmt = kbNorm(kbGet(KB_MGMT_KEY));
-  const chat = kbNorm(kbGet(KB_CHAT_KEY));
-  const el1 = $("kb-empty");
-  if (el1) {
-    el1.innerHTML = "";
-    const a = document.createElement("div");
-    a.textContent = mgmt
-      ? en("打开管理页面")
-      : en("在设置 → 知识库里配置管理页面");
-    el1.append(a);
-    el1.hidden = !!mgmt && !!kbLastPlace.mgmt;
-  }
-  const el2 = $("kb-chat-empty");
-  if (el2) {
-    el2.innerHTML = "";
-    const a = document.createElement("div");
-    a.textContent = chat
-      ? en("打开对话页面")
-      : en("在设置 → 知识库里配置对话页面");
-    el2.append(a);
-    el2.hidden = !!chat && !!kbLastPlace.chat;
-  }
+  const el = $("kb-empty");
+  if (!el) return;
+  el.innerHTML = "";
+  const a = document.createElement("div");
+  a.textContent = en("输入网址开始浏览");
+  el.append(a);
+  el.hidden = !!kbUrl && kbWasCreated;
+  el.onclick = () => $("kb-url")?.focus();
 }
 
 /** 贴 / 挪 / 收 —— 切页、改窗口大小、拖分栏都会调它（重复调不会重新加载页面） */
@@ -1746,17 +1757,15 @@ async function kbSync(force) {
   kbSyncing = true;
   try {
     if (!kbVisible()) {
-      if (kbLastPlace.mgmt || kbLastPlace.chat) {
+      if (kbLastPlace) {
         await invoke("kb_hide_all").catch(() => {});
-        kbLastPlace = {};
       }
       return;
     }
     kbEmptyText();
-    const mgmt = kbNorm($("kb-url") && $("kb-url").value ? $("kb-url").value : kbGet(KB_MGMT_KEY));
-    const chat = kbNorm($("kb-chat-url") && $("kb-chat-url").value ? $("kb-chat-url").value : kbGet(KB_CHAT_KEY));
-    await kbPlace("mgmt", "kb-host", mgmt, "kb-empty", force);
-    await kbPlace("chat", "kb-chat-host", chat, "kb-chat-empty", force);
+    if (!kbUrl) kbUrl = kbNorm($("kb-url")?.value || "");
+    if ($("kb-url") && document.activeElement !== $("kb-url") && kbUrl) $("kb-url").value = kbUrl;
+    await kbPlace("kb-host", kbUrl, "kb-empty", force);
     if (force) kbEmptyText();
   } finally {
     kbSyncing = false;
@@ -1771,22 +1780,14 @@ function kbSyncSoon() {
 function bindKb() {
   if (!$("kb-url")) return;
   const urlIn = $("kb-url");
-  const chatIn = $("kb-chat-url");
-  urlIn.value = kbGet(KB_MGMT_KEY);
-  if (chatIn) chatIn.value = kbGet(KB_CHAT_KEY);
+  urlIn.value = kbUrl;
   kbEmptyText();
 
   const open = async () => {
     const u = kbNorm(urlIn.value);
-    if (!u) { toast(en("先填个地址：已经在设置 → 知识库里等你")); openSettings("kb"); return; }
-    kbLastPlace = {};
-    await kbSync(true);
-    kbEmptyText();
-  };
-  const openChat = async () => {
-    const u = kbNorm(chatIn && chatIn.value);
-    if (!u) { toast(en("先填「对话页面」地址：已经在设置 → 知识库里等你")); openSettings("kb"); return; }
-    kbLastPlace.chat = "";
+    if (!u) { toast(en("先填个地址")); urlIn.focus(); return; }
+    kbUrl = u;
+    await kbOpenUrl(u).catch((e) => toast(String(e)));
     await kbSync(true);
     kbEmptyText();
   };
@@ -1794,63 +1795,39 @@ function bindKb() {
   urlIn.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); $("kb-open").click(); }
   });
-  if (chatIn) {
-    chatIn.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); openChat().catch(() => {}); }
-    });
-  }
-  const saveKey = (key, input, name) => {
-    const u = kbNorm(input.value);
+  if ($("kb-save")) $("kb-save").onclick = () => {
+    const u = kbNorm(urlIn.value);
     if (!u) { toast(en("先填个地址")); return; }
-    localStorage.setItem(key, u);
-    input.value = u;
-    if ($("set-kb-mgmt") && key === KB_MGMT_KEY) $("set-kb-mgmt").value = u;
-    if ($("set-kb-chat") && key === KB_CHAT_KEY) $("set-kb-chat").value = u;
-    toast(`${en(name)} ${en("地址已存为默认")}`);
+    localStorage.setItem(KB_HOME_KEY, u);
+    if ($("set-kb-home")) $("set-kb-home").value = u;
+    toast(en("地址已存为首页"));
   };
-  // 每一块有自己的地址与自己的默认值（管理页 / 对话页各一份）
-  if ($("kb-save")) $("kb-save").onclick = () => saveKey(KB_MGMT_KEY, urlIn, "管理页面");
-  if ($("kb-chat-save")) $("kb-chat-save").onclick = () => saveKey(KB_CHAT_KEY, chatIn, "对话页面");
   $("kb-reload").onclick = () => {
-    if (!kbLastPlace.mgmt) { toast(en("还没打开过")); return; }
-    invoke("kb_reload", { kind: "mgmt" }).catch((e) => toast(String(e)));
+    if (!kbWasCreated) { toast(en("还没打开过")); return; }
+    invoke("kb_reload", { kind: KBB_KIND }).catch((e) => toast(String(e)));
   };
+  $("kb-back").onclick = () => invoke("kb_back", { kind: KBB_KIND }).catch((e) => toast(String(e)));
   $("kb-external").onclick = () => {
-    const u = kbNorm(urlIn.value || kbGet(KB_MGMT_KEY));
+    const u = kbNorm(urlIn.value || kbUrl);
     if (!u) { toast(en("先填个地址")); return; }
     invoke("browser_open_external", { path: u }).catch((e) => toast(String(e)));
   };
-  const ce = $("kb-chat-empty");
-  if (ce) ce.onclick = () => openSettings("kb");
   const me = $("kb-empty");
   if (me) {
     me.onclick = () => {
-      // 配了地址就"打开"，没配就去设置
-      if (kbNorm(urlIn.value || kbGet(KB_MGMT_KEY))) open().catch(() => {});
-      else openSettings("kb");
+      if (kbNorm(urlIn.value || kbUrl)) open().catch(() => {});
+      else urlIn.focus();
     };
   }
-  $("kb-chat-open").onclick = () => openChat().catch((e) => toast(String(e)));
-  if ($("kb-chat-focus")) $("kb-chat-focus").onclick = () => kbSetFocus(!kbFocus);
-  $("kb-chat-reload").onclick = () => {
-    if (!kbLastPlace.chat) { toast(en("还没打开过")); return; }
-    invoke("kb_reload", { kind: "chat" }).catch((e) => toast(String(e)));
-  };
-  // 设置页里的两个输入
-  if ($("set-kb-mgmt")) $("set-kb-mgmt").value = kbGet(KB_MGMT_KEY);
-  if ($("set-kb-chat")) $("set-kb-chat").value = kbGet(KB_CHAT_KEY);
+  if ($("set-kb-home")) $("set-kb-home").value = localStorage.getItem(KB_HOME_KEY) || "";
   if ($("set-kb-save")) {
     $("set-kb-save").onclick = () => {
-      const m = kbNorm($("set-kb-mgmt").value);
-      const c = kbNorm($("set-kb-chat").value);
-      if (m) localStorage.setItem(KB_MGMT_KEY, m); else localStorage.removeItem(KB_MGMT_KEY);
-      if (c) localStorage.setItem(KB_CHAT_KEY, c); else localStorage.removeItem(KB_CHAT_KEY);
-      $("set-kb-mgmt").value = m;
-      $("set-kb-chat").value = c;
-      urlIn.value = m;
-      kbLastPlace = {};
+      const u = kbNorm($("set-kb-home").value);
+      if (u) localStorage.setItem(KB_HOME_KEY, u); else localStorage.removeItem(KB_HOME_KEY);
+      $("set-kb-home").value = u;
+      if (u) { kbUrl = u; urlIn.value = u; }
       if ($("set-kb-state")) $("set-kb-state").textContent = en("已保存");
-      toast(en("知识库地址已保存"));
+      toast(en("共享浏览器首页已保存"));
     };
   }
   if ($("set-kb-go")) {
@@ -1859,35 +1836,22 @@ function bindKb() {
       showPane("kb");
     };
   }
+  document.querySelector("[data-kb-focus-main]")?.addEventListener("click", () => {
+    $("kb-url")?.focus();
+    kbSyncSoon();
+  });
   // 位置跟随：窗口缩放 / 拖分栏 / 抽屉式布局变化都算
   window.addEventListener("resize", () => { if (kbVisible()) kbSyncSoon(); syncParamStrip(); });
   // 参数区里的折叠卡展开/收起后，条带高度跟着变（toggle 不冒泡，用捕获接）
   document.addEventListener("toggle", (e) => { if (e.target && e.target.closest && e.target.closest(".params")) syncParamStrip(); }, true);
   if (window.ResizeObserver) {
     const ro = new ResizeObserver(() => { if (kbVisible()) kbSyncSoon(); });
-    for (const id of ["kb-host", "kb-chat-host"]) {
-      const el = document.getElementById(id);
-      if (el) ro.observe(el);
-    }
+    const el = document.getElementById("kb-host");
+    if (el) ro.observe(el);
   }
-  kbSetFocus(kbFocus);
+  if (window.kdockOnLang) window.kdockOnLang(kbEmptyText);
   // 兜底：有些变化（拖左栏/右栏的把手、改缩放）不会触发上面两个
   setInterval(() => { if (kbVisible()) kbSync(false).catch(() => {}); }, 700);
-}
-
-let kbFocus = localStorage.getItem("kdock_kb_focus") !== "0";
-function kbSetFocus(on) {
-  kbFocus = !!on;
-  localStorage.setItem("kdock_kb_focus", kbFocus ? "1" : "0");
-  document.documentElement.classList.toggle("kb-focus", kbFocus && helpCurrentPage() === "kb");
-  const b = $("kb-chat-focus");
-  if (b) {
-    b.textContent = en(kbFocus ? "管理" : "全屏");
-    b.title = en(kbFocus ? "显示知识库管理页面" : "全屏显示知识库对话页面");
-  }
-  kbLastPlace = {};
-  syncParamStrip();
-  kbSyncSoon();
 }
 
 function bindTabs() {
@@ -7510,7 +7474,7 @@ window.kdockSyncDataLang = syncDataLang;
 
 // ---------------- 上下文帮助（F1 / 标题栏 / 设置 / 各分区的 ?） ----------------
 const HELP_PAGE_LABEL = {
-  link: "传输", cmds: "命令表", agent: "Agent", kb: "知识库",
+  link: "传输", cmds: "命令表", agent: "Agent", kb: "浏览器",
   upgrade: "固件升级", runtime: "运行结构", flash: "烧录", files: "文件管理", adb: "安卓 ADB",
   env: "环境配置", chart: "实时图表", seq: "中控编排", scope: "示波器",
   capture: "屏幕共享", logic: "逻辑分析仪", usb: "监听", batch: "批量文本",
@@ -7518,7 +7482,7 @@ const HELP_PAGE_LABEL = {
 };
 const HELP_PAGE_ROOT = {
   link: "help-transfer-start", cmds: "help-cmds", agent: "help-agent-chat",
-  kb: "help-kb-chat", upgrade: "help-upgrade-start", runtime: "help-runtime-start", flash: "help-flash-programmer",
+  kb: "help-kb-shared", upgrade: "help-upgrade-start", runtime: "help-runtime-start", flash: "help-flash-programmer",
   files: "help-files-start", adb: "help-adb-device", env: "help-env-first",
   chart: "help-chart-main", seq: "help-seq-links", scope: "help-scope-connect",
   capture: "help-capture-source", logic: "help-logic-source", usb: "help-usb-local",
@@ -7543,8 +7507,8 @@ const HELP_GROUPS = HELP_GROUPS_CONTENT;
 
 const HELP_HEADING_MAP = {
   link: { "从这里开始": "help-transfer-start", "统计": "help-transfer-stats", "快捷发送": "help-transfer-quick" },
-  agent: { "Agent 信息": "help-agent-info", "上下文成分": "help-agent-context", "技能": "help-agent-skills", "MCP 服务": "help-agent-mcp", "页面里的链接": "help-agent-links" },
-  kb: { "对话页面": "help-kb-chat", "管理页面": "help-kb-admin" },
+  agent: { "Agent 信息": "help-agent-info", "上下文成分": "help-agent-context", "技能": "help-agent-skills", "MCP 服务": "help-agent-mcp" },
+  kb: { "共享浏览器": "help-kb-shared" },
   upgrade: { "从这里开始": "help-upgrade-start", "固件": "help-upgrade-firmware" },
   flash: { "烧录器": "help-flash-programmer", "固件": "help-flash-firmware", "命令预览": "help-flash-preview" },
   files: { "从这里开始": "help-files-start", "目录": "help-files-dir", "取回本机": "help-files-pull", "发到设备": "help-files-push" },
@@ -7877,7 +7841,7 @@ function openSettings(section) {
   if (section === "about") agLoadTools();
   if (section === "help") buildHelpIndex();
   if (section === "netip") { bindNetip(); netipLoad(); }
-  kbSyncSoon();      // 知识库页那块是原生子视图，会盖住弹窗 —— 开设置就先收起来
+  kbSyncSoon();      // 浏览器页那块是原生子视图，会盖住弹窗 —— 开设置就先收起来
 }
 
 function closeSettings() {
@@ -11231,8 +11195,9 @@ const TOOL_DESC_EN = {
   skill_create: "Create a skill (a SKILL.md with frontmatter).",
   skill_update: "Overwrite a skill's SKILL.md.",
   skill_delete: "Delete a skill.",
-  browser_open: "Open a page in the built-in browser (extracts the main text; also shown in the Browser pane).",
-  browser_read: "Read the main text of the current page (omit url to use the current page).",
+  browser_open: "Open a page in the shared internal browser; the Browser page and Agent browser show the same page.",
+  browser_navigate: "Navigate the shared internal browser to a URL while keeping the current login state.",
+  browser_read: "Read the rendered DOM text of the shared browser's current page (omit url to use the current page).",
   browser_find: "Find a snippet in the current page text and return the surrounding context.",
   history_search: "Search this session's raw log by keyword (including parts already compacted away).",
   ui_show_text: "Show a block of text in the Text pane on the right.",
@@ -11740,44 +11705,39 @@ function amdBind() {
 function agRenderPage(page) {
   if (!page) return;
   agBrPage = page;
-  const t = agEl("ag-br-title");
-  if (t) t.textContent = (page.title || "(无标题)") + "  ·  " + page.url;
-  const body = agEl("ag-br-body");
-  if (body) {
-    body.textContent = agBrSource ? (page.html || "") : (page.text || "(正文是空的)");
-    body.scrollTop = 0;
+  if (agEl("ag-br-title")) agEl("ag-br-title").textContent = (page.title || "(无标题)") + "  ·  " + page.url;
+  if (agEl("ag-br-body")) {
+    agEl("ag-br-body").textContent = agBrSource ? (page.html || "") : (page.text || "(正文是空的)");
+    agEl("ag-br-body").scrollTop = 0;
   }
-  const st = agEl("ag-br-state");
-  if (st) st.textContent = `${(page.text || "").length} 字 · ${(page.links || []).length} 链接`;
+  if (agEl("ag-br-state")) agEl("ag-br-state").textContent = `${(page.text || "").length} 字 · ${(page.links || []).length} 链接`;
   if (agEl("ag-br-url")) agEl("ag-br-url").value = page.url || "";
-  const links = agEl("ag-br-links");
-  if (links) {
-    links.innerHTML = "";
-    const list = (page.links || []).slice(0, 60);
-    if (!list.length) links.innerHTML = '<div class="empty">（没抓到链接）</div>';
-    for (const l of list) {
-      const row = document.createElement("div");
-      row.className = "row";
-      const nm = document.createElement("span");
-      nm.className = "nm lnk"; nm.textContent = l.text || l.href;
-      nm.title = l.href;
-      nm.onclick = async (e) => { e.stopPropagation(); await agBrowserOpen(l.href); };
-      row.appendChild(nm);
-      links.appendChild(row);
-    }
+}
+
+function kbRenderAgentBrowser(page) {
+  if (!page) return;
+  agBrPage = page;
+  if (agEl("ag-br-url")) agEl("ag-br-url").value = page.url || "";
+  if (agEl("ag-br-title")) agEl("ag-br-title").textContent = page.title || page.url || "";
+  if (agEl("ag-br-state")) agEl("ag-br-state").textContent = en("共享页面已同步");
+  if (agEl("ag-br-body") && page.text) {
+    agEl("ag-br-body").textContent = agBrSource ? (page.html || page.text) : page.text;
   }
 }
 
 async function agBrowserOpen(url) {
   const u = (url || (agEl("ag-br-url") ? agEl("ag-br-url").value : "")).trim();
-  if (!u) return toast("先填个网址");
+  if (!u) return toast(en("先填个网址"));
   const st = agEl("ag-br-state");
-  if (st) st.textContent = "打开中…";
+  if (st) st.textContent = en("打开中…");
+  const normalized = kbNorm(u);
+  kbUrl = normalized;
+  if ($("kb-url")) $("kb-url").value = normalized;
   try {
-    const page = await invoke("browser_fetch", { url: u });
-    agBrSource = false;
-    if (agEl("ag-br-src")) agEl("ag-br-src").classList.remove("primary");
-    agRenderPage(page);
+    // 实际视图留在浏览器页；Agent 右栏只同步 URL/标题，不再渲染第二份网页。
+    await kbOpenUrl(normalized);
+    agBrPage = { url: normalized, title: normalized, text: "", html: "", links: [] };
+    kbRenderAgentBrowser(agBrPage);
   } catch (e) {
     if (st) st.textContent = "";
     toast(String(e));
@@ -11800,25 +11760,41 @@ function bindAgentPanes() {
   }
   if (agEl("ag-br-back")) {
     agEl("ag-br-back").onclick = async () => {
-      const prev = await invoke("browser_back").catch(() => null);
-      if (prev) agRenderPage(prev);
-      else toast("没有上一页了");
+      try {
+        await invoke("kb_back", { kind: KBB_KIND });
+        const url = await invoke("kb_current_url", { kind: KBB_KIND }).catch(() => "");
+        if (url) kbRenderAgentBrowser({ url, title: agBrPage?.title || "", text: "", html: "", links: [] });
+      } catch (e) { toast(String(e)); }
+    };
+  }
+  if (agEl("ag-br-show")) {
+    agEl("ag-br-show").onclick = () => {
+      showPane("kb");
+      $("kb-url") && ($("kb-url").value = kbUrl || agBrPage?.url || "");
     };
   }
   if (agEl("ag-br-ext")) {
     agEl("ag-br-ext").onclick = async () => {
       const url = agBrPage ? agBrPage.url : (agEl("ag-br-url") ? agEl("ag-br-url").value.trim() : "");
-      if (!url) return toast("没有网址");
+      if (!url) return toast(en("没有网址"));
       await invoke("browser_open_external", { path: url }).catch((e) => toast(String(e)));
     };
   }
   if (agEl("ag-br-src")) {
-    agEl("ag-br-src").onclick = () => {
+    agEl("ag-br-src").onclick = async () => {
       if (!agBrPage) return;
       agBrSource = !agBrSource;
       agEl("ag-br-src").classList.toggle("primary", agBrSource);
-      agRenderPage(agBrPage);
+      try {
+        await invoke("kb_source", { kind: KBB_KIND });
+      } catch (e) { toast(String(e)); }
     };
+  }
+  if (agEl("ag-br-body")) {
+    agEl("ag-br-body").addEventListener("click", async () => {
+      try { await invoke("kb_read_dom", { kind: KBB_KIND }); }
+      catch (e) { toast(String(e)); }
+    });
   }
   if (agEl("ag-tx-open")) {
     agEl("ag-tx-open").onclick = async () => {
@@ -11901,7 +11877,11 @@ function agOnShow() {
   agRefreshGit();
   agRefreshBreakdown();
   agRefreshBalance();
-  if (!agBrPage) invoke("browser_current").then((p) => { if (p) agRenderPage(p); }).catch(() => {});
+  invoke("kb_current_url", { kind: KBB_KIND }).then((url) => {
+    if (!url) return;
+    const title = agBrPage?.title || url;
+    kbRenderAgentBrowser({ ...(agBrPage || { text: "", html: "", links: [] }), url, title });
+  }).catch(() => {});
 }
 
 /** 左栏点了「会话 / 新建会话」时先把中间切到 Agent 页。
@@ -11945,11 +11925,11 @@ const AG_HOST = {
     const map = { transfer: "link", firmware: "upgrade", flow: "seq", files: "files", flash: "flash",
                   runtime: "runtime", chart: "chart", capture: "capture", scope: "scope", logic: "logic", commands: "cmds",
                   batch: "batch", calculator: "calc", datacalc: "datacalc", env: "env", kb: "kb",
-                  knowledge: "kb", agent: "agent", debug: "debug" };
+                  knowledge: "kb", browser: "kb", agent: "agent", debug: "debug" };
     const tab = map[a.page] || a.page;
     // 左导航里没有的（比如调试页被藏起来）就别切了，省得切到一片空白
     const btn = document.querySelector(`.navitem[data-tab="${tab}"]`);
-    if (!btn || btn.hidden) return `没有「${a.page}」这个页面（可用：传输/命令表/固件升级/烧录/文件管理/运行结构/Agent/实时图表/中控编排/示波器/屏幕捕获/逻辑分析仪/批量文本/计算器/数据计算/环境配置/知识库）`;
+    if (!btn || btn.hidden) return `没有「${a.page}」这个页面（可用：传输/命令表/固件升级/烧录/文件管理/运行结构/Agent/实时图表/中控编排/示波器/屏幕捕获/逻辑分析仪/批量文本/计算器/数据计算/环境配置/浏览器）`;
     showPane(tab);
     return "已切到「" + tab + "」页";
   },
@@ -12304,9 +12284,31 @@ async function bindAgentEvents() {
     agState("等你批准…", "wait");
     if (!agWatching()) agUnreadBump();
   });
-  await agOn("agent://browser", (ev) => {
-    const p = ev.payload || {};
-    agRenderPage(p.page || p);     // agent 打开网页时，右侧「浏览器」跟着显示
+  await agOn("kb://page", async (ev) => {
+    const raw = ev.payload;
+    const url = raw && typeof raw === "object" ? raw.url || "" : "";
+    if (!url) return;
+    if ($("kb-url")) $("kb-url").value = url;
+    kbUrl = url;
+    kbWasCreated = true;
+    kbRenderAgentBrowser({ url, title: agBrPage?.title || url, text: "", html: "", links: [] });
+    kbEmptyText();
+  });
+  await agOn("kb://source", (ev) => {
+    if (!agEl("ag-br-body")) return;
+    agEl("ag-br-body").textContent = String(ev.payload || "");
+  });
+  await agOn("kb://dom", (ev) => {
+    try {
+      const raw = ev.payload;
+      let text = raw;
+      if (typeof text === "string") {
+        try { text = JSON.parse(text); } catch (_) {}
+        if (typeof text === "string") text = JSON.parse(text);
+      }
+      const page = text;
+      if (page && page.url) agRenderPage(page);
+    } catch (_) {}
   });
   await agOn("agent://done", async (ev) => {
     const sid = ev.payload && ev.payload.session;
@@ -12684,7 +12686,7 @@ const EN = {
   "每轮注入系统提示，一直占上下文": "injected every turn (always occupies context)",
   "正文每轮注入，不会被压缩掉": "injected every turn, never trimmed away",
   "不是 git 仓库": "not a git repo", " · 干净": " · clean", "读取中…": "loading…",
-  "打开": "Open", "源码": "Source", "页面里的链接": "Links on page",
+  "打开": "Open", "源码": "Source",
   "MCP 服务": "MCP servers", "命令": "Command", "参数": "Args", "保存": "Save",
   "测一测": "Test", "删除": "Delete", "打开文件": "Open file", "另存为": "Save as",
   "存到工作区": "Save to workspace", "清空": "Clear", "标题": "Title",
@@ -12978,8 +12980,6 @@ const EN = {
   "运行概览": "Runtime overview",
   "先在设置里选择一个模型。": "Choose a model in Settings first.",
   "说明目标、现象或贴一段日志；Enter 发送，Shift+Enter 换行": "Describe the goal, symptom or paste a log; Enter sends, Shift+Enter adds a line",
-  "显示知识库管理页面": "Show the knowledge-base admin page",
-  "全屏显示知识库对话页面": "Show the knowledge-base chat page full width",
   "… 还有 ": "… ", " 个对话（点开）": " more sessions (click to show)",
   "⚠ 没密钥": "⚠ no key", "正在请求…": "requesting…",
   "该厂商没有余额接口": "this vendor has no balance endpoint",
@@ -13327,36 +13327,18 @@ const EN = {
     "connected, but the state could not be read (scope busy? click Connect again)",
   "已重连": "reconnected",
 
-  // ============ 知识库页（中间管理页面 + 右栏对话页面，内置浏览器渲染）============
-  "知识库": "Knowledge base",
-  "知识库：中间是管理页面、右边是对话页面（两个地址在设置里配）":
-    "Knowledge base: the admin page in the middle, the chat page on the right (both URLs are set in Settings)",
-  "管理页面地址（留空 = 用设置里配的那个）":
-    "Admin page URL (empty = the one from Settings)",
+  // ============ 共享内部浏览器 ============
+  "知识库": "Knowledge base", "浏览器": "Browser",
+  "共享浏览器": "Shared browser", "共享浏览器首页": "Shared browser home", "浏览器": "Browser",
+  "在浏览器打开": "Open in browser",
+  "共享浏览器首页已保存": "Shared browser home saved", "当前页已读取": "Current page read",
+  "输入网址开始浏览": "Enter a URL to start browsing",
   "重新加载": "Reload",
   "用系统浏览器打开（登录 / 下载这类它更顺手）":
     "Open in the system browser (handier for logins and downloads)",
-  "对话": "Chat", "知识库页面": "Knowledge base pages",
-  "管理页面": "Admin page", "对话页面": "Chat page",
-  "去知识库页": "Go to the knowledge base page",
-  "打开管理页面": "Open admin page",
-  "在设置 → 知识库里配置管理页面": "Set the admin page in Settings → Knowledge base",
-  "在设置 → 知识库里配置对话页面": "Set the chat page in Settings → Knowledge base",
-  "还没配「知识库管理页面」地址 —— 点这里去设置里填":
-    "No \"admin page\" URL yet — click here to set it in Settings",
-  "还没配「知识库对话页面」地址 —— 点这里去设置里填":
-    "No \"chat page\" URL yet — click here to set it in Settings",
-  "还没打开：上面地址栏点「打开」，或者直接点这里":
-    "Not opened yet: press Open above, or just click here",
-  "还没打开：上面点「打开」，或者直接点这里":
-    "Not opened yet: press Open above, or just click here",
+  "对话": "Chat",
   "还没打开过": "it has not been opened yet",
   "先填个地址": "fill in a URL first",
-  "先填个地址：已经在设置 → 知识库里等你":
-    "Fill in a URL first — Settings → Knowledge base is waiting for you",
-  "先填「对话页面」地址：已经在设置 → 知识库里等你":
-    "Fill in the \"chat page\" URL first — Settings → Knowledge base is waiting for you",
-  "知识库地址已保存": "Knowledge base URLs saved",
   "已保存（只在本机）": "saved (this machine only)",
   "已打开：": "opened: ",
 
@@ -13366,11 +13348,8 @@ const EN = {
   "任意进制互转、有符号/无符号、大小端翻转":
     "any radix, signed/unsigned and endianness flipping",
 
-  // ============ 知识库：两块各自的地址栏 ============
-  "存为默认": "Save as default", "↻ 重新加载": "↻ Reload",
-  "把这个地址存成「管理页面」默认（设置 → 知识库）": "Save this as the admin-page default (Settings → Knowledge base)",
-  "把这个地址存成「对话页面」默认（设置 → 知识库）": "Save this as the chat-page default (Settings → Knowledge base)",
-  "地址已存为默认": "saved as default",
+  "存为首页": "Save as home", "↻ 重新加载": "↻ Reload",
+  "地址已存为首页": "saved as the home page",
 
   // ============ 数据计算：新一批标签/按钮 ============
   "文件校验 / 哈希": "Checksums / hashes", "算法": "Algorithms", "范围": "Range",
@@ -13734,8 +13713,6 @@ const EN = {
   "打开指令目录": "Open commands folder",
   "常驻技能清单（哪几个技能的正文每轮注入系统提示）": "Always-on skills (their body is injected into the system prompt every turn)",
   "只清「常驻」标记，技能文件本身不动": "Only clears the \"always-on\" mark; skill files stay untouched",
-  "https://…（知识库后台 / 数据集管理页）": "https://… (knowledge-base admin / dataset page)",
-  "https://…（问答 / 聊天页）": "https://… (Q&A / chat page)",
   "↗ 系统浏览器": "↗ System browser",
   "显示器 1 · 1920x1080": "Monitor 1 · 1920x1080",
   "显示器 2 · 3840x2160": "Monitor 2 · 3840x2160",
@@ -14408,7 +14385,7 @@ const TB_PAGES = [["link", "传输"], ["cmds", "命令表"], ["upgrade", "固件
   ["files", "文件管理"], ["adb", "安卓 ADB"], ["chart", "实时图表"], ["seq", "中控编排"], ["scope", "示波器"],
   ["capture", "屏幕共享"], ["logic", "逻辑分析仪"],
   ["batch", "批量文本"], ["calc", "计算器"], ["datacalc", "数据计算"], ["env", "环境配置"], ["usb", "USB 诊断"],
-  ["kb", "知识库"], ["debug", "调试"]];
+  ["kb", "浏览器"], ["debug", "调试"]];
 const TB_THEME_NAME = { dark: "暗色", light: "亮色", auto: "跟随系统" };
 function tbCmd(action) { return invoke("win_ctl", { action }).catch((e) => toast("窗口操作失败: " + e)); }
 function tbCloseMenus() {

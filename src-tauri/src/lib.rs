@@ -9,6 +9,7 @@ mod checksum;
 mod debug;
 mod env_setup;
 mod kbview;
+use kbview as shared_browser;
 mod logic;
 mod netcapture;
 mod netfs;
@@ -1422,7 +1423,7 @@ fn flash_stop() {
     }
 }
 
-// ── 知识库页：把外部页面（管理界面 / 对话界面）贴进主窗口 ──
+// ── 共享内部浏览器：把外部页面贴进主窗口 ──
 // 位置与大小由前端按 DOM 占位区的实际坐标给（CSS 像素，相对窗口客户区）。
 
 #[tauri::command]
@@ -1462,6 +1463,36 @@ fn kb_reload(kind: String) -> Result<(), String> {
 #[tauri::command]
 fn kb_url(kind: String) -> Option<String> {
     kbview::current_url(&kind)
+}
+
+#[tauri::command]
+fn kb_navigate(kind: String, url: String) -> Result<(), String> {
+    kbview::navigate(&kind, &url)
+}
+
+#[tauri::command]
+fn kb_open(app: AppHandle, kind: String, url: String) -> Result<(), String> {
+    kbview::open(&app, &kind, &url)
+}
+
+#[tauri::command]
+fn kb_back(kind: String) -> Result<(), String> {
+    kbview::back(&kind)
+}
+
+#[tauri::command]
+fn kb_source(app: AppHandle, kind: String) -> Result<(), String> {
+    kbview::source(&app, &kind)
+}
+
+#[tauri::command]
+fn kb_current_url(kind: String) -> Option<String> {
+    kbview::current_url(&kind)
+}
+
+#[tauri::command]
+fn kb_read_dom(app: AppHandle, kind: String) -> Result<(), String> {
+    kbview::read_dom(&app, &kind)
 }
 
 // ── 示波器：SCPI（RIGOL DS1000Z 系，裸 socket 5555）──
@@ -3782,13 +3813,19 @@ pub fn run() {
                 scope_screenshot,
                 scope_save_png,
                 scope_control,
-                // ── 知识库页的内置浏览器（WebView2 子视图）──
+                // ── 共享内部浏览器（WebView2 子视图）──
                 kb_show,
                 kb_bounds,
                 kb_hide,
                 kb_hide_all,
                 kb_reload,
                 kb_url,
+                kb_open,
+                kb_navigate,
+                kb_back,
+                kb_source,
+                kb_current_url,
+                kb_read_dom,
                 // ── 文件管理：FTP / FTPS / TFTP（客户端 + 内置 TFTP 服务端）──
                 netfs::netfs_open,
                 netfs::netfs_close,
@@ -3897,9 +3934,6 @@ pub fn run() {
             agent::agent_workspace_rename,
             agent::agent_workspace_write,
             agent::agent_workspace_read,
-            agent::browser_fetch,
-            agent::browser_back,
-            agent::browser_current,
             agent::browser_open_external,
             agent::mcp_list,
             agent::mcp_save,

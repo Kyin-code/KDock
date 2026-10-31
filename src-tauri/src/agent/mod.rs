@@ -11,7 +11,6 @@
 //! ```
 
 pub mod anthropic;
-pub mod browser;
 mod builtin;
 pub mod fingerprint;
 pub mod llm;
@@ -80,9 +79,6 @@ pub struct AgentState {
     /// perm=ask 时要等用户点"允许/拒绝"
     pub approve_waiters: Mutex<HashMap<u64, (String, Sender<bool>)>>,
     pub approve_seq: std::sync::atomic::AtomicU64,
-    /// 每个会话自己的浏览器当前页和历史；同一个界面只显示最后打开的那一页
-    pub page: Mutex<HashMap<String, browser::Page>>,
-    pub history: Mutex<HashMap<String, Vec<browser::Page>>>,
     /// 屏幕会话 → 打开它的 agent 会话。防止 A 关掉 B 的屏幕。
     pub screen_owners: Mutex<HashMap<u32, String>>,
     /// 只读工具的短 TTL 结果缓存：同一会话重复读同一个文件/搜索词时不再重新扫。
@@ -2820,54 +2816,6 @@ pub fn agent_workspace_read(
     let ws = workspace_of(&app, &session_id);
     let target = store::resolve_in_workspace(&ws, &path)?;
     std::fs::read_to_string(&target).map_err(|e| format!("读失败: {e}"))
-}
-
-// ── 内置浏览器 ──────────────────────────────────────────────────────
-
-const UI_BROWSER_KEY: &str = "__ui__";
-
-#[tauri::command]
-pub fn browser_fetch(app: AppHandle, url: String) -> Result<browser::Page, String> {
-    let page = browser::fetch(&url)?;
-    let st = app.state::<Arc<AgentState>>().inner().clone();
-    if let Ok(mut g) = st.page.lock() {
-        if let Some(old) = g.insert(UI_BROWSER_KEY.to_string(), page.clone()) {
-            if let Ok(mut h) = st.history.lock() {
-                let history = h.entry(UI_BROWSER_KEY.to_string()).or_default();
-                history.push(old);
-                if history.len() > 30 {
-                    history.remove(0);
-                }
-            }
-        }
-    }
-    Ok(page)
-}
-
-#[tauri::command]
-pub fn browser_back(app: AppHandle) -> Result<Option<browser::Page>, String> {
-    let st = app.state::<Arc<AgentState>>().inner().clone();
-    let prev = st
-        .history
-        .lock()
-        .map_err(|_| "mutex".to_string())?
-        .get_mut(UI_BROWSER_KEY)
-        .and_then(|h| h.pop());
-    if let Some(p) = &prev {
-        if let Ok(mut g) = st.page.lock() {
-            g.insert(UI_BROWSER_KEY.to_string(), p.clone());
-        }
-    }
-    Ok(prev)
-}
-
-#[tauri::command]
-pub fn browser_current(app: AppHandle) -> Option<browser::Page> {
-    let st = app.state::<Arc<AgentState>>().inner().clone();
-    let g = st.page.lock().ok()?;
-    g.get(UI_BROWSER_KEY)
-        .cloned()
-        .or_else(|| g.values().next().cloned())
 }
 
 #[tauri::command]
