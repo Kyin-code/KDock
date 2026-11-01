@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HELP_GROUPS, HELP_TITLE_EN } from "../src/help-content.js";
+import { changeLanguage, createI18n, translate } from "../src/i18n.js";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const read = (path) => readFile(resolve(root, path), "utf8");
@@ -16,11 +17,23 @@ const [main, html, ...modules] = await Promise.all([
 ]);
 
 const start = main.indexOf("const EN = {");
-const end = main.indexOf("\nconst en =", start);
+const end = main.indexOf("\nconst appI18n", start);
 assert.ok(start >= 0 && end > start, "EN dictionary block not found");
 const objectSource = main.slice(main.indexOf("{", start), end).trim().replace(/;\s*$/, "");
 const EN = new Function(`return (${objectSource});`)();
 assert.ok(Object.keys(EN).length > 1000, "English dictionary unexpectedly small");
+
+const testI18n = createI18n({
+  "你好": "Hello",
+  "参数 {{args}}": "Args {{args}}",
+}, "en");
+assert.equal(translate(testI18n, "en", "你好"), "Hello");
+assert.equal(translate(testI18n, "en", "参数 {{args}}"), "Args {{args}}");
+assert.equal(translate(testI18n, "en", "参数 {{args}}", { args: "build" }), "Args build");
+assert.equal(translate(testI18n, "zh", "你好"), "你好");
+await changeLanguage(testI18n, "zh");
+assert.equal(translate(testI18n, "zh", "你好"), "你好");
+assert.match(main, /createI18n\(EN, LANG\)/);
 
 for (const group of HELP_GROUPS) {
   for (const item of group.items) {
@@ -39,6 +52,22 @@ for (const source of [main, ...modules]) {
 const missing = [...new Set(literalCalls)].filter((key) => !EN[key]);
 assert.deepEqual(missing, [], `UI strings passed to en()/T() have no English translation:\n${missing.join("\n")}`);
 
+const htmlAttributeCopy = [
+  ...html.matchAll(/(?:title|placeholder)="([^"]*[\u3400-\u9fff][^"]*)"/g),
+].map((match) => match[1]
+  .replace(/&#10;/g, "\n")
+  .replace(/&quot;/g, "\"")
+  .replace(/&#39;/g, "'")
+  .replace(/&lt;/g, "<")
+  .replace(/&gt;/g, ">")
+  .replace(/&amp;/g, "&"));
+const missingAttributes = [...new Set(htmlAttributeCopy)].filter((key) => !EN[key]);
+assert.deepEqual(
+  missingAttributes,
+  [],
+  `Static title/placeholder copy has no English translation:\n${missingAttributes.join("\n")}`,
+);
+
 assert.ok((html.match(/data-en=/g) || []).length >= 60, "static bilingual markup is unexpectedly sparse");
 assert.equal((html.match(/id="set-lang-zh"/g) || []).length, 1);
 assert.equal((html.match(/id="set-lang-en"/g) || []).length, 1);
@@ -48,5 +77,6 @@ console.log(JSON.stringify({
   dictionaryEntries: Object.keys(EN).length,
   helpItems: HELP_GROUPS.reduce((n, group) => n + group.items.length, 0),
   literalEnCalls: new Set(literalCalls).size,
+  translatedAttributes: new Set(htmlAttributeCopy).size,
   staticDataEnAttributes: (html.match(/data-en=/g) || []).length,
 }, null, 2));

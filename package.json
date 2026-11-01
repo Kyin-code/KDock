@@ -19,6 +19,7 @@
     "test:vite:session": "node tests/agent-session.vite-smoke.mjs",
     "test:browser": "node tests/shared-browser.unit.mjs",
     "test:i18n": "node tests/i18n.unit.mjs",
+    "test:i18n:ui": "node tests/i18n-layout.vite-smoke.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "@tauri-apps/plugin-autostart": "^2.7.0",
     "@tauri-apps/plugin-dialog": "^2.8.2",
     "@tauri-apps/plugin-fs": "^2.7.0",
+    "i18next": "^26.6.0",
     "uplot": "^1.6.32"
   },
   "devDependencies": {

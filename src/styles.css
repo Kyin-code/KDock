@@ -743,6 +743,63 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
   }
   .params .parampane[data-param="batch"] .dcbody > .hint { grid-column: 1 / -1; margin: 0; }
   .cardtitle { margin: 10px 0 6px; }
+
+  /* Agent needs a usable conversation viewport at the minimum window size.
+     Its inspector is secondary and remains available in a short scrollable
+     strip; without this cap the English composer wraps and overdraws it. */
+  html[data-tab="agent"] .split {
+    grid-template-rows: minmax(0, 1fr) minmax(0, 140px);
+  }
+  html[data-tab="agent"] .split > .params {
+    max-height: 140px;
+  }
+  [data-work="agent"] .agcomposer {
+    flex-wrap: nowrap;
+  }
+  [data-work="agent"] .agcomposer .agctl {
+    min-width: 0;
+  }
+  [data-work="agent"] .agcomposer .agctl-label {
+    display: none;
+  }
+  [data-work="agent"] .agcomposer .agctl-model {
+    flex: 1 1 160px;
+    min-width: 0;
+    overflow: hidden;
+  }
+  [data-work="agent"] .agcomposer .agctl-model select {
+    width: 100%;
+    min-width: 0;
+  }
+  [data-work="agent"] .agcomposer #ag-send {
+    flex: 0 0 auto;
+  }
+  [data-work="agent"] {
+    overflow: hidden;
+  }
+
+  /* At this width the right side is already tight. The full connection state
+     matters more than the location/status pair; IP details remain in Settings. */
+  #ip-location-chip {
+    display: none;
+  }
+}
+
+@container app (max-width: 980px) and (max-height: 700px) {
+  /* At the minimum window height, keep a useful chat viewport instead of
+     letting the optional inspector and composer metadata consume it. */
+  html[data-tab="agent"] .split {
+    grid-template-rows: minmax(0, 1fr) minmax(0, 88px);
+  }
+  html[data-tab="agent"] .split > .params {
+    max-height: 88px;
+  }
+  [data-work="agent"] .agcomposer-meta {
+    display: none;
+  }
+  [data-work="agent"] #ag-input {
+    min-height: 78px;
+  }
 }
 /* 只有真的切到"参数区在下面"（<=980）时才用 3 列；
    以前写的是 1000 —— 于是 980~1000 这段里 .split 只有 3 列，而 split 有 5 个子项，

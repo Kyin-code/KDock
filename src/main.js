@@ -15,6 +15,14 @@ import { ADVANCED_TABS, initAdvancedNav, openAdvancedNavFor } from "./nav-advanc
 import { createShortcutManager, mountShortcutSettings } from "./shortcuts.js";
 import { mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "./agent-session.js";
 import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
+import {
+  applyDomLanguage,
+  changeLanguage,
+  createI18n,
+  syncDataLanguage,
+  translate,
+  translatedOrNull,
+} from "./i18n.js";
 
 const $ = (id) => document.getElementById(id);
 window.kdockToast = (text) => toast(text);
@@ -7462,96 +7470,12 @@ function bindLogResize(gripId, boxId, key) {
 /** 按字典扫一遍 DOM：元素看 placeholder/title，文本节点按 (中文 -> 英文) 替换。
  *  运行时拼出来的控件重建完再扫一遍就行，所以单独抽出来。*/
 function langWalk() {
-  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
-  let n;
-  while ((n = w.nextNode())) {
-    if (n.nodeType === 1) {
-      // 页面级双语文案：比依赖整句中文查表可靠，带参数的标题和运行时空态也不会漏。
-      if (n.dataset.en) {
-        if (LANG === "en" && n.childNodes.length > 1) {
-          if (!n.dataset.zhHtml) n.dataset.zhHtml = n.innerHTML;
-          n.textContent = n.dataset.en;
-        } else if (LANG === "en" && n.firstChild && n.firstChild.nodeType === Node.TEXT_NODE) {
-          const raw = n.firstChild.nodeValue;
-          const lead = raw.match(/^\s*/)?.[0] || "";
-          n.dataset.zhText = n.dataset.zhText || raw;
-          n.firstChild.nodeValue = lead + n.dataset.en;
-        } else if (LANG === "zh" && n.dataset.zhText != null && n.firstChild && n.firstChild.nodeType === Node.TEXT_NODE) {
-          n.firstChild.nodeValue = n.dataset.zhText;
-        }
-        if (LANG === "zh") delete n.dataset.zhText;
-      }
-      if (n.dataset.enPh) {
-        if (LANG === "en") { n.dataset.zhPh = n.dataset.zhPh || n.placeholder; n.placeholder = n.dataset.enPh; }
-        else if (n.dataset.zhPh != null) { n.placeholder = n.dataset.zhPh; }
-        if (LANG === "zh") delete n.dataset.zhPh;
-      }
-      if (n.dataset.enTitle) {
-        if (LANG === "en") {
-          if (n.dataset.zhTip == null) n.dataset.zhTip = n.dataset.tip || n.getAttribute("title") || "";
-          n.dataset.tip = n.dataset.enTitle;
-          n.removeAttribute("title");
-        } else if (n.dataset.zhTip) {
-          n.dataset.tip = n.dataset.zhTip;
-          delete n.dataset.zhTip;
-        }
-      }
-      if (n.placeholder) {
-        const ph = EN[n.placeholder] || EN[n.placeholder.trim().replace(/\s+/g, " ")];
-        if (LANG === "en" && ph) { n.dataset.zhPh = n.dataset.zhPh || n.placeholder; n.placeholder = ph; }
-        else if (LANG === "zh" && n.dataset.zhPh) n.placeholder = n.dataset.zhPh;
-      }
-      // 提示文本：bindTooltips 把 title 搬进了 dataset.tip（为了不让系统画那个丑气泡），
-      // 两个地方都要认，不然切语言时提示会漏翻
-      const tipRaw = n.dataset.tip || n.getAttribute("title");
-      if (tipRaw) {
-        const ti = EN[tipRaw] || EN[tipRaw.trim().replace(/\s+/g, " ")];
-        if (LANG === "en" && ti) { n.dataset.zhTi = n.dataset.zhTi || tipRaw; n.dataset.tip = ti; }
-        else if (LANG === "zh" && n.dataset.zhTi) n.dataset.tip = n.dataset.zhTi;
-      }
-      continue;
-    }
-    const t = (n.nodeValue || "").trim();
-    if (!t) continue;
-    // HTML 里换行+缩进会被算进文本节点；查表时把空白规范化再试一次
-    const key = t.replace(/\s+/g, " ");
-    if (LANG === "en") {
-      const tr = EN[t] || EN[key];
-      if (tr) { if (n.__zh == null) n.__zh = n.nodeValue; n.nodeValue = n.nodeValue.replace(t, tr); }
-    } else if (n.__zh != null) {
-      n.nodeValue = n.__zh; n.__zh = null;
-    }
-  }
+  applyDomLanguage(document.body, appI18n, LANG);
 }
 
 /** data-en 文案的独立同步入口：供独立模块在绘制完成后调用，不受本轮 DOM 扫描方向影响。 */
 function syncDataLang() {
-  const en = LANG === "en";
-  for (const el of document.querySelectorAll("[data-en], [data-en-ph]")) {
-    if (el.dataset.en && el.childNodes.length > 1) {
-      if (en) {
-        if (!el.dataset.zhHtml) el.dataset.zhHtml = el.innerHTML;
-        el.textContent = el.dataset.en;
-      } else if (el.dataset.zhHtml) {
-        el.innerHTML = el.dataset.zhHtml;
-        delete el.dataset.zhHtml;
-      }
-    } else if (el.dataset.en && el.firstChild && el.firstChild.nodeType === Node.TEXT_NODE) {
-      if (en) {
-        const raw = el.firstChild.nodeValue;
-        const lead = raw.match(/^\s*/)?.[0] || "";
-        el.dataset.zhText = el.dataset.zhText || raw;
-        el.firstChild.nodeValue = lead + el.dataset.en;
-      } else if (el.dataset.zhText != null) {
-        el.firstChild.nodeValue = el.dataset.zhText;
-        delete el.dataset.zhText;
-      }
-    }
-    if (el.dataset.enPh) {
-      if (en) { el.dataset.zhPh = el.dataset.zhPh || el.placeholder; el.placeholder = el.dataset.enPh; }
-      else if (el.dataset.zhPh != null) { el.placeholder = el.dataset.zhPh; delete el.dataset.zhPh; }
-    }
-  }
+  syncDataLanguage(document, LANG);
 }
 window.kdockSyncDataLang = syncDataLang;
 
@@ -10386,7 +10310,7 @@ function agTrName(name) {
   const s = String(name || "");
   if (LANG !== "en") return s;
   // 内置/预设名字：先按整名查词典（"DeepSeek（Anthropic 格式）" 这种），再换 AMD 前缀
-  return (EN[s] || s).replace(/^AMD 免费 · /, "AMD Free · ");
+  return en(s).replace(/^AMD 免费 · /, "AMD Free · ");
 }
 
 /** 出字速度：每个 profile 一条 {last, avg, tokens, ms, samples} */
@@ -13452,6 +13376,8 @@ const EN = {
   "知识库": "Knowledge base", "浏览器": "Browser",
   "共享浏览器": "Shared browser", "共享浏览器首页": "Shared browser home",
   "在浏览器打开": "Open in browser",
+  "输入网址或域名": "Enter a URL or domain", "https://…（可留空）": "https://… (optional)",
+  "首页": "Home", "打开浏览器": "Open browser",
   "共享浏览器首页已保存": "Shared browser home saved", "当前页已读取": "Current page read",
   "输入网址开始浏览": "Enter a URL to start browsing",
   "共享页面已同步": "Shared page is in sync", "页面载入中…": "Loading page…",
@@ -14509,8 +14435,70 @@ const EN = {
   "立方": "Cube", "阶乘只支持 0~170 的整数": "Factorial supports integers from 0 to 170 only",
   "阶乘": "Factorial", "复制全部": "Copy all", "列": "Column", "密文": "Ciphertext",
   "选要算 CRC / 哈希的文件": "Choose a file for CRC / hashing",
+
+  // ============ 静态标题 / 占位符翻译回归 ============
+  "人格 / 口吻 / 通用规矩写这儿（等价于 Codex 的全局 AGENTS.md）。\n例：\n# 身份\n- 说话简短，先给结论。\n- 做事前先看现状，改设备状态前先说明。":
+    "Personality, tone and shared rules (equivalent to Codex's global AGENTS.md).\nExample:\n# Identity\n- Be concise and lead with the conclusion.\n- Inspect the current state first; explain before changing device state.",
+  "---\nname: xxx\ndescription: 什么时候用它\n---\n\n正文":
+    "---\nname: xxx\ndescription: when to use it\n---\n\nBody",
+  "npx / node / 你的 mcp server.exe（远程模式留空）": "npx / node / your mcp server.exe (leave blank for remote mode)",
+  "EXA_API_KEY=... 或 Authorization=Bearer ...（每行一个）": "EXA_API_KEY=... or Authorization=Bearer ... (one per line)",
+  "和 KDock 一起工作": "Work with KDock",
+  "固件运行结构：main 调用树 / 中断 / 库函数折叠 / 自动布局":
+    "Firmware runtime graph: main call tree, interrupts, library folding and automatic layout",
+  "展开低频开发、测量和效率工具": "Expand low-frequency development, measurement and productivity tools",
+  "共享内部浏览器": "Shared internal browser",
+  "安卓设备：adb 设备 / shell / 推拉文件 / 装 APK / 投屏与反向控制（scrcpy 也在这页）":
+    "Android devices: adb devices, shell, file transfer, APK install, screen mirroring and remote control (scrcpy is here too)",
+  "内嵌调试：GDB（MI）+ GDB Server（openocd / J-Link）":
+    "Embedded debugging: GDB (MI) + GDB Server (openocd / J-Link)",
+  "屏幕共享：本机桌面 / VNC（可控制键鼠）/ RTSP / RTMP / H.264（FFmpeg 解码），支持全屏与快捷键":
+    "Screen sharing: local desktop, VNC (keyboard/mouse control), RTSP, RTMP and H.264 (FFmpeg decoding), with fullscreen and shortcuts",
+  "发送输入框内容": "Send input box contents",
+  "打开分析器所在目录": "Open analyzer folder",
+  "本会话的思考强度": "Reasoning effort for this session",
+  "后退": "Back",
+  "存为共享浏览器首页": "Save as shared browser home",
+  "按函数名或地址查找": "Find by function name or address",
+  "按调用深度自动分层，重新排版": "Lay out automatically by call depth",
+  "展开所有折叠分支": "Expand all collapsed branches",
+  "折叠选中分支；未选中时折叠所有有下游的分支":
+    "Collapse the selected branches; when nothing is selected, collapse every branch with outgoing calls",
+  "全固件包含所有被识别函数；main 运行链只显示入口可达与中断可达函数；函数调用链路只显示以选中函数为根的上下游链路":
+    "Full firmware includes every recognized function; main runtime shows only functions reachable from the entry or interrupts; call chains show only upstream/downstream functions rooted at the selection",
+  "链路方向：向下看它调用了谁，向上看谁调用了它":
+    "Chain direction: downstream shows what it calls; upstream shows its callers",
+  "从根函数向外展开的层数": "Number of levels to expand from the root function",
+  "回到全固件图；直接使用本地缓存，不重新分析":
+    "Return to the full-firmware graph; reuse the local cache without re-analysis",
+  "递归展开 main 可达调用": "Recursively expand calls reachable from main",
+  "先显示 main 入口和组件入口，点击节点逐步展开":
+    "Start with main and component entries, then expand nodes incrementally",
+  "勾选后收起库函数下游分支；取消勾选立即展开":
+    "When checked, collapse downstream library branches; uncheck to expand them immediately",
+  "DSLogic 的采样率是所有已启用通道共享的": "The DSLogic sample rate is shared by all enabled channels",
+  "在浏览器页查看共享页面": "View the shared page in Browser",
+  "查看当前页 HTML 源码": "View the current page HTML source",
+  "可留空；例：-ex \"target extended-remote :3333\"": "Optional; e.g. -ex \"target extended-remote :3333\"",
+  "0x08000101（可留空）": "0x08000101 (optional)",
+  "自动发现，可覆盖": "Auto-detected; can override",
+  "大图建议只突出选中节点的上下游链路": "For large graphs, highlight only the selected node's upstream/downstream chain",
+  "pyocd.exe 路径（CMSIS-DAP / WCH-Link / ST-Link）": "pyocd.exe path (CMSIS-DAP / WCH-Link / ST-Link)",
+  "选 pyocd.exe": "Choose pyocd.exe",
+  "esptool.exe 路径（ESP ROM 烧录）": "esptool.exe path (ESP ROM flashing)",
+  "选 esptool.exe": "Choose esptool.exe",
+  "wlink.exe 路径（RISC-V）": "wlink.exe path (RISC-V)",
+  "选 wlink.exe": "Choose wlink.exe",
+  "AURIXFlasher.exe 路径": "AURIXFlasher.exe path",
+  "选 AURIXFlasher.exe": "Choose AURIXFlasher.exe",
+  "可选，追加到工具命令末尾": "Optional; appended to the end of the tool command",
+  "多探针时填 pyOCD 的唯一 ID（可空）": "For multiple probes, enter the unique pyOCD ID (optional)",
+  "adb pair（只用一次；已配对设备不要重复配对）":
+    "adb pair (one-off; do not pair an already paired device again)",
+  "DSView 自带解码器": "Decoder bundled with DSView",
 };
-const en = (t) => (LANG === "en" && EN[t]) ? EN[t] : t;
+const appI18n = createI18n(EN, LANG);
+const en = (t, values) => translate(appI18n, LANG, t, values);
 // 分文件写的小模块（批量文本/计算器）也要能翻译 + 切语言时重画
 const langHooks = [];
 window.kdockT = en;
@@ -14520,13 +14508,14 @@ window.kdockOnLang = (fn) => { if (typeof fn === "function") langHooks.push(fn);
 window.kdockTranslateText = (text) => {
   if (LANG !== "en") return text;
   const s = String(text);
-  return EN[s] || s.replace(
+  return en(s) !== s ? en(s) : s.replace(
     /^(未找到便携分析器：去环境配置 → 固件运行结构分析器 准备。|便携分析器就绪：|选择固件失败：|已选择 )/,
-    (m) => EN[m] || m,
+    (m) => en(m),
   );
 };
 function applyLang(lang) {
   LANG = lang === "en" ? "en" : "zh";
+  changeLanguage(appI18n, LANG);
   localStorage.setItem("kdock_lang", LANG);
   uiPrefsSave();
   document.documentElement.dataset.lang = LANG;
