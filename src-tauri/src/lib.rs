@@ -429,7 +429,23 @@ fn flash_scripts_blocking(kind: String, scripts_dir: Option<String>) -> Result<V
 /// 去掉 Windows 原生那圈"窗体边框"（WS_CAPTION）：留着 WS_THICKFRAME 所以还能拖边改大小/贴边。
 /// 顺手让 DWM 保持圆角，避免变成硬直角。
 #[cfg(windows)]
-fn strip_native_frame(window: &tauri::WebviewWindow) {
+trait NativeWindowHandle {
+    fn native_hwnd(&self) -> Option<isize>;
+}
+
+impl NativeWindowHandle for tauri::Window {
+    fn native_hwnd(&self) -> Option<isize> {
+        self.hwnd().ok().map(|h| h.0 as isize)
+    }
+}
+
+impl NativeWindowHandle for tauri::WebviewWindow {
+    fn native_hwnd(&self) -> Option<isize> {
+        self.hwnd().ok().map(|h| h.0 as isize)
+    }
+}
+
+fn strip_native_frame(window: &impl NativeWindowHandle) {
     // 反复调用是安全的：DWM 在最大化/还原/激活时会把这些属性重画回默认值
     const GWL_STYLE: i32 = -16;
     const GWL_EXSTYLE: i32 = -20;
@@ -453,8 +469,7 @@ fn strip_native_frame(window: &tauri::WebviewWindow) {
     extern "system" {
         fn DwmSetWindowAttribute(hwnd: isize, attr: u32, value: *const i32, size: u32) -> i32;
     }
-    let Ok(h) = window.hwnd() else { return };
-    let hwnd = h.0 as isize;
+    let Some(hwnd) = window.native_hwnd() else { return };
     unsafe {
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
         // 彻底无边框：CAPTION/THICKFRAME 都不要（拖拽/缩放我们在前端自己做）
@@ -689,7 +704,7 @@ fn spawn_frame_watcher(window: tauri::WebviewWindow) {
 
 /// 把主窗口叫到前面来：最小化状态要先 unminimize，否则 show() 不起作用（托盘点了像没反应）。
 fn focus_main(app: &tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
+    if let Some(w) = app.get_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
@@ -717,7 +732,7 @@ fn hide_native(w: &tauri::WebviewWindow) {
 
 /// 把窗口贴到显示器工作区（最大化时用，避开无边框窗口那 8px 边框）。
 #[cfg(windows)]
-fn fit_work_area(w: &tauri::WebviewWindow) {
+fn fit_work_area(w: &impl NativeWindowHandle) {
     #[repr(C)]
     struct RECT { l: i32, t: i32, r: i32, b: i32 }
     const SWP_NOZORDER: u32 = 0x0004;
@@ -732,9 +747,8 @@ fn fit_work_area(w: &tauri::WebviewWindow) {
     }
     #[repr(C)]
     struct MONITORINFO { cb: u32, rc: RECT, work: RECT, flags: u32 }
-    if let Ok(h) = w.hwnd() {
+    if let Some(hwnd) = w.native_hwnd() {
         unsafe {
-            let hwnd = h.0 as isize;
             let mon = MonitorFromWindow(hwnd, 2);   // NEAREST
             let mut mi = MONITORINFO { cb: std::mem::size_of::<MONITORINFO>() as u32,
                 rc: RECT { l: 0, t: 0, r: 0, b: 0 }, work: RECT { l: 0, t: 0, r: 0, b: 0 }, flags: 0 };
@@ -766,7 +780,7 @@ fn win_move(app: tauri::AppHandle, dx: i32, dy: i32) -> Result<(), String> {
             fn GetWindowRect(hwnd: isize, r: *mut RECT) -> i32;
             fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
         }
-        let w = app.get_webview_window("main").ok_or("找不到主窗口")?;
+        let w = app.get_window("main").ok_or("找不到主窗口")?;
         let h = w.hwnd().map_err(|e| e.to_string())?.0 as isize;
         unsafe {
             let mut r = RECT { l: 0, t: 0, r: 0, b: 0 };
@@ -795,7 +809,7 @@ fn win_resize(app: tauri::AppHandle, edge: String, dx: i32, dy: i32) -> Result<(
             fn GetWindowRect(hwnd: isize, r: *mut RECT) -> i32;
             fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
         }
-        let w = app.get_webview_window("main").ok_or("找不到主窗口")?;
+        let w = app.get_window("main").ok_or("找不到主窗口")?;
         let h = w.hwnd().map_err(|e| e.to_string())?.0 as isize;
         unsafe {
             let mut r = RECT { l: 0, t: 0, r: 0, b: 0 };
@@ -829,7 +843,7 @@ fn win_frame_info(app: tauri::AppHandle) -> serde_json::Value {
         extern "system" {
             fn DwmGetWindowAttribute(hwnd: isize, attr: u32, value: *mut i32, size: u32) -> i32;
         }
-        if let Some(w) = app.get_webview_window("main") {
+        if let Some(w) = app.get_window("main") {
             if let Ok(h) = w.hwnd() {
                 let hwnd = h.0 as isize;
                 unsafe {
@@ -857,10 +871,10 @@ fn win_frame_info(app: tauri::AppHandle) -> serde_json::Value {
 /// 无边框标题栏的窗口控制：min / toggle_max / close / drag。
 #[tauri::command]
 fn win_ctl(app: tauri::AppHandle, action: String) -> Result<(), String> {
-    let w = app.get_webview_window("main").ok_or("找不到主窗口")?;
+    let w = app.get_window("main").ok_or("找不到主窗口")?;
     // Windows 在最大化/还原/最小化后会把原生 caption 样式加回来，所以每次操作后都再去一遍
     #[cfg(windows)]
-    let again = |w: &tauri::WebviewWindow| {
+    let again = |w: &tauri::Window| {
         strip_native_frame(w);
     };
     match action.as_str() {
@@ -1445,17 +1459,17 @@ async fn kb_bounds(app: AppHandle, kind: String, x: f64, y: f64, w: f64, h: f64)
 }
 
 #[tauri::command]
-fn kb_hide(kind: String) {
+async fn kb_hide(kind: String) {
     kbview::hide(&kind);
 }
 
 #[tauri::command]
-fn kb_hide_all() {
+async fn kb_hide_all() {
     kbview::hide_all();
 }
 
 #[tauri::command]
-fn kb_reload(kind: String) -> Result<(), String> {
+async fn kb_reload(kind: String) -> Result<(), String> {
     kbview::reload(&kind)
 }
 
@@ -1466,22 +1480,22 @@ fn kb_url(kind: String) -> Option<String> {
 }
 
 #[tauri::command]
-fn kb_navigate(kind: String, url: String) -> Result<(), String> {
+async fn kb_navigate(kind: String, url: String) -> Result<(), String> {
     kbview::navigate(&kind, &url)
 }
 
 #[tauri::command]
-fn kb_open(app: AppHandle, kind: String, url: String) -> Result<(), String> {
+async fn kb_open(app: AppHandle, kind: String, url: String) -> Result<(), String> {
     kbview::open(&app, &kind, &url)
 }
 
 #[tauri::command]
-fn kb_back(kind: String) -> Result<(), String> {
+async fn kb_back(kind: String) -> Result<(), String> {
     kbview::back(&kind)
 }
 
 #[tauri::command]
-fn kb_source(app: AppHandle, kind: String) -> Result<(), String> {
+async fn kb_source(app: AppHandle, kind: String) -> Result<(), String> {
     kbview::source(&app, &kind)
 }
 
@@ -1491,7 +1505,7 @@ fn kb_current_url(kind: String) -> Option<String> {
 }
 
 #[tauri::command]
-fn kb_read_dom(app: AppHandle, kind: String) -> Result<(), String> {
+async fn kb_read_dom(app: AppHandle, kind: String) -> Result<(), String> {
     kbview::read_dom(&app, &kind)
 }
 
@@ -1696,7 +1710,7 @@ fn set_close_to_tray(v: bool) {
 
 #[tauri::command]
 fn show_main_window(app: AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
+    if let Some(w) = app.get_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
@@ -2306,7 +2320,7 @@ fn get_log(state: State<'_, Arc<AppState>>) -> Vec<LogLine> {
 #[tauri::command]
 fn window_set_zoom(app: AppHandle, scale: f64) -> Result<(), String> {
     let s = if scale.is_finite() { scale.clamp(0.5, 3.0) } else { 1.0 };
-    if let Some(w) = app.get_webview_window("main") {
+    if let Some(w) = app.get_webview("main") {
         w.set_zoom(s).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -3235,7 +3249,7 @@ fn set_big_icon(window: &tauri::WebviewWindow, img: &tauri::image::Image<'_>) {
 /// 从 window-state 恢复出来的位置可能已经不在可见区域（换显示器/改缩放，或者存的是
 /// 最大化时那个 -8 的坐标）—— 那就"看不见"了。这里把它夹回工作区内。
 #[cfg(windows)]
-fn clamp_to_work_area(w: &tauri::WebviewWindow) {
+fn clamp_to_work_area(w: &impl NativeWindowHandle) {
     #[repr(C)]
     struct RECT {
         l: i32,
@@ -3259,8 +3273,7 @@ fn clamp_to_work_area(w: &tauri::WebviewWindow) {
         fn MonitorFromWindow(h: isize, flags: u32) -> isize;
         fn GetMonitorInfoW(mon: isize, info: *mut MONITORINFO) -> i32;
     }
-    let Ok(h) = w.hwnd() else { return };
-    let hwnd = h.0 as isize;
+    let Some(hwnd) = w.native_hwnd() else { return };
     unsafe {
         let mut r = RECT { l: 0, t: 0, r: 0, b: 0 };
         if GetWindowRect(hwnd, &mut r) == 0 {
@@ -3387,7 +3400,7 @@ mod tests {
 
 fn ui_ready_impl(app: &AppHandle) {
     UI_READY_DONE.store(true, Ordering::Relaxed);
-    if let Some(w) = app.get_webview_window("main") {
+    if let Some(w) = app.get_window("main") {
         let visible = w.is_visible().unwrap_or(true);
         if !visible {
             #[cfg(windows)]
@@ -3564,7 +3577,7 @@ pub fn run() {
         // 不去碰 WebView2 的用户数据目录（两个实例抢同一个目录 = HRESULT(0x8007139F) 起不来）
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             focus_main(app);
-            if let Some(w) = app.get_webview_window("main") {
+            if let Some(w) = app.get_window("main") {
                 let _ = w.show();
                 let _ = w.unminimize();
                 let _ = w.set_focus();

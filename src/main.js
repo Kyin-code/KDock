@@ -633,7 +633,8 @@ function pushSys(text) {
   if (rxPaused) return;
   for (const line of String(text).split(/\r?\n/)) {
     if (!line.trim()) continue;
-    pushEntry({ dir: "SYS", ts_ms: Date.now(), text: line, hex: "", ascii: "" });
+    const shown = window.kdockTranslateText ? window.kdockTranslateText(line) : line;
+    pushEntry({ dir: "SYS", ts_ms: Date.now(), text: shown, hex: "", ascii: "" });
   }
 }
 
@@ -2188,7 +2189,7 @@ async function flDetectTools(clearFirst) {
   flCfgSave();
   $("fl-tool-state").textContent = en("检测中…");
   try {
-    flBootSet(30, "检测烧录器…");
+    flBootSet(30, en("检测烧录器…"));
     const r = await invoke("flash_tools", { overrides: FL_CFG });
     const seg = [];
     const map = [
@@ -2205,7 +2206,7 @@ async function flDetectTools(clearFirst) {
     const sc = (r.openocd || {}).scripts || "";
     if (sc) $("fl-tool-scripts").value = sc;
     seg.push("scripts" + (sc ? " ✓" : " ✗"));
-    flBootSet(40, "枚举探针…");
+    flBootSet(40, en("枚举探针…"));
     try {
       // 串口枚举和 pyOCD 探针查询互不依赖：并行跑，别让 Python 启动时间叠加
       const [ports, cmsis] = await Promise.all([
@@ -2597,7 +2598,7 @@ function flashBootstrap() {
   (async () => {
     flBootShow("准备烧录工具…");
     await flYield();
-    flBootSet(18, "检测烧录器…");
+    flBootSet(18, en("检测烧录器…"));
     await flDetectTools(false);
     await flYield();
     flBootSet(48, "扫描 openocd 器件库…");
@@ -4491,7 +4492,8 @@ function sqNodeEl(n) {
     if (into > 1 || outN > 1 || n.type === "step" || n.type === "delay" || n.type === "branch") {
       const c = document.createElement("div");
       c.className = "ncount";
-      c.textContent = (into > 1 ? "调用 ×" + into : "") + (outN > 1 ? (into > 1 ? " · " : "") + "出线 ×" + outN : "");
+      c.textContent = (into > 1 ? en("调用 ×") + into : "") +
+        (outN > 1 ? (into > 1 ? " · " : "") + en("出线 ×") + outN : "");
       if (c.textContent) el.appendChild(c);
     }
   }
@@ -6676,11 +6678,21 @@ async function envInstall(id, opts) {
       force: id !== "usbpcap" && !!(it && it.installed && !it.warning),
     });
     if (log) envLog(String(log));
+    const rebootRequired = String(log || "").includes("KDOCK_REBOOT_REQUIRED");
     envLog(en("完成，重新扫描…"));
     envData = null;
     await envRefresh(true);
     const all = (envData && envData.items) || [];
     const miss = (envData && envData.missingRequired) || [];
+    const now = all.find((x) => x.id === id);
+    const driverStillPending = !!it && /驱动/.test(String(it.kind || "")) && (!now || !now.installed);
+    if (rebootRequired || driverStillPending) {
+      const msg = en("驱动安装已完成，但 Windows 需要完整重启后才能加载。") + "\n" +
+        en("请使用开始菜单的「重启」；不要关机后再开机，因为快速启动可能不会重新加载驱动。");
+      envLog(msg);
+      toast(en("驱动已安装，请完整重启 Windows"));
+      agDialog({ title: en("需要重启"), text: msg, okText: en("知道了") });
+    }
     return `${it ? it.name : id}：${log ? String(log) : "ok"}\n` +
       `重扫：已装 ${all.filter((x) => x.installed).length}/${all.length}；` +
       (miss.length ? `仍缺必需项 ${miss.join(", ")}` : "必需项齐了");
@@ -13856,6 +13868,7 @@ const EN = {
   "(DLL 内置库)": "(DLL, built-in lib)",
   "文件…": "File…",
   "失败: 还没有连接：先连上设备": "Error: not connected yet — connect to the device first",
+  "[文件] 列目录失败: 还没有连接：先连上设备": "[Files] list failed: not connected yet — connect to the device first",
   "每行前面标出 RX/TX/SYS 方向；开着时间戳时会并进同一个方括号里（SSCOM 那种一个前缀）": "Tag each line with RX/TX/SYS; when timestamps are on they share one bracket (a single prefix like SSCOM)",
   "{a} × {b}（消隐 {c} × {d}）": "{a} × {b} (blanking {c} × {d})",
   "显示器 ": "Monitor ",
@@ -13914,6 +13927,30 @@ const EN = {
   "设备视图：谁挂在哪个端口、VID/PID、速度、接口和端点、绑定到哪个驱动。原始传输（每一笔 IN/OUT 的 payload）由 USBPcap 抓取，需要先在「环境配置」里安装并重启一次。": "Device view: what sits on which port, VID/PID, speed, interfaces and endpoints, which driver it binds to. Raw transfers (the payload of every IN/OUT) come from USBPcap — install it from Environment setup and reboot once.",
   "需要重启一次": "Reboot once",
   "已安装 · 需要重启一次": "Installed · reboot once",
+  "枚举探针…": "Enumerating probes…",
+  "检测烧录器…": "Detecting programmers…",
+  "调用 ×": "Calls ×", "出线 ×": "Edges ×",
+  "完整页面显示在中间工作区。地址、登录状态、Cookie 和后退历史由这一块共享浏览器维护。":
+    "The full page appears in the center workspace. This shared browser keeps the URL, login state, cookies and back history.",
+  "在中间打开": "Open in center",
+  "DSLogic 逻辑分析仪驱动": "DSLogic logic-analyzer driver",
+  "梦源 DSLogic 系列（VID 2A0E）的 WinUSB 绑定，sigrok / KDock 采集走它。插着分析仪时一键安装，会弹一次 UAC。":
+    "WinUSB binding for DreamSourceLab DSLogic analyzers (VID 2A0E), used by sigrok / KDock capture. Connect the analyzer and install once; this raises one UAC prompt.",
+  "DSView 解码引擎": "DSView decoder engine",
+  "夜间版 sigrok-cli + DSView 自带解码器。只在 DSLogic 设备上使用，24M 那台继续走原来的 sigrok 路径。":
+    "Nightly sigrok-cli plus DSView's bundled decoders. Used only with DSLogic devices; the 24M unit keeps the existing sigrok path.",
+  "ST-Link / V2-1 / V3 调试器的 WinUSB 驱动，OpenOCD、pyOCD、probe-rs 都靠它认探针。一键安装会弹一次 UAC。":
+    "WinUSB driver for ST-Link / V2-1 / V3 probes, used by OpenOCD, pyOCD and probe-rs. One-click install raises one UAC prompt.",
+  "沁恒 WCH-Link / WCH-LinkE 的 CMSIS-DAP 调试接口。只绑定 MI_00，串口（MI_01）保持系统自带驱动可用。":
+    "CMSIS-DAP interface for WCH-Link / WCH-LinkE. Only MI_00 is bound; the serial interface (MI_01) keeps its system driver.",
+  "wlink（WCH-Link 命令行烧录）": "wlink (WCH-Link CLI flasher)",
+  "沁恒 CH32V / CH57x / CH58x / CH59x 的命令行烧录器，支持 hex / elf / bin，比厂商 GUI 更适合自动化和批量烧录。":
+    "Command-line flasher for WCH CH32V / CH57x / CH58x / CH59x with hex / elf / bin support; better suited to automation and batch flashing than the vendor GUI.",
+  "驱动安装已完成，但 Windows 需要完整重启后才能加载。": "The driver installation finished, but Windows must be fully restarted before it can load.",
+  "请使用开始菜单的「重启」；不要关机后再开机，因为快速启动可能不会重新加载驱动。": "Use Start menu → Restart. Do not shut down and power on again, because Fast Startup may not reload the driver.",
+  "驱动已安装，请完整重启 Windows": "Driver installed — fully restart Windows",
+  "需要重启": "Restart required",
+  "知道了": "Got it",
   "抓包": "Capture",
   "开始抓包": "Start capture",
   "停止抓包": "Stop capture",
@@ -14431,6 +14468,47 @@ const EN = {
   "搜索工具名 / 说明": "Search tool name / description",
   "（没有技能：点「导入…」选一个 SKILL.md，或「新建」）": "(no skills: use Import… or New)",
   "命中率": "Cache hit", "缓存命中": "Cache hit",
+
+  // Dynamic strings that are assembled at runtime rather than present in index.html.
+  "填一下 SSH 主机": "Enter the SSH host",
+  "已刷新": "Refreshed",
+  "网络与代理设置已保存": "Network and proxy settings saved",
+  "正在查询…": "Querying…",
+  "已连上，要换连接先点「断开」": "Connected; click Disconnect before switching links",
+  "升级中": "Upgrading",
+  "失败: ": "Failed: ", "启动失败: ": "Start failed: ",
+  "目录名（建在当前路径下）": "Folder name (created under the current path)",
+  "垂直偏移（V）": "Vertical offset (V)",
+  "（adb 不可用）": "(adb unavailable)",
+  "先选一台设备": "Select a device first", "配对成功": "Paired successfully",
+  "选 APK": "Choose APK", "条指令？": "instruction(s)?",
+  "删除指令组": "Delete command group",
+  "要加 / 改 / 删就点「✎ 编辑指令表」：组和指令都在那个弹窗里管，组名可以随便起":
+    "Use “✎ Edit command list” to add, change or delete entries; both groups and commands are managed there, and group names can be arbitrary",
+  "改完立刻存进 agent/commands.json，下次开机还在（「设置 → 缓存」里能看到、也能删）":
+    "Changes are saved to agent/commands.json immediately and survive restarts (visible and removable under Settings → Cache)",
+  "弹窗里的「恢复默认」= 回到内置的标准 Linux 指令集":
+    "“Restore defaults” in the dialog returns to the built-in standard Linux command set",
+  "列表里显示的名字（留空就用内容前几个字）": "Display name (blank uses the first few characters of the content)",
+  "文本直接写；HEX 形如 41 54 0D 0A": "Enter text directly; HEX looks like 41 54 0D 0A",
+  "把安装包放进 <exe 同目录>\\drivers\\<组件id>\\ 之后再点这个":
+    "Put the installer under <exe folder>\\drivers\\<component id>\\, then click this",
+  "运行中…": "Running…",
+  "跟 IDE 一样把左右两份文本并排比对": "Compare the two texts side by side like an IDE",
+  "退出码": "Exit code", "复制失败": "Copy failed",
+  "打开全文": "Open full output", "打开路径": "Open path",
+  "文本预览（仅可打印字符）": "Text preview (printable characters only)",
+  "点击展开": "Click to expand",
+  "正在编辑：全局技能": "Editing: global skill",
+  "正在编辑：本项目技能（": "Editing: workspace skill (",
+  "先填个网址": "Enter a URL first", "打开中…": "Opening…", "没有网址": "No URL",
+  "共带宽 400 MHz · {n} 通道 → 每通道 ≤ {r}": "Total bandwidth 400 MHz · {n} channels → ≤ {r} per channel",
+  "当前窗口没有解码结果": "No decoded result in the current view",
+  "先载入一段数据": "Load some data first", "解码中…": "Decoding…",
+  "没有解出内容": "No decoded content", "发送中": "Sending",
+  "立方": "Cube", "阶乘只支持 0~170 的整数": "Factorial supports integers from 0 to 170 only",
+  "阶乘": "Factorial", "复制全部": "Copy all", "列": "Column", "密文": "Ciphertext",
+  "选要算 CRC / 哈希的文件": "Choose a file for CRC / hashing",
 };
 const en = (t) => (LANG === "en" && EN[t]) ? EN[t] : t;
 // 分文件写的小模块（批量文本/计算器）也要能翻译 + 切语言时重画

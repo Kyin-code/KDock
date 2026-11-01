@@ -65,6 +65,67 @@ try {
     results.push(state);
   }
 
+  // Resolution / UI zoom matrix. Representative pages cover the densest
+  // layouts (Agent, runtime, scope, env, browser, USB and tools).
+  const matrixPages = ["link", "agent", "kb", "env", "runtime", "scope", "logic", "usb", "calc"];
+  const matrix = [
+    { name: "1920x1080@100", width: 1920, height: 1080, scale: 1 },
+    { name: "2560x1440@100", width: 2560, height: 1440, scale: 1 },
+    { name: "3840x2160@150", width: 3840, height: 2160, scale: 1.5 },
+    { name: "1366x768@100", width: 1366, height: 768, scale: 1 },
+    { name: "1366x768@125", width: 1366, height: 768, scale: 1.25 },
+    { name: "1280x720@150", width: 1280, height: 720, scale: 1.5 },
+    { name: "1024x768@125", width: 1024, height: 768, scale: 1.25 },
+    { name: "900x600@100", width: 900, height: 600, scale: 1 },
+    { name: "1500x950@200", width: 1500, height: 950, scale: 2 },
+  ];
+  const matrixResults = [];
+  for (const profile of matrix) {
+    await page.setViewportSize({ width: profile.width, height: profile.height });
+    await page.evaluate(({ scale, width, height }) => {
+      const root = document.documentElement;
+      root.style.setProperty("--ui-scale", String(scale));
+      root.style.setProperty("--app-vw", `${width / scale / 100}px`);
+      root.style.setProperty("--app-vh", `${height / scale / 100}px`);
+      root.dataset.uiScale = scale.toFixed(3);
+      root.dataset.lang = "en";
+    }, profile);
+    for (const tab of matrixPages) {
+      await page.evaluate((name) => window.__showAllPagesPage(name), tab);
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const state = await page.evaluate((name) => {
+        const work = [...document.querySelectorAll("[data-work]")].find((el) => !el.hidden);
+        const param = [...document.querySelectorAll("[data-param]")].find((el) => !el.hidden);
+        const w = work?.getBoundingClientRect();
+        const p = param?.getBoundingClientRect();
+        return {
+          tab: name,
+          work: work?.dataset.work || "",
+          param: param?.dataset.param || "",
+          workSize: w ? [Math.round(w.width), Math.round(w.height)] : [0, 0],
+          paramSize: p ? [Math.round(p.width), Math.round(p.height)] : [0, 0],
+          bodyOverflow: document.documentElement.scrollWidth - window.innerWidth,
+          navOverflow: (() => {
+            const n = document.querySelector(".nav");
+            return n ? n.scrollWidth - n.clientWidth : 0;
+          })(),
+        };
+      }, tab);
+      if (!state.work || state.workSize[0] < 80 || state.workSize[1] < 80) {
+        throw new Error(`${profile.name}/${tab}: work pane collapsed ${JSON.stringify(state)}`);
+      }
+      if (!state.param) throw new Error(`${profile.name}/${tab}: parameter pane missing`);
+      if (state.bodyOverflow > 2) {
+        throw new Error(`${profile.name}/${tab}: body overflows by ${state.bodyOverflow}px`);
+      }
+      if (state.navOverflow > 2) {
+        throw new Error(`${profile.name}/${tab}: nav overflows by ${state.navOverflow}px`);
+      }
+      matrixResults.push({ profile: profile.name, ...state });
+    }
+  }
+  await page.setViewportSize({ width: 1500, height: 950 });
+
   await page.evaluate(() => localStorage.removeItem("kdock_nav_advanced_open"));
   await page.reload();
   await page.waitForFunction(() => document.documentElement.dataset.allPagesReady === "1");
@@ -79,6 +140,12 @@ try {
     ok: true,
     pageCount: pages.length,
     pages: results,
+    responsiveMatrix: {
+      profiles: matrix.length,
+      pageChecks: matrixResults.length,
+      maxBodyOverflow: Math.max(0, ...matrixResults.map((x) => x.bodyOverflow)),
+      maxNavOverflow: Math.max(0, ...matrixResults.map((x) => x.navOverflow)),
+    },
     advancedNav: { closedByDefault: advancedClosed, opens: advancedOpened, count: Number(advancedCount) },
   }, null, 2));
 } finally {

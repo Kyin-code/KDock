@@ -100,6 +100,62 @@ impl RunHandle {
     }
 }
 
+/// Finish a run atomically with respect to `agent_send`: either remove its slot
+/// or replace it with a new run carrying messages that arrived after the last
+/// turn boundary. `agent_send` uses the same runs→pending lock order, so a
+/// supplemental message cannot fall into a detached handle and be lost.
+fn finish_run_slot(
+    st: &AgentState,
+    session: &str,
+    handle: &Arc<RunHandle>,
+) -> Option<(Arc<RunHandle>, String)> {
+    let mut runs = st.runs.lock().ok()?;
+    let mine = runs
+        .get(session)
+        .map(|h| Arc::ptr_eq(h, handle))
+        .unwrap_or(false);
+    if !mine {
+        return None;
+    }
+    if handle.stop.load(Ordering::Relaxed) {
+        if let Ok(mut pending) = handle.pending.lock() {
+            pending.clear();
+        }
+        runs.remove(session);
+        return None;
+    }
+    let pending = handle
+        .pending
+        .lock()
+        .map(|mut p| std::mem::take(&mut *p))
+        .unwrap_or_default();
+    if pending.is_empty() {
+        runs.remove(session);
+        return None;
+    }
+    let next = Arc::new(RunHandle::new());
+    runs.insert(session.to_string(), next.clone());
+    Some((next, pending.join("\n\n")))
+}
+
+fn session_closure(
+    metas: &[(String, String)],
+    root: &str,
+) -> std::collections::HashSet<String> {
+    let mut wanted: std::collections::HashSet<String> = std::iter::once(root.to_string()).collect();
+    loop {
+        let before = wanted.len();
+        for (id, parent) in metas {
+            if !parent.is_empty() && wanted.contains(parent) {
+                wanted.insert(id.clone());
+            }
+        }
+        if wanted.len() == before {
+            return wanted;
+        }
+    }
+}
+
 impl AgentState {
     pub fn running(&self, session: Option<&str>) -> bool {
         self.runs
@@ -357,11 +413,19 @@ pub fn agent_provider_save(
 #[tauri::command]
 pub fn agent_provider_delete(app: AppHandle, id: String) -> Result<Value, String> {
     let mut cfg = store::load_providers(&app);
+    let removed = cfg.providers.iter().find(|p| p.id == id).cloned();
     cfg.providers.retain(|p| p.id != id);
     if cfg.active_id.as_deref() == Some(id.as_str()) {
         cfg.active_id = cfg.providers.first().map(|p| p.id.clone());
     }
     store::save_providers(&app, &cfg)?;
+    if let Some(p) = removed {
+        // The UI promises that deleting a provider also removes its key.
+        let _ = store::secret_set(&app, &p.id, "");
+        if !p.api_key_ref.trim().is_empty() && p.api_key_ref != p.id {
+            let _ = store::secret_set(&app, &p.api_key_ref, "");
+        }
+    }
     forget_speed(&app, &id);
     Ok(json!({ "ok": true }))
 }
@@ -871,6 +935,7 @@ pub fn agent_session_load(app: AppHandle, id: String) -> Result<Value, String> {
 
 #[tauri::command]
 pub fn agent_session_delete(app: AppHandle, id: String) -> Result<Value, String> {
+    let _ = agent_stop(app.clone(), Some(id.clone()));
     store::session_delete(&app, &id)?;
     Ok(json!({ "ok": true }))
 }
@@ -2598,23 +2663,7 @@ fn run_turn(
             json!({ "session": session_id, "text": e }),
         );
     }
-    if let Ok(mut g) = st.runs.lock() {
-        // 只清自己占的那个会话槽；不要把其它会话的运行态一起清掉。
-        let mine = g
-            .get(&session_id)
-            .map(|h| Arc::ptr_eq(h, &handle))
-            .unwrap_or(false);
-        if mine {
-            g.remove(&session_id);
-        }
-    }
-    emit(
-        &app,
-        "agent://state",
-        json!({ "running": false, "session": session_id }),
-    );
-    emit(&app, "agent://done", json!({ "session": session_id }));
-    // 起会话名**放在最后、另开线程**：它还要问一次模型，不能让用户在这儿干等
+    // 起会话名放在最后、另开线程：它还要问一次模型，不能让用户干等。
     {
         let app2 = app.clone();
         let sid = session_id.clone();
@@ -2622,6 +2671,22 @@ fn run_turn(
         let k = key.clone();
         std::thread::spawn(move || maybe_auto_title(&app2, &sid, &prov, &k));
     }
+    if let Some((next_handle, pending_text)) = finish_run_slot(&st, &session_id, &handle) {
+        let app2 = app.clone();
+        let sid = session_id.clone();
+        let prov = provider.clone();
+        let k = key.clone();
+        std::thread::spawn(move || {
+            run_turn(app2, sid, prov, k, pending_text, next_handle)
+        });
+        return;
+    }
+    emit(
+        &app,
+        "agent://state",
+        json!({ "running": false, "session": session_id }),
+    );
+    emit(&app, "agent://done", json!({ "session": session_id }));
 }
 
 /// 发一条消息给 agent（后台跑，立刻返回）
@@ -2640,14 +2705,23 @@ pub fn agent_send(
     let want = provider_id
         .filter(|s| !s.trim().is_empty())
         .or(Some(meta.provider_id.clone()));
-    // **同步占坑**：这里必须锁着判断+占位一气呵成。
-    // 之前是"先起线程、线程里再占"，两条消息同时进来会双双通过检查。
-    // 正在跑的时候**不再拒绝**：排进 pending，等这一轮的下一个边界并进对话（边跑边改方向）。
+    // 先解析供应商/密钥再占运行槽。否则解析失败时，另一条已经排进该槽的
+    // 补充消息会随着槽被删除而静默丢失。
+    let (mut provider, key) = match resolve_provider(&app, want.as_deref()) {
+        Ok(v) => v,
+        Err(e) => return Err(e),
+    };
+    provider.reasoning_effort =
+        provider.effective_reasoning_effort(&meta.reasoning_effort);
+    // **同步占坑**：判断和插入/排队在同一把锁里。运行中的补充消息进入
+    // pending；run_turn 收尾时会在同一把锁下接续，不会落进已脱离 map 的句柄。
     let handle = Arc::new(RunHandle::new());
     {
         let mut g = st.runs.lock().map_err(|_| "run mutex".to_string())?;
         if let Some(cur) = g.get(&session_id).cloned() {
-            drop(g);
+            if cur.stop.load(Ordering::Relaxed) {
+                return Err("当前轮正在停止，等会话空闲后再发送".into());
+            }
             let mut pend = cur
                 .pending
                 .lock()
@@ -2657,6 +2731,7 @@ pub fn agent_send(
             }
             pend.push(text.clone());
             drop(pend);
+            drop(g);
             emit(
                 &app,
                 "agent://queued",
@@ -2666,18 +2741,6 @@ pub fn agent_send(
         }
         g.insert(session_id.clone(), handle.clone());
     }
-    // 占坑成功后再解析 provider/密钥：失败要把坑还回去
-    let (mut provider, key) = match resolve_provider(&app, want.as_deref()) {
-        Ok(v) => v,
-        Err(e) => {
-            if let Ok(mut g) = st.runs.lock() {
-                g.remove(&session_id);
-            }
-            return Err(e);
-        }
-    };
-    provider.reasoning_effort =
-        provider.effective_reasoning_effort(&meta.reasoning_effort);
     let app2 = app.clone();
     std::thread::spawn(move || run_turn(app2, session_id, provider, key, text, handle));
     Ok(json!({ "ok": true }))
@@ -2702,12 +2765,19 @@ pub async fn agent_running(app: AppHandle, session: Option<String>) -> Value {
 pub fn agent_stop(app: AppHandle, session: Option<String>) -> Result<Value, String> {
     let st = app.state::<Arc<AgentState>>().inner().clone();
     let targets: Vec<(String, Arc<RunHandle>)> = if let Some(sid) = session.as_deref() {
+        // 递归带上由这个会话创建的 subagent；父会话停止后不能在后台继续烧 token。
+        let metas: Vec<(String, String)> = store::sessions_list(&app)
+            .into_iter()
+            .map(|m| (m.id, m.parent_session))
+            .collect();
+        let wanted = session_closure(&metas, sid);
         st.runs
             .lock()
             .map_err(|_| "run mutex".to_string())?
-            .get(sid)
-            .map(|h| vec![(sid.to_string(), h.clone())])
-            .unwrap_or_default()
+            .iter()
+            .filter(|(sid, _)| wanted.contains(*sid))
+            .map(|(sid, h)| (sid.clone(), h.clone()))
+            .collect()
     } else {
         st.runs
             .lock()
@@ -3226,6 +3296,93 @@ mod tests {
         a.pending.lock().unwrap().push("only-a".into());
         assert_eq!(a.pending.lock().unwrap().len(), 1);
         assert!(b.pending.lock().unwrap().is_empty(), "补充消息不能串到另一个会话");
+    }
+
+    #[test]
+    fn finishing_run_carries_pending_messages_into_next_slot() {
+        let st = AgentState::default();
+        let old = Arc::new(RunHandle::new());
+        st.runs
+            .lock()
+            .unwrap()
+            .insert("session-a".into(), old.clone());
+        old.pending.lock().unwrap().push("补充一".into());
+        old.pending.lock().unwrap().push("补充二".into());
+
+        let (next, text) = finish_run_slot(&st, "session-a", &old).expect("next run");
+        assert_eq!(text, "补充一\n\n补充二");
+        let current = st.runs.lock().unwrap().get("session-a").cloned().unwrap();
+        assert!(Arc::ptr_eq(&current, &next), "运行槽必须原子切换到下一轮");
+        assert!(next.pending.lock().unwrap().is_empty());
+
+        let stopped = Arc::new(RunHandle::new());
+        stopped.stop.store(true, Ordering::Relaxed);
+        st.runs
+            .lock()
+            .unwrap()
+            .insert("session-b".into(), stopped.clone());
+        assert!(finish_run_slot(&st, "session-b", &stopped).is_none());
+        assert!(!st.running(Some("session-b")), "停止后不能自动续跑");
+    }
+
+    #[test]
+    fn session_stop_closure_includes_nested_subagents() {
+        let metas = vec![
+            ("child".to_string(), "root".to_string()),
+            ("grandchild".to_string(), "child".to_string()),
+            ("unrelated".to_string(), "other".to_string()),
+        ];
+        let ids = session_closure(&metas, "root");
+        assert!(ids.contains("child"));
+        assert!(ids.contains("grandchild"));
+        assert!(!ids.contains("unrelated"));
+    }
+
+    #[test]
+    fn finishing_and_supplemental_send_never_lose_the_message() {
+        use std::sync::Barrier;
+
+        for i in 0..100 {
+            let st = Arc::new(AgentState::default());
+            let old = Arc::new(RunHandle::new());
+            st.runs
+                .lock()
+                .unwrap()
+                .insert("race".into(), old.clone());
+            let barrier = Arc::new(Barrier::new(3));
+            let st_finish = st.clone();
+            let old_finish = old.clone();
+            let b1 = barrier.clone();
+            let finish = std::thread::spawn(move || {
+                b1.wait();
+                finish_run_slot(&st_finish, "race", &old_finish)
+            });
+            let st_send = st.clone();
+            let b2 = barrier.clone();
+            let message = format!("supplement-{i}");
+            let send_message = message.clone();
+            let send = std::thread::spawn(move || {
+                b2.wait();
+                let mut runs = st_send.runs.lock().unwrap();
+                if let Some(cur) = runs.get("race").cloned() {
+                    cur.pending.lock().unwrap().push(send_message);
+                } else {
+                    let next = Arc::new(RunHandle::new());
+                    next.pending.lock().unwrap().push(send_message);
+                    runs.insert("race".into(), next);
+                }
+            });
+            barrier.wait();
+            let carried = finish.join().unwrap().map(|(_, text)| text);
+            send.join().unwrap();
+
+            let current = st.runs.lock().unwrap().get("race").cloned().unwrap();
+            let pending = current.pending.lock().unwrap().clone();
+            assert!(
+                carried.as_deref() == Some(message.as_str()) || pending.contains(&message),
+                "iteration {i}: supplemental message was lost"
+            );
+        }
     }
 
     #[test]

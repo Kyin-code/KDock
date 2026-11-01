@@ -554,6 +554,9 @@ pub struct SessionMeta {
     /// 这个会话里 agent 自称什么（同上；空=用「Agent」）
     #[serde(default)]
     pub agent_name: String,
+    /// 由 subagent_spawn 创建时的父会话；只有父会话能 wait/read 它。
+    #[serde(default)]
+    pub parent_session: String,
 }
 
 fn default_perm() -> String {
@@ -670,10 +673,16 @@ fn dir_signature_inner(dir: &Path, suffix: Option<&str>) -> String {
     parts.join("|")
 }
 
+fn make_session_id(ts: i64) -> String {
+    static SESSION_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let seq = SESSION_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("s{ts}-{}-{seq}", std::process::id())
+}
+
 pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<SessionMeta, String> {
     let ts = now_ms();
     let meta = SessionMeta {
-        id: format!("s{ts}-{}", (ts % 1000).abs()),
+        id: make_session_id(ts),
         title: if title.trim().is_empty() { "新会话".into() } else { title.trim().to_string() },
         created: ts,
         updated: ts,
@@ -709,6 +718,7 @@ pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<Sess
         goal: String::new(),
         user_name: String::new(),
         agent_name: String::new(),
+        parent_session: String::new(),
     };
     std::fs::File::create(session_jsonl(app, &meta.id)?).map_err(|e| e.to_string())?;
     write_json(&session_meta(app, &meta.id)?, &meta)?;
@@ -736,6 +746,9 @@ pub fn session_touch(app: &AppHandle, id: &str) -> Option<SessionMeta> {
 
 /// 追加一条事件（一行 JSON）。**每次打开追加**，所以掉电最多丢最后一行。
 pub fn session_append(app: &AppHandle, id: &str, event: &Event) -> Result<(), String> {
+    if !session_meta(app, id)?.is_file() {
+        return Err("会话已删除".into());
+    }
     let path = session_jsonl(app, id)?;
     let mut line = serde_json::to_string(&event.clone().stamp()).map_err(|e| e.to_string())?;
     line.push('\n');
@@ -767,8 +780,10 @@ pub fn session_read(app: &AppHandle, id: &str) -> Vec<Event> {
 }
 
 pub fn session_delete(app: &AppHandle, id: &str) -> Result<(), String> {
-    let _ = std::fs::remove_file(session_jsonl(app, id)?);
+    // Remove meta first: a finishing run that races with deletion will fail the
+    // meta check in session_append instead of recreating an orphan JSONL file.
     let _ = std::fs::remove_file(session_meta(app, id)?);
+    let _ = std::fs::remove_file(session_jsonl(app, id)?);
     let _ = std::fs::remove_file(session_tools_schema(app, id)?);
     Ok(())
 }
@@ -1760,6 +1775,13 @@ pub fn resolve_in_workspace(root: &Path, rel: &str) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_ids_are_unique_within_the_same_millisecond() {
+        let ids: std::collections::HashSet<String> =
+            (0..1000).map(|_| make_session_id(1_800_000_000_000)).collect();
+        assert_eq!(ids.len(), 1000);
+    }
 
     fn tmp_dir(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("kdock-store-{tag}-{}", std::process::id()));

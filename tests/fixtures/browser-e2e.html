@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>KDock Shared Browser E2E</title>
+</head>
+<body>
+  <h1 id="title">Shared Browser E2E</h1>
+  <p id="path"></p>
+  <button id="spa" onclick="history.pushState({}, '', '/spa'); document.title='SPA Page'; document.querySelector('#path').textContent='SPA /spa'">SPA navigate</button>
+  <a id="next" href="/page2">Page 2</a>
+  <input id="note" value="readable DOM text">
+  <script>
+    document.querySelector("#path").textContent = location.pathname;
+  </script>
+</body>
+</html>

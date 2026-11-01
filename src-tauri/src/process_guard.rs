@@ -12,6 +12,7 @@
 
 use std::io;
 use std::process::{Child, Command};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 #[cfg(windows)]
@@ -29,6 +30,7 @@ use windows_sys::Win32::System::JobObjects::{
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 static TRACKED_PIDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+static JOB_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(windows)]
 static JOB_HANDLE: Mutex<Option<usize>> = Mutex::new(None);
@@ -47,32 +49,17 @@ pub fn init() -> Option<String> {
             return None;
         }
         unsafe {
-            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if job.is_null() {
-                return Some(format!(
-                    "CreateJobObject 失败（错误 {}）",
-                    std::io::Error::last_os_error()
-                ));
-            }
-            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            let ok = SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                &info as *const _ as *const std::ffi::c_void,
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            );
-            if ok == 0 {
-                let err = std::io::Error::last_os_error();
-                CloseHandle(job);
-                return Some(format!("SetInformationJobObject 失败（{err}）"));
-            }
+            let job = match create_kill_job() {
+                Ok(j) => j,
+                Err(e) => return Some(e),
+            };
             if AssignProcessToJobObject(job, GetCurrentProcess()) == 0 {
                 let err = std::io::Error::last_os_error();
                 CloseHandle(job);
                 return Some(format!("AssignProcessToJobObject(self) 失败（{err}）"));
             }
             *guard = Some(job as usize);
+            JOB_ACTIVE.store(true, Ordering::Release);
             None
         }
     }
@@ -82,12 +69,47 @@ pub fn init() -> Option<String> {
     }
 }
 
+#[cfg(windows)]
+fn create_kill_job() -> Result<HANDLE, String> {
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return Err(format!(
+                "CreateJobObject 失败（错误 {}）",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let ok = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        if ok == 0 {
+            let err = std::io::Error::last_os_error();
+            CloseHandle(job);
+            return Err(format!("SetInformationJobObject 失败（{err}）"));
+        }
+        Ok(job)
+    }
+}
+
 /// 启动子进程。Windows 下 KDock 自己已经在 Job 中，子进程会自动继承成员关系；
 /// 这里仍登记 PID，作为非 Windows / Job 初始化失败时的兜底。
 pub fn spawn(cmd: &mut Command) -> io::Result<Child> {
     let child = cmd.spawn()?;
-    if let Ok(mut pids) = TRACKED_PIDS.lock() {
-        pids.push(child.id());
+    // Windows Job 正常时不需要 PID 兜底。长期累积 PID 会在进程号复用后
+    // 让 cleanup_all 误杀无关进程；只有 Job 初始化失败时才登记 PID。
+    #[cfg(windows)]
+    let track_pid = !JOB_ACTIVE.load(Ordering::Acquire);
+    #[cfg(not(windows))]
+    let track_pid = true;
+    if track_pid {
+        if let Ok(mut pids) = TRACKED_PIDS.lock() {
+            pids.push(child.id());
+        }
     }
     Ok(child)
 }
@@ -103,6 +125,7 @@ pub fn cleanup_all() {
                 let _ = TerminateJobObject(job, 1);
                 CloseHandle(job);
             }
+            JOB_ACTIVE.store(false, Ordering::Release);
         }
     }
 
@@ -133,5 +156,83 @@ pub fn cleanup_all() {
                 .stderr(std::process::Stdio::null())
                 .status();
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::os::windows::io::AsRawHandle;
+    use std::time::{Duration, Instant};
+    use windows_sys::Win32::Foundation::WAIT_TIMEOUT;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+    };
+
+    struct TestJob(HANDLE);
+    impl Drop for TestJob {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+
+    fn process_alive(pid: u32) -> bool {
+        unsafe {
+            let h = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+            if h.is_null() {
+                return false;
+            }
+            let rc = WaitForSingleObject(h, 0);
+            CloseHandle(h);
+            rc == WAIT_TIMEOUT
+        }
+    }
+
+    #[test]
+    fn closing_job_reaps_grandchild_process() {
+        let dir = std::env::temp_dir().join(format!("kdock-job-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let pid_file = dir.join("grandchild.pid");
+        let script = format!(
+            "Start-Sleep -Milliseconds 600; \
+             $p=Start-Process -FilePath 'ping.exe' -ArgumentList '-n','60','127.0.0.1' \
+             -WindowStyle Hidden -PassThru; \
+             Set-Content -LiteralPath '{}' -Value $p.Id; $p.WaitForExit()",
+            pid_file.display().to_string().replace('\'', "''")
+        );
+        let mut cmd = Command::new("powershell.exe");
+        cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script]);
+        let mut launcher = cmd.spawn().expect("start launcher");
+        let job = TestJob(create_kill_job().expect("create test job"));
+        let assigned =
+            unsafe { AssignProcessToJobObject(job.0, launcher.as_raw_handle() as HANDLE) };
+        assert_ne!(assigned, 0, "assign launcher to job: {}", io::Error::last_os_error());
+
+        let start = Instant::now();
+        let pid = loop {
+            if let Ok(text) = std::fs::read_to_string(&pid_file) {
+                if let Ok(pid) = text.trim().parse::<u32>() {
+                    break pid;
+                }
+            }
+            if start.elapsed() > Duration::from_secs(8) {
+                let _ = launcher.kill();
+                panic!("grandchild PID file was not produced");
+            }
+            std::thread::sleep(Duration::from_millis(80));
+        };
+        assert!(process_alive(pid), "grandchild should be running before job close");
+
+        drop(job); // kill-on-close: launcher and its ping.exe child
+        let _ = launcher.wait();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while process_alive(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!process_alive(pid), "grandchild survived closing the job");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -80,6 +80,11 @@ assert.doesNotMatch(agent, /Command::new\("cmd"\)[\s\S]{0,120}start/);
 assert.match(agent, /ShellExecuteW/);
 assert.match(agent, /fn validate_external_target/);
 assert.doesNotMatch(tauri, /agent::browser_fetch|agent::browser_back|agent::browser_current/);
+for (const fn of ["kb_show", "kb_bounds", "kb_hide", "kb_hide_all", "kb_reload", "kb_navigate", "kb_open", "kb_back", "kb_source", "kb_read_dom"]) {
+  assert.match(tauri, new RegExp(`async fn ${fn}\\(`), `${fn} must run off the Tauri main command path`);
+}
+assert.match(tauri, /fn win_ctl[\s\S]*?let w = app\.get_window\("main"\)/);
+assert.match(tauri, /fn window_set_zoom[\s\S]*?app\.get_webview\("main"\)/);
 assert.doesNotMatch(main, /kb-chat-host|kb-chat-url|kb-chat-open|kb-chat-save/);
 assert.doesNotMatch(html, /id="kb-chat-host"|id="kb-chat-url"/);
 assert.match(html, /data-tab="kb"[^>]*>[\s\S]*?<span>浏览器<\/span>/);

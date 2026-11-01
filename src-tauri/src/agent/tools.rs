@@ -1354,9 +1354,13 @@ fn subagent_spawn(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     if let Some(mut m) = store::session_meta_of(ctx.app, &sub.id) {
         // 子会话继承父会话权限；父会话是 auto 时子会话也自动，避免后台任务卡在没人看的审批上。
         m.perm = parent.perm.clone();
+        m.parent_session = ctx.session.to_string();
         let _ = store::session_update_meta(ctx.app, &m);
     }
-    crate::agent::agent_send(ctx.app.clone(), sub.id.clone(), task, None)?;
+    if let Err(e) = crate::agent::agent_send(ctx.app.clone(), sub.id.clone(), task, None) {
+        let _ = store::session_delete(ctx.app, &sub.id);
+        return Err(format!("启动子会话失败：{e}"));
+    }
     Ok(format!(
         "已启动子会话 {}（{}）。用 subagent_wait 等它完成，或 subagent_result 查看。",
         sub.id, sub.title
@@ -1365,6 +1369,7 @@ fn subagent_spawn(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
 
 fn subagent_wait(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let sid = arg_str(args, "session").ok_or("缺少 session")?;
+    subagent_meta(ctx, &sid)?;
     let timeout = arg_u64(args, "timeout_ms", 120_000).min(600_000);
     let start = Instant::now();
     while ctx.state.running(Some(&sid)) {
@@ -1381,7 +1386,7 @@ fn subagent_wait(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
 
 fn subagent_result(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let sid = arg_str(args, "session").ok_or("缺少 session")?;
-    let meta = store::session_meta_of(ctx.app, &sid).ok_or("找不到这个子会话")?;
+    let meta = subagent_meta(ctx, &sid)?;
     let events = store::session_read(ctx.app, &sid);
     let answer = events
         .iter()
@@ -1412,6 +1417,14 @@ fn subagent_result(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         if calls.is_empty() { "（无）".into() } else { calls.join(", ") },
         answer.chars().take(6000).collect::<String>()
     ))
+}
+
+fn subagent_meta(ctx: &ToolCtx, sid: &str) -> Result<store::SessionMeta, String> {
+    let meta = store::session_meta_of(ctx.app, sid).ok_or("找不到这个子会话")?;
+    if meta.parent_session != ctx.session {
+        return Err("这个会话不是当前 Agent 创建的子会话".into());
+    }
+    Ok(meta)
 }
 
 fn parallel_safe(name: &str) -> bool {

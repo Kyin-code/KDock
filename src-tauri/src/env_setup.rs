@@ -203,7 +203,11 @@ pub static ITEMS: &[Item] = &[
         required: true,
         min_version: None,
         size_mb: 0.4,
-        rules: &[inf("ch341ser.inf"), inf("ch341wdm.inf"), inf("ch343ser.inf"), inf("ch343wdm.inf"), inf("ch9102ser.inf")],
+        rules: &[
+            inf("ch341ser.inf"), inf("ch341wdm.inf"), inf("ch343ser.inf"), inf("ch343wdm.inf"), inf("ch9102ser.inf"),
+            // 驱动安装后 pnputil 不总保留厂商 INF 名，但正常枚举出的 COM 设备名仍能证明驱动可用。
+            device("CH34"), device("CH9102"),
+        ],
         // WCH 官网的下载要点确认才能拿到直链，我们不去猜：给官网入口 + 支持把驱动提前丢进
         // <exe 同目录>driversch34x 里当"内置驱动"一键装（见 env_install 的第一步）。
         plan: Plan::Manual,
@@ -217,7 +221,7 @@ pub static ITEMS: &[Item] = &[
         required: false,
         min_version: None,
         size_mb: 2.0,
-        rules: &[inf("ftdibus.inf"), inf("ftdiport.inf")],
+        rules: &[inf("ftdibus.inf"), inf("ftdiport.inf"), device("FT2232"), device("FT232H")],
         plan: Plan::Manual,   // FTDI 直链带防盗链（403），给官网入口
     },
     Item {
@@ -578,7 +582,7 @@ pub static ITEMS: &[Item] = &[
         required: false,
         min_version: None,
         size_mb: 12.0,
-        rules: &[inf("silabser.inf")],
+        rules: &[inf("silabser.inf"), device("CP210")],
         plan: Plan::Manual,
     },
     Item {
@@ -590,7 +594,7 @@ pub static ITEMS: &[Item] = &[
         required: false,
         min_version: None,
         size_mb: 5.0,
-        rules: &[inf("ser2pl.inf"), inf("ser2pl64.inf")],
+        rules: &[inf("ser2pl.inf"), inf("ser2pl64.inf"), device("PL2303")],
         plan: Plan::Manual,
     },
     Item {
@@ -602,7 +606,7 @@ pub static ITEMS: &[Item] = &[
         required: false,
         min_version: None,
         size_mb: 5.0,
-        rules: &[inf("mchpcdc.inf")],
+        rules: &[inf("mchpcdc.inf"), device("MCP2200"), device("MCP2221")],
         plan: Plan::Manual,
     },
     Item {
@@ -614,7 +618,7 @@ pub static ITEMS: &[Item] = &[
         required: false,
         min_version: None,
         size_mb: 10.0,
-        rules: &[inf("cyusbserial.inf")],
+        rules: &[inf("cyusbserial.inf"), device("CY7C6521")],
         plan: Plan::Manual,
     },
     Item {
@@ -1203,7 +1207,7 @@ pub static ITEMS: &[Item] = &[
 
 /* ───────────────────────── 检测 ───────────────────────── */
 
-fn run_out(prog: &str, args: &[&str]) -> Option<String> {
+fn run_out_status(prog: &str, args: &[&str]) -> Option<(i32, String)> {
     let mut c = Command::new(prog);
     c.args(args);
     #[cfg(windows)]
@@ -1211,9 +1215,15 @@ fn run_out(prog: &str, args: &[&str]) -> Option<String> {
         use std::os::windows::process::CommandExt;
         c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：别闪黑框
     }
-    let out = c.output().ok()?;
+    let child = crate::process_guard::spawn(&mut c).ok()?;
+    let out = child.wait_with_output().ok()?;
     let mut s = String::from_utf8_lossy(&out.stdout).to_string();
     s.push_str(&String::from_utf8_lossy(&out.stderr));
+    Some((out.status.code().unwrap_or(-1), s))
+}
+
+fn run_out(prog: &str, args: &[&str]) -> Option<String> {
+    let (_, s) = run_out_status(prog, args)?;
     if s.trim().is_empty() { None } else { Some(s) }
 }
 
@@ -1718,21 +1728,76 @@ fn download(app: &tauri::AppHandle, id: &str, url: &str, file: &str) -> Result<P
     Ok(dst)
 }
 
+pub const REBOOT_REQUIRED_MARKER: &str = "KDOCK_REBOOT_REQUIRED";
+
+fn install_exit_result(code: i32, out: String, what: &str) -> Result<String, String> {
+    let tail: String = out.chars().rev().take(6000).collect::<String>().chars().rev().collect();
+    let lower = tail.to_lowercase();
+    let reboot = code == 1641
+        || code == 3010
+        || lower.contains("reboot required")
+        || lower.contains("reboot is required")
+        || lower.contains("restart is required")
+        || tail.contains("需要重启")
+        || tail.contains("重新启动计算机");
+    if code == 0 && !reboot {
+        Ok(tail)
+    } else if reboot && (code == 0 || code == 1641 || code == 3010) {
+        Ok(format!(
+            "{tail}\n{REBOOT_REQUIRED_MARKER}: {what} 已成功完成，但 Windows 返回“需要重启”（{code}）"
+        ))
+    } else {
+        Err(format!("{what} 失败（退出码 {code}）：\n{tail}"))
+    }
+}
+
+fn run_elevated_ps1(
+    app: &tauri::AppHandle,
+    id: &str,
+    script: &Path,
+) -> Result<String, String> {
+    emit(app, id, "install", 60, "等待 UAC 授权 / 安装中…");
+    let path = script.to_string_lossy().replace('\'', "''");
+    let ps = format!(
+        "$ErrorActionPreference='Stop'; \
+         $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru \
+         -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','\"{path}\"'; \
+         Write-Output ('elevated-exit=' + $p.ExitCode); exit $p.ExitCode"
+    );
+    let (code, out) = run_out_status(
+        "powershell.exe",
+        &["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps],
+    )
+    .ok_or_else(|| "没能启动提权进程（UAC 被拒绝？）".to_string())?;
+    install_exit_result(code, out, "提权安装")
+}
+
 fn run_powershell(app: &tauri::AppHandle, id: &str, script: &str, elevated: bool) -> Result<String, String> {
-    let mut ps = format!("$ProgressPreference='SilentlyContinue'; {script}");
     if elevated {
-        // 需要 UAC：这台机器上驱动类安装必须提权，弹一次授权框
-        ps = format!("Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile','-Command',\"{}\"", ps.replace('"', "\\\""));
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("kdock-install-{}-{seq}.ps1", std::process::id()));
+        let mut body = vec![0xEFu8, 0xBB, 0xBF];
+        body.extend_from_slice(script.as_bytes());
+        std::fs::write(&path, body).map_err(|e| format!("写临时安装脚本失败：{e}"))?;
+        let result = run_elevated_ps1(app, id, &path);
+        let _ = std::fs::remove_file(&path);
+        return result;
     }
-    emit(app, id, "install", 60, if elevated { "等待 UAC 授权 / 安装中…" } else { "安装中…" });
-    let out = run_out("powershell.exe", &["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps]);
-    match out {
-        Some(t) => {
-            emit(app, id, "install", 100, "安装命令已执行");
-            Ok(t.chars().rev().take(4000).collect::<String>().chars().rev().collect())
-        }
-        None => Err("PowerShell 没返回输出（可能被 UAC 拒绝）".into()),
-    }
+    let ps = format!(
+        "$ProgressPreference='SilentlyContinue'; \
+         & {{ {script} }}; \
+         if ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }}; exit 0"
+    );
+    emit(app, id, "install", 60, "安装中…");
+    let (code, out) = run_out_status(
+        "powershell.exe",
+        &["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps],
+    )
+    .ok_or_else(|| "PowerShell 没返回输出".to_string())?;
+    let result = install_exit_result(code, out, "安装命令")?;
+    emit(app, id, "install", 100, "安装命令已执行");
+    Ok(result)
 }
 
 /// 解开一个 zip 到 dst。strip=1 时，如果包里只有一层顶层目录（platform-tools / scrcpy-win64-vX
@@ -1840,15 +1905,25 @@ pub async fn env_install(
                 continue;
             }
             let script = if ext == "inf" {
-                format!("pnputil /add-driver '{}' /install", p.display())
+                format!("& pnputil.exe /add-driver '{}' /install; exit $LASTEXITCODE", p.display())
             } else if ext == "msi" {
-                format!("Start-Process msiexec.exe -ArgumentList '/i','\"{}\"','/qn' -Wait", p.display())
+                format!(
+                    "$p=Start-Process msiexec.exe -ArgumentList '/i','\"{}\"','/qn' -Wait -PassThru; exit $p.ExitCode",
+                    p.display()
+                )
             } else {
-                format!("Start-Process -FilePath '{}' -ArgumentList '/S' -Wait", p.display())
+                format!(
+                    "$p=Start-Process -FilePath '{}' -ArgumentList '/S' -Wait -PassThru; exit $p.ExitCode",
+                    p.display()
+                )
             };
             emit(&app, it.id, "install", 40, &format!("内置驱动：{}", p.file_name().unwrap_or_default().to_string_lossy()));
-            if dry { outs.push(format!("（模拟）会执行 {}", script)); }
-            else { let _ = run_powershell(&app, it.id, &script, true); outs.push(format!("已执行：{}", script)); }
+            if dry {
+                outs.push(format!("（模拟）会执行 {}", script));
+            } else {
+                let out = run_powershell(&app, it.id, &script, true)?;
+                outs.push(format!("已执行：{}\n{}", script, out.trim()));
+            }
         }
         emit(&app, it.id, "done", 100, "完成");
         return Ok(format!("用了内置安装包：\n{}", outs.join("\n")));
@@ -2042,9 +2117,17 @@ pub async fn env_install(
         Plan::Download { url, file, args, elevated } => {
             let f = download(&app, it.id, url, file)?;
             let cmd = if f.extension().map(|e| e.eq_ignore_ascii_case("msi")).unwrap_or(false) {
-                format!("Start-Process msiexec.exe -ArgumentList '/i','\"{}\"','{}' -Wait", f.display(), args)
+                format!(
+                    "$p=Start-Process msiexec.exe -ArgumentList '/i','\"{}\"','{}' -Wait -PassThru; exit $p.ExitCode",
+                    f.display(),
+                    args
+                )
             } else {
-                format!("Start-Process -FilePath '{}' -ArgumentList '{}' -Wait", f.display(), args)
+                format!(
+                    "$p=Start-Process -FilePath '{}' -ArgumentList '{}' -Wait -PassThru; exit $p.ExitCode",
+                    f.display(),
+                    args
+                )
             };
             if dry { format!("（模拟）下载到 {}，会执行：{}", f.display(), cmd) }
             else { run_powershell(&app, it.id, &cmd, elevated)? }
@@ -2183,18 +2266,10 @@ fn winusb_inf_text(id: &str, label: &str, hwids: &[&str]) -> String {
 
 /// 提权跑一个 .ps1。用 -File 而不是把脚本内容塞进 -Command，路径里有空格/中文也不会散架。
 fn run_elevated_script(app: &tauri::AppHandle, id: &str, script: &Path) -> Result<String, String> {
-    emit(app, id, "install", 55, "等待 UAC 授权…");
-    let path = script.to_string_lossy().replace('\'', "''");
-    let ps = format!(
-        "$p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru \
-         -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','\"{path}\"'; \
-         Write-Output ('elevated-exit=' + $p.ExitCode)"
-    );
-    let out = run_out("powershell.exe", &["-NoProfile", "-Command", &ps])
-        .ok_or_else(|| "没能启动提权进程（UAC 被拒绝？）".to_string())?;
-    let tail: String = out.chars().rev().take(6000).collect::<String>().chars().rev().collect();
-    if !tail.contains("elevated-exit=0") || tail.contains("Catalog signature: Invalid") {
-        return Err(format!("驱动安装失败（需要确认 UAC）：\n{tail}"));
+    let tail = run_elevated_ps1(app, id, script)
+        .map_err(|e| format!("驱动安装失败（需要确认 UAC）：\n{e}"))?;
+    if tail.contains("Catalog signature: Invalid") {
+        return Err(format!("驱动目录签名校验失败：\n{tail}"));
     }
     emit(app, id, "install", 95, "驱动已安装，正在重新枚举设备…");
     Ok(tail)
@@ -2278,6 +2353,24 @@ mod tests {
             }
             _ => panic!("ST-Link should install through WinUSB without a vendor download"),
         }
+    }
+
+    #[test]
+    fn install_exit_codes_distinguish_failure_and_reboot_required() {
+        assert!(install_exit_result(0, "ok".into(), "install").is_ok());
+        let reboot = install_exit_result(3010, "done".into(), "driver").unwrap();
+        assert!(reboot.contains(REBOOT_REQUIRED_MARKER));
+        let reboot_text = install_exit_result(0, "A reboot is required".into(), "driver").unwrap();
+        assert!(reboot_text.contains(REBOOT_REQUIRED_MARKER));
+        let denied = install_exit_result(5, "access denied".into(), "driver").unwrap_err();
+        assert!(denied.contains("退出码 5"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn run_out_status_preserves_native_exit_code() {
+        let (code, _) = run_out_status("cmd.exe", &["/C", "exit 7"]).expect("cmd should run");
+        assert_eq!(code, 7);
     }
 
     #[test]

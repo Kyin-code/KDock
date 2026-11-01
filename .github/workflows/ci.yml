@@ -45,6 +45,12 @@ jobs:
       - name: Test shared browser contract
         run: npm run test:browser
 
+      - name: Test i18n coverage
+        run: npm run test:i18n
+
+      - name: Test responsive UI matrix
+        run: npm run test:vite:pages
+
       - name: Test workspace
         run: cargo test --workspace --locked
 
