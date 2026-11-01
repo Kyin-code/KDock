@@ -42,8 +42,11 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Test kdock-core
-        run: cargo test -p kdock-core --locked
+      - name: Test shared browser contract
+        run: npm run test:browser
+
+      - name: Test workspace
+        run: cargo test --workspace --locked
 
       - name: Check workspace
         run: cargo check --workspace --locked

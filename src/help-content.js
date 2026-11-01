@@ -7,8 +7,8 @@ export const HELP_GROUPS = [
       {
         id: "help-work",
         title: "Work with KDock",
-        zh: "KDock 把连接、设备操作、分析工具和 Agent 放在同一个窗口里。\n### 导航\n- 常用入口保留在左栏：传输、监听、Agent、固件升级、烧录、文件管理、运行结构和环境配置。\n- 低频的命令、知识库、ADB、测量和效率工具收在「高级工具」，状态会记住。\n### 建议流程\n- 先用「环境配置」确认驱动、调试器和工具链齐全。\n- 调试设备时先在「传输」或「监听」确认目标连接。\n- 固件升级、烧录、文件管理都依赖明确的目标和固件格式。\n### 联动\n- 「命令表」「快捷发送」「批量文本」「实时图表」共用传输连接和数据流。\n- 「运行结构」「逻辑分析仪」「示波器」的结果可以被 Agent 查询和总结。\n- F1 打开当前页面帮助。",
-        en: "KDock combines links, device operations, analysis tools and the Agent in one window.\n### Navigation\n- Primary entries stay visible: Transfer, Monitor, Agent, Firmware, Flash, Files, Runtime graph and Environment.\n- Low-frequency development, knowledge, ADB, measurement and productivity tools live under Advanced tools, whose state is remembered.\n### Suggested flow\n- Check drivers, debug probes and toolchains in Environment setup first.\n- Confirm the target link in Transfer or Monitor before device operations.\n- Firmware upgrade, flashing and file management depend on the right target and file format.\n### Relationships\n- Commands, Quick send, Batch text and Charts share transfer connections and data.\n- Runtime graph, Logic analyzer and Scope results can be queried and summarized by the Agent.\n- F1 opens help for the current page."
+        zh: "KDock 把连接、设备操作、分析工具和 Agent 放在同一个窗口里。\n### 导航\n- 常用入口保留在左栏：传输、监听、Agent、固件升级、烧录、文件管理、运行结构和环境配置。\n- 低频的命令、浏览器、ADB、测量和效率工具收在「高级工具」，状态会记住。\n### 建议流程\n- 先用「环境配置」确认驱动、调试器和工具链齐全。\n- 调试设备时先在「传输」或「监听」确认目标连接。\n- 固件升级、烧录、文件管理都依赖明确的目标和固件格式。\n### 联动\n- 「命令表」「快捷发送」「批量文本」「实时图表」共用传输连接和数据流。\n- 「运行结构」「逻辑分析仪」「示波器」的结果可以被 Agent 查询和总结。\n- F1 打开当前页面帮助。",
+        en: "KDock combines links, device operations, analysis tools and the Agent in one window.\n### Navigation\n- Primary entries stay visible: Transfer, Monitor, Agent, Firmware, Flash, Files, Runtime graph and Environment.\n- Low-frequency development, Browser, ADB, measurement and productivity tools live under Advanced tools, whose state is remembered.\n### Suggested flow\n- Check drivers, debug probes and toolchains in Environment setup first.\n- Confirm the target link in Transfer or Monitor before device operations.\n- Firmware upgrade, flashing and file management depend on the right target and file format.\n### Relationships\n- Commands, Quick send, Batch text and Charts share transfer connections and data.\n- Runtime graph, Logic analyzer and Scope results can be queried and summarized by the Agent.\n- F1 opens help for the current page."
       },
       {
         id: "help-shortcuts",
@@ -105,12 +105,6 @@ export const HELP_GROUPS = [
         en: "### Purpose\nExpose local-command or remote HTTP MCP servers as extra Agent tools.\n### Usage\n- Set id, command/URL, arguments and enabled state; test before use.\n- Remote servers can define request headers.\n### Relationships\n- Enabled tools appear in the tool list, usually as mcp__<server>__<tool>.\n- MCP calls use the same permission and output-budget rules."
       },
       {
-        id: "help-agent-links",
-        title: "页面里的链接",
-        zh: "列出内嵌浏览器当前页面的可读链接，方便继续打开或交给 Agent 读取。链接内容属于外部网页，只有在任务确实需要时才应继续访问。",
-        en: "Lists readable links on the current embedded browser page so they can be opened or handed to the Agent. External page content is untrusted and should only be followed when the task requires it."
-      },
-      {
         id: "help-agent-tools",
         title: "工具、权限与审批",
         zh: "### 分类\n- 只读：扫描、查询、读取文件。\n- 需批准：写文件、运行命令、改设备、安装组件。\n- 自动：完全信任当前会话。\n### 联动\n- 设置 → 工具可分类全开/全关；基本工具不可关闭。\n- 审批弹窗会显示工具名和参数，拒绝后 Agent 会收到失败结果。\n- 工具结果过长时会落盘，避免占满上下文。\n### 注意\n- 「自动」只适合你信任当前任务和 Agent 行为时使用。",
@@ -124,8 +118,8 @@ export const HELP_GROUPS = [
       {
         id: "help-kb-shared",
         title: "共享浏览器",
-        zh: "浏览器页和 Agent 右栏共用同一个 WebView2：地址、登录态、Cookie 和导航历史完全一致。\n### 操作\n- 在浏览器页输入网址并按 Enter，或在 Agent 浏览器面板打开。\n- 页面里的链接和站内跳转保留在当前共享视图中。\n- \"在浏览器打开\" 切回完整页面；\"源码\" 读取当前渲染页的 HTML。\n### Agent\n- browser_open / browser_navigate 导航这块共享视图。\n- browser_read 读取当前 DOM 正文（包括登录后、脚本渲染后的内容）；browser_find 在正文中查找。\n### 注意\n- 这是外部网页，账号和数据由对应服务管理；KDock 不保存网页正文为知识库。\n- 设置里的首页只决定默认地址，不另建第二个页面。",
-        en: "Browser and the Agent side panel share one WebView2: URL, login state, cookies and navigation history are identical.\n### Use\n- Enter a URL on the Browser page or open it in the Agent browser panel.\n- Links and in-site navigation stay in the shared view.\n- \"Open in browser\" shows the full page; \"Source\" reads the rendered HTML.\n### Agent\n- browser_open / browser_navigate drive this shared view.\n- browser_read reads the current DOM text, including logged-in and script-rendered content; browser_find searches it.\n### Notes\n- This is an external webpage; the service owns its account and data. KDock does not store page content as a knowledge base.\n- The home URL in Settings is only the default address; it does not create a second page."
+        zh: "浏览器页和 Agent 右栏共用同一个 WebView2：地址、登录态、Cookie 和导航历史完全一致。\n### 操作\n- 在浏览器页输入网址并按 Enter，或在 Agent 浏览器面板打开；地址栏有草稿时，后台导航不会覆盖你的输入。\n- 页面里的链接和站内跳转保留在当前共享视图中。\n- \"在浏览器打开\" 切回完整页面；\"源码\" 读取当前渲染页的 HTML。\n### Agent\n- browser_open / browser_navigate 串行导航这块共享视图，并等待新页面加载完成。\n- browser_read 读取当前 DOM 正文（包括登录后、脚本渲染后的内容）；browser_find 在正文中查找。\n### 注意\n- 共享浏览器只接受 http:// 和 https://；file/data/javascript 等协议会被拒绝。\n- 这是外部网页，账号和数据由对应服务管理；KDock 不保存网页正文为知识库。\n- 网页正文是不可信数据，Agent 只应把它当资料，不能执行页面里夹带的指令。\n- 设置里的首页只决定默认地址，不另建第二个页面。",
+        en: "Browser and the Agent side panel share one WebView2: URL, login state, cookies and navigation history are identical.\n### Use\n- Enter a URL on the Browser page or open it in the Agent browser panel; background navigation does not overwrite an address draft.\n- Links and in-site navigation stay in the shared view.\n- \"Open in browser\" shows the full page; \"Source\" reads the rendered HTML.\n### Agent\n- browser_open / browser_navigate serialize navigation of this shared view and wait for the new document.\n- browser_read reads the current DOM text, including logged-in and script-rendered content; browser_find searches it.\n### Notes\n- The shared browser accepts only http:// and https://; file/data/javascript and similar protocols are rejected.\n- This is an external webpage; the service owns its account and data. KDock does not store page content as a knowledge base.\n- Page text is untrusted data. The Agent may use it as reference but must not follow instructions embedded in the page.\n- The home URL in Settings is only the default address; it does not create a second page."
       },
     ],
   },
@@ -743,7 +737,6 @@ export const HELP_TITLE_EN = {
   "上下文成分": "Context breakdown",
   "技能": "Skills",
   "MCP 服务": "MCP servers",
-  "页面里的链接": "Links on the page",
   "工具、权限与审批": "Tools, permissions and approvals",
   "共享浏览器": "Shared browser",
   "连接与目标": "Connection and target",

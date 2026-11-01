@@ -25,7 +25,7 @@ for (const name of ["start_task", "task1", "task2", "task3"]) {
 const server = await createServer({
   root,
   configFile: resolve(root, "vite.config.js"),
-  server: { host: "127.0.0.1", port: 1432, strictPort: false },
+  server: { host: "127.0.0.1", port: 0, strictPort: false },
   logLevel: "error",
 });
 const edgeCandidates = [

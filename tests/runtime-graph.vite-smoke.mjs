@@ -55,7 +55,7 @@ if (!multiRootNames) throw new Error("Fixture does not contain a multi-root test
 const server = await createServer({
   root,
   configFile: resolve(root, "vite.config.js"),
-  server: { host: "127.0.0.1", port: 1431, strictPort: false },
+  server: { host: "127.0.0.1", port: 0, strictPort: false },
   logLevel: "error",
 });
 

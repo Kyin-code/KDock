@@ -14,6 +14,7 @@ import { FLASH_ROM_TOOLS, flashToolUi, isFlashRomTool, isSerialRomTool } from ".
 import { ADVANCED_TABS, initAdvancedNav, openAdvancedNavFor } from "./nav-advanced.js";
 import { createShortcutManager, mountShortcutSettings } from "./shortcuts.js";
 import { mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "./agent-session.js";
+import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
 
 const $ = (id) => document.getElementById(id);
 window.kdockToast = (text) => toast(text);
@@ -1646,29 +1647,52 @@ const DEBUG_UI = false;
    页面、登录态和导航历史由浏览器页与 Agent 浏览器共同使用。
    ========================================================================== */
 const KB_HOME_KEY = "kdock_browser_home";
-const KB_LEGACY_MGMT_KEY = "kdock_kb_mgmt";
 const KBB_KIND = "browser";
 let kbLastPlace = "";            // "x,y,w,h|url"，用来判断"要不要真的动它"
 let kbSyncing = false;
+let kbSyncQueued = false;
+let kbSyncQueuedForce = false;
 let kbWasCreated = false;
-let kbUrl = localStorage.getItem(KB_HOME_KEY) || "";
-// 旧版知识库只有管理页地址；迁移到共享浏览器后立即清掉旧键，避免用户
-// 清空新首页时旧地址又在下次启动时复活。
-const kbLegacyHome = (localStorage.getItem(KB_LEGACY_MGMT_KEY) || "").trim();
+let kbAddressDirty = false;
+let kbLastPlaceError = "";
+let kbUrl = "";
+const kbStoredHome = (localStorage.getItem(KB_HOME_KEY) || "").trim();
+if (kbStoredHome) {
+  if (kbIsWebUrl(kbStoredHome)) kbUrl = kbStoredHome;
+  else localStorage.removeItem(KB_HOME_KEY);
+}
+// 旧版知识库有管理页 / 对话页两个地址。迁移时优先用管理页，并在任何情况下
+// 清掉旧键，避免用户清空新首页后旧地址又在下次启动时复活。
+const kbLegacyMgmt = (localStorage.getItem("kdock_kb_mgmt") || "").trim();
+const kbLegacyChat = (localStorage.getItem("kdock_kb_chat") || "").trim();
+const kbLegacyHome = kbLegacyMgmt || kbLegacyChat;
 if (kbLegacyHome) {
-  if (!kbUrl) {
+  if (!kbUrl && kbIsWebUrl(kbLegacyHome)) {
     kbUrl = kbLegacyHome;
     localStorage.setItem(KB_HOME_KEY, kbLegacyHome);
   }
-  localStorage.removeItem(KB_LEGACY_MGMT_KEY);
 }
+localStorage.removeItem("kdock_kb_mgmt");
+localStorage.removeItem("kdock_kb_chat");
+localStorage.removeItem("kdock_kb_focus");
 
 
 /** 地址补全：没写协议就按 https 来（Dify 这类都是 https） */
-function kbNorm(u) {
-  const s = String(u || "").trim();
-  if (!s) return "";
-  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : "https://" + s;
+const kbNorm = normalizeBrowserUrl;
+
+function kbWebUrlError(u) {
+  if (kbIsWebUrl(u)) return "";
+  return en("共享浏览器只支持 http:// 和 https:// 网址");
+}
+
+function kbIsWebUrl(u) {
+  return isWebBrowserUrl(u);
+}
+
+function kbSetAddress(url, force) {
+  kbUrl = url;
+  const input = $("kb-url");
+  if (input && (force || !kbAddressDirty)) input.value = url;
 }
 
 /** 浏览页和 Agent 共用的入口：已有视图就导航，否则先建一块隐藏视图。 */
@@ -1718,14 +1742,18 @@ async function kbPlace(hostId, url, emptyId, force) {
   const live = await invoke("kb_current_url", { kind: KBB_KIND }).catch(() => "");
   const key = `${r.x},${r.y},${r.w},${r.h}|${live || url}`;
   if (!force && kbLastPlace === key) return;
+  if (!force && kbLastPlaceError === key) return;
   try {
     // 已有页面时只移动大小并显示，不重新导航，保留登录跳转。
     await invoke("kb_show", { kind: KBB_KIND, url, x: r.x, y: r.y, w: r.w, h: r.h });
     kbLastPlace = key;
+    kbLastPlaceError = "";
     kbWasCreated = true;
     kbStateText("");
   } catch (e) {
     kbLastPlace = "";
+    kbLastPlaceError = key;
+    kbEmptyText();
     kbStateText(String(e).slice(0, 80), "err");
     toast(String(e));
   }
@@ -1753,22 +1781,42 @@ function kbEmptyText() {
 
 /** 贴 / 挪 / 收 —— 切页、改窗口大小、拖分栏都会调它（重复调不会重新加载页面） */
 async function kbSync(force) {
-  if (kbSyncing) return;
+  if (kbSyncing) {
+    kbSyncQueued = true;
+    kbSyncQueuedForce = kbSyncQueuedForce || !!force;
+    return;
+  }
   kbSyncing = true;
   try {
     if (!kbVisible()) {
-      if (kbLastPlace) {
+      if (kbLastPlace || kbWasCreated) {
         await invoke("kb_hide_all").catch(() => {});
       }
+      // 原生视图已经收起。缓存必须一起失效，否则切回同一布局时会被
+      // 误判为“已经贴好”而跳过 kb_show，整块网页一直隐藏。
+      kbLastPlace = "";
       return;
     }
     kbEmptyText();
-    if (!kbUrl) kbUrl = kbNorm($("kb-url")?.value || "");
-    if ($("kb-url") && document.activeElement !== $("kb-url") && kbUrl) $("kb-url").value = kbUrl;
+    // Agent 可能在浏览器页不可见时创建 / 导航过共享页面。事件监听虽然平时
+    // 都在，但冷启动计划任务等时序下可能错过；进入浏览器页时以后端当前 URL
+    // 为准，避免明明有页面却显示空态。
+    const live = await invoke("kb_current_url", { kind: KBB_KIND }).catch(() => "");
+    if (live) {
+      kbUrl = live;
+      kbWasCreated = true;
+    }
+    if ($("kb-url") && !kbAddressDirty && kbUrl) $("kb-url").value = kbUrl;
     await kbPlace("kb-host", kbUrl, "kb-empty", force);
     if (force) kbEmptyText();
   } finally {
     kbSyncing = false;
+    if (kbSyncQueued) {
+      const againForce = kbSyncQueuedForce;
+      kbSyncQueued = false;
+      kbSyncQueuedForce = false;
+      setTimeout(() => { kbSync(againForce).catch(() => {}); }, 0);
+    }
   }
 }
 
@@ -1782,22 +1830,41 @@ function bindKb() {
   const urlIn = $("kb-url");
   urlIn.value = kbUrl;
   kbEmptyText();
+  urlIn.addEventListener("input", () => { kbAddressDirty = true; });
 
   const open = async () => {
     const u = kbNorm(urlIn.value);
     if (!u) { toast(en("先填个地址")); urlIn.focus(); return; }
+    const bad = kbWebUrlError(u);
+    if (bad) { toast(bad); urlIn.focus(); return; }
+    const previous = kbUrl;
     kbUrl = u;
-    await kbOpenUrl(u).catch((e) => toast(String(e)));
+    try {
+      await kbOpenUrl(u);
+    } catch (e) {
+      kbUrl = previous;
+      toast(String(e));
+      return;
+    }
+    kbAddressDirty = false;
+    kbSetAddress(u, true);
     await kbSync(true);
     kbEmptyText();
   };
   $("kb-open").onclick = () => open().catch((e) => toast(String(e)));
   urlIn.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); $("kb-open").click(); }
+    if (e.key === "Escape") {
+      kbAddressDirty = false;
+      urlIn.value = kbUrl;
+      urlIn.blur();
+    }
   });
   if ($("kb-save")) $("kb-save").onclick = () => {
     const u = kbNorm(urlIn.value);
     if (!u) { toast(en("先填个地址")); return; }
+    const bad = kbWebUrlError(u);
+    if (bad) { toast(bad); return; }
     localStorage.setItem(KB_HOME_KEY, u);
     if ($("set-kb-home")) $("set-kb-home").value = u;
     toast(en("地址已存为首页"));
@@ -1810,6 +1877,8 @@ function bindKb() {
   $("kb-external").onclick = () => {
     const u = kbNorm(urlIn.value || kbUrl);
     if (!u) { toast(en("先填个地址")); return; }
+    const bad = kbWebUrlError(u);
+    if (bad) { toast(bad); return; }
     invoke("browser_open_external", { path: u }).catch((e) => toast(String(e)));
   };
   const me = $("kb-empty");
@@ -1823,6 +1892,8 @@ function bindKb() {
   if ($("set-kb-save")) {
     $("set-kb-save").onclick = () => {
       const u = kbNorm($("set-kb-home").value);
+      const bad = u ? kbWebUrlError(u) : "";
+      if (bad) { toast(bad); return; }
       if (u) localStorage.setItem(KB_HOME_KEY, u); else localStorage.removeItem(KB_HOME_KEY);
       $("set-kb-home").value = u;
       if (u) { kbUrl = u; urlIn.value = u; }
@@ -7965,8 +8036,10 @@ function agDialog(opts) {
     ok.textContent = opts.okText || en("确定");
     ok.className = "btn small " + (opts.danger ? "danger" : "primary");
     box.hidden = false;
+    kbSyncSoon();
     const finish = (v) => {
       box.hidden = true;
+      kbSyncSoon();
       document.removeEventListener("keydown", onKey, true);
       ok.onclick = null; cancel.onclick = null; box.onclick = null;
       resolve(v);
@@ -11714,31 +11787,62 @@ function agRenderPage(page) {
   if (agEl("ag-br-url")) agEl("ag-br-url").value = page.url || "";
 }
 
-function kbRenderAgentBrowser(page) {
+function kbRenderAgentBrowser(page, loading) {
   if (!page) return;
   agBrPage = page;
   if (agEl("ag-br-url")) agEl("ag-br-url").value = page.url || "";
   if (agEl("ag-br-title")) agEl("ag-br-title").textContent = page.title || page.url || "";
-  if (agEl("ag-br-state")) agEl("ag-br-state").textContent = en("共享页面已同步");
+  if (agEl("ag-br-state")) {
+    agEl("ag-br-state").textContent = loading
+      ? en("页面载入中…")
+      : (page.text ? `${page.text.length} 字 · ${(page.links || []).length} 链接` : en("共享页面已同步"));
+  }
   if (agEl("ag-br-body") && page.text) {
     agEl("ag-br-body").textContent = agBrSource ? (page.html || page.text) : page.text;
   }
 }
 
+/** 页面事件来自后端的顶层 WebView2；Started/Finished 与标题查询可能分两次到。 */
+function kbApplyPageEvent(raw) {
+  if (!raw || typeof raw !== "object" || !raw.url) return;
+  const url = String(raw.url);
+  const loading = !!raw.loading;
+  const changed = loading || !agBrPage || agBrPage.url !== url;
+  const page = {
+    url,
+    title: String(raw.title || (changed ? url : agBrPage?.title || url)),
+    text: changed ? "" : (agBrPage?.text || ""),
+    html: changed ? "" : (agBrPage?.html || ""),
+    links: changed ? [] : (agBrPage?.links || []),
+  };
+  kbWasCreated = true;
+  kbSetAddress(url, false);
+  kbStateText(loading ? en("页面载入中…") : "");
+  kbRenderAgentBrowser(page, loading);
+  if (changed && agEl("ag-br-body")) agEl("ag-br-body").textContent = "";
+  kbEmptyText();
+}
+
 async function agBrowserOpen(url) {
   const u = (url || (agEl("ag-br-url") ? agEl("ag-br-url").value : "")).trim();
   if (!u) return toast(en("先填个网址"));
+  const bad = kbWebUrlError(u);
+  if (bad) return toast(bad);
   const st = agEl("ag-br-state");
   if (st) st.textContent = en("打开中…");
   const normalized = kbNorm(u);
-  kbUrl = normalized;
-  if ($("kb-url")) $("kb-url").value = normalized;
+  const previous = kbUrl;
+  kbSetAddress(normalized, true);
+  kbAddressDirty = false;
   try {
     // 实际视图留在浏览器页；Agent 右栏只同步 URL/标题，不再渲染第二份网页。
     await kbOpenUrl(normalized);
-    agBrPage = { url: normalized, title: normalized, text: "", html: "", links: [] };
-    kbRenderAgentBrowser(agBrPage);
+    if (!agBrPage || agBrPage.url !== normalized) {
+      agBrPage = { url: normalized, title: normalized, text: "", html: "", links: [] };
+      kbRenderAgentBrowser(agBrPage, true);
+    }
   } catch (e) {
+    kbSetAddress(previous, true);
     if (st) st.textContent = "";
     toast(String(e));
   }
@@ -11775,7 +11879,8 @@ function bindAgentPanes() {
   }
   if (agEl("ag-br-ext")) {
     agEl("ag-br-ext").onclick = async () => {
-      const url = agBrPage ? agBrPage.url : (agEl("ag-br-url") ? agEl("ag-br-url").value.trim() : "");
+      const live = await invoke("kb_current_url", { kind: KBB_KIND }).catch(() => "");
+      const url = live || (agBrPage ? agBrPage.url : (agEl("ag-br-url") ? agEl("ag-br-url").value.trim() : ""));
       if (!url) return toast(en("没有网址"));
       await invoke("browser_open_external", { path: url }).catch((e) => toast(String(e)));
     };
@@ -11786,7 +11891,8 @@ function bindAgentPanes() {
       agBrSource = !agBrSource;
       agEl("ag-br-src").classList.toggle("primary", agBrSource);
       try {
-        await invoke("kb_source", { kind: KBB_KIND });
+        // 关掉“源码”时立刻回到正文，不能把上一次的源码继续留在框里。
+        await invoke(agBrSource ? "kb_source" : "kb_read_dom", { kind: KBB_KIND });
       } catch (e) { toast(String(e)); }
     };
   }
@@ -11879,8 +11985,16 @@ function agOnShow() {
   agRefreshBalance();
   invoke("kb_current_url", { kind: KBB_KIND }).then((url) => {
     if (!url) return;
-    const title = agBrPage?.title || url;
-    kbRenderAgentBrowser({ ...(agBrPage || { text: "", html: "", links: [] }), url, title });
+    const changed = !agBrPage || agBrPage.url !== url;
+    const title = changed ? url : (agBrPage?.title || url);
+    kbRenderAgentBrowser({
+      ...(agBrPage || { text: "", html: "", links: [] }),
+      url,
+      title,
+      text: changed ? "" : (agBrPage?.text || ""),
+      html: changed ? "" : (agBrPage?.html || ""),
+      links: changed ? [] : (agBrPage?.links || []),
+    }, false);
   }).catch(() => {});
 }
 
@@ -12285,17 +12399,12 @@ async function bindAgentEvents() {
     if (!agWatching()) agUnreadBump();
   });
   await agOn("kb://page", async (ev) => {
-    const raw = ev.payload;
-    const url = raw && typeof raw === "object" ? raw.url || "" : "";
-    if (!url) return;
-    if ($("kb-url")) $("kb-url").value = url;
-    kbUrl = url;
-    kbWasCreated = true;
-    kbRenderAgentBrowser({ url, title: agBrPage?.title || url, text: "", html: "", links: [] });
-    kbEmptyText();
+    kbApplyPageEvent(ev.payload);
   });
   await agOn("kb://source", (ev) => {
-    if (!agEl("ag-br-body")) return;
+    // A slow source callback may arrive after the user already switched back to
+    // rendered text; it must not replace the fresh DOM snapshot.
+    if (!agEl("ag-br-body") || !agBrSource) return;
     agEl("ag-br-body").textContent = String(ev.payload || "");
   });
   await agOn("kb://dom", (ev) => {
@@ -13329,10 +13438,12 @@ const EN = {
 
   // ============ 共享内部浏览器 ============
   "知识库": "Knowledge base", "浏览器": "Browser",
-  "共享浏览器": "Shared browser", "共享浏览器首页": "Shared browser home", "浏览器": "Browser",
+  "共享浏览器": "Shared browser", "共享浏览器首页": "Shared browser home",
   "在浏览器打开": "Open in browser",
   "共享浏览器首页已保存": "Shared browser home saved", "当前页已读取": "Current page read",
   "输入网址开始浏览": "Enter a URL to start browsing",
+  "共享页面已同步": "Shared page is in sync", "页面载入中…": "Loading page…",
+  "共享浏览器只支持 http:// 和 https:// 网址": "The shared browser only supports http:// and https:// URLs",
   "重新加载": "Reload",
   "用系统浏览器打开（登录 / 下载这类它更顺手）":
     "Open in the system browser (handier for logins and downloads)",

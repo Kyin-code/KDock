@@ -2820,17 +2820,59 @@ pub fn agent_workspace_read(
 
 #[tauri::command]
 pub fn browser_open_external(path: String) -> Result<(), String> {
+    let target = validate_external_target(&path)?;
     #[cfg(windows)]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &path])
-            .spawn()
-            .map_err(|e| format!("打开失败: {e}"))?;
-        Ok(())
+        open_with_shell(target)
     }
     #[cfg(not(windows))]
     {
-        Err(format!("这个平台上请自己打开：{path}"))
+        Err(format!("这个平台上请自己打开：{target}"))
+    }
+}
+
+fn validate_external_target(path: &str) -> Result<&str, String> {
+    let target = path.trim();
+    if target.is_empty() {
+        return Err("没有可打开的地址".into());
+    }
+    if target.contains('\0') {
+        return Err("地址包含非法字符".into());
+    }
+    Ok(target)
+}
+
+#[cfg(windows)]
+fn open_with_shell(target: &str) -> Result<(), String> {
+    #[link(name = "shell32")]
+    extern "system" {
+        fn ShellExecuteW(
+            hwnd: isize,
+            op: *const u16,
+            file: *const u16,
+            params: *const u16,
+            dir: *const u16,
+            show: i32,
+        ) -> isize;
+    }
+    let op: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+    let file: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
+    // ShellExecuteW receives the target as data. Unlike `cmd /C start`, `&`,
+    // `|`, `^` and `%` inside a URL/path are never interpreted as shell syntax.
+    let code = unsafe {
+        ShellExecuteW(
+            0,
+            op.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1,
+        )
+    };
+    if code <= 32 {
+        Err(format!("打开失败（ShellExecuteW {code}）: {target}"))
+    } else {
+        Ok(())
     }
 }
 
@@ -2998,6 +3040,16 @@ mod tests {
 
     fn msg(role: &str, content: &str) -> Value {
         json!({ "role": role, "content": content })
+    }
+
+    #[test]
+    fn external_open_target_rejects_empty_and_nul() {
+        assert!(validate_external_target("  ").is_err());
+        assert!(validate_external_target("https://example.com\0calc").is_err());
+        assert_eq!(
+            validate_external_target(" https://example.com/?a=1&b=2 ").unwrap(),
+            "https://example.com/?a=1&b=2"
+        );
     }
 
     #[test]
