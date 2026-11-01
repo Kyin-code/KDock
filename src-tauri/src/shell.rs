@@ -30,7 +30,7 @@ pub fn decode(bytes: &[u8]) -> String {
         // `╓╨╬─`。本机代码页解不出任何非 ASCII 字母、而 CP936 能解出
         // CJK 时才采用 CP936，避免把 CP437 重音字符、日文或韩文误判成中文。
         if let Some(gbk_text) = gbk.as_ref() {
-            if should_prefer_gbk(gbk_text, oem.as_deref(), ansi.as_deref()) {
+            if should_prefer_gbk(gbk_text, oem.as_deref()) {
                 return gbk_text.clone();
             }
         }
@@ -52,12 +52,9 @@ fn cjk_count(text: &str) -> usize {
 }
 
 #[cfg(windows)]
-fn should_prefer_gbk(gbk: &str, oem: Option<&str>, ansi: Option<&str>) -> bool {
+fn should_prefer_gbk(gbk: &str, oem: Option<&str>) -> bool {
     let gbk_cjk = cjk_count(gbk);
-    let local_letters = oem
-        .map(non_ascii_alpha_count)
-        .unwrap_or(0)
-        .max(ansi.map(non_ascii_alpha_count).unwrap_or(0));
+    let local_letters = oem.map(non_ascii_alpha_count).unwrap_or(0);
     gbk_cjk >= 1 && local_letters == 0 && !gbk.contains('\u{FFFD}')
 }
 
@@ -230,10 +227,14 @@ mod tests {
             // 英文 CI Runner 的 CP437 会把它解成 `╓╨╬─`。
             let gbk = [0xD6u8, 0xD0, 0xCE, 0xC4];
             assert_eq!(decode(&gbk), "中文");
-            assert!(should_prefer_gbk("中文", Some("╓╨╬─"), None));
-            assert!(should_prefer_gbk("一", Some("╓"), None));
-            assert!(!should_prefer_gbk("中文", Some("你好"), None));
-            assert!(!should_prefer_gbk("中文", Some("café"), None));
+            let cp437 = decode_code_page(&gbk, 437).unwrap();
+            let cp936 = decode_code_page(&gbk, 936).unwrap();
+            assert_eq!(cp437, "╓╨╬─");
+            assert_eq!(cp936, "中文");
+            assert!(should_prefer_gbk(&cp936, Some(&cp437)));
+            assert!(should_prefer_gbk("一", Some("╓")));
+            assert!(!should_prefer_gbk("中文", Some("你好")));
+            assert!(!should_prefer_gbk("中文", Some("café")));
         }
     }
 
