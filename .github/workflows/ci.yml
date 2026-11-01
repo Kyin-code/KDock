@@ -42,6 +42,9 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Check frontend bundle budget
+        run: npm run test:bundle
+
       - name: Test shared browser contract
         run: npm run test:browser
 
@@ -50,6 +53,9 @@ jobs:
 
       - name: Test bilingual responsive UI
         run: npm run test:i18n:ui
+
+      - name: Test lazy page modules
+        run: npm run test:lazy
 
       - name: Test responsive UI matrix
         run: npm run test:vite:pages

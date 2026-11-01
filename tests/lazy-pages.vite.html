@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN" data-lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KDock Lazy Pages Vite Test</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    #lazy-host { width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="lazy-host"></div>
+  <script type="module">
+    import {
+      loadHelpPage,
+      loadLogicPage,
+      loadRuntimePage,
+      loadToolsPage,
+      loadUPlot,
+    } from "/src/lazy-pages.js";
+
+    const source = await fetch("/index.html").then((response) => response.text());
+    const parsed = new DOMParser().parseFromString(source, "text/html");
+    const host = document.getElementById("lazy-host");
+    const fragment = document.createDocumentFragment();
+    for (const node of [...parsed.body.cloneNode(true).childNodes]) {
+      if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "SCRIPT") continue;
+      fragment.appendChild(node);
+    }
+    host.appendChild(fragment);
+
+    window.kdockT = (text) => text;
+    window.kdockToast = () => {};
+    window.kdockUiScale = () => 1;
+    window.kdockSyncDataLang = () => {};
+    window.kdockTranslateText = (text) => text;
+    window.kdockOnLang = () => {};
+    window.__TAURI_INTERNALS__ = {
+      metadata: {
+        currentWindow: { label: "main" },
+        currentWebview: { windowLabel: "main", label: "main" },
+      },
+      invoke: async (command) => {
+        if (command === "runtime_analyzer_status") return { installed: false, version: "", path: "" };
+        if (command === "logic_devices") return [];
+        if (command === "dsview_decoders") return [];
+        return null;
+      },
+      transformCallback: () => 1,
+      unregisterCallback: () => {},
+      convertFileSrc: (path) => path,
+    };
+
+    const help1 = await loadHelpPage();
+    const help2 = await loadHelpPage();
+    const logic = await loadLogicPage();
+    logic.initLogic();
+    const runtime = await loadRuntimePage();
+    await window.rtInit();
+    const tools = await loadToolsPage();
+    tools.initBatch({ pushTx: () => {} });
+    tools.initCalc();
+    const Plot = await loadUPlot();
+
+    window.__lazyResult = {
+      helpShared: help1 === help2,
+      helpItems: help1.HELP_GROUPS.reduce((count, group) => count + group.items.length, 0),
+      logicBound: typeof document.getElementById("la-fit").onclick === "function",
+      runtimeReady: typeof window.rtAnalyze === "function",
+      toolsBound: !!document.getElementById("bt-in").__bound && !!document.getElementById("calc-expr").__bound,
+      uplotReady: typeof Plot === "function",
+    };
+    document.documentElement.dataset.lazyReady = "1";
+  </script>
+</body>
+</html>

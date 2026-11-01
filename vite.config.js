@@ -15,11 +15,21 @@ export default defineConfig({
     target: "es2021",
     outDir: "dist",
     emptyOutDir: true,
+    manifest: true,
     // 启动画面是第二个页面，得让 Vite 一起产出 dist/splash.html
     rollupOptions: {
       input: {
         main: resolve(__dirname, "index.html"),
         splash: resolve(__dirname, "splash.html"),
+      },
+      output: {
+        manualChunks(id) {
+          // Keep the translation runtime cacheable independently from the
+          // frequently changing application code.
+          if (id.includes("/node_modules/i18next/")) return "vendor-i18n";
+          if (id.includes("/node_modules/@tauri-apps/")) return "vendor-tauri";
+          if (id.includes("/src/locales/")) return "locale-en";
+        },
       },
     },
   },

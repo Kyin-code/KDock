@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HELP_GROUPS, HELP_TITLE_EN } from "../src/help-content.js";
 import { changeLanguage, createI18n, translate } from "../src/i18n.js";
+import { EN } from "../src/locales/en.js";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const read = (path) => readFile(resolve(root, path), "utf8");
@@ -16,11 +17,6 @@ const [main, html, ...modules] = await Promise.all([
     .map((name) => read(`src/${name}`)),
 ]);
 
-const start = main.indexOf("const EN = {");
-const end = main.indexOf("\nconst appI18n", start);
-assert.ok(start >= 0 && end > start, "EN dictionary block not found");
-const objectSource = main.slice(main.indexOf("{", start), end).trim().replace(/;\s*$/, "");
-const EN = new Function(`return (${objectSource});`)();
 assert.ok(Object.keys(EN).length > 1000, "English dictionary unexpectedly small");
 
 const testI18n = createI18n({

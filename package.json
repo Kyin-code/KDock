@@ -11,6 +11,7 @@
     "test:vite:rtos": "node tests/runtime-rtos.vite-smoke.mjs",
     "test:vite:agent": "node tests/agent-typography.vite-smoke.mjs",
     "test:flash": "node tests/flash-rom.unit.mjs",
+    "test:lazy": "node tests/lazy-pages.vite-smoke.mjs",
     "test:vite:flash": "node tests/flash-bootloader.vite-smoke.mjs",
     "test:vite:reasoning": "node tests/reasoning-effort.vite-smoke.mjs",
     "test:vite:pages": "node tests/all-pages.vite-smoke.mjs",
@@ -18,6 +19,7 @@
     "test:vite:shortcuts": "node tests/shortcuts.vite-smoke.mjs",
     "test:vite:session": "node tests/agent-session.vite-smoke.mjs",
     "test:browser": "node tests/shared-browser.unit.mjs",
+    "test:bundle": "node tests/bundle-budget.unit.mjs",
     "test:i18n": "node tests/i18n.unit.mjs",
     "test:i18n:ui": "node tests/i18n-layout.vite-smoke.mjs",
     "tauri": "tauri"

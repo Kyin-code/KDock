@@ -4,17 +4,19 @@ import { getVersion } from "@tauri-apps/api/app";
 // 原生文件对话框 / 文件读写：WebView 里 window.prompt 是空实现，路径类交互一律走这两个
 import { open as dlgOpen, save as dlgSave } from "@tauri-apps/plugin-dialog";
 import { readFile, writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import uPlot from "uplot";
-import "uplot/dist/uPlot.min.css";
-// 两个纯本地工具页（批量文本 / 计算器）——单独成文件，免得 main.js 再长下去
-import { initBatch, initCalc } from "./tools-batch-calc.js";
-import { initLogic, laAgentState, laAgentRead, laAgentDecoders, laAgentConfig, laAgentCapture, laAgentSave } from "./logic-analyzer.js";
-import { HELP_GROUPS as HELP_GROUPS_CONTENT, HELP_TITLE_EN } from "./help-content.js";
 import { FLASH_ROM_TOOLS, flashToolUi, isFlashRomTool, isSerialRomTool } from "./flash-rom.js";
 import { ADVANCED_TABS, initAdvancedNav, openAdvancedNavFor } from "./nav-advanced.js";
 import { createShortcutManager, mountShortcutSettings } from "./shortcuts.js";
 import { mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "./agent-session.js";
 import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
+import { EN } from "./locales/en.js";
+import {
+  loadHelpPage,
+  loadLogicPage,
+  loadRuntimePage,
+  loadToolsPage,
+  loadUPlot,
+} from "./lazy-pages.js";
 import {
   applyDomLanguage,
   changeLanguage,
@@ -27,6 +29,12 @@ import {
 const $ = (id) => document.getElementById(id);
 window.kdockToast = (text) => toast(text);
 window.kdockUiScale = () => uiScaleValue();
+
+function lazyPageError(page, error) {
+  const message = `${en("页面加载失败：")}${page}: ${error && error.message ? error.message : error}`;
+  toast(message);
+  pushSys(message);
+}
 
 /* ── 悬停提示：自绘气泡（接管原生 title）─────────────────────────────────────
    原生 title 的气泡是系统画的：延迟 ~1 秒才出来、样式跟系统走（Windows 上是个
@@ -1613,11 +1621,10 @@ function showPane(tab) {
   if (work === "agent") agUnreadClear();      // 切过来就算看过了，清掉未读角标
   document.querySelectorAll("[data-param]").forEach((p) => { p.hidden = p.dataset.param !== tab; });
   document.documentElement.dataset.tab = tab;      // 窄窗样式要按"当前这一页"决定收不收那条参数带（如计算器）
-  if (tab === "runtime" && window.rtInit) window.rtInit();
+  if (tab === "runtime") void initRuntimePage();
   if (window.kdockSyncDataLang) window.kdockSyncDataLang();
   syncParamStrip();
   if (tab === "upgrade") syncUpgCtl();
-  if (tab === "datacalc") initCalc();          // 折叠区块的初始化在 initCalc 里（只有一次）
   if (tab === "files") {
     // 网络盘模式（FTP/FTPS/TFTP）没连之前别去列目录：那会报"先点连接"
     if (!flIsNet()) {
@@ -1634,10 +1641,9 @@ function showPane(tab) {
   if (tab === "flash") { flashSync(); flashBootstrap(); }
   if (tab === "capture" && capRefresh) capRefresh();
   if (tab === "agent") agOnShow();
-  if (tab === "batch") initBatch({ pushTx: pushEntry });
-  if (tab === "calc") initCalc();
-  if (tab === "datacalc") initCalc();          // 折叠区块的初始化在 initCalc 里（只有一次）
-  if (tab === "logic") initLogic();
+  if (tab === "batch") void initToolsPage("batch");
+  if (tab === "calc" || tab === "datacalc") void initToolsPage("calc");
+  if (tab === "logic") void initLogicPage();
   // 切页保持缓存，避免每次进入都重扫整套驱动/工具链；
   // 外部安装或卸载驱动后，用页面上的「扫描本机 / 重新扫描」强制同步。
   if (tab === "env") envRefresh();
@@ -1645,6 +1651,37 @@ function showPane(tab) {
   if (tab === "scope") { scSetView(scView); scResizePlot(); }
   kbSyncSoon();                                 // 浏览器页：进来就贴、离开就收（详见 kbSync）
   if (LANG === "en") langWalk();   // 这一页里"切过来才渲染"的文字（提示语/空态）再扫一遍
+}
+
+async function initToolsPage(page) {
+  try {
+    const module = await loadToolsPage();
+    if (page === "batch") module.initBatch({ pushTx: pushEntry });
+    else module.initCalc();
+    if (LANG === "en") langWalk();
+  } catch (error) {
+    lazyPageError(page, error);
+  }
+}
+
+async function initLogicPage() {
+  try {
+    const module = await loadLogicPage();
+    module.initLogic();
+    if (LANG === "en") langWalk();
+  } catch (error) {
+    lazyPageError("logic", error);
+  }
+}
+
+async function initRuntimePage() {
+  try {
+    await loadRuntimePage();
+    if (window.rtInit) await window.rtInit();
+    if (LANG === "en") langWalk();
+  } catch (error) {
+    lazyPageError("runtime", error);
+  }
 }
 
 /** 调试页（GDB/MI）暂时隐藏：代码全都在（页面、后端 debug.rs、解析都保留），
@@ -1959,7 +1996,14 @@ let chYs = [];
 let chColors = [];
 let chHidden = new Set();
 let chDirty = false;
+let uPlotConstructor = null;
+let chartBuildPromise = null;
 const CH_PALETTE = ["#4f8cff", "#3ddc97", "#ffc857", "#ff6b6b", "#b388ff", "#4dd0e1", "#ff9f43", "#7ed957"];
+
+async function ensureUPlot() {
+  if (!uPlotConstructor) uPlotConstructor = await loadUPlot();
+  return uPlotConstructor;
+}
 
 /** 从一段 RX 文本里挑出"纯数字行"喂给图表；非数字行忽略 */
 function chartFeed(text) {
@@ -1976,7 +2020,7 @@ function chartFeed(text) {
       chYs = Array.from({ length: n }, (_, i) => chYs[i] || []);
       chColors = Array.from({ length: n }, (_, i) => CH_PALETTE[i % CH_PALETTE.length]);
       chHidden = new Set();
-      rebuildChart();
+      void rebuildChart();
       refreshChannelList();
     }
     chXs.push(chXs.length);
@@ -2016,16 +2060,26 @@ function chartOptions() {
   };
 }
 
-function rebuildChart() {
-  const box = $("chart-box");
-  if (!box) return;
-  if (chart) { chart.destroy(); chart = null; }
-  if (!chYs.length || !box.clientWidth) return;
-  chart = new uPlot(chartOptions(), [chXs, ...chYs], box);
+async function rebuildChart() {
+  if (chartBuildPromise) return chartBuildPromise;
+  chartBuildPromise = (async () => {
+    const box = $("chart-box");
+    if (!box) return;
+    if (chart) { chart.destroy(); chart = null; }
+    if (!chYs.length || !box.clientWidth) return;
+    try {
+      const Plot = await ensureUPlot();
+      if (!chYs.length || !box.clientWidth) return;
+      chart = new Plot(chartOptions(), [chXs, ...chYs], box);
+    } catch (error) {
+      lazyPageError("chart", error);
+    }
+  })().finally(() => { chartBuildPromise = null; });
+  return chartBuildPromise;
 }
 
 function chartResize() {
-  if (!chart) { rebuildChart(); return; }
+  if (!chart) { void rebuildChart(); return; }
   const box = $("chart-box");
   chart.setSize({ width: box.clientWidth || 600, height: box.clientHeight || 320 });
 }
@@ -2063,7 +2117,7 @@ function bindChart() {
     if (box.closest("[hidden]")) return;      // 不在图表页就先不画（**别清 dirty**，切回来要补画）
     chDirty = false;
     $("ch-src").textContent = chYs.length + en(" 通道 / ") + chXs.length + en(" 点");
-    if (!chart || chart.series.length - 1 !== chYs.length) rebuildChart();
+    if (!chart || chart.series.length - 1 !== chYs.length) void rebuildChart();
     else chart.setData([chXs, ...chYs]);
   }, Math.max(30, Number($("ch-sample").value) || 4) * 5);
 }
@@ -2647,6 +2701,7 @@ async function flLoadPyocdTargets() {
 
 // ---------------- 示波器：SCPI（Rigol DS1000Z 那套） ----------------
 let scPlot = null;
+let scDrawPromise = null;
 let scWaves = {};           // ch -> { x: [], y: [] }
 let scInfo = null;          // scope_info 的结果
 let scShotData = null;      // 最近一次截屏 { path, dataUrl, bytes }
@@ -3016,13 +3071,23 @@ function scResizePlot() {
 }
 
 /** 画波形：一个通道一条线（颜色跟通道卡片一致），鼠标悬停看读数 */
-function scDraw() {
+async function scDraw() {
+  if (scDrawPromise) return scDrawPromise;
+  scDrawPromise = (async () => {
+  try {
   const box = $("sc-plot");
   if (!box) return;
   const nums = Object.keys(scWaves).map(Number).sort((a, b) => a - b);
   const empty = $("sc-empty");
   if (empty) empty.hidden = nums.length > 0;
   if (!nums.length) return;
+  let Plot;
+  try {
+    Plot = await ensureUPlot();
+  } catch (error) {
+    lazyPageError("scope", error);
+    return;
+  }
   const w = box.clientWidth || 600, h = box.clientHeight || 300;
   const base = scWaves[nums[0]];
   const data = [base.x];
@@ -3040,7 +3105,7 @@ function scDraw() {
     });
   }
   if (scPlot) scPlot.destroy();
-  scPlot = new uPlot({
+  scPlot = new Plot({
     width: w, height: h, series,
     axes: [
       { stroke: "#8b98a8", grid: { stroke: "rgba(139,152,168,.15)" }, values: (u, sp) => sp.map(scFmtTime) },
@@ -3050,6 +3115,11 @@ function scDraw() {
     legend: { show: true, live: true },
     cursor: { points: { size: 6 } },
   }, data, box);
+  } catch (error) {
+    lazyPageError("scope", error);
+  }
+  })().finally(() => { scDrawPromise = null; });
+  return scDrawPromise;
 }
 
 /** 波形 / 截屏 两个视图来回切 */
@@ -7510,7 +7580,21 @@ const HELP_SETTINGS_ROOT = {
   help: "help-settings-help",
 };
 
-const HELP_GROUPS = HELP_GROUPS_CONTENT;
+let HELP_GROUPS = [];
+let HELP_TITLE_EN = {};
+let helpItemById = new Map();
+let helpContentReady = false;
+
+async function ensureHelpContent() {
+  if (helpContentReady) return;
+  const module = await loadHelpPage();
+  HELP_GROUPS = module.HELP_GROUPS;
+  HELP_TITLE_EN = module.HELP_TITLE_EN;
+  helpItemById = new Map(HELP_GROUPS.flatMap((group) =>
+    group.items.map((item) => [item.id, { ...item, group: group.title }]),
+  ));
+  helpContentReady = true;
+}
 
 const HELP_HEADING_MAP = {
   link: { "从这里开始": "help-transfer-start", "统计": "help-transfer-stats", "快捷发送": "help-transfer-quick" },
@@ -7538,7 +7622,6 @@ const HELP_SUMMARY_MAP = {
   files: { "内置 TFTP 服务端": "help-files-tftp" },
 };
 
-const helpItemById = new Map(HELP_GROUPS.flatMap((g) => g.items.map((it) => [it.id, { ...it, group: g.title }])));
 let helpCurrent = "help-work";
 
 function helpLang() { return LANG === "en" ? "en" : "zh"; }
@@ -7601,9 +7684,15 @@ function helpSyncPageLabel() {
   if (el) el.textContent = en(HELP_PAGE_LABEL[page] || "");
 }
 
-function buildHelpNav() {
+async function buildHelpNav() {
   const nav = $("help-nav");
-  if (!nav) return;
+  if (!nav) return false;
+  try {
+    await ensureHelpContent();
+  } catch (error) {
+    lazyPageError("help", error);
+    return false;
+  }
   nav.innerHTML = "";
   for (const g of HELP_GROUPS) {
     const h = document.createElement("div");
@@ -7619,11 +7708,18 @@ function buildHelpNav() {
       nav.appendChild(b);
     }
   }
+  return true;
 }
 
-function buildHelpIndex() {
+async function buildHelpIndex() {
   const box = $("set-help-list");
-  if (!box) return;
+  if (!box) return false;
+  try {
+    await ensureHelpContent();
+  } catch (error) {
+    lazyPageError("help", error);
+    return false;
+  }
   box.innerHTML = "";
   for (const g of HELP_GROUPS) {
     const h = document.createElement("div");
@@ -7644,9 +7740,16 @@ function buildHelpIndex() {
     }
   }
   helpSyncPageLabel();
+  return true;
 }
 
-function showHelpItem(id) {
+async function showHelpItem(id) {
+  try {
+    await ensureHelpContent();
+  } catch (error) {
+    lazyPageError("help", error);
+    return;
+  }
   const it = helpItemById.get(id) || helpItemById.get("help-work");
   if (!it) return;
   helpCurrent = it.id;
@@ -7690,7 +7793,7 @@ function showHelpItem(id) {
   if (content) content.scrollTop = 0;
 }
 
-function openHelp(anchor) {
+async function openHelp(anchor) {
   const m = $("help-modal");
   if (!m) return;
   const sm = $("settings-modal");
@@ -7700,8 +7803,8 @@ function openHelp(anchor) {
   const id = anchor || HELP_SETTINGS_ROOT[settingsPane] || HELP_PAGE_ROOT[helpCurrentPage()] || "help-work";
   if (sm && !sm.hidden) closeSettings();
   m.hidden = false;
-  buildHelpNav();
-  showHelpItem(id);
+  if (!await buildHelpNav()) return;
+  await showHelpItem(id);
   kbSyncSoon();
 }
 
@@ -7725,12 +7828,12 @@ function bindHelp() {
     }
   });
   decorateHelpHeadings();
-  buildHelpIndex();
   window.kdockOnLang(() => {
-    buildHelpIndex();
+    if (!helpContentReady) return;
+    void buildHelpIndex();
     if (!m.hidden) {
-      buildHelpNav();
-      showHelpItem(helpCurrent);
+      void buildHelpNav();
+      void showHelpItem(helpCurrent);
     }
   });
 }
@@ -7846,7 +7949,7 @@ function openSettings(section) {
   if (section === "model") agProvTab("use");
   if (section === "shortcuts" && shortcutSettingsUi) shortcutSettingsUi.refresh();
   if (section === "about") agLoadTools();
-  if (section === "help") buildHelpIndex();
+  if (section === "help") void buildHelpIndex();
   if (section === "netip") { bindNetip(); netipLoad(); }
   kbSyncSoon();      // 浏览器页那块是原生子视图，会盖住弹窗 —— 开设置就先收起来
 }
@@ -7873,7 +7976,7 @@ function bindSettings() {
       // 才切回来的，只重画旧快照就会看不见新技能（后端的目录指纹缓存很便宜）
       if (b.dataset.set === "skills") { agLoadSkills(); }
       if (b.dataset.set === "tools") { agToolRows = []; renderToolsPage(); }
-      if (b.dataset.set === "help") buildHelpIndex();
+      if (b.dataset.set === "help") void buildHelpIndex();
       if (b.dataset.set === "netip") { bindNetip(); netipLoad(); }
       if (b.dataset.set === "theme") tbSyncTheme();
       if (b.dataset.set === "about" || b.dataset.set === "general") agRenderAbout();
@@ -11944,12 +12047,12 @@ function agFocus() {
 // ---------- host 工具（后端让前端干活） ----------
 const AG_HOST = {
   // 逻辑分析仪：读结果（只读）+ 改配置（不动数据）+ 采集 + 存盘
-  async la_state() { initLogic(); return laAgentState(); },
-  async la_read(a) { initLogic(); return laAgentRead(a || {}); },
-  async la_decoders() { return laAgentDecoders(); },
-  async la_config(a) { initLogic(); return laAgentConfig(a || {}); },
-  async la_capture(a) { initLogic(); return laAgentCapture(a || {}); },
-  async la_save(a) { initLogic(); return laAgentSave(a || {}); },
+  async la_state() { const m = await loadLogicPage(); m.initLogic(); return m.laAgentState(); },
+  async la_read(a) { const m = await loadLogicPage(); m.initLogic(); return m.laAgentRead(a || {}); },
+  async la_decoders() { const m = await loadLogicPage(); return m.laAgentDecoders(); },
+  async la_config(a) { const m = await loadLogicPage(); m.initLogic(); return m.laAgentConfig(a || {}); },
+  async la_capture(a) { const m = await loadLogicPage(); m.initLogic(); return m.laAgentCapture(a || {}); },
+  async la_save(a) { const m = await loadLogicPage(); m.initLogic(); return m.laAgentSave(a || {}); },
   // 环境配置：扫本机（只读）+ 装 / 更新（要审批；装的时候切到环境页让用户看着）
   async env_scan(a) {
     const d = await invoke("env_scan", { force: !!(a && a.force) });
@@ -12399,2104 +12502,8 @@ async function bindAgentEvents() {
 // 覆盖导航、标题栏、菜单、各页卡片标题与常用按钮/字段；字典里没有的保持中文（可随时补）。
 // 没配置过就默认英文（用户要的是"如无配置默认英语"）
 let LANG = localStorage.getItem("kdock_lang") === "zh" ? "zh" : "en";
-const EN = {
-  "调试": "Debug", "设备": "Device", "工具": "Tools",
-  "（空目录）": "(empty folder)", "项": "item(s)", "已就绪": "Ready", "未准备": "Not prepared",
-  "未找到便携分析器：去环境配置 → 固件运行结构分析器 准备。": "Portable analyzer not found; prepare it in Environment setup → Firmware runtime analyzer.",
-  "准备中…": "Preparing…", "准备中…（首次需下载 ~500 MB）": "Preparing… (first run downloads about 500 MB)",
-  "开始准备固件运行结构分析器。KDock 会自带 Python 3.13，不使用系统 Python。": "Preparing the firmware runtime analyzer. KDock bundles Python 3.13 and does not use system Python.",
-  "检测失败": "Detection failed", "检测失败: ": "Detection failed: ", "器件库就绪": "Device library ready",
-  "点击「准备 / 更新分析器」": "click Prepare / update analyzer",
-  // 安卓 ADB：无线调试（Android 11+）
-  "无线调试": "Wireless debugging", "无线调试（Android 11+）": "Wireless debugging (Android 11+)",
-  "找设备": "Find devices",
-  "列出局域网里正在广播的无线调试设备（adb mdns services）": "List wireless-debugging devices advertising on the LAN (adb mdns services)",
-  "配对": "Pair", "配对码": "Pairing code",
-  "手机「使用配对码配对设备」里那 6 位": "the 6 digits from “Pair device with pairing code”",
-  "192.168.1.37 或 192.168.1.37:37000": "192.168.1.37 or 192.168.1.37:37000",
-  "adb pair（只用一次；配对成功后再点「连接」）": "adb pair (one-off; then hit Connect)",
-  "adb connect：连到无线调试页面上显示的那个端口": "adb connect: use the port shown on the device's wireless-debugging screen",
-  "重新列设备（新插的线 / 新开的无线调试点这个）": "Re-list devices (after plugging in a cable or enabling wireless debugging)",
-  "没看到设备？两条路：① USB：手机打开「开发者选项 → USB 调试」，插线后在手机上允许这台电脑；② 无线调试（Android 11+）：手机打开「开发者选项 → 无线调试」，先用下面的「配对」填手机弹窗上的地址和配对码，再「连接」到无线调试页面上显示的那个端口。":
-    "No device? Two ways: (1) USB — enable Developer options → USB debugging and allow this PC on the phone; (2) Wireless debugging (Android 11+) — enable Developer options → Wireless debugging, use Pair below with the address and pairing code shown on the phone, then Connect to the port shown on the phone's wireless-debugging screen.",
-  "（没发现广播：设备上要打开「无线调试」，两边要在同一网段）": "(no advertisement found: enable Wireless debugging on the device and keep both on the same subnet)",
-  "配对要填 地址 + 配对端口 + 6 位配对码": "Pairing needs the address, the pairing port and the 6-digit code",
-  "配对成功，接着点「连接」（端口通常和配对端口不同）": "Paired. Now hit Connect (the connect port usually differs from the pairing port)",
-  "配对失败：": "Pairing failed: ", "连接失败：": "Connect failed: ", "断开失败：": "Disconnect failed: ", "失败：": "Failed: ",
-  // 审批卡
-  "本会话都允许": "Allow for this session",
-  "已允许": "Allowed", "已拒绝": "Denied",
-  "传输": "Transfer", "命令表": "Commands", "固件升级": "Firmware", "烧录": "Flash",
-  "高级工具": "Advanced tools", "开发": "Develop", "效率": "Productivity",
-  "文件管理": "Files", "实时图表": "Charts", "中控编排": "Flow", "示波器": "Scope",
-  "屏幕捕获": "Capture", "逻辑分析仪": "Logic",
-  "批量文本": "Batch text", "计算器": "Calculator",
-  "文件": "File", "编辑": "Edit", "视图": "View", "窗口": "Window", "帮助": "Help",
-  "概览": "Overview", "其它页面": "More pages", "管理": "Manage", "全屏": "Full width",
-  "连接": "Connect", "断开": "Disconnect", "发送": "Send", "清空": "Clear", "清空日志": "Clear log",
-  "开始": "Start", "停止": "Stop", "暂停接收": "Pause RX", "自动滚动": "Auto scroll",
-  "ASCII 交互": "ASCII mode", "复制全部输出": "Copy output", "清空发送区": "Clear input",
-  "主题": "Theme", "配色": "Accent", "暗色": "Dark", "亮色": "Light", "跟随": "System",
-  "暗色主题": "Dark theme", "亮色主题": "Light theme", "跟随系统": "Follow system",
-  "配色与设置…": "Accent & settings…", "最小化": "Minimize", "最大化 / 还原": "Maximize / Restore",
-  "关闭到托盘": "Close to tray", "开机自启": "Run at startup", "断线自动重连": "Auto reconnect",
-  "快捷键": "Shortcuts", "功能帮助": "Help", "功能帮助…": "Context help…", "功能帮助（F1）": "Help (F1)",
-  "关于 KDock": "About KDock", "退出 KDock": "Quit KDock",
-  "保存会话日志…": "Save session…", "加载会话日志…": "Load session…", "导出 CSV…": "Export CSV…",
-  "回放会话": "Replay session", "导入编排 JSON…": "Import flow JSON…", "导出编排 JSON…": "Export flow JSON…",
-  "从这里开始": "Start here", "帮助（F1）": "Help (F1)",
-  "连接设备": "Device link", "方式": "Mode", "串口": "Port", "波特率": "Baud", "目标 IP": "Host",
-  "端口": "Port", "路径": "Path", "地址": "Address", "文件": "File", "速度": "Speed",
-  "接口": "Interface", "适配器": "Adapter", "工具": "Tool", "目标芯片": "Target chip",
-  "器件库": "Device library", "固件": "Firmware", "命令预览": "Command preview",
-  "烧录器": "Programmer", "烧录工具路径": "Tool paths",
-  "自动检测": "Auto detect", "清空重填": "Reset & detect", "到中间选型号": "Pick a model →",
-  "选择固件文件": "Choose firmware", "擦除": "Erase", "校验": "Verify", "复位": "Reset",
-  "目录": "Directory", "列出目录": "List", "上级": "Up", "取回本机": "Pull to PC",
-  "下载到": "Save to", "传回本机": "Pull", "发到设备": "Send to device", "选择本机文件": "Choose file",
-  "写到": "Write to", "发送到设备": "Send to device",
-  "暂存": "Staging", "版本": "Version", "升级": "Upgrade", "读取版本": "Read version",
-  "中控连接": "Flow links", "添加连接": "Add link", "选中节点": "Selected node", "编排文件": "Flow file",
-  "导入 JSON": "Import JSON", "导出 JSON": "Export JSON", "清空画布": "Clear canvas",
-  "加节点": "Add node", "步骤": "Step", "延时": "Delay", "条件": "Branch", "结束": "End",
-  "失败结束": "Fail", "示例": "Example", "整理": "Tidy", "适应": "Fit", "运行": "Run",
-  "查找": "Find", "展开全部": "Expand all", "收起分支": "Collapse branches",
-  "搜索函数名 / 地址": "Search function / address",
-  "分析运行结构": "Analyze runtime", "选择固件": "Select firmware",
-  "拉选中链路": "Draw selected chain", "返回全固件": "Back to full firmware",
-  "用当前选中的全部函数作为链路根；Ctrl / Shift 点击可多选": "Use all selected functions as chain roots; Ctrl / Shift + click to multi-select",
-  "链路中隐藏 HAL / CMSIS / C 库等系统函数，优先显示应用逻辑": "Hide HAL / CMSIS / C-library functions in chains to prioritize application logic",
-  "选择 ELF / BIN…": "Select ELF / BIN…", "分析目标": "Analysis target",
-  "全固件函数": "Full firmware", "main 运行链": "main runtime chain", "函数调用链路": "Call chain",
-  "运行结构": "Runtime graph",
-  "向下调用": "Downstream calls", "向上调用者": "Upstream callers", "双向": "Both directions",
-  "深度": "Depth", "1 层": "1 level", "2 层": "2 levels", "3 层": "3 levels",
-  "5 层": "5 levels", "8 层": "8 levels", "选择一个固件，查看运行结构": "Select firmware to inspect runtime structure",
-  "全固件函数一览、main 调用链、中断作用域和单函数链路；库函数自动折叠。": "Full-firmware functions, main runtime chains, interrupt scopes and focused call chains; libraries are summarized.",
-  "滚轮缩放 · 拖动画布 · 点击空白或按 Esc 取消高亮 · 点击函数看详情": "Wheel to zoom · drag to pan · click empty space or press Esc to clear highlighting · select a function for details",
-  "入口骨架": "Entry skeleton",
-  "应用逻辑": "Application logic",
-  "分析日志": "Analysis log", "分析器": "Analyzer", "BIN 参数": "BIN parameters",
-  "裸机 BIN 必须填写": "Required for bare-metal BIN", "基址": "Base address", "架构": "Architecture",
-  "入口": "Entry", "向量表": "Vector table",
-  "BIN 没有符号表时无法可靠找到 main。优先使用 ELF；只有 BIN 时请在符号表中按地址查看 CFG。": "BIN without symbols cannot reliably locate main. Prefer ELF; for BIN, inspect CFG by address.",
-  "分析范围": "Scope", "布局": "Layout", "按调用分层": "Call topology", "紧凑网格": "Compact grid",
-  "函数筛选": "Function filter", "全部函数": "All functions", "仅业务函数": "Business only",
-  "仅库函数": "Libraries only", "仅中断": "Interrupts only", "仅孤立函数": "Isolated only",
-  "连线": "Edges", "全部调用线": "All call edges",
-  "选中上下游": "Selected upstream/downstream", "不画线": "No edges",
-  "折叠分组": "Collapse groups", "＋ 新建": "+ New",
-  "启用的分组会按名称或地址识别函数，并默认收起其下游分支；设置保存在本机。": "Enabled groups match functions by name or address and collapse their downstream branches by default. Settings are stored locally.",
-  "名称": "Name", "匹配": "Match", "规则": "Pattern", "名称前缀": "Name prefix",
-  "名称包含": "Name contains", "正则表达式": "Regular expression",
-  "精确名称（逗号分隔）": "Exact names (comma separated)", "地址范围（十六进制）": "Address range (hex)",
-  "例如：日志模块": "For example: logging", "例如：LOG_ 或 0x08010000-0x0801ffff": "For example: LOG_ or 0x08010000-0x0801ffff",
-  "如何生成 ELF（MDK / CMake）": "How to produce an ELF (MDK / CMake)",
-  "在全固件或运行链里点击函数；Ctrl / Shift 点击可多选。链路内点其他节点只查看详情，不会改变根。": "Click a function in Full firmware or Runtime chain; use Ctrl / Shift + click to multi-select. Selecting another node inside a chain only inspects it and does not change the root.",
-  "函数": "Function", "调用点": "Call sites", "定位画布": "Center on canvas",
-  "展开 CFG": "Open CFG", "拉这条链路": "Draw this chain",
-  "未分析": "Not analyzed", "在中间点一个函数，这里显示地址、大小和调用点。": "Select a function on the canvas to inspect address, size and call sites.",
-  "运行日志": "Run log", "节点": "Node",
-  "图表": "Chart", "数据源": "Source", "通道": "Channels", "采样": "Sample",
-  "捕获": "Capture", "显示器": "Monitor", "帧率": "FPS", "画质": "Quality",
-  "一键读取": "Quick read", "自动测量": "Auto measure", "读波形": "Read waveform", "截屏": "Screenshot",
-  "连接": "Connect", "未连接": "Disconnected", "已连接": "Connected", "就绪": "Ready",
-  "统计": "Stats", "高级参数": "Advanced", "自定义": "Custom",
-  // ---- 补齐：提示语 / 卡片内文 / 命令表说明 / 占位符 / 悬停提示 ----
-  "1:1（窗口小就裁左上角）": "1:1 (crops top-left when small)",
-  "<文字> [> file]": "<text> [> file]",
-  "[NAME=值]": "[NAME=value]",
-  "DXGI 桌面复制 → JPEG → 界面显示；帧率越高占 CPU 越多，调试看画面 5~10fps 够用。": "DXGI desktop duplication → JPEG → UI. Higher FPS costs more CPU; 5-10 fps is enough for debugging.",
-  "J-Link 器件库": "J-Link device DB",
-  "常用命令（Linux）": "Common commands (Linux)",
-  "openocd · 开发板": "openocd · board", "openocd · 芯片": "openocd · chip", "openocd · 适配器": "openocd · adapter",
-  "openocd 开发板": "openocd board", "openocd 芯片": "openocd chip",
-  "— PC→设备 传文件": "— PC → device: send file",
-  "— YMODEM 收文件到区域": "— receive a file into an area (YMODEM)",
-  "— 不带参数=列出并校验 /firmware 里的包": "— no args: list & verify packages in /firmware",
-  "— 写自定义属性": "— write a custom attribute",
-  "— 切换目录": "— change directory",
-  "— 切换设备端提示语言": "— switch the device prompt language",
-  "— 列区域 / YMODEM 发文件": "— list areas / send a file (YMODEM)",
-  "— 列目录": "— list directory",
-  "— 删自定义属性": "— delete a custom attribute",
-  "— 删除变量": "— unset a variable",
-  "— 删除文件/目录": "— remove file/dir",
-  "— 十六进制查看": "— hex dump",
-  "— 卸载文件系统": "— unmount filesystem",
-  "— 回显 / 重定向到文件": "— echo / redirect to file",
-  "— 复制": "— copy",
-  "— 建 N 字节测试文件": "— create an N-byte test file",
-  "— 建目录": "— make directory",
-  "— 建空文件": "— create empty file",
-  "— 打印文件": "— print file",
-  "— 执行脚本文件": "— run a script file",
-  "— 改名 / 移动": "— rename / move",
-  "— 改文件长度": "— resize file",
-  "— 格式化（危险）": "— format (dangerous)",
-  "— 看前 n 行": "— head (first n lines)",
-  "— 看后 n 行": "— tail (last n lines)",
-  "— 看类型/大小": "— stat (type/size)",
-  "— 算文件 CRC32": "— file CRC32",
-  "— 设备→PC 取文件": "— device → PC: fetch file",
-  "— 设置或列出变量": "— set / list variables",
-  "— 读自定义属性": "— read a custom attribute",
-  "— 递归列目录": "— recursive list",
-  "↓ 最新": "↓ Latest", "↻ 刷新": "↻ Refresh", "⌗ 整理": "⌗ Tidy", "⏹ 停止": "⏹ Stop",
-  "▶ 运行": "▶ Run", "⤢ 适应": "⤢ Fit",
-  "主连接": "Main link", "交互": "Interactive", "会话": "Session", "保存日志": "Save log",
-  "保留": "Keep", "停止位": "Stop bits", "数据位": "Data bits", "校验位": "Parity", "流控": "Flow control",
-  "硬件 RTS/CTS": "Hardware RTS/CTS", "软件 XON/XOFF": "Software XON/XOFF",
-  "先占位：等确定型号/接口（USB 还是网络、采样率、通道数）再实现。": "Placeholder: implement once the model/interface (USB or network, sample rate, channels) is decided.",
-  "全部来源": "All sources", "分区变大后扩容量": "Grow partition", "加载日志": "Load log",
-  "区域": "Area", "升级": "Upgrade", "卸载+挂载（测持久化）": "Unmount + mount (persistence test)",
-  "历史…": "History…", "命令": "Command", "回放": "Replay",
-  "在中间点一下节点或连线，这里改参数。": "Click a node or a link on the canvas to edit it here.",
-  "失败": "Fail", "成功": "OK", "导出 CSV": "Export CSV", "开始回放": "Start replay",
-  "强制一致性检查": "Force consistency check", "当前目录": "Current directory", "循环": "Loop",
-  "快捷": "Quick", "挂载文件系统": "Mount filesystem", "支持": "Formats", "文件系统": "Filesystem",
-  "文件系统几何信息": "Filesystem geometry", "文件系统占用": "Filesystem usage",
-  "文本": "Text", "无": "None", "时间戳": "Timestamp", "显示": "Show", "显示帮助": "Show help",
-  "暂停": "Pause", "服务器": "Server", "未开始": "Idle", "未选": "none", "未选择固件": "No firmware",
-  "本地回显": "Local echo", "本地文件": "Local file", "本地端口": "Local port", "本机命令": "Local command",
-  "来源": "Source", "树": "Tree", "正常结束": "Finished",
-  "每个「步骤」绑一个连接（主连接 / 中控连接 / 临时串口 / 临时 TCP·UDP / 本机命令），发完可勾「等待数据」；拖底部圆点连线，滚轮缩放，Delete 删除选中项": "Each step binds one link (Main / flow link / temp serial / temp TCP·UDP / local command) and can wait for data after sending. Drag from the bottom dot to connect, wheel to zoom, Delete to remove.",
-  "每行发一串数字即可。": "Send one line of numbers per sample.",
-  "流程入口": "Flow entry", "添加": "Add", "清屏": "Clear screen", "清屏（设备端）": "Clear screen (device)",
-  "滚动": "Scroll", "点": "pt", "点右边【开始】后这里显示屏幕画面": "Press Start on the right to see the screen here",
-  "烧录日志": "Flash log",
-  "画布就绪：加「步骤」节点，每步绑一个连接；发完可以勾「发送后等待数据」。": "Canvas ready: add Step nodes; each binds a link and can wait for data after sending.",
-  "监听地址": "Listen address", "空闲": "Idle", "空间": "Space", "等": "wait", "系统": "System",
-  "统计已用块": "Count used blocks", "继续": "Continue", "继续 / 回流": "Continue / loop back",
-  "编码": "Encoding", "英文": "English", "行尾": "Line ending", "设备文件": "Device files",
-  "读取目录 ...": "Reading directory …", "读版本": "Read version", "超时": "Timeout",
-  "跑一次垃圾回收": "Run GC once", "远端 IP": "Remote host", "远端端口": "Remote port",
-  "适应窗口": "Fit window", "选择 .fw 文件": "Choose .fw file", "逻辑分析仪": "Logic analyzer",
-  "逻辑分析仪：先留空，等你定型号/协议再接": "Logic analyzer: placeholder until the model/protocol is decided.",
-  "（读不到）": "(unreadable)",
-  "（还没有中控连接；用「主连接」也可以）": "(no flow links yet; Main link works too)",
-  "（还没有读版本）": "(version not read yet)",
-  ".hex / .elf 自带地址；.bin 需填写起始地址。.fw 请在「固件升级」页使用。":
-    ".hex / .elf carry their own addresses; .bin needs a start address. Use .fw on the Firmware upgrade page.",
-  // 占位符
-  "JLink.exe 路径": "JLink.exe path",
-  "openocd 的 scripts 目录（可留空）": "openocd scripts dir (optional)",
-  "例如 250000": "e.g. 250000", "名字": "name",
-  "搜型号，如 stm32f4 / nrf52 / rp2040": "Search a model, e.g. stm32f4 / nrf52 / rp2040",
-  "搜索命令 / 说明": "Search command / description",
-  "文本直接输入；HEX 形如 41 54 0D 0A（Enter 发送 / Shift+Enter 换行）": "Plain text, or HEX like 41 54 0D 0A (Enter to send / Shift+Enter for newline)",
-  "文本直接输入（Enter 发送 / Shift+Enter 换行）": "Plain text (Enter to send / Shift+Enter for newline)",
-  "HEX 模式：41 54 0D 0A（Enter 发送 / Shift+Enter 换行）": "HEX mode: 41 54 0D 0A (Enter to send / Shift+Enter for newline)",
-  "本机目录": "Local folder", "没找到就手动选 openocd.exe": "Pick openocd.exe manually if not found",
-  "目录或 .fw 地址": "Directory or .fw path", "要发送的内容": "Payload",
-  "选文件后自动填": "Filled after picking a file", "默认目录": "Default folder",
-  // 悬停提示
-  "关闭（按设置可收进托盘）": "Close (may go to tray)",
-  "删除这一条": "Delete this row",
-  "名称": "Name", "内容": "Payload", "类型": "Kind",
-  // ── 计算器（重排）/ 数据计算 ──
-  "程序员计算器：表达式、32 位控制板、历史记录": "Programmer calculator: expressions, 32-bit bit board, history",
-  "文件校验 / 哈希、浮点、进制字节序、AES / RSA": "Checksums / hashes, float, radix & byte order, AES / RSA",
-  "数据计算": "Data calcs",
-  "位宽": "Width", "算式": "Expression",
-  "字节交换": "Byte swap", "位反转": "Bit reverse", "→ 浮点": "→ Float", "平方": "Square",
-  "已折叠高 16 位": "high 16 bits folded:", "32 位全显示": "all 32 bits shown",
-  "点一位就能翻": "click a bit to toggle",
-  "点任意一位就能翻它；结果会立刻同步到上面的显示区。": "Click any bit to flip it; the display above updates immediately.",
-  "位宽按你敲进去的数位自动定：如 0036 = 4 位十进制 → 16 位": "Width follows the digits you type: e.g. 0036 = 4 decimal digits → 16 bits", "以 16 进制显示": "Show as hex", "以 10 进制显示": "Show as decimal", "以 2 进制显示": "Show as binary",
-  "→ 浮点数": "→ Float", "☆ 标记这个数据": "☆ Mark this value", "历史记录": "History",
-  "清未标记": "Clear unmarked", "各进制一览": "All bases", "拖动调整上下比例（双击回到 1/3）": "Drag to resize (double-click resets to 1/3)",
-  "点任意一位就能翻它；结果会立刻同步到上面的显示区和右侧历史。": "Click any bit to flip it; the display and the history on the right update immediately.",
-  "→ 算式": "→ Expression", "全反": "NOT all", "取反 ~": "NOT ~", "零算": "zero",
-  "文件校验（CRC16 / CRC32 / MD5 / SHA-1 / SHA-256）": "File checksum (CRC16 / CRC32 / MD5 / SHA-1 / SHA-256)",
-  "进制 / 字节序": "Radix / byte order", "换算": "Convert", "有符号": "signed", "无符号": "unsigned", "字节序": "Byte order",
-  "随便哪种进制：0x1F · 0b1010 · 0o17 · 1234 或 1,234": "Any radix: 0x1F · 0b1010 · 0o17 · 1234 or 1,234",
-  "按多少位解释（影响有符号/无符号与翻转）": "Interpret as this width (affects sign and byte reversal)",
-  "AES 加解密（WebCrypto）": "AES encrypt / decrypt (WebCrypto)", "密钥": "Key", "随机": "Random",
-  "hex（32 / 64 个十六进制字符）或 base64": "hex (32 / 64 hex chars) or base64",
-  "GCM 12 字节 / CBC 16 字节，hex 或 base64": "GCM 12 bytes / CBC 16 bytes, hex or base64",
-  "要加密的明文，或要解密的 base64 密文": "Plain text to encrypt, or base64 ciphertext to decrypt",
-  "加密 → base64": "Encrypt → base64", "base64 解密": "Decrypt base64",
-  "RSA（RSA-OAEP-SHA256 / RSASSA-PKCS1-SHA256）": "RSA (RSA-OAEP-SHA256 / RSASSA-PKCS1-SHA256)",
-  "用公钥": "public key", "用私钥": "private key", "PEM/BER 文件路径，或直接粘在下面": "PEM/BER file path, or paste the key below",
-  "明文 / base64 密文 / 待签名文本 / base64 签名": "plain text / base64 ciphertext / text to sign / base64 signature",
-  "验签用的原文（只验签时填）": "Original message for verify (only when verifying)",
-  "公钥加密": "Encrypt (public)", "私钥解密": "Decrypt (private)", "私钥签名": "Sign (private)", "公钥验签": "Verify (public)",
-  "选 PEM 密钥文件": "Pick a PEM key file", "说明": "Notes",
-  "（还没算过）": "(nothing yet)", "点一下填回算式": "Click to load it back into the expression",
-  "标记：高亮，并且保留到下次开机": "Mark: highlight it and keep it after a restart",
-  "取消标记（下次开机就不留了）": "Unmark (won't survive a restart)",
-  "现在这个值没法标记": "This value can't be marked", "已标记（会保留到下次开机）": "Marked (kept after a restart)",
-  "已取消标记": "Mark removed", "已复制：": "Copied: ",
-  "先填一个数": "Enter a number first", "先填内容": "Enter the content first", "先填": "Enter the ",
-  "字节": "bytes", "字节。": "bytes.", "有符号": "signed", "无符号": "unsigned",
-  "密钥长度不对": "Key length mismatch", "长度不对": "Bad length",
-  "加密完成": "Encrypted", "解密完成": "Decrypted", "签名完成": "Signed", "明文": "Plain text", "出错": "Error",
-  "随机密钥已生成（hex）": "Random key generated (hex)", "随机 IV 已生成（hex）": "Random IV generated (hex)",
-  "解密失败：密钥 / IV / 密文对不上，或者数据被改过": "Decryption failed: key / IV / ciphertext mismatch (or the data was modified)",
-  "验签结果": "Verify result", "✅ 通过（签名对得上）": "✅ OK (signature matches)",
-  "❌ 不通过（改了内容或不是这把公钥）": "❌ Failed (content changed or wrong public key)",
-  "PEM 里没找到 base64 正文": "No base64 body found in the PEM",
-  "先把 PEM 密钥粘进来（或选文件）": "Paste the PEM key first (or pick a file)",
-  "十六进制输入": "hex input", "十进制输入": "decimal input", "八进制输入": "octal input", "二进制输入": "binary input",
-  "显示：IEEE-754 单精度解释": "Showing the IEEE-754 single-precision reading", "显示：整数": "Showing integers",
-  "进制里没有这个字符：": " is not a digit in this radix: ",
-  "内容（HEX 形如 41 54 0D 0A）": "Payload (HEX like 41 54 0D 0A)",
-  "搜索…": "Search…", "没有匹配的条目": "no match", "（还没有快捷项，下面加一条）": "(no quick-send items yet — add one below)",
-  "点这一行 = 直接发出去": "Click a row to send it right away",
-  "改这一条": "Edit this one",
-  "点某一行=直接发出去；✎ 改、✕ 删（改的时候上面那行变成编辑框，改完点「保存」）。":
-    "Click a row to send it; ✎ edit, ✕ delete (the row above turns into an edit box — press Save when done).",
-  "回到最新（上翻时自动停住跟随）": "Jump to latest (auto-follow stops when you scroll up)",
-  "填进输入框": "Fill into the input", "怎么用": "How to use",
-  "打开后可以直接在右边输出区敲键盘跟设备交互": "Type in the output area to talk to the device",
-  "拖动调整参数区宽度（双击复位）": "Drag to resize the params column (double-click to reset)",
-  "拖动调整左栏宽度（双击复位）": "Drag to resize the nav (double-click to reset)",
-  "按流程分层自动排版（线就不乱了）": "Auto-layout by flow level (keeps wires tidy)",
-  "更多：编码 / 滚动 / 暂停 / ASCII 交互 / 快捷命令 / 会话": "More: encoding / scroll / pause / ASCII / quick cmds / session",
-  "每行前面显示时间戳": "Show a timestamp per line",
-  "点这里；打开「ASCII 交互」后可以直接敲键盘跟设备对话": "Click here; with ASCII mode you can type to the device",
-  "直接发送": "Send now", "缩放到合适大小": "Zoom to fit",
-  "设备不回显时打开": "Turn on when the device does not echo",
-  "设备打印非 UTF-8（比如 GB2312）时切到 GBK": "Switch to GBK when the device prints non-UTF-8 (e.g. GB2312)",
-  "读取可用版本，明细打到中间输出": "Read available versions; details go to the output",
-  "载入 ping + TCP + 串口 的示例编排": "Load the ping + TCP + serial example flow",
-  "选 JLink.exe": "Pick JLink.exe", "选 STM32_Programmer_CLI.exe": "Pick STM32_Programmer_CLI.exe",
-  "选 openocd.exe": "Pick openocd.exe", "选 scripts 目录": "Pick the scripts dir",
-  "配色与设置": "Accent & settings", "设置": "Settings", "重新扫描串口": "Rescan ports",
-  "重新枚举显示器（新接入的显示器点这个）": "Re-enumerate monitors (click after plugging one in)",
-  "暮光紫": "Twilight", "森林绿": "Forest", "樱花粉": "Sakura", "海洋蓝": "Ocean",
-  "琥珀橙": "Amber", "石墨": "Graphite", "薄荷青": "Mint",
-  "拖动调整日志高度": "Drag to resize the log",
-  // 传输页顶部那行
-  "点一下在资源管理器里打开这个目录": "Click to open this folder in Explorer",
-  "当前时间": "Current time", "会话开始": "session started", "已运行": "elapsed",
-  "直接在输出区敲键盘，会按原始字节发给设备（Enter 发 CR、Backspace 发 0x08、Ctrl+C 发 0x03）；点这里关掉":
-    "Type right in the output area; bytes go to the device as-is (Enter = CR, Backspace = 0x08, Ctrl+C = 0x03). Click to turn off",
-  "未设置": "not set",
-  // 编排：节点配置面板
-  "HEX（内容按十六进制解析）": "HEX (parse content as hex)",
-  "发送内容": "Payload", "发送后等待数据": "Wait for data after send",
-  "发送后延时(ms)": "Delay after send (ms)", "超时(ms)": "Timeout (ms)",
-  "命令超时(ms)": "Command timeout (ms)", "命令（cmd /C）": "Command (cmd /C)",
-  "要求输出包含": "Output must contain", "留空=只看退出码 0": "empty = exit code 0 only",
-  "留空=收到任意数据就算成功": "empty = any data counts", "要发出去的文本": "Text to send",
-  "如 a0000028d000": "e.g. a0000028d000", "本机命令（ping 等）": "Local command (ping etc.)",
-  "主连接（传输页）": "Main link (Transfer page)",
-  "临时 TCP（本步指定 IP:端口）": "Temp TCP (this step's host:port)",
-  "临时 UDP（本步指定 IP:端口）": "Temp UDP (this step's host:port)",
-  "临时串口（本步指定 COM 口）": "Temp serial (this step's COM port)",
-  "（没扫到串口）": "(no serial port found)",
-  "（还没有中控连接；用「主连接」也可以）": "(no flow link yet; Main link works too)",
-  "延时(ms)": "Delay (ms)", "判断方式": "Test", "包含": "Contains", "不为空": "Not empty",
-  "正则匹配": "Regex", "要匹配的文本 / 正则": "Text / regex to match", "值": "Value",
-  "对最近 600 字符的接收内容判断；是 / 否 分别从两个底部圆点引出。":
-    "Tests the last 600 received chars; yes / no leave from the two bottom dots.",
-  "流程入口，只能有一个。": "Flow entry, only one allowed.",
-  "正常结束。": "Normal end.", "失败结束（流程以失败收尾）。": "Fail end (the flow ends as failed).",
-  "删除这个节点": "Delete this node", "删除这条线": "Delete this wire",
-  "起点": "From", "终点": "To", "点一下选中并居中": "Click to select and center",
-  "拖动调整输入区高度（双击复位）": "Drag to resize the input area (double-click to reset)",
-  "出口：成功 / 失败。": "Exits: ok / fail.",
-  "出口：成功 / 失败(发送错) / 超时(等不到)。": "Exits: ok / fail(send error) / timeout(no data).",
-  // 编排：期待匹配
-  // 设置弹窗
-  "设置": "Settings", "通用": "General", "主题与配色": "Theme & accent", "网络与代理": "Network & proxy",
-  "模型与供应商": "Model & provider", "关于与数据": "About & data", "界面": "Appearance",
-  "行为": "Behaviour", "数据目录": "Data folder", "主题": "Theme", "配色": "Accent",
-  "agent 能用的工具": "Tools the agent can use", "当前": "Current",
-  // Agent 右栏三页
-  "浏览器": "Browser", "技能 / MCP": "Skills / MCP", "文本": "Text",
-  "Agent 信息": "Agent info", "上下文": "Context", "工作区": "Workspace",
-  "Token": "Tokens", "缓存命中": "Cache hit", "花费": "Cost",
-  "输入": "in", "输出": "out", "补充": "Add",
-  "上下文成分": "Context breakdown", "系统提示": "System", "工具定义": "Tools",
-  "当前：": "Current: ", "未知": "Unknown", "公网 IP 归属地": "Public IP location", "归属地": "Location", "城市 / 地区": "City / region",
-  "网络组织": "Network organization", "最后更新": "Last updated", "今日已请求": "Requests today",
-  "剩余": "remaining", "统计日期": "Statistics date", "今日额度已用完，明天自动恢复。": "Today's quota is exhausted; it resets tomorrow.",
-  "后台更新中…": "Refreshing in background…", "等待重试": "Retry in",
-  "摘要": "Summary", "用户消息": "User msgs", "助手回复": "Assistant", "内置工具结果": "Built-in tool results", "MCP 工具结果": "MCP tool results",
-  "剩余可用": "Free", "余额": "Balance", "已配置": "Configured", "接口格式": "API format",
-  "本机估算": "local estimate", "模型上报": "provider-reported", "窗口预算": "budget",
-  "已被摘要压掉": "compressed away by the summary", "回复完成时间": "replied at",
-  "已思考": "thought", "思考过程": "reasoning", "有未读回复": "unread reply",
-  "方向标记": "Direction", "agent 连上了主连接：": "the agent connected the main link: ",
-  "字号 / 放大 / 字体": "Text size / zoom / font", "字号": "Text size", "放大": "Zoom", "字体": "Font",
-  "系统默认": "System default", "整体按倍数缩放（控件 / 文本 / 字号一起变），并自动叠加系统的显示缩放；字体只替换正文那一族。":
-    "Everything scales by this factor (controls, text and font size together) on top of the system display scaling; the font only replaces the UI text family.",
-  "常驻": "Always on", "常驻技能": "Always-on skills", "其中常驻技能": "of which always-on skills",
-  "先启用这个技能": "Enable the skill first",
-  "常驻：技能正文每轮注入系统提示（身份 / 口吻类技能用这个）":
-    "Always on: inject the skill body into the system prompt every turn (use this for identity / tone skills)",
-  "每轮注入系统提示，一直占上下文": "injected every turn (always occupies context)",
-  "正文每轮注入，不会被压缩掉": "injected every turn, never trimmed away",
-  "不是 git 仓库": "not a git repo", " · 干净": " · clean", "读取中…": "loading…",
-  "打开": "Open", "源码": "Source",
-  "MCP 服务": "MCP servers", "命令": "Command", "参数": "Args", "保存": "Save",
-  "测一测": "Test", "删除": "Delete", "打开文件": "Open file", "另存为": "Save as",
-  "存到工作区": "Save to workspace", "清空": "Clear", "标题": "Title",
-  "会话历史": "Session history", "上一个页面": "Previous page",
-  "用系统浏览器打开": "Open in system browser", "看 HTML 源码": "View HTML source",
-  "改工作区": "Change workspace", "删除当前": "Delete current",
-  "agent 打开网页后这里会同步显示；也可以自己填网址打开":
-    "Pages the agent opens show up here; you can also type a URL yourself",
-  "只读展示 + 编辑；「存到工作区」会写进当前会话的工作区。":
-    "View / edit text; \"Save to workspace\" writes into the current session workspace.",
-  "技能 = 一份 SKILL.md（YAML frontmatter 里的 name/description 会进 agent 的系统提示，正文按需读）。agent 自己也能 skill_create / skill_update / skill_delete。":
-    "A skill is one SKILL.md (name/description from the YAML frontmatter go into the agent system prompt; the body is read on demand). The agent can also skill_create / skill_update / skill_delete.",
-  "stdio 方式：保存后按「测一测」会真的起进程握手一次；启用中的服务，工具会以 mcp__<id>__<tool> 挂给 agent。":
-    "stdio transport: \"Test\" really spawns the process and handshakes; enabled servers expose their tools to the agent as mcp__<id>__<tool>.",
-  // Agent
-  "模型与供应商": "Model & provider", "供应商": "Provider", "新增": "Add",
-  "保存": "Save", "删除": "Delete", "地址": "Endpoint", "模型": "Model",
-  "上下文": "Context", "预留输出": "Reserve out", "温度": "Temp",
-  "支持工具": "Tools", "流式": "Stream", "拉模型列表": "Fetch models",
-  "测一测": "Test", "技能": "Skills", "工具": "Tools", "会话": "Sessions",
-  "新会话": "New session", "压缩上下文": "Compact", "停止": "Stop",
-  "说点什么": "Say something", "发送": "Send", "保存技能": "Save skill",
-  "改工作区": "Change workspace", "删除当前会话": "Delete session",
-  "期待方式": "Match mode", "包含文本": "Contains text", "正则表达式": "Regex",
-  "位判断(HEX)": "Bit test (HEX)", "任意数据": "any data", "忽略大小写": "Ignore case",
-  "期望值(HEX)": "Expected (HEX)", "掩码(HEX)": "Mask (HEX)", "正则": "Regex", "位判断": "bit test",
-  "如 A0000028D000": "e.g. A0000028D000", "如 ^SVR1 或 Directory": "e.g. ^SVR1 or Directory",
-  "同长度，留空=逐字节比较；如 F00000000000": "Same length; empty = byte-by-byte, e.g. F00000000000",
-  "在收到的字节流里找一段，使 (数据 & 掩码) == (期望值 & 掩码)。":
-    "Find a run in the received bytes where (data & mask) == (expected & mask).",
-
-  // ============ 状态栏 / 对话框 / 通用 ============
-  "未连接": "Disconnected", "空闲": "Idle", "确认": "Confirm", "取消": "Cancel", "确定": "OK",
-  "语言": "Language", "运行时长 / 负载": "Uptime / load", "系统时间": "System time",
-  "环境变量": "Environment", "查看挂载": "Mounts", "刷写缓存到存储": "Flush caches",
-  "重启设备": "Reboot", "复制": "Copy", "编辑": "Edit", "设为当前": "Use this",
-  "loading…": "loading…",
-  "（读不到）": "(unavailable)",
-
-  // ============ 工具页：批量文本 ============
-  "输入（一行一条）": "Input (one per line)", "结果": "Result",
-  "逐行发送": "Send line by line", "按下面的间隔，一行一行发到串口": "Send each line to the serial port with the delay below",
-  "每行带走当前行尾": "Append the current line ending", "间隔": "Delay",
-  "搜索 / 替换": "Find / replace", "查找": "Find", "要查找的内容": "Text to find",
-  "全词": "Whole word", "模糊": "Fuzzy",
-  "忽略大小写 + 空白灵活（空格可以匹配换行/多空格）": "Case-insensitive; whitespace matches any run of spaces/newlines",
-  "替换成": "Replace with", "留空 = 删除匹配": "Empty = delete matches",
-  "↑": "↑", "↓ 找下一个": "↓ Find next",
-  "上一个（Shift+Enter）": "Previous (Shift+Enter)", "下一个（Enter / F3）": "Next (Enter / F3)",
-  "替换": "Replace", "全部替换": "Replace all", "没在找": "idle",
-  "JSON 整理": "JSON tools", "格式化": "Format", "压缩成一行": "Minify",
-  "缩进 2": "indent 2", "缩进 4": "indent 4", "缩进 1（Tab 宽）": "indent 1 (tab)",
-  "按标准 JSON 解析后再排版；解析失败会告诉你错在第几个字符。":
-    "Parses as standard JSON before formatting; on failure it tells you the offending character position.",
-  "正则批量处理": "Regex batch", "替换为": "Replace with",
-  "每行单独": "per line", "全文一起": "whole text", "批量处理": "Run",
-  "选中一段就只处理那段；没选就按下面的\"范围\"处理。用": "With a selection only that part is processed; otherwise the scope below applies. Use",
-  "引用捕获组。": "for capture groups.",
-  "大小写 / 缩进": "Case / indent", "大写": "UPPER", "小写": "lower", "首字母大写": "Title Case",
-  "JSON 自动": "JSON auto", "花括号自动（C/JS）": "Braces auto (C/JS)",
-  "Tab → 2 空格": "Tab → 2 spaces", "Tab → 4 空格": "Tab → 4 spaces", "去掉行首缩进": "Strip leading indent",
-  "只处理选中部分（没选就整篇）": "Only the selection (whole text if none)",
-  "把右边结果搬回左边输入，继续往下处理": "Move the result back to the input to keep processing",
-  "结果 → 输入": "Result → input",
-  "逐行处理": "Per-line processing", "去掉首尾空白": "Trim each line", "丢掉空行": "Drop empty lines",
-  "去重（保留首次出现）": "De-duplicate (keep first)", "排序": "Sort", "加行号": "Number lines",
-  "起": "start at", "前缀": "Prefix", "例：AT+": "e.g. AT+", "后缀": "Suffix", "例：\\r\\n": "e.g. \\r\\n",
-  "大小写": "Case", "不改": "keep", "转大写": "UPPER", "转小写": "lower",
-  "输出格式": "Output format", "原样（一行一条）": "as-is (one per line)",
-  "HEX 数组 0x41,0x42…": "HEX array 0x41,0x42…", "HEX 字符串 4142…": "HEX string 4142…",
-  "JSON 数组": "JSON array", "逗号连接": "comma joined", "C 数组 {0x41,0x42}": "C array {0x41,0x42}",
-  "十六进制那几种是按": "The HEX formats encode", "UTF-8 字节": "UTF-8 bytes",
-  "转的，中文也行。": "; CJK text works too.",
-  "「逐行发送」按上面的间隔一条条发到当前串口，发完自动停；中途再点一次就停。":
-    "\"Send line by line\" pushes each line to the current serial port with the delay above and stops when done; click again to abort.",
-
-  // ============ 工具页：计算器 ============
-  "表达式": "Expression", "C 风格：0x1F & (0x0F << 2)  ·  1.5e3 * 2  ·  (1<<16)-1  ·  ~0 & 0xFF":
-    "C style: 0x1F & (0x0F << 2)  ·  1.5e3 * 2  ·  (1<<16)-1  ·  ~0 & 0xFF",
-  "键盘按十六进制解释：打 1F 就是 0x1F，A-F 也算数字":
-    "Keypad enters hex: typing 1F means 0x1F, A-F count as digits",
-  "32 位控制板": "32-bit bit board", "清零": "Zero", "取反 ~": "NOT ~",
-  "左移一位": "Shift left by one", "右移一位": "Shift right by one",
-  "循环左移": "Rotate left", "循环右移": "Rotate right",
-  "反相（异或 0xFFFFFFFF）": "Invert (XOR 0xFFFFFFFF)", "全反": "Invert",
-  "把这一行的值写进上面的表达式": "Write this value into the expression above",
-  "→ 计算区": "→ Calc",
-  "点任意一位就能改；改完的值会同时出现在上面的结果区，并（在你没在输入框里打字时）回填到表达式。":
-    "Click any bit to flip it; the value updates the result area and is written back into the expression (unless you are typing there).",
-  "传统计算器": "Keypad",
-  "直接按数字和运算符，= 出结果；结果和上面的控制板实时同步。":
-    "Tap digits and operators; = evaluates. The result stays in sync with the bit board above.",
-  "十六进制": "Hex", "把结果填进串口发送框": "Put the result into the send box", "→ 发送框": "→ Send box",
-  "历史": "History", "（还没算过）": "(nothing yet)", "常用": "Quick",
-  "把结果送进右边的浮点/IEEE 转换": "Feed the result into the IEEE panel on the right",
-  "→ 浮点转换": "→ IEEE",
-  "文件校验（CRC / 哈希）": "File checksum (CRC / hash)", "选文件…": "Choose file…",
-  "（还没选）": "(none)", "偏移": "Offset", "长度": "Length", "计算": "Compute",
-  "CRC32 填进计算区": "Put CRC32 into the calc area",
-  "长度填 0 = 从偏移算到文件末尾。固件查分段有没有被改过时很好用。":
-    "Length 0 = from the offset to EOF. Handy to check whether a firmware region changed.",
-  "IEEE 754 浮点": "IEEE 754", "浮点 → 位": "float → bits", "位 → 浮点": "bits → float",
-  "3.14 或 0x4048F5C3": "3.14 or 0x4048F5C3", "转换": "Convert",
-  "拿计算区当前的值来转": "Convert the current calc value", "用计算区当前值": "Use calc value",
-  "进制换算": "Radix", "位宽": "Width", "不限（任意精度）": "unbounded", "8 位（掩到 0xFF）": "8-bit (mask 0xFF)",
-  "16 位": "16-bit", "32 位": "32-bit", "串口常用换算": "Serial timing",
-  "位时间 = 1 / 波特率。开 8N1 时一个字节 10 位，所以 115200 下发一个字节约 86.8 µs。":
-    "Bit time = 1 / baud. With 8N1 a byte takes 10 bits, so one byte at 115200 is about 86.8 µs.",
-  "十进制": "decimal", "科学计数": "sci", "符号": "sign", "阶码": "exponent",
-  "尾数": "mantissa", "二进制": "binary", "字节": "byte", "1 字节": "1 byte",
-  "2 字节": "2 bytes", "4 字节": "4 bytes", "+1（正数）": "+1 (positive)", "-1（负数）": "-1 (negative)",
-
-  // ============ Agent 信息 / 工作区 / 会话 ============
-  "出字速度": "Throughput", "最近": "last", "平均": "avg",
-  "价格": "Pricing", "峰价": "Peak", "谷价": "Off-peak",
-  "启用峰谷计费": "Enable peak/off-peak billing",
-  "模型指纹": "Model fingerprint", "当前为": "Current", "未采样": "Not sampled",
-  "美元 / 百万 token": "USD / 1M tokens", "人民币 / 百万 token": "CNY / 1M tokens",
-  "缓存命中": "Cache hit", "缓存未命中": "Cache miss", "输出": "Output",
-  "当前峰价": "Peak rate now", "当前谷价": "Off-peak rate now",
-  "北京时间": "Beijing time", "周末与法定节假日为谷价":
-    "Weekends and statutory holidays use the off-peak rate",
-  "更多": "More", "工作区：": "Workspace:", "重命名对话": "Rename session",
-  "删除这个对话": "Delete session", "你": "You",
-  "会自己动手的调试助手": "A debugging assistant that can actually do things",
-  "新建工作区（选一个目录）": "New workspace (pick a folder)",
-  "在这个工作区里新开一个对话": "Start a new session in this workspace",
-  "右键可以删除": "Right-click to delete", "默认工作区": "Default workspace",
-  "3.14 或 0x4048F5C3 ": "3.14 or 0x4048F5C3 ",
-  "上一轮的 token 用量": "token usage of the last round",
-  "例：看一下设备根目录里有什么，再把 /config/config.bin 取回来":
-    "e.g. look at the device root, then pull back /config/config.bin",
-  "/goal <目标>": "/goal <text>", "设定长期目标（每轮都带上，": "set a standing goal (injected every round, ",
-  "清除）·": " clears it) · ", "压缩上下文 ·": "compact · ", "新会话 ·": " new · ",
-  "切权限 ·": "permission · ", "停止 ·": "stop · ",
-  "附上本机文件：复制进会话工作区，agent 就能读它": "Attach a local file: copied into the session workspace so the agent can read it",
-  "📎 文件": "📎 File",
-  "agent 的权限：只读 / 危险动作先问 / 全自动": "Agent permission: read-only / ask before risky actions / fully automatic",
-  "只读": "Read-only", "需要批准": "Ask", "自动": "Auto",
-  "思考强度": "Reasoning effort", "跟随模型默认": "Use model default",
-  "可用思考强度": "Available reasoning efforts",
-  "只勾选这个供应商/模型确认支持的档位。Agent 面板会按这里列出可选值；不同厂商未支持的档位可能返回 400。":
-    "Select only the efforts this provider/model supports. The Agent panel lists these values; unsupported values may return HTTP 400.",
-  "默认思考强度": "Default reasoning effort",
-  "测试真实思考强度": "Test real reasoning efforts",
-  "测试中…每个档位会真实请求一次": "Testing… each effort sends one real request",
-  "个档位完成": "efforts completed",
-  "真实请求观察（不是隐藏 CoT 的绝对证明）": "Observed from real requests (not proof of hidden CoT volume)",
-  "测试会对每个已勾选档位真实发一次小请求（会产生少量 token 费用），记录接口可见的思考正文、首字延迟、出字耗时和 token。隐藏 CoT 的厂商可能显示 0 字；这只能说明未暴露，不代表没有思考。":
-    "The test sends one small real request per selected effort (a small token charge) and records exposed reasoning, first-token latency, generation time and tokens. A hidden-CoT API showing 0 chars only means it was not exposed.",
-  "思考": "thought", "字": "chars", "首字": "first token", "出字": "generation", "接口未暴露思考正文": "API did not expose reasoning text",
-  "供应商默认": "Provider default", "本会话思考强度：": "Session reasoning effort: ",
-  "测试失败": "test failed", "模型默认": "model default",
-  "关闭思考": "Disable thinking", "极低": "Minimal", "低": "Low", "中": "Medium",
-  "高": "High", "极高": "Extra high", "最大": "Max", "超强": "Ultra",
-  "OpenAI 兼容发 reasoning_effort；Anthropic 转成 thinking budget":
-    "OpenAI-compatible providers receive reasoning_effort; Anthropic maps it to a thinking budget",
-  "正在取模型状态（AMD 那边约 20 秒）": "Fetching model status (takes ~20 s for AMD)",
-  "这轮用哪个模型（参数去设置里改）": "Model to use (edit parameters in Settings)",
-  "＋ 新增/编辑…": "＋ Add / edit…", "取状态中…": "fetching status…",
-  "状态未知": "status unknown", "满载": "full", "繁忙": "busy",
-  "（还没有技能）· 去「设置 → 技能」导入": "(no skills yet) · import one in Settings → Skills",
-  "（还没有 MCP 服务）· 去「设置 → MCP」新增": "(no MCP servers yet) · add one in Settings → MCP",
-  "这里只管**开关**（关掉的技能不进口令索引，也不会被主动提及）。": "This page only shows toggles (disabled skills are not indexed or suggested automatically).",
-  "路径 / 导入 / 编辑都在": "Paths, import and editing live in",
-  "设置 → 技能": "Settings → Skills",
-  "这里只管**开关**。新增 / 参数 / 测试都在": "This page only shows toggles. Adding, parameters and tests live in",
-  "设置 → MCP": "Settings → MCP",
-  "（来自文件名 / agent）": "(from file name / agent)",
-  "这里可以看文本：打开文件、或者让 agent 用 ui_show_text 推过来。":
-    "Show text here: open a file, or let the agent push one with ui_show_text.",
-
-  // ============ 设置：模型与供应商 ============
-  "厂家预设": "Vendor preset", "— 选厂家 —": "— pick a vendor —", "填入表单": "Fill form",
-  "选择模型…": "Choose a model…", "从已获取的模型列表中选择": "Choose from the fetched model list",
-  "添加模型": "Add model", "高级": "Advanced",
-  "搜索模型或供应商，例如 claude / deepseek / glm": "Search models or providers, e.g. claude / deepseek / glm",
-  "刷新目录": "Refresh catalog", "读取 models.dev…": "Loading models.dev…",
-  "显示全部": "Show all", "只看常用": "Popular only",
-  "目录来自 models.dev，只显示当前后端可直连的 OpenAI 兼容 / Anthropic 模型。":
-    "Catalog data comes from models.dev; only OpenAI-compatible and Anthropic models this backend can call directly are shown.",
-  "目录里没有可用模型": "No usable models in the catalog",
-  "目录读取失败：": "Catalog failed to load: ", "个模型": "models",
-  "家供应商": "providers", "没有匹配的供应商": "No matching provider",
-  "没有匹配的模型": "No matching model", "目录还没加载": "Catalog not loaded",
-  "推理": "reasoning", "旧版": "deprecated", "工具": "tools",
-  "还有": "Showing first 400; ", "个，继续搜索缩小范围": "more — keep typing to narrow it down",
-  "这个供应商下没有匹配模型": "No matching model for this provider",
-  "尚未加载": "not loaded", "缓存命中": "cache hit", "输出": "output",
-  "每百万 token，美元": "USD per million tokens",
-  "已保存，留空即可": "saved — leave blank to keep it", "粘贴 Key": "Paste key",
-  "已有同名配置，保存会更新它": "A profile with this ID exists and will be updated",
-  "ID 不能空": "ID cannot be empty", "地址不能空": "Endpoint cannot be empty",
-  "已添加：": "Added: ",
-  "DeepSeek（OpenAI 兼容）": "DeepSeek (OpenAI-compatible)",
-  "DeepSeek（Anthropic 格式）": "DeepSeek (Anthropic format)",
-  "智谱 GLM": "Zhipu GLM", "阿里通义 DashScope": "Alibaba DashScope", "硅基流动": "SiliconFlow",
-  "火山方舟（豆包）": "Volcano Ark (Doubao)", "Ollama（本机）": "Ollama (local)",
-  "LM Studio（本机）": "LM Studio (local)", "AMD Radeon Cloud（免费额度）": "AMD Radeon Cloud (free tier)",
-  "自定义 / 自建网关": "Custom / self-hosted gateway",
-  "选一个预设 -> 填入表单 -> 只补 API Key 就能用。都是 OpenAI 兼容写法（能填 base_url 的服务）。":
-    "Pick a preset → fill the form → only the API key is missing. All of them are OpenAI-compatible (any service with a base_url).",
-  "导入…": "Import…", "导出…": "Export…", "全部测一测": "Test all",
-  "+ AMD 免费模型": "+ AMD free models",
-  "把 AMD Radeon Cloud 那批免费模型加回列表（删掉之后不会自己回来，点这里加）":
-    "Add the AMD Radeon Cloud free models back to the list (deleted ones do not come back by themselves)",
-  "导入/导出的是 profile（**不含密钥**：密钥按用户 DPAPI 加密，换机器本来也带不走，导过去重新粘一次）。":
-    "Import/export covers profiles only (**no API keys**: keys are DPAPI-encrypted per user, so paste them again on another machine).",
-  "这个 profile 的参数": "Parameters of this profile",
-  "deepseek（只给程序用，随便起）": "deepseek (internal id, any name works)",
-  "OpenAI 兼容（/chat/completions）": "OpenAI-compatible (/chat/completions)",
-  "OpenAI 兼容 /chat/completions": "OpenAI-compatible /chat/completions",
-  "按这个 profile 发一句最短的话，验证地址/密钥/模型": "Send a one-line request with this profile to verify endpoint/key/model",
-  "查余额（DeepSeek 有 /user/balance）": "Check balance (DeepSeek exposes /user/balance)",
-  "填进下面的表单": "Fill the form below", "后面这些轮都用它": "Use it for the next rounds",
-  "DeepSeek 两种都支持：OpenAI 兼容填": "DeepSeek supports both: OpenAI-compatible uses",
-  "，\n                Anthropic 格式填": " , Anthropic format uses",
-  "已在密钥库里（留空=不改）": "already in the key store (empty = keep)",
-  "上下文窗口": "Context window", "这个模型最多能记多少 token": "How many tokens this model can remember",
-  "不知道填多少就看服务商文档；填小了会频繁触发\"压缩上下文\"，填大了没坏处（超了服务端会报错）。":
-    "Check the vendor docs if unsure. Too small triggers compaction often; too large is harmless (the server will error out if exceeded).",
-  "最多回复": "Max reply", "单次回复最多多少 token": "Max tokens per reply",
-  "留 2048~8192 就行": "2048–8192 is fine", "高级": "Advanced",
-  "温度 = 回答的\"随机性\"：0 最稳（每次几乎一样，调试/工具调用建议 0~0.3）；\n                越高越发散（0.7~1.0 适合写东西）。这个助手要调工具、要准，建议 0.2。":
-    "Temperature = randomness: 0 is most stable (debugging/tool calls prefer 0–0.3); higher is more creative (0.7–1.0 suits prose). For an assistant that calls tools, 0.2 is a good default.",
-  "支持工具调用": "Tool calls", "流式输出": "Streaming",
-  "这两个直接用上面**当前填的值**试，不用先保存": "Both use the values currently typed above — no need to save first",
-  "AMD Radeon Cloud 实时负载": "AMD Radeon Cloud live load",
-  "这些是 AMD Radeon Cloud（tokenfactory）各模型当前的并发占用，来自他们页面上\n                \"Live capacity\" 那份公开数据（后端去取，绕开跨域）。":
-    "Current concurrency usage per AMD Radeon Cloud (tokenfactory) model — the same public data as the \"Live capacity\" line on their page (fetched by the backend to bypass CORS).",
-  "只在打开这个页面时才刷新": "refreshed only while this page is open", "，\n                每 15 秒一次。": ", every 15 s.",
-
-  // ============ 设置：技能 / MCP ============
-  "本机技能": "Local skills", "（还没有技能：点「导入…」选一个 SKILL.md，或「新建」）":
-    "(no skills yet: use Import… to pick a SKILL.md, or New)",
-  "打开技能目录": "Open skills folder", "新建": "New",
-  "技能名（会 slug 化；中文也能用）": "Skill name (slugified; CJK works too)",
-  "---\nname: xxx\ndescription: 什么时候用它\n---\n\n正文": "---\nname: xxx\ndescription: when to use it\n---\n\nbody",
-  "技能 = 一份": "A skill is one",
-  "（frontmatter 的 name/description 进系统提示，正文按需读）。\n                点列表里的一项可以读出来编辑；「导入」支持选一个": "(name/description from the frontmatter go into the system prompt, the body is read on demand). Click a list item to edit it; Import accepts a",
-  "或装着它的目录。\n                技能目录：": "or a folder containing it. Skills folder:",
-  "（还没有 MCP 服务：填下面的 ID / 命令 / 参数，点保存）": "(no MCP servers yet: fill in ID / command / args below and save)",
-  "npx / node / 你的 mcp server.exe": "npx / node / your mcp server.exe",
-  "打开配置目录": "Open config folder",
-  "stdio 方式：保存后按「测一测」会真的起进程握手一次（不响应会在 20 秒内报超时）。\n                启用中的服务，工具会以": "stdio transport: \"Test\" really spawns the process and handshakes (times out in 20 s if it stays silent). Enabled servers expose their tools to the agent as",
-  "挂给 agent；\n                配置文件：": " . Config file:",
-
-  // ============ 升级 / 烧录 / 图表 零星文案 ============
-  "自有 Bootloader / App 升级": "KDock bootloader / app upgrade",
-  "串口：KDock 自有 cshell + YMODEM，只接受 .fw；不是 STM32/ESP 出厂 ROM 下载器。":
-    "Serial: KDock cshell + YMODEM, .fw only; not the STM32/ESP factory ROM loader.",
-  "UDP：KDock 自有 SVC1 服务通道，按偏移写入 .fw；不是厂商 ROM Bootloader。":
-    "UDP: KDock SVC1 service channel, offset-writes .fw; not a vendor ROM bootloader.",
-  "TCP：KDock 自有 SVC1 服务通道，按偏移写入 .fw；不是厂商 ROM Bootloader。":
-    "TCP: KDock SVC1 service channel, offset-writes .fw; not a vendor ROM bootloader.",
-  "调试探针（SWD / JTAG）": "Debug probe (SWD / JTAG)",
-  "厂商 ROM Bootloader（芯片系统区）": "Vendor ROM bootloader (chip system area)",
-  "KDock 自有 OTA": "KDock OTA",
-  "STM32 · USB DFU（BOOT0=1）": "STM32 · USB DFU (BOOT0=1)",
-  "STM32 · UART ROM（BOOT0=1）": "STM32 · UART ROM (BOOT0=1)",
-  "ESP32 / ESP8266 · 串口 ROM": "ESP32 / ESP8266 · serial ROM",
-  "网络设备 · SVC1 / .fw": "Network device · SVC1 / .fw",
-  "调试探针直接通过 SWD/JTAG 写片上 Flash，不依赖设备里的 bootloader。":
-    "The debug probe writes on-chip Flash over SWD/JTAG without relying on a device bootloader.",
-  "STM32 系统 Bootloader · USB DFU：BOOT0=1 后复位/上电，使用 CubeProgrammer 的 USB1。":
-    "STM32 system bootloader · USB DFU: set BOOT0=1 then reset/power-cycle; CubeProgrammer uses USB1.",
-  "STM32 系统 Bootloader · UART：BOOT0=1 后复位/上电，连接芯片指定的 USART。":
-    "STM32 system bootloader · UART: set BOOT0=1 then reset/power-cycle; connect the chip's designated USART.",
-  "ESP32 / ESP8266 串口 ROM：拉低 GPIO0（BOOT）后复位；只烧 .bin，合并镜像通常从 0x0 开始。":
-    "ESP32 / ESP8266 serial ROM: pull GPIO0 low, then reset; flash .bin only, merged images usually start at 0x0.",
-  "这是 KDock 自有 OTA（SVC1 + .fw），不是厂商出厂 ROM Bootloader。":
-    "This is KDock OTA (SVC1 + .fw), not a vendor factory ROM bootloader.",
-  "STM32 USB DFU 不需要串口；BOOT0=1 后复位/上电，进入系统 Bootloader。":
-    "STM32 USB DFU does not use a serial port; set BOOT0=1 and reset/power-cycle to enter the system bootloader.",
-  "ESP ROM 只接受 .bin；多镜像请先用 esptool merge_bin 合并，再填写合并后的起始偏移。":
-    "ESP ROM accepts .bin only; merge multiple images with esptool merge_bin and enter the merged start offset.",
-  ".hex / .elf 自带地址；.bin 需要填写芯片 Flash 地址。此路径使用厂商出厂 ROM Bootloader。":
-    ".hex / .elf carry addresses; .bin needs the chip Flash address. This path uses the vendor factory ROM bootloader.",
-  "Flash 偏移": "Flash offset",
-  "配置未完成": "Configuration incomplete",
-  "固件目录 / manifest.json / 单个 .fw 的地址": "firmware folder / manifest.json / a single .fw URL",
-  "显示当前目录": "show current directory",
-  "等待数据…": "waiting for data…", "设备按": "The device sends",
-  "读取中…": "reading…",
-  "openocd 芯片": "openocd chip", "openocd 开发板": "openocd board",
-  "（没有检测到串口）": "(no serial port found)",
-  "（还没对话，点 ＋）": "(no sessions yet — click ＋)", "（无标题）": "(untitled)",
-  "（还没选对话）": "(no session selected)", " 轮": " turns",
-  "把目标说出来，KDock 会和你一起推进。": "Tell KDock what you want to get done.",
-  "给 Agent": "To Agent",
-  "运行概览": "Runtime overview",
-  "先在设置里选择一个模型。": "Choose a model in Settings first.",
-  "说明目标、现象或贴一段日志；Enter 发送，Shift+Enter 换行": "Describe the goal, symptom or paste a log; Enter sends, Shift+Enter adds a line",
-  "… 还有 ": "… ", " 个对话（点开）": " more sessions (click to show)",
-  "⚠ 没密钥": "⚠ no key", "正在请求…": "requesting…",
-  "该厂商没有余额接口": "this vendor has no balance endpoint",
-  "（余额字段为空）": "(balance fields empty)", "（账号不可用）": " (account unavailable)",
-  "还没有供应商": "no providers yet", "开始逐个测": "testing",
-  "openocd 适配器": "openocd adapter",
-  "openocd：芯片": "openocd: chips", "开发板": "boards", "适配器": "adapters",
-  "J-Link 器件库：没找到 JLinkDevices.xml": "J-Link device DB: JLinkDevices.xml not found",
-  "还没有器件库，点右上角「↻ 刷新」。": "No device DB yet — click ↻ Refresh.",
-  " 行": " lines", " 字": " chars", " 通道 / ": " channels / ", " 点": " points",
-  "接收": "Receive", "发送": "Transmit", "字符": "chars", "日志": "log",
-  "（还没有技能）": "(no skills)",
-  "监听中（等对端接入）": "listening (waiting for peer)", "监听中": "listening",
-
-  // ============ 批量文本 / 计算器：运行时提示 ============
-  "找到 ": "found ", " 处": " matches", "没找到": "not found",
-  "正则写错了：": "bad regex: ", "JSON 解析失败：": "JSON parse failed: ",
-  "JSON 解析失败（第 ": "JSON parse failed (at char ", " 个字符）：": "): ",
-  "先写个正则": "enter a regex first", "已全部替换": "replaced all",
-  "正则批量处理完成（每行单独）": "regex batch done (per line)",
-  "正则批量处理完成（全文）": "regex batch done (whole text)",
-  "出错：": "error: ", "发送中 ": "sending ", "发完了": "done",
-  "结果已搬回输入": "result moved back to the input", "已复制": "copied",
-  "复制失败：": "copy failed: ", "保存批量文本结果": "Save batch text result", "已保存": "saved",
-  "保存失败：": "save failed: ", "重新开始": "cleared", "0x（十六进制输入）": "0x (hex input)",
-  "十进制输入": "decimal input", "负数不能开平方": "cannot take the square root of a negative number",
-  "0 没有倒数": "0 has no reciprocal", "除数不能是 0": "division by zero",
-  "空表达式": "empty expression", "只能算数字和 + - * / % & | ~ << >> ** 这些":
-    "only numbers and + - * / % & | ~ << >> ** are supported",
-  "认不出这个数字：": "unrecognized number: ", "表达式没写完": "incomplete expression",
-  "括号没闭合": "unmatched parenthesis", "这里不该出现 ": "unexpected token ",
-  "取余的除数不能是 0": "modulo by zero", "多余的字符：": "trailing characters: ",
-  "值": "value", "位": "bit", "一字节约": "per byte ~",
-  "计算中…": "computing…", "文件大小": "Size", "算的范围": "Range",
-  "保存技能": "Save skill", "加行号": "Number lines",
-  // 运行时写进去的（词典查表管不到，源码里用 en() 包）
-  "已连接": "Connected", "主题：": "Theme: ", "（点一下切换）": " (click to cycle)",
-  "暗色": "Dark", "亮色": "Light", "跟随系统": "Follow system",
-  "直接发送": "Send now", "（默认）": "(default)", "（无）": "(none)",
-  "（先读版本）": "(read versions first)",
-  "下载文件": "download a file", "端口探测": "probe a port",
-  "粘贴 Key（已保存的会留空）": "paste the key (empty keeps the saved one)",
-  "多行文本批量处理 / 逐行发到串口": "Batch-process multi-line text / send line by line",
-  "表达式计算：进制、位运算、常用换算": "Expression calculator: radix, bitwise, conversions",
-  "用户消息：悬停看前几个字，点一下跳过去": "User messages: hover to preview, click to jump",
-  "https:// 或直接输域名": "https:// or a bare domain",
-  "（agent 打开网页后这里会同步显示；也可以自己填网址打开）":
-    "(pages the agent opens show up here; you can also type a URL yourself)",
-  "在中间点一下节点或连线，这里改参数。": "Click a node or an edge in the middle to edit its parameters here.",
-  "这里只管**开关**（关掉的技能不进口令索引，也不会被主动提及）。 路径 / 导入 / 编辑都在":
-    "This page only shows toggles (disabled skills are not indexed or suggested automatically). Paths, import and editing live in",
-  "例：^(\\w+)=(\\d+)$": "e.g. ^(\\w+)=(\\d+)$",
-  "例：$1 -> $2": "e.g. $1 -> $2",
-  "思考中…": "thinking…", "思考中": "thinking",
-  "（还没有，点新增）": "(none yet — click Add)", "（没找到显示器）": "(no monitor found)",
-  "还没有对话，点 ＋ 新建": "No sessions yet — click ＋ to create one",
-  "还没有器件库，点右上角「↻ 刷新」。": "No device DB yet — click ↻ Refresh.",
-  "没找到 J-Link 器件库": "J-Link device DB not found",
-  "正在取（这个接口本身要 20 多秒）…": "fetching (this endpoint takes ~20 s)…",
-  "工作区": "Workspace", "界面": "UI tools", "本机": "local",
-  "手动": "manual", "自动找到": "auto-detected",
-  // 关于本软件 / 版本管理
-  "版本": "Version", "作者": "Author", "仓库": "Repository", "协议": "License",
-  "构建": "Build", "当前版本": "Current version", "版本号来源": "Version sources",
-  "变更记录": "Changelog", "发版约定": "Release convention", "固件包版本": "Firmware package version",
-  "关于本软件": "About", "打开 GitHub 仓库": "Open GitHub repo", "作者主页": "Author profile",
-  "更新日志": "Changelog", "更多（版本管理 / 数据目录）…": "More (versioning / data folder)…",
-  "版本管理": "Versioning",
-  "Apache-2.0（见仓库里的 LICENSE / NOTICE）": "Apache-2.0 (see LICENSE / NOTICE in the repo)",
-  "tauri.conf.json · Cargo.toml · package.json（三处保持一致）":
-    "tauri.conf.json · Cargo.toml · package.json (kept in sync)",
-  "CHANGELOG.md（每次发版追加一段）": "CHANGELOG.md (a new section per release)",
-  "打 tag：": "tag it: ",
-  "三段式 PD_HW.PD_SW.PD_FIX（写在 .fw 包头里，与应用版本无关）":
-    "three-segment PD_HW.PD_SW.PD_FIX, stored in the .fw header (unrelated to the app version)",
-  "内存": "Memory", "时间": "Time", "进程": "Processes", "GitHub 仓库": "GitHub repo",
-  "Tauri 2 · Rust + 原生 JS": "Tauri 2 · Rust + vanilla JS",
-  "KDock 以": "KDock is released under",
-  "开源，欢迎 issue / PR。第三方组件与借鉴声明见仓库里的": "— issues and PRs are welcome. Third-party notices live in",
-  "应用版本": "App version", "遵循": " follows ",
-  "语义化版本": "Semantic Versioning",
-  "：不兼容改动升 MAJOR，加功能升 MINOR，修 bug 升 PATCH。 版本号在":
-    ": breaking changes bump MAJOR, features bump MINOR, fixes bump PATCH. The version is kept in sync across",
-  "三处保持一致，每次发版写进": ", and every release is recorded in",
-  "， 并打一个": ", plus a", "的 git tag。": " git tag.",
-  "是另一套：": " is a separate scheme: ",
-  // ============ 传输页「更多」面板 ============
-  "更多 ⋯": "More ⋯", "显示": "Display", "编码": "Encoding",
-  "设备打印的不是 UTF-8（例如 GB2312/GBK）时切过去，原始字节不会丢":
-    "Switch when the device prints non-UTF-8 text (e.g. GB2312/GBK); raw bytes are kept either way",
-  "中文乱码就切 GBK；编码只影响显示，日志里存的还是原始字节。":
-    "Garbled CJK? switch to GBK. Encoding only affects the view — logs keep raw bytes.",
-  "自动滚动": "Auto scroll", "新数据到达时自动滚到底部": "Scroll to the bottom as new data arrives",
-  "暂停接收": "Pause RX", "先冻住界面看历史，设备数据照收（不丢）": "Freeze the view to read history; data keeps arriving",
-  "「暂停」只是不刷新界面，串口照样在收；取消暂停会把攒下的数据补上。":
-    "Pause only stops repainting — the port keeps receiving, and resuming shows everything buffered.",
-  "交互": "Interaction", "ASCII 交互": "ASCII mode",
-  "打开后可以直接在输出区敲键盘跟设备对话": "Type directly in the output area to talk to the device",
-  "设备不回显时打开，自己敲的字会先显示出来": "Enable when the device does not echo; your keystrokes are shown",
-  "本地回显": "Local echo",
-  "打开「ASCII 交互」后点输出区就能直接打字（Enter 发送、Ctrl+C 发送 0x03）；适合对着 shell 交互。":
-    "With ASCII mode on, click the output area and type (Enter sends, Ctrl+C sends 0x03) — handy for shell sessions.",
-  "快捷发送": "Quick send", "按钮名": "Button label",
-  "要发送的内容（HEX 形如 41 54 0D 0A）": "Payload (HEX looks like 41 54 0D 0A)",
-  "勾上后按 HEX 发送": "Send as HEX", "加进去的按钮常驻在输出区上方，点一下就发；右键按钮可以删除。":
-    "Added buttons stay above the output area and send with one click; right-click a button to delete it.",
-  "会话日志": "Session log", "默认目录（留空=文档目录）": "Default folder (empty = Documents)",
-  "保存的是完整会话（含时间戳/方向/原始字节），加载后可以回放。":
-    "The saved file contains the whole session (timestamps, direction, raw bytes) and can be replayed.",
-  "回放": "Replay", "先「加载日志」再回放；1x 按原始时间轴，2x 就是两倍速。":
-    "Load a log first, then replay: 1x follows the original timeline, 2x is twice as fast.",
-  "0x": "0x (hex input)",
-
-  // ============ 指令表：编辑 ============
-  "新增一个指令组（比如：我的板子专用）": "Add a command group (e.g. my board)",
-  "往当前组新增一条指令": "Add a command to a group",
-  "恢复到内置的标准 Linux 指令集": "Restore the built-in standard Linux command set",
-  "指令表是**可编辑**的：加了什么就存在": "The command table is editable: whatever you add is stored in",
-  "，下次开机还在（「设置 → 缓存」里能看到它、也能删）。行尾的 ✎ / ✕ 用来改或删那一条。":
-    " and survives restarts (visible and deletable in Settings → Cache). The ✎ / ✕ buttons at the line end edit or delete that entry.",
-  "没匹配的命令": "no matching command", "这条要带参数，已填进输入框": "This one takes arguments — filled into the send box",
-  "改指令组名": "Rename group", "组名": "Group name", "删掉这个组（连同组里的指令）": "Delete this group and its commands",
-  "删掉指令组": "Delete group", "连同里面的": "and its", " 条指令？": " commands?",
-  "编辑这条指令": "Edit command", "删掉这条指令": "Delete command",
-  "名字": "Name", "参数模板": "Arguments", "说明": "Description",
-  "新增指令": "New command", "指令组": "Group", "可以填新组名，会自动创建": "a new name creates the group",
-  "这条是干什么的": "what it does", "自定义": "Custom", "新增指令组": "New group",
-  "例：我的板子专用": "e.g. my board", "这个组已经存在": "that group already exists",
-  "恢复成内置的标准 Linux 指令集？你自己加的组和指令会丢掉。":
-    "Restore the built-in standard Linux set? Your own groups and commands will be lost.",
-  "恢复默认指令表": "Restore default table", "已恢复默认指令表": "default command table restored",
-  "已加入指令表：": "added to the command table: ", "指令表保存失败：": "saving the command table failed: ",
-  "点名字=填进发送框；▶=直接发（带参数的会先填进去让你补）":
-    "Click a name to fill the send box; ▶ sends right away (entries with arguments are filled in for you to edit)",
-  "+ 组 / + 指令：自己加；组名可以随便起（例：我的板子专用）":
-    "+ group / + command: add your own; group names are free-form (e.g. my board)",
-  "行尾 ✎ 改、✕ 删；改完立刻存进 agent/commands.json，下次开机还在":
-    "✎ edits, ✕ deletes; every change is written to agent/commands.json immediately",
-  "恢复默认：回到内置的标准 Linux 指令集": "Restore default: back to the built-in standard Linux set",
-  "怎么用 / 怎么自定义": "How to use / customise",
-  "取消": "Cancel", "确定": "OK",
-
-  // ============ 设置 → 缓存 ============
-  "缓存": "Cache", "持久化数据（缓存）": "Persisted data (cache)", "↻ 刷新": "↻ Refresh",
-  "这里是本软件在你这台机器上留下的**全部**数据：界面偏好、窗口状态、LLM 供应商与密钥、 对话历史、技能副本、MCP 配置、指令表、工作区文件…… 每一项都标了路径，可以单独删。 删除后软件会自动重启（避免半截状态）。":
-    "Everything this app leaves on your machine: UI preferences, window state, LLM providers and keys, chat history, skill copies, MCP config, command table, workspace files… Each row shows its path and can be deleted on its own. The app restarts afterwards to avoid half-deleted state.",
-  "全选": "Select all", "全不选": "Select none", "删除选中…": "Delete selected…",
-  "已选": "selected", " 项": " item(s)", "（不存在）": "(missing)",
-  "确认删除这些缓存？": "Delete these cache items?",
-  "勾选框里的会被删掉；删完软件会自动重启。带 ⚠ 的会丢数据（对话、密钥、供应商配置、技能副本），请确认你不需要它们。":
-    "Checked items are deleted and the app restarts. Items marked ⚠ lose real data (chats, keys, provider config, skill copies) — make sure you do not need them.",
-  "删除并重启": "Delete and restart", "已删除，正在重启…": "deleted, restarting…",
-  "先勾选要删的项": "tick something first", "一个都没勾": "nothing selected",
-  // 后端返回的缓存项文案
-  "界面偏好（主题 / 配色 / 语言；栏宽那些存在浏览器本地存储里）":
-    "UI preferences (theme / accent / language; pane widths live in browser local storage)",
-  "会回到默认外观（深色 + 海洋蓝 + 英文）": "resets the look to the default (dark, ocean blue, English)",
-  "窗口位置与大小": "Window position and size",
-  "下次启动窗口回到屏幕中央的默认尺寸": "next launch uses the default size, centred",
-  "浏览器本地存储（快捷发送 / 编排画布 / 编码 / 上次目录…）":
-    "Browser local storage (quick send / flow canvas / encoding / last folders…)",
-  "由界面自己清空（WebView2 的本地存储）": "cleared by the UI itself (WebView2 local storage)",
-  "LLM 供应商配置（不含密钥）": "LLM provider profiles (no keys)",
-  "供应商列表与当前选择会清空，需要重新配置模型": "the provider list and current selection are wiped — configure a model again",
-  "API 密钥（DPAPI 加密）": "API keys (DPAPI encrypted)",
-  "所有供应商的 Key 都会被删除，需要重新粘贴": "all provider keys are deleted; paste them again",
-  "Agent 对话历史（含摘要与压缩前的原始记录）": "Agent chat history (summaries and pre-compaction records)",
-  "所有对话都会消失，不可恢复": "every chat disappears — unrecoverable",
-  "技能（导入/新建的 SKILL.md 副本）": "Skills (imported/created SKILL.md copies)",
-  "只删这个副本目录（你自己的原始 SKILL.md 不在里面）": "only this copy directory is removed (your original SKILL.md files live elsewhere)",
-  "已关闭的技能副本": "Disabled skill copies", "同上，只删副本": "same as above — copies only",
-  "MCP 服务配置": "MCP server config", "MCP 列表会清空": "the MCP list is cleared",
-  "指令表配置（指令组 / 指令）": "Command table config (groups / commands)",
-  "回到内置的标准 Linux 指令集": "falls back to the built-in standard Linux set",
-  "工作区列表": "Workspace list", "工作区记录清空（目录本身不动）": "workspace records are cleared (the folders themselves stay)",
-  "Agent 工作区文件（下载/导出的文件）": "Agent workspace files (downloaded / exported)",
-  "里面有 agent 收发的文件，删了就没了": "files the agent sent and received — gone once deleted",
-  "出字速度统计": "Throughput stats", "速度与平均速度重新累计": "last and average throughput start over",
-  "包头里的三段式版本号（PD_HW.PD_SW.PD_FIX）， 由设备端规则决定是否允许升级/降级，和上面的应用版本无关。":
-    " header (three segments) that the device uses to accept or reject an upgrade — unrelated to the app version.",
-  "未选择固件": "no firmware selected", "升级中…": "upgrading…", "升级完成": "upgrade finished",
-  "读取服务器 ...": "reading server …", "填服务器地址后点【读版本】": "fill in the server address, then click Read version",
-  "开始升级": "start upgrade", "取消升级": "cancel",
-  "设置（Ctrl+, ）": "Settings (Ctrl+, )",
-  "切换主题：暗色 / 亮色 / 跟随系统": "Switch theme: dark / light / system",
-
-  // ============ 命令表：分组 + 说明 + 交互 ============
-  "系统": "System", "网络": "Network", "权限": "Permissions",
-  "填进输入框": "Put into the send box", "已填入：": "filled in: ",
-  "列目录": "list directory", "切换目录": "change directory", "显示当前目录": "show current directory",
-  "打印文件内容": "print file content", "分页查看文件": "page through a file",
-  "看前 n 行": "first n lines", "看后 n 行": "last n lines", "建目录": "create directory",
-  "删除文件/目录": "remove files/dirs", "复制": "copy", "移动 / 改名": "move / rename",
-  "建空文件 / 改时间": "create empty file / touch", "建软链接": "create symlink",
-  "按名字找文件": "find by name", "看类型 / 大小 / 时间": "type / size / mtime",
-  "统计占用": "disk usage of a path", "文件系统占用": "filesystem usage",
-  "递归列目录（需已安装）": "recursive listing (if installed)", "猜文件类型": "guess file type",
-  "回显 / 重定向": "echo / redirect", "搜索文本": "search text", "流编辑": "stream edit",
-  "按列处理": "process columns", "按分隔符取列": "cut by delimiter", "排序": "Sort",
-  "去重（配合 sort）": "de-duplicate (after sort)", "统计行/字/字节": "count lines/words/bytes",
-  "字符替换": "translate characters", "比较两个文件": "diff two files", "十六进制查看": "hex view",
-  "内核 / 架构信息": "kernel / arch info", "内存占用": "memory usage", "进程列表": "process list",
-  "进程快照": "process snapshot", "结束进程": "kill a process", "内核日志": "kernel log",
-  "设置环境变量": "set an env var", "等待 1 秒": "wait one second", "命令路径": "command path",
-  "网卡地址": "interface addresses", "网卡信息（旧写法）": "interface info (legacy)",
-  "连通性测试": "reachability test", "连接 / 端口": "connections / ports",
-  "连接 / 端口（新写法）": "connections / ports (modern)", "HTTP 请求": "HTTP request",
-  "改权限": "change mode", "改属主": "change owner", "当前用户 / 组": "current user / groups",
-  "当前用户名": "current user name", "提权执行": "run as root",
-
-  // ============ 设置 → 模型：供应商面板（使用 / 新增）============
-  "使用": "Use", "新增 / 编辑": "Add / Edit",
-  "当前模型": "Current model",
-  "选中的这个模型，agent 后面几轮就用它。点下面任意一条也能直接切过去。":
-    "The selected model is what the agent uses from now on. Clicking any row below switches to it.",
-  "自建 / 自己编辑的模型": "Your own / hand-edited models",
-  "显示免费模型 ▾": "Show free models ▾", "收起免费模型 ▴": "Hide free models ▴",
-  "个免费模型": "free models", "实时负载": "Live load",
-  "立刻取一次（这个接口本身要 20 多秒）": "Fetch now (this endpoint takes ~20s)",
-  "AMD Radeon Cloud（tokenfactory）各模型当前的并发占用，来自他们页面上 \"Live capacity\" 那份公开数据（后端去取，绕开跨域）。":
-    "Current concurrency usage of the AMD Radeon Cloud (tokenfactory) models, taken from the public \"Live capacity\" data on their page (fetched by the backend to avoid CORS).",
-  "只有你把这块展开时才去取": "It is fetched only while you keep this section expanded",
-  "，展开期间每 15 秒一次。": ", once every 15 seconds while expanded.",
-  "其它": "Other",
-  "（还没有自建供应商：去「新增 / 编辑」加一个）": "(no custom provider yet — add one under Add / Edit)",
-  "（没有免费模型：展开后点「+ AMD 免费模型」加回来）": "(no free model — expand this and click “+ AMD free models”)",
-  "把 AMD Radeon Cloud 那批免费模型加回列表（删掉之后不会自己回来，点这里加）":
-    "Add the AMD Radeon Cloud free models back to the list (they do not come back on their own)",
-  "在这条的基础上改（跳到「新增 / 编辑」）": "Edit this entry (jumps to Add / Edit)",
-  "删掉这个 profile（密钥一起删）": "Delete this profile (its key is deleted too)",
-  "密钥也一起删。": "Its API key is deleted too.",
-  "点一下切到它": "Click to switch to it", "当前在用": "in use",
-  "后面这轮用：": "Using for the next turn: ",
-  "新模型窗口更小：当前约": "The new model has a smaller window: about",
-  "，预算": " tokens used, budget",
-  "先压一次上下文": "compressing the context first",
-  "压缩失败：": "compression failed: ",
-  "使用默认模版": "Use default template",
-  "把选中预设的地址 / 模型 / 上下文填进下面": "Fill the selected preset's endpoint / model / context into the form below",
-  "取消编辑": "Cancel edit", "编辑：": "Editing: ",
-  "新增供应商": "Add a provider",
-  "把这条 profile 删掉？": "Delete this profile?",
-
-  // ============ 计算器：位控制板 / 显示区 ============
-  "表达式（C 风格）": "Expression (C style)",
-  "0x / 0b / 0o · 位移 · 位与或 · 乘方 **": "0x / 0b / 0o · shifts · bitwise and/or · power **",
-  "插入": "Insert",
-  "不限位宽": "unbounded width", "8 位": "8-bit", "16 位": "16-bit", "32 位": "32-bit",
-  "取反 ~": "NOT ~", "全反": "Invert all", "→ 表达式": "→ expression",
-  "点任意一位就能翻它；结果会立刻同步到下面的显示区、表达式和右边的进制明细。":
-    "Click any bit to flip it; the value syncs to the display below, the expression and the radix detail on the right.",
-  "十六进制输入": "Hex input",
-  "进制明细": "Radix detail",
-  "无符号 32 位": "unsigned 32-bit",
-  "点一下复制这一行的值": "Click to copy this line",
-  "已复制：": "copied: ",
-
-  // ============ 设置 → 技能：编辑卡片 ============
-  "编辑技能": "Edit skill", "点上面列表里的一项读进来": "click an item above to load it",
-  "删除这个技能": "Delete this skill",
-
-  // ============ 指令表编辑器 ============
-  "指令表编辑器": "Command table editor",
-  "主页面只管用：点名字填进输入框、▶ 直接发。加 / 改 / 删都在这里做，改完立刻存进 agent/commands.json。":
-    "The main page is for use only: click a name to fill the send box, ▶ to send. Add / edit / delete here; changes are saved to agent/commands.json right away.",
-  "（空的：点「+ 新增指令组」或者「恢复默认」）": "(empty — click “+ new group” or “restore defaults”)",
-  "点一下填进输入框并关掉这个弹窗": "Click to fill the send box and close this dialog",
-  "✎ 编辑指令表": "✎ Edit command table",
-  "打开指令表编辑器：加组 / 加指令 / 改名 / 删除 / 恢复默认":
-    "Open the command table editor: add groups / commands, rename, delete, restore defaults",
-  "+ 新增指令组": "+ New group", "+ 新增指令": "+ New command",
-  "恢复默认": "Restore defaults", "关闭": "Close",
-  "+ 加一条到本组": "+ Add command here", "条": "items",
-  "改组名": "Rename group", "往这个组里加一条指令": "Add a command to this group",
-  "编辑指令": "Edit command",
-
-  // ============ 补齐：多行文本节点的规范化写法 / 说明文字 ============
-  "限定位宽：结果会被掩到这么多位": "Limit the width: results are masked to this many bits",
-  "， 展开期间每 15 秒一次。": ", once every 15 seconds while expanded.",
-  "选一个预设 → 使用默认模版 → 只补 API Key 就能用。都是 OpenAI 兼容写法（能填 base_url 的服务）。":
-    "Pick a preset → Use default template → then just add the API key. All of them are OpenAI-compatible (any service with a base_url).",
-  "， Anthropic 格式填": ", and for the Anthropic format use",
-  "导入 / 导出的是 profile（**不含密钥**：密钥用 Windows DPAPI 按当前用户加密， 换机器本来就带不走，导过去重新粘一次）。":
-    "Import / export covers profiles only (**no keys**: keys are encrypted with Windows DPAPI per user, so they cannot travel to another machine — paste them again there).",
-  "点命令名 = 填进输入框；行尾 ▶ = 直接发。要加 / 改 / 删就点上面的":
-    "Clicking a command name fills the send box; ▶ sends it right away. To add / edit / delete, use the",
-  "（在弹窗里改，主页只管用）。加了什么存在": "button above (everything is edited in a dialog; the main page is for use only). What you add is stored in",
-  "， 下次开机还在（「设置 → 缓存」里能看到它、也能删）。":
-    ", and it survives a restart (you can see and delete it under Settings → Cache).",
-  "密钥存储：": "Key storage: ",
-  "（按当前用户加密）": " (encrypted for the current user)",
-  "明文（非 Windows 平台）": "plain text (non-Windows)",
-  "数据目录：": "Data directory: ",
-  "明文（非 Windows）": "plain text (non-Windows)",
-  "供应商": "Providers", "个 · 已存密钥": "· stored keys",
-  "删除供应商": "Delete provider", "确定删掉": "Delete",
-  "它的 API Key 也一起删。": "Its API key is deleted as well.",
-  "已启用": "enabled", "已停用": "disabled",
-  "已启用（关掉后不进索引，只能由你点名读取）": "enabled (turn off = not indexed; read only when named by you)",
-  "已停用（不进索引，可点名读取）": "disabled (not indexed; can be read when named)",
-  "已启用（工具会挂给 agent）": "enabled (tools are exposed to the agent)",
-  "失败": "failed", "完成": "done", "执行中…": "running…",
-  "参数：": "args: ",
-  "工具调用": "Tool calls", "执行中": "running", "个失败": "failed", "全部完成": "all done",
-  "条旧事件；原文仍在会话文件里，可用 history_search 回查":
-    "old events; the raw text is still in the session file — search it with history_search",
-  "温度 = 回答的\"随机性\"：0 最稳（每次几乎一样，调试/工具调用建议 0~0.3）； 越高越发散（0.7~1.0 适合写东西）。这个助手要调工具、要准，建议 0.2。":
-    "Temperature = how \"random\" the answer is: 0 is the steadiest (almost identical every time; 0–0.3 is right for debugging and tool calls); higher is more exploratory (0.7–1.0 for writing). This assistant calls tools and needs accuracy, so 0.2 is recommended.",
-  "个文件": "file(s)",
-  "上次更新 ": "updated ",
-  "显示 / 交互 / 快捷发送 / 会话日志 / 回放": "Display / interaction / quick send / session log / replay",
-
-  // ============ 示波器页 ============
-  "机器状态": "Instrument", "测一次": "Measure once", "连续": "continuous",
-  "时基 / 触发": "Timebase / Trigger", "时基": "Timebase",
-  "触发源": "Trigger source", "电平 V": "Level V", "自动设置": "Autoset",
-  "自动设置中…（示波器要几秒）": "Autoset running… (the scope takes a few seconds)",
-  "SCPI（想发什么发什么）": "SCPI (send whatever you like)",
-  "波形": "Waveform", "屏幕 1200 点": "screen, 1200 pts",
-  "深存储 12k": "deep memory, 12k", "深存储 120k": "deep memory, 120k",
-  "自动刷新": "auto refresh", "另存为…": "Save as…",
-  "型号": "Model", "采样率": "Sample rate", "存储深度": "Memory depth",
-  "触发": "Trigger", "状态": "State", "应用": "Apply", "探头": "probe",
-  "开": "on", "关": "off",
-  "还没连上（点上面的「连接」）": "not connected yet (click Connect above)",
-  "连上之后这里会列出通道。": "Channels show up here once connected.",
-  "读取状态…": "reading state…", "读不到状态": "cannot read state",
-  "连接中…": "connecting…", "连接失败": "connect failed", "出错": "error",
-  "时基已改": "timebase updated", "触发已改": "trigger updated",
-  "已保存：": "saved: ", "保存示波器截屏": "Save scope screenshot",
-  "示波器上现在没有打开的通道": "no channel is turned on in the scope",
-  "频率": "Frequency", "周期": "Period", "峰峰值": "Vpp", "最大值": "Vmax",
-  "最小值": "Vmin", "平均值": "Vavg", "有效值": "Vrms", "顶电平": "Vtop",
-  "底电平": "Vbase", "上升时间": "Rise time", "下降时间": "Fall time",
-  "正占空": "Duty+", "负占空": "Duty-",
-  "点数：1200 = 屏幕上的数据（快）；更大的走深存储（慢）":
-    "Point count: 1200 = on-screen data (fast); larger values use deep memory (slow)",
-  "每 2 秒自动重读一次": "re-read every 2 seconds", "每 2 秒重测一次": "re-measure every 2 seconds",
-  "让示波器自己找档位和时基（:AUT）": "let the scope find scale and timebase itself (:AUT)",
-  "探头 ": "probe ",
-  "示波器只给了": "the scope only returned",
-  "点（存储深度 AUTO）；想真深存储：先在示波器上按 STOP，把存储深度调大":
-    "points (memory depth is AUTO); for real deep memory, press STOP on the scope and raise the memory depth",
-  "连上了，但状态没读到（示波器在忙？再点一次「连接」）":
-    "connected, but the state could not be read (scope busy? click Connect again)",
-  "已重连": "reconnected",
-
-  // ============ 共享内部浏览器 ============
-  "知识库": "Knowledge base", "浏览器": "Browser",
-  "共享浏览器": "Shared browser", "共享浏览器首页": "Shared browser home",
-  "在浏览器打开": "Open in browser",
-  "输入网址或域名": "Enter a URL or domain", "https://…（可留空）": "https://… (optional)",
-  "首页": "Home", "打开浏览器": "Open browser",
-  "共享浏览器首页已保存": "Shared browser home saved", "当前页已读取": "Current page read",
-  "输入网址开始浏览": "Enter a URL to start browsing",
-  "共享页面已同步": "Shared page is in sync", "页面载入中…": "Loading page…",
-  "共享浏览器只支持 http:// 和 https:// 网址": "The shared browser only supports http:// and https:// URLs",
-  "重新加载": "Reload",
-  "用系统浏览器打开（登录 / 下载这类它更顺手）":
-    "Open in the system browser (handier for logins and downloads)",
-  "对话": "Chat",
-  "还没打开过": "it has not been opened yet",
-  "先填个地址": "fill in a URL first",
-  "已保存（只在本机）": "saved (this machine only)",
-  "已打开：": "opened: ",
-
-  // ============ 数据计算页：折叠区块 ============
-  "全部展开": "Expand all", "全部折叠": "Collapse all",
-  "浮点 ↔ 位，含符号/阶码/尾数拆解": "float ↔ bits, with sign/exponent/mantissa breakdown",
-  "任意进制互转、有符号/无符号、大小端翻转":
-    "any radix, signed/unsigned and endianness flipping",
-
-  "存为首页": "Save as home", "↻ 重新加载": "↻ Reload",
-  "地址已存为首页": "saved as the home page",
-
-  // ============ 数据计算：新一批标签/按钮 ============
-  "文件校验 / 哈希": "Checksums / hashes", "算法": "Algorithms", "范围": "Range",
-  "核对": "Verify", "长度 0 = 算到文件末尾": "length 0 = to end of file",
-  "选中的结果填进计算器": "Send the selected result to the calculator",
-  "文件": "File", "计算": "Compute", "算完了": "done", "对得上": "matches", "先点「计算」": "press Compute first",
-  "先粘一个期望值": "paste an expected value first",
-  "六项都对不上 —— 文件或范围可能不对": "none of them match — wrong file or range?",
-  "→ 计算器": "→ Calculator", "已填进计算器": "sent to the calculator",
-  "这一项没法当数算": "this one is not a number", "点一行复制": "click a row to copy", "点一下复制": "click to copy",
-  "JSON 整理": "JSON tidy", "缩进": "Indent", "不缩进": "no indent", "空格": "spaces",
-  "输入": "Input", "结果": "Result", "格式化": "Format", "压缩": "Minify", "只校验": "Validate only",
-  "键排序": "Sort keys", "转义": "Escape", "反转义": "Unescape", "复制结果": "Copy result",
-  "结果搬回输入": "Result → input", "已转义（可直接塞进代码）": "escaped (ready to paste into code)",
-  "反转义完成": "unescaped", "✅ JSON 合法": "✅ valid JSON", "格式化完成": "formatted", "压缩完成": "minified",
-  "行": "lines", "字符": "chars", "先粘点 JSON": "paste some JSON first", "结果还是空的": "the result is still empty",
-  "第": "line", "行第": "col", "列": "",
-  "按行整理了 ": "formatted ", " 份 JSON（结果栏直接给的排版结果）": " JSON documents line by line (the result pane shows it directly)",
-  "JSON 已排版（结果栏直接给的是排版后的内容，不过行处理那条流水线）":
-    "JSON formatted — the result pane shows it directly, bypassing the line pipeline",
-  "浮点 ↔ 数值": "Float ↔ value", "宽度": "Width", "浮点（十进制）": "Float (decimal)", "位（HEX）": "Bits (HEX)",
-  "明细": "Details", "复制": "Copy", "用计算器当前值": "Use the calculator value",
-  "已取计算器当前值": "took the calculator value: ",
-  "位侧支持 0x / 0b / 十进制整数；宽度 32/64 会同时给出两种精度":
-    "the bits side accepts 0x / 0b / decimal integers; both precisions are always shown",
-  "-（负数）": "−(negative)", "+（正数）": "+(positive)",
-  "AES 加解密": "AES", "模式": "Mode", "密钥": "Key", "格式": "Format", "输出": "Output",
-  "自动": "auto", "都要": "both", "随机": "Random", "加密": "Encrypt", "解密": "Decrypt",
-  "GCM：IV 12 字节，密文自带 16 字节认证标签": "GCM: 12-byte IV, ciphertext carries a 16-byte auth tag",
-  "CBC：IV 16 字节，密文长度是 16 的整数倍": "CBC: 16-byte IV, ciphertext is a multiple of 16 bytes",
-  "CTR：IV 16 字节，密文长度是 16 的整数倍": "CTR: 16-byte IV, ciphertext is a multiple of 16 bytes",
-  "文本哈希 / HMAC": "Text hashes / HMAC", "文本": "Text", "HMAC 密钥": "HMAC key",
-  "留空就只算普通哈希（填了会多算一行 HMAC-SHA256）":
-    "leave empty for plain hashes (a key adds an HMAC-SHA256 row)",
-  "生成": "Generate", "生成密钥对": "Generate key pair", "清空": "Clear", "验签原文": "Signed text",
-  "生成的私钥只在你本机内存/框里，自己存好": "the private key stays in this box on your machine — keep it safe",
-  "密钥对已生成（框里放的是私钥；公钥在下面，复制给对方）":
-    "key pair generated (the box holds the private key; copy the public key below to the other side)",
-  "公钥": "Public key", "私钥": "Private key", "正在生成…": "generating…", "生成完成": "generated",
-  "算的范围": "Range", "先填密钥": "fill in the key first", "先填内容": "fill in the content first",
-  "hex 得是偶数个字符": "hex needs an even number of digits",
-  "先把 PEM 密钥粘进来（或选文件）": "paste the PEM key first (or pick a file)",
-  "这把钥匙认不出来（要 SPKI/PKCS#8 的 PEM 或 DER）":
-    "cannot read this key (needs an SPKI/PKCS#8 PEM or DER)",
-  "解密失败：密钥 / IV / 密文对不上，或者数据被改过":
-    "decryption failed: wrong key / IV / ciphertext, or the data was modified",
-  "这不是个数：": "not a number: ", "位": "bits", "字节": "bytes", "要": "needs",
-  "长度不对": "bad length", "先填": "fill in the ", "用计算器当前值": "Use the calculator value",
-  "RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent":
-    "The standard LAN port on RIGOL DS1000Z series scopes (TCP 5555, SCPI text). Once connected the agent",
-  "工具干同样的事。": "can do the same things with the same tools.",
-  // 逻辑分析仪
-  "导入 VCD / CSV…": "Import VCD / CSV…",
-  "原始二进制…": "Raw binary…",
-  "光标": "Cursors",
-  "清光标": "Clear cursors",
-  "点一下放 A · Shift+点放 B · 滚轮缩放 · 拖动平移 · 双击适应": "click = cursor A · Shift+click = B · wheel = zoom · drag = pan · double-click = fit",
-  "点 A · Shift 点 B · Alt 点/「＋标记」加标记 · 拖标记线 · 点解码块选中区间":
-    "click = A · Shift-click = B · Alt-click / +mark = add marker · drag a marker line · click a decoded block to select its span",
-  "行 −": "Rows −", "行 ＋": "Rows +", "降低行高，多看几路": "Reduce row height to see more channels",
-  "增大行高，波形更清楚": "Increase row height for clearer waveforms",
-  "＋标记": "+ marker", "点击设为 A；Shift+点击设为 B；拖动标记线可移动":
-    "Click to set A, Shift-click to set B, drag the marker line to move it",
-  "删除这个标记": "Delete this marker",
-  "点通道名选中它；点波形放 A，Shift 点放 B，Alt 点加标记。":
-    "Click a channel name to select it; click the waveform for A, Shift-click for B, Alt-click to add a marker.",
-  "缩小时波形上的标签会自动避让；完整结果始终在这里。":
-    "Labels on the waveform avoid overlapping as you zoom out; the full decoded list stays here.",
-  "数据来源": "Source",
-  "解码器": "Decoders",
-  "测量（当前视图窗口 · 选中的通道）": "Measure (current view · selected channel)",
-  "占空比": "Duty",
-  "脉冲数": "Pulses",
-  "高 / 低脉宽": "High / low pulse width",
-  "在左边通道名上点一下 = 选中它（测的就是它）。": "Click a channel name on the left to select it (that is what gets measured).",
-  "显示 / 隐藏这一路": "Show / hide this channel",
-  "显示全部通道": "Show all channels",
-  "删掉这个解码器": "Remove this decoder",
-  "还没加解码器：上面点 + UART / + SPI": "No decoder yet: click + UART / + SPI above",
-  "还没加解码器：上面选个协议点「＋」": "No decoder yet: pick a protocol above and hit +",
-  "已加解码器：": "Decoder added: ",
-  "载入示例": "Load demo",
-  "应用菜单": "App menu",
-  // 快捷发送（弹窗版）
-  "编辑快捷发送": "Edit quick-send",
-  "新增快捷发送": "New quick-send",
-  "快捷发送编辑器": "Quick-send editor",
-  "主页面点一行就直接发出去；加 / 改 / 删都在这里做，改完立刻存到本地。": "Clicking a row on the main pane sends it right away; add / edit / delete here — saved locally right after.",
-  "＋ 新增一条": "+ New entry",
-  "（还没有快捷项，点上面「＋ 新增一条」）": "(no entries yet — hit \"+ New entry\" above)",
-  "（还没有快捷项，点上面的「✎ 编辑」加一条）": "(no entries yet — use ✎ Edit above)",
-  "显示在列表里的名字（留空就用内容前几个字）": "Name shown in the list (blank = first few chars of the payload)",
-  "先填要发送的内容": "Fill in the payload first",
-  "已加入快捷发送": "Added to quick-send",
-  "已保存": "Saved",
-  "新增一条": "New entry",
-  "收起参数区": "Hide params panel",
-  "显示参数区": "Show params panel",
-  "展开 / 收起导航（窄窗口下只显示图标）": "Expand / collapse the nav (icons only in narrow windows)",
-  "示例场景": "Demo scenario",
-  "协议": "Protocol",
-  "（无）": "(none)",
-  "已载入示例：": "Demo loaded: ",
-  "串行": "Serial", "总线": "Bus", "编码": "Encoding", "调试": "Debug", "现场总线": "Field bus",
-  "差分 Manchester": "Differential Manchester", "NEC 红外": "NEC IR",
-  "低（一体化接收头）": "Low (IR receiver module)", "高": "High",
-  "设备→主机": "Device → host", "主机→设备": "Host → device",
-  "I2S（标准）": "I2S (standard)", "左对齐": "Left justified", "右对齐": "Right justified",
-  "低=左": "Low = left", "高=左": "High = left",
-  "现在能吃：内置示例场景、VCD、CSV、原始二进制（一个字节 = 8 个通道，采样率按上面填）。真机采集（fx2lafw / DSLogic 这类 USB 逻辑分析仪）要加驱动，下一版接。":
-    "Sources: built-in demo scenarios, VCD, CSV, raw binary (one byte = 8 channels, sample rate from the field above). Real device capture (fx2lafw / DSLogic USB analyzers) needs a driver — next version.",
-  "传感": "Sensor", "音频": "Audio", "红外": "IR", "测量": "Measure",
-  "数据位": "Data bits", "校验": "Parity", "停止位": "Stop bits", "极性": "Polarity",
-  "模式": "Mode", "位序": "Bit order", "字长": "Word size", "约定": "Convention",
-  "位深": "Bit depth", "格式": "Format", "声道": "Channels", "型号": "Model",
-  "载波电平": "Carrier level", "方向": "Direction", "比特率": "Bitrate", "波特率": "Baud",
-  "复位低电平(µs)": "Reset low (µs)", "显示前几个槽": "Show first slots",
-  "常用总线（UART / PWM / I2C / SPI / DS18B20 / NEC）": "Common buses (UART / PWM / I2C / SPI / DS18B20 / NEC)",
-  "调试与音频（CAN / JTAG / I2S / PS2）": "Debug & audio (CAN / JTAG / I2S / PS2)",
-  "编码与工业总线（Manchester / DHT / LIN / Modbus / SWD / DMX）": "Encoding & fieldbus (Manchester / DHT / LIN / Modbus / SWD / DMX)",
-  "UART 115200 · 1 kHz PWM · I2C 读写 · SPI 读 JEDEC ID · DS18B20 温度 · NEC 红外": "UART 115200 · 1 kHz PWM · I2C read/write · SPI JEDEC ID · DS18B20 temperature · NEC IR",
-  "CAN 250k（标准帧 + 扩展帧）· JTAG（IR 4 位 + DR 16 位）· I2S 16 位 · PS/2 键盘两帧": "CAN 250k (standard + extended) · JTAG (IR 4 bit + DR 16 bit) · I2S 16 bit · PS/2 keyboard frames",
-  "Manchester · 差分 Manchester · Miller · DHT22 · 1-Wire ROM · LIN · Modbus RTU · SWD · DMX512": "Manchester · differential Manchester · Miller · DHT22 · 1-Wire ROM · LIN · Modbus RTU · SWD · DMX512",
-  "（无）通道": "(none)",
-  "示例信号（UART 115200 / 1kHz PWM / SPI 读 JEDEC ID）": "Demo signal (UART 115200 / 1 kHz PWM / SPI JEDEC ID read)",
-  "已载入示例信号": "Demo signal loaded",
-  "通道": "Channel",
-  "二进制": "Binary",
-  "采样率已改为 ": "Sample rate set to ",
-  "{n} 路 / {m} 点 / {t}": "{n} ch / {m} samples / {t}",
-  "每屏 ": "per screen ",
-  "窗口 {a} ~ {b}": "window {a} ~ {b}",
-  "导入 VCD": "Imported VCD",
-  "导入 CSV": "Imported CSV",
-  "导入二进制": "Imported binary",
-  "{n} 个信号 / {m} 点": "{n} signals / {m} samples",
-  "{m} 点": "{m} samples",
-  "捕获文件": "Capture files",
-  "所有文件": "All files",
-  "导入逻辑分析仪数据（VCD / CSV）": "Import logic data (VCD / CSV)",
-  "导入原始二进制（一个字节 = 8 个通道）": "Import raw binary (one byte = 8 channels)",
-  "已导入 ": "Imported ",
-  "VCD 里没找到信号（只支持单比特标量）": "no signals found in that VCD (single-bit scalars only)",
-  "CSV 是空的": "the CSV is empty",
-  "CSV 里没有采样": "the CSV has no samples",
-  "现在能吃：示例信号、VCD、CSV、原始二进制（一个字节 = 8 个通道，采样率按上面填）。 真机采集（fx2lafw / DSLogic 这类 USB 逻辑分析仪）要加驱动，下一版接。": "Sources: demo signal, VCD, CSV, raw binary (one byte = 8 channels, sample rate as above). Live capture (fx2lafw / DSLogic USB analyzers) needs a driver and lands next version.",
-
-  // 传输页：序号列
-  "序号": "Line no.",
-  "每行前面显示行号（从 1 开始；清屏后重新数，上翻看历史时也对得上）": "Show a line number on each line (starts at 1, restarts after clearing, and stays stable when you scroll back)",
-
-  // 批量文本：比对箭头
-  "跟随输入": "Follow input",
-  "右边改过之后就不再跟着输入走了，点这个恢复跟随": "Once the right side is edited it stops following the input; click to follow again",
-  "把这一处搬到右边": "Move this block to the right",
-  "把这一处写回左边输入": "Write this block back to the input",
-  "已把这一处搬到右边": "Moved this block to the right",
-  "（右边已固定，不再跟着输入走）": " (right side pinned, no longer following the input)",
-  "已把这一处写回左边输入": "Wrote this block back to the input",
-  "右边已固定（不跟随输入）": "right side pinned (not following input)",
-  "右边恢复跟随输入": "the right side follows the input again",
-
-  // 批量文本：比对右边来源
-  "挑一个文件跟输入比": "Pick a file to compare with the input",
-  "右边：": "right: ",
-
-  // 批量文本：文本比对
-  "比对": "Compare",
-  "跟 IDE 一样把左右两份文本并排比对（F7 / Shift+F7 跳差异，Esc 退出）": "Side-by-side compare of the two texts, like an IDE (F7 / Shift+F7 jump, Esc exits)",
-  "比对：输入 ↔ 结果": "Compare: input ↔ result",
-  "忽略首尾空白": "Ignore outer spaces",
-  "上一处": "Previous",
-  "下一处": "Next",
-  "上一处（Shift+F7）": "Previous (Shift+F7)",
-  "下一处（F7）": "Next (F7)",
-  "↑ 上一处": "↑ Previous",
-  "↓ 下一处": "↓ Next",
-  "返回编辑": "Back to editing",
-  "退出比对（Esc）": "Exit compare (Esc)",
-  "{n} 处不同": "{n} differences",
-  "改 {m} · 加 {a} · 删 {d}": "changed {m} · added {a} · removed {d}",
-  "两边完全一样": "the two sides are identical",
-
-  // 批量文本：行号栏 / 状态栏 / 导入文件
-  "从文件读进来；也可以把文件直接拖到下面这个框上": "Read from a file; you can also drop a file on the box below",
-  "导入文本文件": "Import a text file",
-  "文本 / 日志 / CSV": "Text / log / CSV",
-  "所有文件": "All files",
-  "已导入 {name}（{n} 字节{enc}）": "Imported {name} ({n} bytes{enc})",
-  "，不是 UTF-8，已按替换字符显示": ", not UTF-8 - shown with replacement characters",
-  "导入失败：": "Import failed: ",
-  "已填入示例（一行一条，像 AT 指令那样）": "Sample filled in (one per line, AT-command style)",
-  "行 {r}, 列 {c}": "Ln {r}, Col {c}",
-  "选中 {n}": "{n} selected",
-  "{n} 字符": "{n} chars",
-  "{n} 字节": "{n} bytes",
-  "{n} 行": "{n} lines",
-
-  // 批量文本：缩进那几个小标签
-  "2 空格": "2 spaces",
-  "4 空格": "4 spaces",
-  "1 空格": "1 space",
-
-  // 批量文本（补）
-  "格式化 · 压缩": "Format · minify",
-  "原样 · HEX · JSON · CSV": "As-is · HEX · JSON · CSV",
-  "一行一行发到当前串口（每行按上面的行尾设置），发完自动停；发送中再点一次就停下。": "Sends one line at a time on the current port (each line uses the line ending above) and stops when done; click again while sending to stop.",
-
-  // 批量文本右栏（重排后的那几张卡）
-  "查找 / 替换 / 改写": "Find / replace / rewrite",
-  "Ctrl+F 找 · F3 下一个": "Ctrl+F to find · F3 next",
-  "匹配": "Match",
-  "选中部分": "Selection",
-  "每一行": "Each line",
-  "整篇": "Whole text",
-  "留空 = 删掉匹配": "empty = delete the match",
-  "已替换 ": "replaced ",
-  "没找到要替换的": "nothing to replace",
-  "这一卡改的是": "This card edits the ",
-  "左边输入框": "left input box",
-  "；范围选「选中部分」时只改选中的那段；正则里的 ^ $ 在「每一行」和「整篇」下含义不同。": "; with Selection it only touches the selected part. In regex mode ^ and $ differ between Each line and Whole text.",
-  "按标准 JSON 解析后再排版（看不懂就告诉你错在第几个字符，并退一步按花括号重排）。一行一份 JSON 的日志也认。": "Parses it as real JSON, then re-indents (on failure it tells you the character position and falls back to brace re-indenting). One JSON per line also works.",
-  "实时作用在结果与发送": "applies live to the result and to sending",
-  "按行": "Lines",
-  "行号": "Numbering",
-  "从几开始": "start at",
-  "去首尾空白": "Trim",
-  "去重": "Dedupe",
-  "每行大小写": "Line case",
-  "前缀 / 后缀里可以写": "Prefix / suffix accept ",
-  "（按控制字符发）。": " (sent as control characters).",
-  "HEX 那几种按 UTF-8 字节转（中文也行）": "The HEX ones use UTF-8 bytes (Chinese included)",
-  "花括号自动": "Auto braces",
-
-  // 视频带宽计算（第二组：明细/悬停提示）
-  "色深": "Color depth",
-  "时序": "Timing",
-  "像素时钟": "Pixel clock",
-  "常用规格": "Presets",
-  "模式：{m}": "Mode: {m}",
-  "模式带宽 {b} Gbps": "Mode bandwidth {b} Gbps",
-  "需要 {b} Gbps": "Requires {b} Gbps",
-  "DSC 可用 {n} bpp（压缩率约 {p}%）": "DSC offers {n} bpp (~{p}% compression)",
-  "这一档不用 DSC": "no DSC needed on this mode",
-  "这个版本支持 HDR": "this version supports HDR",
-  "原因：{r}": "Reason: {r}",
-  "最高模式带宽 {b} Gbps": "Top mode bandwidth {b} Gbps",
-
-  // 视频带宽计算（数据计算页）
-  "视频带宽计算": "Video bandwidth",
-  "分辨率 · 刷新率 · 色深 · 色度 → 峰值 / Line / Active / DSC + 各接口能不能扛": "resolution · refresh · depth · chroma → peak / Line / Active / DSC + per-interface verdicts",
-  "画面": "Signal",
-  "色度": "Chroma",
-  "点一下填进上面": "click one to fill the fields above",
-  "CVT 系会把宽度向下取整到 8 的倍数（1366 → 1360）": "CVT rounds the width down to a multiple of 8 (1366 → 1360)",
-  "带宽（峰值）": "Bandwidth (peak)",
-  "DSC（8 bpp 下限）": "DSC (8 bpp floor)",
-  "点一下复制这个数": "click to copy this number",
-  "DSC 按固定 8 bpp 估的理论下限，跟输入的色深无关；实际压缩码率会更高。": "DSC is the theoretical 8 bpp floor and ignores the color depth above; a real compressed bitrate is higher.",
-  "总像素（含消隐）": "Total pixels (with blanking)",
-  "有效像素": "Active pixels",
-  "实际刷新率": "Actual refresh rate",
-  "行频": "Line rate",
-  "前后肩 / 极性": "Porches / polarity",
-  "时序来源": "Timing source",
-  "完整 CVT": "Full CVT",
-  "DMT 查表": "DMT lookup",
-  "CTA-861 查表": "CTA-861 lookup",
-  "支持（轻度 DSC）": "Supported, requires light DSC compression",
-  "支持（重度 DSC）": "Supported, requires heavy DSC compression",
-  "带宽不够": "not enough bandwidth",
-  "色度格式不支持": "chroma format not supported",
-  "色深超上限": "color depth above limit",
-  "用量 {p}%": "Usage {p}%",
-  "要的是 {r} Hz": "asked for {r} Hz",
-  "查表按 ±0.5 Hz 取整匹配：请求 {a} Hz，命中的是 {b} Hz 那行。": "Lookup rounds to the nearest Hz (±0.5 Hz): asked {a} Hz, matched the {b} Hz row.",
-  "这套规格算不出来": "cannot compute this signal",
-  "DMT 表里没有这套时序": "not in the DMT table",
-  "CTA-861 表里没有这套时序": "not in the CTA-861 table",
-  "DMT 是标准分辨率表（最大 4096×2160），{spec} 不在里面 —— 表里没有 144Hz 这种高刷，也没有非标准分辨率。": "DMT only lists standard resolutions (up to 4096x2160); {spec} is not there - no high refresh like 144 Hz, no non-standard sizes.",
-  "CTA-861 只收广播视频模式（而且只认逐行），{spec} 不在里面。": "CTA-861 only lists broadcast video modes (progressive only); {spec} is not there.",
-  "{f} 不能是 0。": "{f} must not be 0.",
-  "{f} 得是个数字。": "{f} must be a number.",
-  "这几个输入都得是数字。": "these inputs must be numbers.",
-  "算出来的时序里有非法值（{f}）—— 换个规格再试。": "the timing came out invalid ({f}) - try another signal.",
-  "高度": "height",
-  "刷新率": "refresh rate",
-  "改用 CVT-RBv2": "use CVT-RBv2",
-  "改用 CVT": "use CVT",
-  "只算带宽账：判定「支持」只代表链路带宽够，不代表插上一定能点亮（还要看 EDID、链路训练、线缆、DSC 切片）。DP Alt Mode 只按 2 lane 算，另外 2 lane 留给 USB。": "Bandwidth arithmetic only: Supported means the link has the bandwidth, not that it will light up (EDID, link training, cable and DSC slicing are out of scope). DP Alt Mode counts 2 lanes only; the other 2 stay with USB.",
-
-  // ── 补齐（英文模式全站扫漏出来的：调试页 / 设置 / 数据计算 / 快捷发送 / 拖动手柄 等）──
-  "清空输出": "Clear output",
-  "行号（序号）": "Line numbers",
-  "显示 / 发送用 HEX": "Display / send as HEX",
-  "没有可发送的内容": "Nothing to send", "已发送": "Sent",
-  "设置…": "Settings…",
-  "✎ 编辑": "✎ Edit",
-  "打开快捷发送编辑器：新增 / 改 / 删": "Open the quick-send editor: add / edit / delete",
-  "点某一行 = 直接发出去；行尾 ✎ 改、✕ 删；新增 / 批量整理点上面的「✎ 编辑」。": "Click a row = send it right away; ✎ edit / ✕ delete at the row end; add or bulk-edit via ✎ Edit above.",
-  "连接方式：串口 / TCP 客户端 / TCP 服务端 / UDP": "Link mode: serial / TCP client / TCP server / UDP",
-  "串口（窄窗口下这一排的标签会收起来）": "Serial port (labels collapse in narrow windows)",
-  "波特率": "Baud",
-  "用右边这个自定义波特率（窄窗口下「自定义」三个字会收起来）": "Use the custom baud rate on the right (the label collapses in narrow windows)",
-  "自定义波特率（左边那个勾打开才生效）": "Custom baud rate (tick the checkbox on the left first)",
-  "忽略大小写；空格还能匹配换行 / 多个空格": "Case-insensitive; a space also matches newlines / runs of spaces",
-  "把右边结果搬回左边输入，接着往下处理": "Move the right-hand result back into the left input and keep editing",
-  "只清没标记的（★ 的留下）": "Clear unstarred only (★ entries stay)",
-  "连标记的一起清掉": "Clear everything, including starred",
-  "算一次（回车同效）": "Evaluate (Enter works too)",
-  "退格（删一个字符）": "Backspace (delete one character)",
-  "取反": "NOT",
-  "打开文件": "Open file",
-  "调试控制台": "Debug console",
-  "已停下": "Stopped",
-  "停下就刷新面板": "Refresh panels when stopped",
-  "刷新面板": "Refresh panels",
-  "断点": "Breakpoints",
-  "加断点": "Add breakpoint",
-  "调用栈": "Call stack",
-  "局部变量": "Locals",
-  "寄存器": "Registers",
-  "gdb 路径": "gdb path",
-  "附加参数": "Extra args",
-  "启动 gdb": "Start gdb",
-  "关闭 gdb": "Stop gdb",
-  "可执行文件": "Executable",
-  "启动 Server": "Start server",
-  "停 Server": "Stop server",
-  "固件 / 运行控制": "Firmware / run control",
-  "载入固件": "Load firmware",
-  "▶ 继续": "▶ Continue",
-  "⏸ 暂停": "⏸ Halt",
-  "单步": "Step",
-  "下一行": "Next line",
-  "跳出函数": "Finish",
-  "每次 gdb 停下来（断点/单步/异常）就自动刷新右侧面板": "Auto-refresh the side panels whenever gdb stops (breakpoint / step / fault)",
-  "gdb 命令（回车发送）：target extended-remote :3333 / break main / continue …": "gdb commands (Enter sends): target extended-remote :3333 / break main / continue …",
-  "arm-none-eabi-gdb（留空=用 PATH 里的 gdb）": "arm-none-eabi-gdb (blank = gdb from PATH)",
-  "openocd（也可以 JLinkGDBServerCL / pyocd）": "openocd (JLinkGDBServerCL / pyocd also work)",
-  "选一个 .elf（file + load）": "Pick an .elf (file + load)",
-  "选择文件": "Choose file",
-  "monitor reset halt（openocd 语法；J-Link 用 monitor reset）": "monitor reset halt (openocd syntax; use monitor reset for J-Link)",
-  "缩小": "Zoom out",
-  "去设置里导入 / 新建技能": "Import / create skills in Settings",
-  "去设置里新增 MCP 服务": "Add an MCP server in Settings",
-  "拖动排序（同一组内）": "Drag to reorder (within the group)",
-  "拖动排序（整个指令组）": "Drag to reorder (whole group)",
-  "拖动调整对话区高度（双击复位）": "Drag to resize the chat area (double-click resets)",
-  "列表左边显示行号（跟传输页的「序号」是同一个开关）": "Show line numbers on the left (same switch as \"No.\" on the transfer page)",
-  "中文": "中文",
-  "小": "Small",
-  "标准": "Normal",
-  "大": "Large",
-  "特大": "Extra large",
-  "微软雅黑": "Microsoft YaHei",
-  "思源黑体 / Noto": "Noto Sans",
-  "Inter / 系统无衬线": "Inter / system sans",
-  "粘贴 API Key": "Paste API key",
-  "斜杠指令（/xxx）": "Slash commands (/xxx)",
-  "打开指令目录": "Open commands folder",
-  "常驻技能清单（哪几个技能的正文每轮注入系统提示）": "Always-on skills (their body is injected into the system prompt every turn)",
-  "只清「常驻」标记，技能文件本身不动": "Only clears the \"always-on\" mark; skill files stay untouched",
-  "↗ 系统浏览器": "↗ System browser",
-  "显示器 1 · 1920x1080": "Monitor 1 · 1920x1080",
-  "显示器 2 · 3840x2160": "Monitor 2 · 3840x2160",
-  "数值": "Value",
-  "64 位": "64-bit",
-  "128 位": "128-bit",
-  "192 位": "192-bit",
-  "256 位": "256-bit",
-  "格式化 / 压缩 / 校验 / 排序键 / 转义": "Format / minify / validate / sort keys / escape",
-  "左右随便在哪边输入，另一边实时跟着变": "Type on either side — the other follows live",
-  "CBC / CTR / GCM · 128 / 192 / 256 · 本地 WebCrypto": "CBC / CTR / GCM · 128 / 192 / 256 · local WebCrypto",
-  "OAEP-SHA256 加解密 · PKCS#1-SHA256 签名验签 · 可生成密钥对": "OAEP-SHA256 encrypt/decrypt · PKCS#1-SHA256 sign/verify · key-pair generation",
-  "把 \\n 之类的转义还原成真内容": "Turn \\n-style escapes back into real content",
-  "转成一行一字符串（便于塞进代码 / 配置）": "One string per line (easy to paste into code / config)",
-  "把计算器当前的值拿过来": "Pull in the calculator's current value",
-  "文件路径（直接粘也行，或者点右边「选文件…」）": "File path (paste it, or use \"Choose file…\" on the right)",
-  "粘一个期望值，我告诉你它跟哪一项对得上（不分大小写、空格无所谓）": "Paste an expected value; I'll tell you which entry matches (case-insensitive, spaces ignored)",
-  "HEX 或 Base64（长度跟位数对上）": "HEX or Base64 (length must match the bit width)",
-  "CBC 16 字节 / CTR 16 字节 / GCM 12 字节（HEX 或 Base64）": "CBC 16 bytes / CTR 16 bytes / GCM 12 bytes (HEX or Base64)",
-  "要加密的明文；解密时粘密文（按下面选的格式解析）": "Plaintext to encrypt; paste ciphertext when decrypting (parsed per the format below)",
-  "要算哈希的文本（UTF-8）": "Text to hash (UTF-8)",
-  "PEM/DER 文件路径，或直接粘在下面": "PEM/DER file path, or paste it below",
-  "加密：明文；解密：base64 密文；签名：待签文本；验签：base64 签名": "Encrypt: plaintext; decrypt: base64 ciphertext; sign: text; verify: base64 signature",
-  "只验签时填": "Only needed when verifying",
-  "Kyin (任开炎)": "Kyin",
-  "J-Link：": "J-Link: ",
-  "（": " (",
-  "）": ")",
-  "库": "lib",
-  "(DLL 内置库)": "(DLL, built-in lib)",
-  "文件…": "File…",
-  "失败: 还没有连接：先连上设备": "Error: not connected yet — connect to the device first",
-  "[文件] 列目录失败: 还没有连接：先连上设备": "[Files] list failed: not connected yet — connect to the device first",
-  "每行前面标出 RX/TX/SYS 方向；开着时间戳时会并进同一个方括号里（SSCOM 那种一个前缀）": "Tag each line with RX/TX/SYS; when timestamps are on they share one bracket (a single prefix like SSCOM)",
-  "{a} × {b}（消隐 {c} × {d}）": "{a} × {b} (blanking {c} × {d})",
-  "显示器 ": "Monitor ",
-  "一条 .md 一条指令：frontmatter 里写 name / description，正文就是提示词模板（里面的 {{args}} 会换成命令后面跟的参数）。把文件丢进下面的目录就行 —— 技能作者也能随技能一起分发。": "One .md = one command: frontmatter holds name / description, the body is the prompt template ({{args}} becomes whatever follows the command). Drop files into the folder below — skill authors can ship them with a skill.",
-  "左边是「文件校验 / 浮点 / 进制字节序 / AES / RSA」。AES 与 RSA 走系统的 WebCrypto（浏览器内实现，不发到网上）；密钥只在你本机的框里，不写盘。": "Left column: file hashing / floating point / byte order / AES / RSA. AES and RSA use the system WebCrypto (in-browser, nothing leaves the machine); keys stay in the boxes here and are never written to disk.",
-  "RIGOL DS1000Z 系标配的网口口子（TCP 5555，SCPI 文本）。连上之后 agent 也能用同一套 scope_* 工具干同样的事。": "The LAN port that ships with RIGOL DS1000Z series (TCP 5555, SCPI text). Once connected the agent can do the same things through the same scope_* tools.",
-  "{\"b\":1,\"a\":[1,2,{\"c\":true}]}  或  \\\"{\\\\\\\"a\\\\\\\":1}\\\"（转义过的也行）": "{\"b\":1,\"a\":[1,2,{\"c\":true}]}  or  \"{\\\"a\\\":1}\" (escaped also works)",
-  "可留空；例：-ex \"target extended-remote :3333\"": "Optional; e.g. -ex \"target extended-remote :3333\"",
-  "JLink.exe (DLL 内置库)": "JLink.exe (built-in DLL)",
-  "环境": "Environment",
-  "环境配置": "Environment setup",
-  "驱动 / 工具链的一键检测与安装": "Detect and one-click install drivers / toolchains",
-  "安装位置（留空 = 默认）": "Install folder (blank = default)",
-  "选一个目录当统一安装位置": "Pick one folder as the shared install location",
-  "选目录": "Pick folder",
-  "扫描会读 PATH / 注册表 / pnputil 的驱动列表和各盘常见目录": "Reads PATH, the registry, pnputil driver list and common folders on each drive",
-  "只看缺失": "Missing only",
-  "扫描本机": "Scan this PC",
-  "刷新同步": "Refresh & sync",
-  "强制重新检测驱动 / 工具链并刷新列表": "Force rescan drivers/toolchains and refresh the list",
-  "类别": "Category",
-  "全部": "All",
-  "小驱动可以内置：把安装包丢进 ": "Small drivers can be bundled: drop the installer into ",
-  "（exe / msi / inf 都认），点安装时会优先用本地的，不走网络。": " (exe / msi / inf all work); installing then prefers the local copy and skips the network.",
-  "首次运行检查": "First-run check",
-  "装齐必需项": "Install required",
-  "重新扫描": "Rescan",
-  "「必需项」指的是认不出设备就没法干活的那几个（比如 CH340 串口驱动）。缺了会在启动后提示一次，随时可以在这里补。": "\"Required\" means the items you cannot work without (the CH340 serial driver, say). If one is missing you get one prompt after startup; you can always add it here.",
-  "安装位置": "Install folder",
-  "例如 F:\\ENV": "e.g. F:\\ENV",
-  "便携类（工具链 zip / git 仓库）解到这儿；winget 装的走系统默认位置。留空 = 自动（优先 F:\\ENV，没有就用用户目录下 KDock\\env）。": "Portable items (toolchain zips / git repos) unpack here; winget installs use the system default. Blank = auto (F:\\ENV if present, otherwise KDock\\env in your user folder).",
-  "安装进度": "Install progress",
-  "去看看": "Open it",
-  "小驱动可以内置：把安装包丢进": "Small drivers can be bundled: drop the installer into ",
-  "drivers\\<组件id>\\": "drivers\\<item id>\\",
-  "检测中…": "Detecting…",
-  "全部设备": "All devices",
-  "地址": "Addr",
-  "只抓这个设备节点（USB 地址来自 Hub 端口信息）": "Capture only this device node (USB address from hub port info)",
-  "抓包中 · 实时": "Capturing · live",
-  "正在启动抓包…": "Starting capture…",
-  "正在停止…": "Stopping…",
-  "停止超时（看 %TEMP% 下 kdock-usbpcap-*.err）": "Stop timed out (check kdock-usbpcap-*.err in %TEMP%)",
-  "已停止 · {n} 条": "Stopped · {n} records",
-  "监听": "Monitor",
-  "tshark 列的网卡": "Interfaces listed by tshark",
-  "tshark（Wireshark 命令行 + Npcap）": "tshark (Wireshark CLI + Npcap)",
-  "Wireshark 自带的命令行抓包工具，KDock 的「监听 → 网络」用它。安装包同时带 Npcap（WinPcap 兼容驱动）。GPLv2；KDock 只调用，不打包、不链接。": "The command-line capture tool bundled with Wireshark, used by Monitor → Network. The installer also brings Npcap (a WinPcap-compatible driver). GPLv2; KDock only invokes it — no bundling, no linking.",
-  "本机": "Local",
-  "本机 USB": "Local USB",
-  "未安装 tshark": "tshark not installed",
-  "没有网卡": "No interface",
-  "监听：本机 USB（USBPcap）/ 网络（tshark）原始数据": "Monitor: local USB (USBPcap) / network (tshark) raw data",
-  "USBPcap（USB 抓包驱动 + 命令行）": "USBPcap (USB capture driver + CLI)",
-  "开源的 USB 抓包过滤驱动：被动抓取所有设备的控制/批量/中断传输，不干扰原有逻辑。驱动 GPLv2、命令行工具 BSD-2-Clause；KDock 只调用你安装的组件，不打包、不链接它的代码。装完需要重启一次。": "Open-source USB capture filter driver: passively captures control / bulk / interrupt transfers of every device without disturbing normal operation. Driver is GPLv2, the command-line tool is BSD-2-Clause; KDock only invokes the component you install — it does not bundle or link its code. Reboot once after installing.",
-  "设备视图：谁挂在哪个端口、VID/PID、速度、接口和端点、绑定到哪个驱动。原始传输（每一笔 IN/OUT 的 payload）由 USBPcap 抓取，需要先在「环境配置」里安装并重启一次。": "Device view: what sits on which port, VID/PID, speed, interfaces and endpoints, which driver it binds to. Raw transfers (the payload of every IN/OUT) come from USBPcap — install it from Environment setup and reboot once.",
-  "需要重启一次": "Reboot once",
-  "已安装 · 需要重启一次": "Installed · reboot once",
-  "枚举探针…": "Enumerating probes…",
-  "检测烧录器…": "Detecting programmers…",
-  "调用 ×": "Calls ×", "出线 ×": "Edges ×",
-  "完整页面显示在中间工作区。地址、登录状态、Cookie 和后退历史由这一块共享浏览器维护。":
-    "The full page appears in the center workspace. This shared browser keeps the URL, login state, cookies and back history.",
-  "在中间打开": "Open in center",
-  "DSLogic 逻辑分析仪驱动": "DSLogic logic-analyzer driver",
-  "梦源 DSLogic 系列（VID 2A0E）的 WinUSB 绑定，sigrok / KDock 采集走它。插着分析仪时一键安装，会弹一次 UAC。":
-    "WinUSB binding for DreamSourceLab DSLogic analyzers (VID 2A0E), used by sigrok / KDock capture. Connect the analyzer and install once; this raises one UAC prompt.",
-  "DSView 解码引擎": "DSView decoder engine",
-  "夜间版 sigrok-cli + DSView 自带解码器。只在 DSLogic 设备上使用，24M 那台继续走原来的 sigrok 路径。":
-    "Nightly sigrok-cli plus DSView's bundled decoders. Used only with DSLogic devices; the 24M unit keeps the existing sigrok path.",
-  "ST-Link / V2-1 / V3 调试器的 WinUSB 驱动，OpenOCD、pyOCD、probe-rs 都靠它认探针。一键安装会弹一次 UAC。":
-    "WinUSB driver for ST-Link / V2-1 / V3 probes, used by OpenOCD, pyOCD and probe-rs. One-click install raises one UAC prompt.",
-  "沁恒 WCH-Link / WCH-LinkE 的 CMSIS-DAP 调试接口。只绑定 MI_00，串口（MI_01）保持系统自带驱动可用。":
-    "CMSIS-DAP interface for WCH-Link / WCH-LinkE. Only MI_00 is bound; the serial interface (MI_01) keeps its system driver.",
-  "wlink（WCH-Link 命令行烧录）": "wlink (WCH-Link CLI flasher)",
-  "沁恒 CH32V / CH57x / CH58x / CH59x 的命令行烧录器，支持 hex / elf / bin，比厂商 GUI 更适合自动化和批量烧录。":
-    "Command-line flasher for WCH CH32V / CH57x / CH58x / CH59x with hex / elf / bin support; better suited to automation and batch flashing than the vendor GUI.",
-  "驱动安装已完成，但 Windows 需要完整重启后才能加载。": "The driver installation finished, but Windows must be fully restarted before it can load.",
-  "请使用开始菜单的「重启」；不要关机后再开机，因为快速启动可能不会重新加载驱动。": "Use Start menu → Restart. Do not shut down and power on again, because Fast Startup may not reload the driver.",
-  "驱动已安装，请完整重启 Windows": "Driver installed — fully restart Windows",
-  "需要重启": "Restart required",
-  "知道了": "Got it",
-  "抓包": "Capture",
-  "开始抓包": "Start capture",
-  "停止抓包": "Stop capture",
-  "未抓包": "Not capturing",
-  "抓包中": "Capturing",
-  "完整数据": "Full data",
-  "显示/保存完整 HEX/ASCII（关闭时每行最多 128 字节；大包会让表格变长）": "Show/save full HEX/ASCII (max 128 bytes per row when off; large packets make rows longer)",
-  "只看控制传输": "Control only",
-  "只看控制传输：设备枚举和 RNDIS 握手都在这里": "Control transfers only: enumeration and the RNDIS handshake live here",
-  "USBPcap 根 Hub（每个根 Hub 一个）": "USBPcap root hub (one per root hub)",
-  "没有可抓包的根 Hub": "No root hub available",
-  "未安装 USBPcap": "USBPcap not installed",
-  "需要重启一次（驱动刚装）": "Reboot once (driver just installed)",
-  "USBPcap 驱动状态未知，请重新插拔设备或重启电脑": "USBPcap driver state is unknown; reconnect the device or reboot",
-  "已就绪": "Ready",
-  "已就绪（开始抓包时会请求管理员权限）": "Ready (administrator permission is requested when capture starts)",
-  "没有可用的根 Hub": "No root hub available",
-  "—— 开始抓包 ": "—— capture started ",
-  "—— 已停止抓包 ——": "—— capture stopped ——",
-  "串口节点（也可以直接在左边列表里点一个设备）": "Serial node (or click a device in the list)",
-  "监听目标": "Monitor target",
-  "开始监听": "Start monitoring",
-  "停止监听": "Stop monitoring",
-  "未监听": "Not monitoring",
-  "等待设备…": "Waiting for device…",
-  "监听中": "Monitoring",
-  "等待设备重连…": "Waiting for the device to reconnect…",
-  "先选一个设备或串口": "Pick a device or serial port first",
-  "—— 开始监听 ": "—— monitoring ",
-  "—— 已连接 ": "—— connected ",
-  "—— 设备断开，等待重连 ——": "—— device disconnected, waiting for reconnect ——",
-  "—— 已停止监听 ——": "—— monitoring stopped ——",
-  "保存…": "Save…",
-  "要抓原始数据的串口": "Serial port to capture",
-  "发送内容（文本或 HEX，回车发送）": "Data to send (text or HEX; Enter to send)",
-  "抓取中": "capturing",
-  "未打开": "closed",
-  "先选一个串口": "Pick a serial port first",
-  "没有串口": "No serial port",
-  "还没有数据": "No data yet",
-  "串口读取失败：": "Serial read failed: ",
-  "存储": "Storage", "音频": "Audio", "相机": "Camera", "打印机": "Printer", "复合": "Composite",
-  "设备管理器": "Device manager",
-  "管理员读取": "Read as admin",
-  "警告 {n}": "Warnings: {n}",
-  "需要管理员权限才能读取 Hub 端口和描述符": "Administrator rights are required to read hub ports and descriptors",
-  "设备详情": "Device details",
-  "串口（COM）": "Serial ports (COM)",
-  "USB 设备 {n} · 端口设备 {m} · 串口 {s}": "USB devices {n} · port devices {m} · serial {s}",
-  "非 USB": "not USB",
-  "序列号": "Serial number",
-  "产品": "Product",
-  "设备未配置": "Not configured",
-  "无法启动": "Cannot start",
-  "已停用": "Disabled",
-  "设备未安装": "Not installed",
-  "没有驱动": "No driver",
-  "驱动加载失败": "Driver failed to load",
-  "驱动故障": "Driver failure",
-  "问题码": "Problem code",
-  "新插入": "new",
-  "已拔出": "removed",
-  "已拔出（{n}）": "Removed ({n})",
-  " · 新插入 {n}": " · new {n}",
-  " · 已拔出 {n}": " · removed {n}",
-  "设备列表不需要权限；端口拓扑、设备描述符、配置/接口/端点要打开 Hub 句柄，Windows 要求管理员 —— 点上面按钮会弹一次 UAC，子进程读完就退出，主程序不提权。": "The device list needs no privileges; port topology and descriptors require opening the hub handle, which Windows only allows to administrators — the button above raises one UAC prompt, a child process reads once and exits, and the main app stays unelevated.",
-  "刷新": "Refresh",
-  "USB 设备": "USB devices",
-  "端口 / 描述符可读": "Ports / descriptors readable",
-  "只读设备列表": "Device list only",
-  "USB 诊断": "USB",
-  "USB 设备树 / 描述符 / 端口（免驱，不装过滤驱动）": "USB device tree / descriptors / ports (driver-free)",
-  "每 3 秒重扫一次，热插拔会记到下面的日志": "Rescan every 3 s; hot-plug events land in the log below",
-  "端口拓扑 / 设备描述符需要管理员权限（弹一次 UAC）": "Port topology / descriptors need admin (one UAC prompt)",
-  "以管理员读取端口": "Read ports as admin",
-  "点左边一个设备看描述符": "Pick a device on the left to see its descriptors",
-  "热插拔": "Hot-plug",
-  "以管理员读取端口 / 描述符": "Read ports / descriptors as admin",
-  "说明": "Notes",
-  "警告": "Warnings",
-  "等待 UAC 授权…": "Waiting for UAC…",
-  "已读到端口 / 描述符": "Ports / descriptors loaded",
-  "读取权限": "Access",
-  "管理员（端口 / 描述符可读）": "Administrator (ports / descriptors readable)",
-  "普通（只读设备列表）": "Standard (device list only)",
-  "端口拓扑要管理员权限：点上面的「以管理员读取端口」。": "Port topology needs administrator rights: click \"Read ports as admin\" above.",
-  "所有 USB 设备（SetupAPI）": "All USB devices (SetupAPI)",
-  "端口设备": "Port device",
-  "设备类": "Class",
-  "配置数": "Configurations",
-  "配置描述符": "Configuration descriptor",
-  "接口数": "Interfaces",
-  "自供电": "Self-powered",
-  "最大电流": "Max power",
-  "接口 {n}": "Interface {n}",
-  "端点": "Endpoint", "传输成功": "Transfer succeeded", "传输失败": "Transfer failed",
-  "方向": "Dir",
-  "类型": "Type",
-  "包大小": "Max packet",
-  "间隔": "Interval",
-  "这个端口没读到配置描述符（设备可能需要先被驱动认领，或读取被拒绝）。": "No configuration descriptor for this port (the device may need a driver bound first, or the read was refused).",
-  "设备实例": "Instance",
-  "驱动服务": "Driver service",
-  "厂商": "Manufacturer",
-  "位置": "Location",
-  "USB 设备 {n} · 端口设备 {m}": "USB devices {n} · port devices {m}",
-  "端口 {n} · {s}": "Port {n} · {s}",
-  "Hub 数": "Hubs",
-  "端口上的设备": "Devices on ports",
-  "网络": "Network",
-  "蓝牙": "Bluetooth",
-  "Silicon Labs CP210x 串口驱动": "Silicon Labs CP210x serial driver",
-  "CP2102 / CP2104 / CP2105 / CP2108 —— 开发板最常见的 USB 转串口之一。装完才会出现 COM 口。": "CP2102 / CP2104 / CP2105 / CP2108 — one of the most common USB-to-serial chips on dev boards. No COM port until this is installed.",
-  "Prolific PL2303 串口驱动": "Prolific PL2303 serial driver",
-  "老款 USB 转串口，工业设备和老开发板很多。注意新版 Windows 上老芯片会被官方驱动拒认，必要时用内置的旧版安装包。": "An older USB-to-serial chip, common in industrial gear and older boards. Note that on recent Windows the official driver rejects some old chips — use a bundled older installer if needed.",
-  "Microchip MCP2200 / MCP2221 驱动": "Microchip MCP2200 / MCP2221 driver",
-  "USB 转串口 + GPIO / I2C 的桥接芯片，Microchip 官方 CDC 驱动。": "USB-to-serial plus GPIO / I2C bridge chip; installs Microchip's official CDC driver.",
-  "Infineon / Cypress USB-Serial 驱动": "Infineon / Cypress USB-Serial driver",
-  "CY7C65211 / CY7C65215 这类 USB-Serial 桥接（也带 GPIO / I2C / SPI）。": "CY7C65211 / CY7C65215 USB-Serial bridges (also expose GPIO / I2C / SPI).",
-  "Infineon TriBoard / DAS JDS": "Infineon TriBoard / DAS JDS",
-  "AURIX TC3xx TriBoard 的板载 DAS JDS 调试口与串口。识别到后会同时出现 Infineon DAS JDS Debug 和 Infineon DAS JDS COM。": "On-board DAS JDS debug and serial interfaces on AURIX TC3xx TriBoards. A working connection exposes both Infineon DAS JDS Debug and Infineon DAS JDS COM.",
-  "SEGGER J-Link / J-Link OB 探针": "SEGGER J-Link / J-Link OB probe",
-  "当前接入的 J-Link / J-Link OB 调试探针（USB VID 1366）。J-Link OB 常见于开发板板载调试器，可能同时提供 JLink CDC UART 串口。": "Connected J-Link / J-Link OB probe (USB VID 1366). J-Link OB is often the on-board debugger on a development board and may also expose a JLink CDC UART port.",
-  "CMSIS-DAP / DAPLink 调试探针": "CMSIS-DAP / DAPLink debug probe",
-  "通过 pyOCD 动态枚举任意厂商的 CMSIS-DAP / DAPLink 探针；型号、唯一 ID 和可选 CDC 串口都从实际设备读取，不绑定 VID/PID。": "Dynamically enumerate CMSIS-DAP / DAPLink probes from any vendor through pyOCD. Model, unique ID and optional CDC port come from the connected device, with no VID/PID binding.",
-  "WCH-Link / WCH-LinkE 驱动": "WCH-Link / WCH-LinkE driver",
-  "沁恒 RISC-V / Cortex-M 调试器（WCH-Link、WCH-LinkE）。用 WCH-LinkUtility 或 MounRiver 时会装。": "WCH RISC-V / Cortex-M debug probes (WCH-Link, WCH-LinkE). Installed together with WCH-LinkUtility or MounRiver.",
-  "TI XDS110 / XDS100 驱动": "TI XDS110 / XDS100 driver",
-  "TI MSP430 / C2000 / Sitara 的 XDS110、XDS100 调试探针驱动（CCS 里带，也可以单独装）。": "Driver for TI XDS110 / XDS100 probes (MSP430 / C2000 / Sitara). Ships with CCS or can be installed separately.",
-  "自动 / 全部网卡": "Auto / all interfaces",
-  "网卡": "Interface",
-  "探针 UID": "Probe UID",
-  "网络设备（UDP 服务，.fw）": "Network device (UDP service, .fw)",
-  "pyOCD（CMSIS-DAP / WCH-Link / ST-Link）": "pyOCD (CMSIS-DAP / WCH-Link / ST-Link)",
-  "Infineon AURIX Flasher": "Infineon AURIX Flasher",
-  "Python 3": "Python 3",
-  "脚本与工具依赖：pyOCD、esptool、pyserial、intelhex 这些都要它。装完记得勾 Add to PATH（winget 默认会加）。": "Needed for pyOCD, esptool, pyserial, intelhex and other scripting tools. Keep \"Add to PATH\" checked (winget does by default).",
-  "Git（含 Git LFS 可用）": "Git (Git LFS available)",
-  "版本控制；RT-Thread Env 拉包、很多 SDK 的 submodule 都靠它。": "Version control; RT-Thread Env package fetching and many SDK submodules rely on it.",
-  "CMake": "CMake",
-  "跨平台构建系统：STM32Cube / ESP-IDF / Zephyr / 大多数现代嵌入式工程都用它生成 Ninja / Make 工程。": "Cross-platform build system: STM32Cube / ESP-IDF / Zephyr and most modern embedded projects use it to generate Ninja / Make projects.",
-  "Ninja": "Ninja",
-  "CMake 最常用的后端：比 Make 快很多，几乎所有嵌入式 IDE 的默认选择。": "The usual CMake backend: much faster than Make and the default in most embedded IDEs.",
-  "Meson": "Meson",
-  "另一套现代构建系统（Zephyr / 部分开源 BSP 在用），配合 Ninja。": "Another modern build system (used by Zephyr and some open BSPs), paired with Ninja.",
-  "LLVM / Clang + lld": "LLVM / Clang + lld",
-  "替代 GCC 的编译器，部分工程（RISC-V / 嵌入式 Rust / 某些 SDK）需要；也自带 lld 链接器。": "A GCC alternative needed by some projects (RISC-V / embedded Rust / certain SDKs); includes the lld linker.",
-  "OpenSSL": "OpenSSL",
-  "生成密钥 / 证书 / 摘要，固件签名和 TLS 调试都会用到。": "Generate keys / certificates / digests; used for firmware signing and TLS debugging.",
-  "QEMU": "QEMU",
-  "仿真运行：没有板子时跑 ARM / RISC-V Linux、跑 U-Boot 验证镜像。": "Emulation: run ARM / RISC-V Linux or boot U-Boot images without hardware.",
-  "Renode": "Renode",
-  "无板仿真：整块板子（CPU + 外设 + 网络）都能模拟，适合 CI 里跑固件。": "Board-level emulation (CPU + peripherals + networking) — good for running firmware in CI.",
-  "Device Tree Compiler（dtc）": "Device Tree Compiler (dtc)",
-  "编译 / 反编译设备树（.dts ↔ .dtb），Linux BSP 和 U-Boot 常用。": "Compile / decompile device trees (.dts ↔ .dtb); common in Linux BSPs and U-Boot.",
-  "UsbDk Runtime": "UsbDk Runtime",
-  "USB 设备重定向 / 抓包用的通用运行时（Wireshark 的 USBPcap、部分虚拟化工具依赖）。": "Generic runtime for USB device redirection / capture (used by USBPcap in Wireshark and some virtualisation tools).",
-  "Wireshark": "Wireshark",
-  "网络 / USB / BLE / CAN 抓包分析。配合 USBPcap、nRF Sniffer 用。": "Network / USB / BLE / CAN capture analysis. Works with USBPcap and the nRF Sniffer.",
-  "MobaXterm": "MobaXterm",
-  "终端 + 串口 + X11 + SFTP 的多合一工具（A 核 / Linux 板子常用）。": "Terminal + serial + X11 + SFTP in one (common for Cortex-A / Linux boards).",
-  "DAPLink / CMSIS-DAP（pyOCD）": "DAPLink / CMSIS-DAP (pyOCD)",
-  "DAPLink、CMSIS-DAP、ST-Link、J-Link 的调试与烧录 CLI。装好后可运行 pyocd list 检查烧录器；DAPLink 设备通常还需要在 Windows 上正确绑定 HID/WinUSB 驱动。": "Debug and flash CLI for DAPLink, CMSIS-DAP, ST-Link and J-Link. After installing, run pyocd list to check the probe; DAPLink usually also needs the correct HID/WinUSB driver binding on Windows.",
-  "STM32CubeProgrammer（ST-Link / USB DFU / UART ROM）": "STM32CubeProgrammer (ST-Link / USB DFU / UART ROM)",
-  "ST 官方烧录 CLI。KDock 用它走 ST-Link，也用它连接 STM32 出厂系统 Bootloader：USB DFU（BOOT0=1）或 UART（BOOT0=1，接芯片指定 USART）。": "ST's official flashing CLI. KDock uses it with ST-Link and to connect the STM32 factory system bootloader over USB DFU (BOOT0=1) or UART (BOOT0=1 on the documented USART).",
-  "esptool（ESP32 烧录）": "esptool (ESP32 flashing)",
-  "ESP32 / ESP8266 的烧录、读 MAC、擦除、读 Flash。需要先装 Python。": "Flash, read MAC, erase and read flash on ESP32 / ESP8266. Requires Python.",
-  "ESP-IDF（安装管理器）": "ESP-IDF (installation manager)",
-  "乐鑫官方 ESP-IDF 安装管理器 CLI：装工具链、拉 SDK、切版本都在它里面。": "Espressif's official ESP-IDF installation manager CLI: installs the toolchain, fetches the SDK and switches versions.",
-  "nRF Util（Nordic CLI）": "nRF Util (Nordic CLI)",
-  "Nordic 的通用 CLI：nRF52 系列 DFU 打包 / 烧录、BLE 调试辅助（nrfutil device / dfu）。": "Nordic's general CLI: nRF52 DFU packaging / flashing and BLE debugging helpers (nrfutil device / dfu).",
-  "nRF Connect for Desktop（BLE 调试）": "nRF Connect for Desktop (BLE debugging)",
-  "Nordic 的 BLE 桌面工具：扫广播、连 GATT、读写特征值、看 RSSI，配 nRF Sniffer 还能抓 BLE 包。Windows 自带蓝牙协议栈，不用另装驱动。": "Nordic's BLE desktop tool: scan advertisements, connect to GATT, read/write characteristics, watch RSSI; with the nRF Sniffer it can capture BLE packets. Windows already ships the Bluetooth stack, so no extra driver is needed.",
-  "人格 / 口吻 / 通用规矩写这儿（等价于 Codex 的全局 AGENTS.md）。\n例：\n# 身份\n- 说话简短，先给结论。\n- 做事前先看现状，改设备状态前先说明。": "Persona / tone / general rules go here (the equivalent of Codex's global AGENTS.md).\nExample:\n# Identity\n- Be brief, lead with the conclusion.\n- Look at the current state first; explain before changing device state.",
-  "倒计时 ·": "Countdown ·",
-  "定时 ·": "Scheduled ·",
-  "<工作区>/.kdock_skill/<名字>/SKILL.md": "<workspace>/.kdock_skill/<name>/SKILL.md",
-  "需批准": "needs approval",
-  "连接设置": "Connection",
-  "添加并使用": "Add and use",
-  "按 F1 打开当前页面的帮助，或从下面选择。": "Press F1 to open help for the current page, or pick one below.",
-  "打开当前页帮助": "Open help for this page",
-  "示波器连接": "Scope connection",
-  "两层分工（照 Codex 的规矩）：": "Two layers (the Codex way):",
-  "是按需读的流程 —— 上下文里只有一行 「名字 — 什么时候用」，正文要模型自己读；": "is on-demand: the context only carries one line \"name — when to use it\"; the model reads the body itself;",
-  "是一直播在场的东西 （人格 / 口吻 / 通用规矩 / 项目规矩）。程序自带的行为规则不在这里，也不对外开放。": "is always present (persona / tone / general rules / project rules). Built-in behaviour rules are not here and are not exposed.",
-  "指导文件 AGENTS.md": "Guidance file AGENTS.md",
-  "转到哪个工作区": "Target workspace",
-  "把列表里选中的技能复制到该工作区，再从全局移除（自动在 skill-archive 留一份备份）": "Copy the selected skill into that workspace and remove it from global (a backup is kept in skill-archive)",
-  "看哪个工作区的技能": "Workspace whose skills to show",
-  "放在": "lives at",
-  "，随项目走": ", travels with the project",
-  "这里是": "This is where",
-  "只读清单 + 使用/不使用": "Read-only list + enable/disable",
-  "：关掉用不上的工具，模型会少被无关工具干扰、少误调。 开关对": ": turn off tools you do not need so the model is less distracted and makes fewer wrong calls. The switch applies to",
-  "生效（工具清单按会话固定，这样前面的上下文才好复用缓存）。": "is effective (the tool list is fixed per session so earlier context stays cache-friendly).",
-  "/timer 10m 任务": "/timer 10m <task>",
-  "倒计时 · ": "Countdown · ",
-  "/at 09:30 任务": "/at 09:30 <task>",
-  "定时 · ": "Scheduled · ",
-  "全屏（F11）；退出按 Esc 或再按一次": "Full screen (F11); Esc or click again to exit",
-  "把当前这一帧存成 PNG": "Save the current frame as PNG",
-  "内置投屏：抓屏轮询，画面可直接点（反向控制）": "Built-in mirroring: polls screenshots; click directly on the picture (reverse control)",
-  "用 scrcpy 投屏（独立窗口，更丝滑；需要先装 scrcpy）": "Mirror with scrcpy (separate window, smoother; requires scrcpy)",
-  "scrcpy：没找到（要丝滑投屏就到「环境配置」装一下）": "scrcpy: not found (install it from Environment setup for smooth mirroring)",
-  "内网设备大多是自签名证书；不勾就一直用系统信任根校验": "LAN devices usually use self-signed certs; leave unchecked to keep the system trust roots",
-  "在设备/服务器上新建目录": "Create a directory on the device/server",
-  "删掉列表里选中的那一个（目录也能删，非空目录会被拒绝）": "Delete the selected entry (directories too; non-empty ones are refused)",
-  "打开后允许设备把文件写进来（慎用：会落到根目录下）": "When on, the device may write files in (careful: they land in the root)",
-  "自带地址；": "comes with an address;",
-  "需填写起始地址。": "An address is required.",
-  "请在「固件升级」页使用。": "Use this on the Firmware page.",
-  "示波器 IP，例如 192.168.1.100": "Scope IP, e.g. 192.168.1.100",
-  "本机桌面走 DXGI；VNC 能控制键鼠；RTSP / RTMP / H.264 交给 FFmpeg 解码": "Local desktop uses DXGI; VNC can control mouse/keyboard; RTSP / RTMP / H.264 are decoded by FFmpeg",
-  "打开后：画面里点一下 = 点手机；拖动 = 滑动；上面那行还能直接发按键和文字": "When on: click = tap, drag = swipe; the row above can also send keys and text",
-  "已装过就覆盖安装（adb install -r）": "Overwrite if already installed (adb install -r)",
-  "列出第三方包（点一下填进来）": "List third-party packages (click to fill in)",
-  "解码结果": "Decode results",
-  "NEC 地址 ": "NEC address ",
-  " 命令 ": " command ",
-  " 取反校验错": " inverted check failed",
-  "sigrok-cli（逻辑分析仪的采集后端）": "sigrok-cli (logic analyzer capture backend)",
-  "PulseView 同门的命令行采集工具。KDock 的「逻辑分析仪 → 真机」就是调它：fx2lafw（Saleae Logic / 各种 FX2 板）、saleae-logic16、DSLogic 这些都能用。装完不用配置，回到页面点 ↻ 就能看到设备。": "The command-line capture tool from the PulseView project. KDock's logic analyzer uses it for real-device capture: fx2lafw (old Saleae Logic / generic FX2 boards), saleae-logic16 and DSLogic all work. No configuration needed — reopen the page and click ↻.",
-  "DSLogic（梦源）固件": "DSLogic (DreamSourceLab) firmware",
-  "梦源 DSLogic 系列（Basic / Plus / Pro / U2 / U3）在 sigrok 里要这两样固件：FX2 固件 + FPGA 位流。没有它们，插上 DSLogic 也扫不到设备（sigrok-cli 会报找不到固件）。装到 sigrok-cli 的 share\\sigrok-firmware 下。": "DreamSourceLab DSLogic (Basic / Plus / Pro / U2 / U3) needs two firmware pieces under sigrok: the FX2 firmware and the FPGA bitstream. Without them a plugged-in DSLogic is not even detected (sigrok-cli reports missing firmware). Installs into sigrok-cli's share\\sigrok-firmware.",
-  "真机": "Device",
-  "点数": "Samples",
-  "采集": "Capture",
-  "扫描设备中…": "Scanning devices…",
-  "没有找到设备": "No device found",
-  "不可用": "Unavailable",
-  "没找到逻辑分析仪（接了设备的话检查驱动）": "No logic analyzer found (check the driver if one is plugged in)",
-  "先选一台设备（没列出来的话点 ↻）": "Pick a device first (click ↻ if it is not listed)",
-  "至少勾一个通道": "Tick at least one channel",
-  "采集中…": "Capturing…",
-  "上一次采集还没结束": "The previous capture has not finished",
-  "找到 {n} 台设备": "Found {n} device(s)",
-  "采到 {n} 点 · {ms} ms": "Captured {n} samples · {ms} ms",
-  "采到 {n} 点（{r}）": "Captured {n} samples ({r})",
-  "sigrok 看到的设备（fx2lafw / Saleae / DSLogic…）": "Devices sigrok can see (fx2lafw / Saleae / DSLogic…)",
-  "重新扫描设备": "Rescan devices",
-  "设备支持的采样率": "Sample rates the device supports",
-  "这次采多少个点": "How many samples to capture",
-  "需要装 USB 驱动的会弹一次 UAC 授权（驱动必须提权，我们不做静默绕过）。WCH / FTDI / SEGGER 官网的下载要点勾选同意，所以那几项只给官网入口 —— 或者把安装包丢进上面的\"内置\"目录，一键装。": "Installing a USB driver raises one UAC prompt (drivers need elevation and we never bypass it silently). WCH / FTDI / SEGGER gate their downloads behind a consent checkbox, so those items only link to the official site — or drop the installer into the bundled folder above and use the one-click install.",
-  "正在扫描本机…": "Scanning this PC…",
-  "扫描失败：": "Scan failed: ",
-  "没有符合条件的组件": "No component matches the filter",
-  "已装 ": "Installed ",
-  " · 未装 ": " · missing ",
-  " · 可更新 ": " · updatable ",
-  "缺必需项：": "Missing required: ",
-  "必需项都齐了": "All required items present",
-  "可更新": "Update available",
-  "已装": "installed",
-  "未安装": "Not installed",
-  "检查状态": "Check status",
-  "驱动未加载": "driver not loaded",
-  "通信": "Communication",
-  "工作区与执行": "Workspace & execution",
-  "设备与固件": "Devices & firmware",
-  "安卓调试": "Android debugging",
-  "仪器与固件分析": "Instruments & firmware analysis",
-  "屏幕与图像": "Screen & images",
-  "中控编排": "Workflow",
-  "技能与环境": "Skills & environment",
-  "界面与上下文": "UI & context",
-  "其他": "Other",
-  "全开": "Enable all",
-  "全关": "Disable all",
-  "基本工具，不可关闭": "Core tool; cannot be disabled",
-  "更新 / 重装": "Update / reinstall",
-  "一键安装": "Install",
-  "打开官网": "Open website",
-  "这个要登录 / 同意条款才能下：官网下完，把安装包丢进内置目录就能一键装。": "Needs a login / consent click to download: grab it from the site, drop the installer into the bundled folder, then one-click install.",
-  "我下好了，用本地的装": "I downloaded it — install from local",
-  "把安装包放进 <exe 同目录>\\drivers\\<组件id>\\ 之后再点这个": "Put the installer in <exe folder>\\drivers\\<item id>\\ first, then click this",
-  "定位": "Locate",
-  "必需项": "Required",
-  "齐了": "All set",
-  "上次扫描": "Last scan",
-  "先等这个装完：": "Wait for this one to finish: ",
-  "（模拟，不真装）": " (dry run, nothing is installed)",
-  "完成，重新扫描…": "Done, rescanning…",
-  "失败：": "Failed: ",
-  "环境检查：有必需驱动没装": "Environment check: required drivers are missing",
-  "现在去「环境配置」一键安装？（需要提权的会弹一次 UAC）": "Open Environment setup and install now? (anything needing elevation raises one UAC prompt)",
-  "有 ": "There are ",
-  " 个组件可以更新（环境配置页）": " components with updates (Environment setup page)",
-  "开始扫描本机…": "Scanning this PC…",
-  "扫描完成": "Scan finished",
-  "选一个统一的安装位置": "Pick a shared install location",
-  "必需项没有能一键装的（点卡片上的官网入口自己去装）": "The required items have no one-click install (use their website link on the card)",
-  "USB 驱动": "USB driver",
-  "调试器": "Debugger",
-  "工具链": "Toolchain",
-  "运行时": "Runtime",
-  // 本轮新增的类别（环境配置页的分类按钮）
-  "GUI": "GUI", "MQTT": "MQTT", "总线": "Fieldbus",
-  // Rust 工具链 / MSVC / probe-rs
-  "Rust 工具链（rustup + cargo）": "Rust toolchain (rustup + cargo)",
-  "Rust 编译器与包管理器。装嵌入式 Rust 时用它加目标架构（rustup target add thumbv7em-none-eabihf）。默认用 MSVC 链接器，所以 MSVC 生成工具也要装。":
-    "The Rust compiler and package manager. For embedded Rust you add a target with rustup target add thumbv7em-none-eabihf. It links with MSVC by default, so the MSVC build tools are needed too.",
-  "MSVC 生成工具（Visual Studio Build Tools 2022）": "MSVC build tools (Visual Studio Build Tools 2022)",
-  "微软的 C/C++ 编译器与链接器（cl.exe / link.exe）。Rust 的 MSVC 目标、部分 SDK 和 CMake 工程都要它；只装 Build Tools，不装整个 VS IDE。":
-    "Microsoft's C/C++ compiler and linker (cl.exe / link.exe). Needed by Rust's MSVC target, some SDKs and CMake projects. Installs only the Build Tools, not the whole VS IDE.",
-  "probe-rs（嵌入式 Rust 烧录 / 调试）": "probe-rs (embedded Rust flashing / debugging)",
-  "Rust 生态的通用烧录与调试器：一条命令烧 .elf、开 RTT 日志、起 GDB Server。支持 CMSIS-DAP / J-Link / ST-Link / ESP32 等。用 cargo install 装（需要先装 Rust）。":
-    "The general-purpose flasher and debugger of the Rust ecosystem: flash an .elf, stream RTT logs and start a GDB server with one command. Supports CMSIS-DAP / J-Link / ST-Link / ESP32. Installed via cargo install (Rust required first).",
-  // GUI
-  "LVGL（含 Windows 模拟器工程）": "LVGL (with Windows simulator project)",
-  "开源嵌入式图形库，配 lv_port_win_visual_studio 能在 Windows 上直接跑模拟器调界面，不用先上板。装完到安装目录打开 LvglWindowsSimulator，用 Visual Studio 编译（需要 MSVC 生成工具）。":
-    "Open-source embedded graphics library. With lv_port_win_visual_studio you can run the simulator on Windows and tune the UI without touching the board. After installing, open LvglWindowsSimulator in the install folder and build it with Visual Studio (MSVC build tools required).",
-  "SquareLine Studio（LVGL 可视化设计器）": "SquareLine Studio (LVGL visual designer)",
-  "LVGL 官方向导式拖拽设计器：画好界面直接导出 C 代码。个人试用免费，但下载要注册账号，所以这里只给官网入口。":
-    "The LVGL drag-and-drop designer: draw the UI and export C code. The personal trial is free, but the download requires an account, so this entry only links to the official site.",
-  "SEGGER AppWizard（emWin 界面设计器）": "SEGGER AppWizard (emWin UI designer)",
-  "SEGGER emWin 的官方可视化设计器，生成 emWin 代码。试用版免费但要填表下载，官网入口在这里。":
-    "SEGGER's official visual designer for emWin that generates emWin code. The trial is free but requires a form, so this entry links to the official site.",
-  "TouchGFX Designer（ST 图形框架）": "TouchGFX Designer (ST graphics framework)",
-  "ST 的 MCU 图形框架与设计器，配 STM32 + LTDC / Chrom-ART 用。随 STM32CubeMX 或 X-CUBE-TOUCHGFX 包分发，要先有 ST 账号。":
-    "ST's MCU graphics framework and designer for STM32 with LTDC / Chrom-ART. Distributed with STM32CubeMX or the X-CUBE-TOUCHGFX package and requires an ST account.",
-  "NXP GUI Guider（LVGL 设计器）": "NXP GUI Guider (LVGL designer)",
-  "NXP 免费提供的 LVGL 图形界面设计器，支持多家芯片（不只 NXP）。导出 LVGL 代码，带模拟器预览。下载需要 NXP 账号。":
-    "NXP's free LVGL UI designer that also supports other vendors' chips. Exports LVGL code and includes a simulator preview. The download requires an NXP account.",
-  // MQTT
-  "Eclipse Mosquitto（MQTT Broker）": "Eclipse Mosquitto (MQTT broker)",
-  "最常用的开源 MQTT broker：本机起一个就能让设备连上来联调，不用连公网服务器。装完到服务里启动 mosquitto。":
-    "The most widely used open-source MQTT broker: run one locally and let the device connect to it instead of a public server. Start the mosquitto service after installing.",
-  "MQTTX（MQTT 5.0 客户端）": "MQTTX (MQTT 5.0 client)",
-  "EMQ 出的 MQTT 客户端：多连接、订阅发布、看消息流、支持 MQTT 5.0 属性，调设备上报和下发很顺手。":
-    "The MQTT client by EMQ: multiple connections, subscribe/publish, message stream, MQTT 5.0 properties. Handy for testing what a device reports and receives.",
-  "MQTT Explorer（MQTT 拓扑浏览）": "MQTT Explorer (MQTT topic browser)",
-  "按主题树浏览 MQTT 上的全部消息，适合排查「设备到底发到哪个 topic 了」。比纯客户端更适合摸清别人的 broker。":
-    "Browse every message on a broker as a topic tree. Good for finding out which topic a device actually publishes to, and for exploring a broker you did not set up.",
-  "paho-mqtt（Python MQTT 库）": "paho-mqtt (Python MQTT library)",
-  "Python 的 MQTT 客户端库，写自动化测试脚本、批量造数据时用。装完 import paho.mqtt.client 可用。":
-    "The Python MQTT client library, for automation scripts and generating test traffic. After installing, import paho.mqtt.client works.",
-  // CAN / Modbus
-  "PEAK PCAN 驱动与工具（CAN / CAN FD）": "PEAK PCAN drivers and tools (CAN / CAN FD)",
-  "PEAK-System 的 PCAN 系列驱动包：USB 转 CAN / CAN FD 适配器的驱动、PCAN-View 收发工具、PCAN-Basic API（含 CAN FD）。C++ / Python 调 PCAN-Basic 都要先装它。":
-    "PEAK-System's PCAN driver pack: drivers for USB-to-CAN / CAN FD adapters, the PCAN-View send/receive tool and the PCAN-Basic API (CAN FD included). Required before calling PCAN-Basic from C++ or Python.",
-  "Cangaroo（开源 CAN / CAN FD 分析仪）": "Cangaroo (open-source CAN / CAN FD analyzer)",
-  "开源 CAN 分析工具：支持 candleLight（CANable / CANable2 这类廉价适配器）、SocketCAN，带 DBC 解析、报文时间差视图。Windows 版在 GitHub Releases，需要自己下。":
-    "Open-source CAN analysis tool supporting candleLight (cheap adapters like CANable / CANable2) and SocketCAN, with DBC parsing and a time-delta view. The Windows build is on GitHub Releases, so download it yourself.",
-  "python-can + cantools（CAN 脚本与 DBC 解析）": "python-can + cantools (CAN scripting and DBC parsing)",
-  "python-can 提供统一接口（PCAN / Vector / SocketCAN / SLCAN 都能接），cantools 解析 .dbc 报文定义。写 CAN / CAN FD 自动化测试最常用的两个库。":
-    "python-can gives one interface over PCAN / Vector / SocketCAN / SLCAN, and cantools parses .dbc message definitions. The two libraries most used for CAN / CAN FD test automation.",
-  "ModbusTool（Modbus 主站 / 从站调试）": "ModbusTool (Modbus master / slave testing)",
-  "开源 Modbus 主站和从站模拟器，支持 TCP / UDP / RTU，能导入导出寄存器表。测 Modbus RTU 从机（485）和 TCP 服务端都用它。":
-    "Open-source Modbus master and slave simulator supporting TCP / UDP / RTU, with register-table import and export. Used for testing Modbus RTU slaves (RS-485) and TCP servers alike.",
-  "pymodbus（Python Modbus 库）": "pymodbus (Python Modbus library)",
-  "Python 的 Modbus 客户端 / 服务端库，支持串口 RTU 与 TCP。做寄存器扫描、批量读写、自动化回归时用。":
-    "The Python Modbus client and server library for serial RTU and TCP. Used for register scanning, bulk reads and automated regressions.",
-  "CH34x / CH340 串口驱动": "CH34x / CH340 serial driver",
-  "FTDI FT2232 / D2XX 驱动": "FTDI FT2232 / D2XX driver",
-  "SEGGER J-Link（含 JFlash / GDB Server / RTT）": "SEGGER J-Link (JFlash / GDB Server / RTT included)",
-  "GNU Arm Embedded Toolchain（arm-none-eabi-gcc）": "GNU Arm Embedded Toolchain (arm-none-eabi-gcc)",
-  "逻辑分析仪：PulseView / sigrok": "Logic analyzer: PulseView / sigrok",
-  "RT-Thread Env 工具": "RT-Thread Env tools",
-  "ST-Link USB 驱动": "ST-Link USB driver",
-  "Zadig（给逻辑分析仪装 WinUSB）": "Zadig (WinUSB for the logic analyzer)",
-  "WCH 的 USB 转串口（CH340/CH341/CH343/CH9102）。插上板子认不出 COM 口、或者出现带感叹号的未知设备，就是它没装。": "WCH USB-to-serial (CH340/CH341/CH343/CH9102). If the board shows up as an unknown device with a warning triangle instead of a COM port, this is what is missing.",
-  "FTDI 的 FT2232H/FT232H 双通道芯片（CMSIS-DAP 调试器、FT2232 逻辑分析仪都用它）。装了才有 COM 口和 D2XX 通道。": "FTDI dual-channel FT2232H/FT232H (used by CMSIS-DAP debuggers and FT2232 logic analyzers). Without it you get neither a COM port nor the D2XX channel.",
-  "J-Link 的软件包与 USB 驱动：JLink.exe / JFlash.exe / JLinkGDBServerCL.exe / JLinkRTTViewer.exe 都在里面，烧录页与调试页都用它。": "The J-Link software pack and USB driver: JLink.exe / JFlash.exe / JLinkGDBServerCL.exe / JLinkRTTViewer.exe all live here, and both the Flash and Debug pages use it.",
-  "编译 ARM 工程的 gcc/g++/gdb/newlib。装完把 bin 目录加到用户 PATH，命令行和本软件的调试页就能直接用。": "gcc/g++/gdb/newlib for ARM projects. Once its bin folder is on your user PATH, both the shell and this app's Debug page can use it right away.",
-  "开源调试/烧录器（0.12 起自带 CMSIS-DAP、ST-Link、J-Link 驱动）。烧录页选 OpenOCD 时用的就是它。": "Open-source debugger/flasher (0.12+ bundles CMSIS-DAP, ST-Link and J-Link drivers). This is what the Flash page uses when you pick OpenOCD.",
-  "就是你那台开源逻辑分析仪用的软件（FX2 芯片 + fx2lafw 固件，sigrok 出的 PulseView）。装完插上设备就能抓波形。": "The software for that open-source logic analyzer of yours (FX2 chip + fx2lafw firmware, PulseView by sigrok). Install it, plug the device in and capture.",
-  "RT-Thread 的命令行环境（env.exe / env.bat，来自 RT-ThreadStudio 或官方 env 仓库）：scons、menuconfig、pkgs 都靠它。": "RT-Thread's command-line environment (env.exe / env.bat, from RT-ThreadStudio or the official env repo): scons, menuconfig and pkgs all rely on it.",
-  "ST-Link / ST-Link V2-1 调试器的 WinUSB 驱动（OpenOCD 走它）。用 ST 官方 CUBE 或驱动包安装。": "WinUSB driver for ST-Link / ST-Link V2-1 debuggers (OpenOCD goes through it). Install it from ST's official CUBE or driver pack.",
-  "开源逻辑分析仪（FX2 / fx2lafw）在 Windows 上要用 WinUSB 驱动，Zadig 就是干这个的：跑一次、选设备、装 WinUSB。": "The open-source logic analyzer (FX2 / fx2lafw) needs a WinUSB driver on Windows and Zadig is the tool for that: run it once, pick the device, install WinUSB.",
-
-  // ── 本轮新增：安卓 ADB / 屏幕共享 / 文件管理（FTP·TFTP）/ SSH / 环境配置新增项 ──
-  "安卓 ADB": "Android ADB", "屏幕共享": "Screen share",
-  "安卓": "Android", "音视频": "Audio/video", "网络服务": "Network services",
-  "安卓设备": "Android device", "投屏": "Mirror", "停止投屏": "Stop mirror", "scrcpy 投屏": "scrcpy mirror",
-  "关 scrcpy": "Close scrcpy", "执行": "Run", "推送": "Push", "截图存盘": "Save screenshot…",
-  "选择 APK": "Choose APK", "覆盖安装": "Reinstall (overwrite)", "安装": "Install", "卸载": "Uninstall",
-  "卸载包名": "Package name", "列表": "List", "常用命令": "Common commands", "当前设备": "Current device",
-  "已配对 / 可连接设备": "Paired / connectable devices",
-  "已配对": "Paired", "直接连接": "Direct connect", "台": "device(s)",
-  "无线调试设备": "Wireless debugging device", "无线 ADB 设备": "Wireless ADB device",
-  "还没发现无线调试设备。手机打开「无线调试」后点上面的「找设备」。": "No wireless debugging device found yet. Turn on Wireless debugging on the phone, then click Find devices above.",
-  "已经配对过的设备会显示在上面，直接点「连接」即可，不需要再次配对。地址变了也没关系，以这里扫描到的为准。": "Devices that are already paired appear above. Just click Connect — do not pair them again. If the address changed, use the one discovered here.",
-  "这台设备可能还没配对：只有第一次需要配对，配对后再点连接": "This device may not be paired yet: pairing is needed only the first time; after pairing, click Connect.",
-  "已记录为已配对设备。只有第一次需要配对；现在到「已配对 / 可连接设备」里点「连接」。": "Remembered as a paired device. Pairing is only needed the first time; now click Connect under Paired / connectable devices.",
-  "配对成功，不需要再次配对；请在已配对设备列表里点连接": "Paired successfully. Do not pair again; click Connect in the paired-device list.",
-  "这台设备已经配对过，不需要再次配对；直接到「已配对 / 可连接设备」点连接。": "This device is already paired. Do not pair again; click Connect under Paired / connectable devices.",
-  "已配对过，直接点连接": "Already paired — just click Connect",
-  "首次配对 / 手动连接（只做一次）": "First-time pairing / manual connect (once only)",
-  "首次配对码": "First-time pairing code",
-  "scrcpy 投屏（外置）": "scrcpy mirror (external)",
-  "内置投屏是「抓屏轮询」（约 3~10 fps），直接嵌在 KDock 里；scrcpy 使用自己的 SDL 窗口（性能更好，所以作为外置窗口运行）。": "The built-in mirror uses screencap polling (~3-10 fps) and is embedded in KDock. scrcpy uses its own SDL window (better performance), so it runs as an external window.",
-  "传文件": "File transfer", "本机 → 设备": "PC → device", "写到设备": "Write to device",
-  "设备上的路径": "Path on device", "安装包": "Package", "返回": "Back", "主屏": "Home",
-  "多任务": "Recents", "电源键": "Power", "安装并保存": "Install & save",
-  "反向控制（点画面 = 点手机）": "Remote control (click the view = tap the device)",
-  "内置投屏是「抓屏轮询」（约 3~10 fps，够看状态）；要丝滑就用上面的": "The built-in mirror is screencap polling (~3-10 fps, fine for watching state); for smoothness use",
-  "（独立窗口）。": " (its own window).",
-  "选一台设备 → 点【投屏】；画面里点一下就是点手机（在右栏打开「反向控制」）": "Pick a device, then hit Mirror; clicking inside the view taps the device (enable Remote control in the right panel)",
-  "adb shell 命令：getprop ro.product.model / ls -l /sdcard / dumpsys battery …": "adb shell command: getprop ro.product.model / ls -l /sdcard / dumpsys battery …",
-  "要输入的文字（走 input text）": "Text to type (adb shell input text)",
-  "没看到设备？手机要先打开「开发者选项 → USB 调试」，插线后在手机上允许这台电脑。": "No device? Enable Developer options → USB debugging on the phone and allow this PC when prompted.",
-  "（没有设备：USB 调试开了吗？）": "(no device — is USB debugging on?)",
-  "没有设备（打开手机上的 USB 调试，插线后允许本机）": "No device (turn on USB debugging, then allow this PC)",
-  "型号": "Model", "安卓版本": "Android version", "分辨率": "Resolution", "电量": "Battery",
-  "存储占用": "Storage", "CPU 占用": "CPU usage", "内存": "Memory", "SD 卡目录": "SD card",
-  "日志(最近 60 行)": "Logcat (last 60)", "进程列表": "Processes", "IP 地址": "IP addresses", "重启": "Reboot",
-  "Android Platform Tools（adb）": "Android Platform Tools (adb)",
-  "Google 官方的 adb（含 fastboot）。「安卓 ADB」页要靠它连手机/平板/开发板：列设备、跑 shell、装卸 APK、推拉文件、抓屏投屏。": "Google's official adb (with fastboot). The Android ADB page uses it to talk to phones/tablets/boards: list devices, run shell, install/uninstall APKs, push/pull files, mirror the screen.",
-  "scrcpy（安卓投屏 / 反向控制）": "scrcpy (Android mirroring + control)",
-  "把安卓设备画面投到电脑上、还能用鼠标键盘反向控制（走 adb，不需要装手机端 App）。「安卓 ADB」页的「用 scrcpy 投屏」调的就是它。": "Puts an Android screen on your PC with mouse/keyboard control (over adb, no app needed on the phone). The \"scrcpy mirror\" button on the Android ADB page runs it.",
-  "FFmpeg（H.264 / RTSP / RTMP 解码）": "FFmpeg (H.264 / RTSP / RTMP decoding)",
-  "「屏幕共享」页的 RTSP / RTMP / H.264 流全靠它解码（拉流交给 ffmpeg 子进程，KDock 不链接它的库，规避 GPL/LGPL 传染）。": "The Screen share page decodes RTSP / RTMP / H.264 with it (pulling is done by an ffmpeg child process — KDock never links its libraries, so no GPL/LGPL entanglement).",
-  "Tftpd64（TFTP 服务端）": "Tftpd64 (TFTP server)",
-  "独立的 TFTP 服务器（Tftpd64，含客户端/服务端/SNTP）。KDock 的「文件管理」页自带 TFTP 客户端与内置服务端，这个装不装都能用；要更全的功能（DHCP、日志、多网卡绑定）就装它。": "Standalone TFTP server (Tftpd64, with client/server/SNTP). The Files page already has a TFTP client and a built-in server, so this is optional — install it for the extras (DHCP, logging, binding to a specific NIC).",
-  "OpenSSH 客户端（ssh / scp / sftp）": "OpenSSH client (ssh / scp / sftp)",
-  "Windows 自带的 OpenSSH 客户端。「传输」页选 SSH 方式、「中控编排」的 SSH 步骤、命令表里的远程命令都靠它；一条命令就能装（DISM 可选组件，不联网）。": "Windows' built-in OpenSSH client. The SSH mode on the Transfer page, SSH steps in Flow and remote commands in the command table all use it; one DISM command installs it (no download needed).",
-  "PuTTY plink（SSH 密码登录用）": "PuTTY plink (for SSH password login)",
-  "Windows 自带的 ssh.exe 在「密码」这一步只认控制台、不认管道，所以纯密码登录（大多数开发板/设备）要它 —— KDock 的 SSH 连接在填了密码时会优先用 plink。密钥登录用不着它。": "Windows' ssh.exe only reads passwords from a console, never from a pipe, so password-only logins (most boards and devices) need plink. KDock prefers it whenever a password is filled in; key-based logins don't need it.",
-  "OpenSSH 服务端（sshd，可选）": "OpenSSH server (sshd, optional)",
-  "把本机变成 SSH 服务器（别人/别的设备 scp、ssh 进来取日志、传固件）。装完自动配好密钥、设成开机自启并启动；不想要就在服务里停掉 sshd。": "Turns this PC into an SSH server (so other machines can ssh/scp in to grab logs or firmware). It generates host keys, sets the service to automatic and starts it; stop the sshd service if you don't want it.",
-  "SSH（远程 shell）": "SSH (remote shell)",
-  "主机": "Host", "用户名": "User", "密码": "Password", "缩放": "Scale", "原始": "Original",
-  "留空 = 用密钥 / 自己在这儿敲": "empty = key auth",
-  // 带 <code> 的整句会被拆成碎片：langWalk 查表前会 trim + 把内部空白压成一个空格，
-  // 所以这些键必须是"去首尾空白、内部空白压成一个空格"的样子，否则永远查不中（踩过）。
-  "密钥登录：密码留空 + 这里填": "Key auth: leave the password empty and put",
-  "-i <私钥路径>": "-i <private key>",
-  "；端口转发在右边照原样写（如": "here; port forwards go here verbatim (e.g.",
-  "填了密码 → 用 PuTTY 的": "With a password → PuTTY's",
-  "scrcpy 参数": "scrcpy args",
-  "（Windows 自带的": " is used (Windows'",
-  "只在控制台里读密码，管道喂不进去， 所以密码登录必须靠它；首次连接会把主机指纹记下来，之后就对不上了会拒绝）。密码留空 → 走": " only reads passwords from a console, never from a pipe, so password logins need it; the host key fingerprint is remembered on first connect and later mismatches are refused). Empty password →",
-  "+ 密钥。 连上之后，下面输入框里敲的就是远端 shell，输出直接显示在输出区；「命令表」的指令、「中控编排」里选 SSH 的步骤也用这条连接。": " with key auth. Once connected, the input box below is the remote shell and its output goes to the output pane; the command table and SSH steps in Flow share this link.",
-  "临时 SSH（本步指定主机/账号）": "Ad-hoc SSH (host/account per step)",
-  "登录取 Prompt 超时(ms)": "Login prompt timeout (ms)",
-  "FTPS（显式 TLS）": "FTPS (explicit TLS)", "FTPS（隐式 990）": "FTPS (implicit, 990)",
-  "默认 21 / 990 / 69": "default 21 / 990 / 69",
-  "不校验证书（自签名）": "Skip certificate check (self-signed)",
-  "FTP 的列表优先用": "FTP listings prefer",
-  "（带大小/时间），老服务器退回": " (with size/time), falling back to",
-  "；传输一律二进制（TYPE I）。": " on older servers; transfers are always binary (TYPE I).",
-  "TFTP 没有目录/列表这一说：直接填要取或送的文件路径（相对根目录即可），端口默认 69。": "TFTP has no directories or listings: just type the file path to get/send (relative to the root is fine); port defaults to 69.",
-  "新建目录": "New folder", "删除选中": "Delete selection",
-  "内置 TFTP 服务端": "Built-in TFTP server", "根目录": "Root folder",
-  "要给出去的文件放这儿": "files you want to serve go here",
-  "允许写入": "Allow writes", "启动": "Start", "未启动": "not running",
-  "示例：": "Example: ",
-  "tftp -i 本机IP GET kdock.bin": "tftp -i <this PC> GET kdock.bin",
-  "本机桌面（DXGI）": "This PC's desktop (DXGI)", "VNC（可控制键鼠）": "VNC (with keyboard/mouse control)",
-  "RTSP（FFmpeg）": "RTSP (FFmpeg)", "RTMP（FFmpeg）": "RTMP (FFmpeg)",
-  "H.264 文件 / 裸流（FFmpeg）": "H.264 file / raw stream (FFmpeg)",
-  "VNC 密码（没设就留空）": "VNC password (empty if none)",
-  "TCP（推荐，穿透好）": "TCP (recommended)", "UDP（低延迟）": "UDP (lower latency)",
-  "文件 / 流": "File / stream",
-  "D:\\x.h264 或 tcp://0.0.0.0:5000?listen=1": "D:\\x.h264 or tcp://0.0.0.0:5000?listen=1",
-  "原始（1:1）": "Original (1:1)", "50%（省带宽）": "50% (less bandwidth)", "25%（只看大概）": "25% (rough only)",
-  "适应窗口（默认）": "Fit window (default)", "解码尺寸": "Decode size",
-  "FFmpeg 负责解码（含 H.264），按上面这个尺寸等比缩放 + 黑边填充；没装 FFmpeg 就到「环境配置」一键安装。": "FFmpeg does the decoding (H.264 included), scaled to the size above with letterboxing; install FFmpeg from Environment setup if it's missing.",
-  "全屏：点上面的【⛶ 全屏】或按 F11；退出按 Esc 或 F11。VNC 全屏后鼠标键盘直接作用到被控端（「允许控制键鼠」打开时）。": "Fullscreen: the ⛶ button above or F11; Esc or F11 leaves it. In fullscreen VNC the mouse and keyboard go straight to the remote machine (when \"allow keyboard/mouse control\" is on).",
-  "⛶ 全屏": "⛶ Fullscreen", "⛶ 退出全屏": "⛶ Exit fullscreen",
-  "保存画面…": "Save frame…", "全屏中 · 按 F11 或 Esc 退出": "Fullscreen · press F11 or Esc to exit",
-  "允许控制键鼠": "Allow keyboard/mouse", "本机桌面": "Desktop",
-  "选一个 H.264 / 视频文件": "Choose an H.264 / video file",
-  "选要推到设备的文件": "Choose a file to push", "先点「选择本机文件」": "Pick a local file first",
-  "先填设备上的路径": "Fill in the device path first", "存到本机": "Save to this PC",
-  "把设备截图存到本机": "Save the device screenshot", "先选一个 APK": "Choose an APK first",
-  "先填包名": "Fill in the package name first", "还没有画面可存": "No frame to save yet",
-  "把当前画面另存为": "Save the current frame as", "已保存：": "Saved: ",
-  "已停止": "Stopped", "采集中…": "Capturing…", "连接中…": "Connecting…",
-  "选一台设备": "Pick a device", "投屏中（抓屏轮询）": "Mirroring (screencap polling)",
-  "投屏已停止": "Mirror stopped", "投屏失败: ": "Mirror failed: ",
-  "没找到 adb": "adb not found", "已找到 adb": "adb found",
-  "没找到 adb.exe —— 到「环境配置 → Android Platform Tools（adb）」点一键安装。": "adb.exe not found — install Android Platform Tools (adb) from Environment setup.",
-  "没找到 adb.exe：到「环境配置」一键安装，或者把 platform-tools 目录加到 PATH。": "adb.exe not found: install it from Environment setup, or add the platform-tools folder to PATH.",
-  "先点「连接」（FTP/FTPS 要登录；TFTP 只是记一下地址）": "Hit Connect first (FTP/FTPS log in; for TFTP it just remembers the address)",
-  "（TFTP 没有列表：直接填路径取/送）": "(TFTP has no listing: type a path to get/send)",
-  "「新建目录」只在 FTP / FTPS 下可用": "\"New folder\" only works over FTP / FTPS",
-  "「删除」只在 FTP / FTPS 下可用": "\"Delete\" only works over FTP / FTPS",
-  "先在列表里选一个": "Pick one in the list first", "删除": "Delete", "（目录）": " (folder)",
-  "先选一个 TFTP 根目录": "Pick a TFTP root folder first", "选 TFTP 根目录": "Choose the TFTP root folder",
-  "未连接": "Disconnected", "先选一个本机文件": "Choose a local file first",
-  "填一下设备上的目标路径": "Fill in the target path on the device",
-
-  // ── 上下文分层（技能 / 指导文件）+ 命中率 ──
-  "工具": "Tools",
-  "全局指导（每轮都在场）": "Global guidance (always in context)",
-  "保存指导": "Save guidance", "打开所在目录": "Open folder",
-  "以前的「常驻技能」已迁到这里": "The old \"always-on skills\" moved here",
-  "全局技能（用户级：使用 / 不使用）": "Global skills (user level: on / off)",
-  "工作区技能（项目级：存在即生效）": "Workspace skills (project level: present = active)",
-  "技能归档（skill-archive：工作区技能的备份）": "Skill archive (backups of workspace skills)",
-  "转为工作区专属": "Move to workspace", "还原到全局": "Restore to global",
-  "还原到工作区": "Restore to workspace", "删归档": "Delete archive",
-  "使用中": "in use", "不使用": "off",
-  "读取中…": "Loading…", "来自工作区": "from workspace", "来自全局": "from global",
-  "存在即生效（每轮进索引）": "present = active (indexed every turn)",
-  "这个工作区还没有专属技能（导入的技能默认落在全局，可用上面的「转为工作区专属」下放）":
-    "This workspace has no project skills yet (imports land in global skills; use \"Move to workspace\" to push one down)",
-  "（没有归档：把全局技能转为工作区专属、或删掉工作区技能时，会自动在这儿留一份备份）":
-    "(no archive entries: moving a global skill into a workspace, or deleting a workspace skill, leaves a backup here)",
-  "（还没有技能：点「导入…」选一个 SKILL.md，或「新建」）": "(no skills yet: use Import… to pick a SKILL.md, or New)",
-  "先在下面的「编辑技能」里点一个技能（或填名字），再转": "Click a skill in the editor below (or type a name) first",
-  "没有可选的工作区（先在左边栏建一个）": "No workspace to choose (create one in the left sidebar first)",
-  "转为工作区专属": "Move to workspace", "打开 .kdock_skill 目录": "Open .kdock_skill folder",
-  "删除技能": "Delete skill", "删除归档": "Delete archive", "已还原到全局技能": "Restored to global skills",
-  "已还原到工作区": "Restored to the workspace", "已转换：": "Moved: ",
-  "关掉就不再带上这条（对新会话生效）": "Turns this block off (applies to new sessions)",
-  "已打开 ": "Enabled ", "已关闭 ": "Disabled ",
-  "技能索引": "skill index", "指导文件": "guidance", "其中指导文件": "of which guidance",
-  "技能在这里只管开关：正文不进上下文，模型需要时自己读":
-    "Skills here are on/off only: the body never enters the context unless the model reads it",
-  "已把常驻技能迁移到「全局指导」：": "Migrated always-on skills into global guidance: ",
-  "agent 能用的工具": "Tools the agent can use",
-  "搜索工具名 / 说明": "Search tool name / description",
-  "（没有技能：点「导入…」选一个 SKILL.md，或「新建」）": "(no skills: use Import… or New)",
-  "命中率": "Cache hit", "缓存命中": "Cache hit",
-
-  // Dynamic strings that are assembled at runtime rather than present in index.html.
-  "填一下 SSH 主机": "Enter the SSH host",
-  "已刷新": "Refreshed",
-  "网络与代理设置已保存": "Network and proxy settings saved",
-  "正在查询…": "Querying…",
-  "已连上，要换连接先点「断开」": "Connected; click Disconnect before switching links",
-  "升级中": "Upgrading",
-  "失败: ": "Failed: ", "启动失败: ": "Start failed: ",
-  "目录名（建在当前路径下）": "Folder name (created under the current path)",
-  "垂直偏移（V）": "Vertical offset (V)",
-  "（adb 不可用）": "(adb unavailable)",
-  "先选一台设备": "Select a device first", "配对成功": "Paired successfully",
-  "选 APK": "Choose APK", "条指令？": "instruction(s)?",
-  "删除指令组": "Delete command group",
-  "要加 / 改 / 删就点「✎ 编辑指令表」：组和指令都在那个弹窗里管，组名可以随便起":
-    "Use “✎ Edit command list” to add, change or delete entries; both groups and commands are managed there, and group names can be arbitrary",
-  "改完立刻存进 agent/commands.json，下次开机还在（「设置 → 缓存」里能看到、也能删）":
-    "Changes are saved to agent/commands.json immediately and survive restarts (visible and removable under Settings → Cache)",
-  "弹窗里的「恢复默认」= 回到内置的标准 Linux 指令集":
-    "“Restore defaults” in the dialog returns to the built-in standard Linux command set",
-  "列表里显示的名字（留空就用内容前几个字）": "Display name (blank uses the first few characters of the content)",
-  "文本直接写；HEX 形如 41 54 0D 0A": "Enter text directly; HEX looks like 41 54 0D 0A",
-  "把安装包放进 <exe 同目录>\\drivers\\<组件id>\\ 之后再点这个":
-    "Put the installer under <exe folder>\\drivers\\<component id>\\, then click this",
-  "运行中…": "Running…",
-  "跟 IDE 一样把左右两份文本并排比对": "Compare the two texts side by side like an IDE",
-  "退出码": "Exit code", "复制失败": "Copy failed",
-  "打开全文": "Open full output", "打开路径": "Open path",
-  "文本预览（仅可打印字符）": "Text preview (printable characters only)",
-  "点击展开": "Click to expand",
-  "正在编辑：全局技能": "Editing: global skill",
-  "正在编辑：本项目技能（": "Editing: workspace skill (",
-  "先填个网址": "Enter a URL first", "打开中…": "Opening…", "没有网址": "No URL",
-  "共带宽 400 MHz · {n} 通道 → 每通道 ≤ {r}": "Total bandwidth 400 MHz · {n} channels → ≤ {r} per channel",
-  "当前窗口没有解码结果": "No decoded result in the current view",
-  "先载入一段数据": "Load some data first", "解码中…": "Decoding…",
-  "没有解出内容": "No decoded content", "发送中": "Sending",
-  "立方": "Cube", "阶乘只支持 0~170 的整数": "Factorial supports integers from 0 to 170 only",
-  "阶乘": "Factorial", "复制全部": "Copy all", "列": "Column", "密文": "Ciphertext",
-  "选要算 CRC / 哈希的文件": "Choose a file for CRC / hashing",
-
-  // ============ 静态标题 / 占位符翻译回归 ============
-  "人格 / 口吻 / 通用规矩写这儿（等价于 Codex 的全局 AGENTS.md）。\n例：\n# 身份\n- 说话简短，先给结论。\n- 做事前先看现状，改设备状态前先说明。":
-    "Personality, tone and shared rules (equivalent to Codex's global AGENTS.md).\nExample:\n# Identity\n- Be concise and lead with the conclusion.\n- Inspect the current state first; explain before changing device state.",
-  "---\nname: xxx\ndescription: 什么时候用它\n---\n\n正文":
-    "---\nname: xxx\ndescription: when to use it\n---\n\nBody",
-  "npx / node / 你的 mcp server.exe（远程模式留空）": "npx / node / your mcp server.exe (leave blank for remote mode)",
-  "EXA_API_KEY=... 或 Authorization=Bearer ...（每行一个）": "EXA_API_KEY=... or Authorization=Bearer ... (one per line)",
-  "和 KDock 一起工作": "Work with KDock",
-  "固件运行结构：main 调用树 / 中断 / 库函数折叠 / 自动布局":
-    "Firmware runtime graph: main call tree, interrupts, library folding and automatic layout",
-  "展开低频开发、测量和效率工具": "Expand low-frequency development, measurement and productivity tools",
-  "共享内部浏览器": "Shared internal browser",
-  "安卓设备：adb 设备 / shell / 推拉文件 / 装 APK / 投屏与反向控制（scrcpy 也在这页）":
-    "Android devices: adb devices, shell, file transfer, APK install, screen mirroring and remote control (scrcpy is here too)",
-  "内嵌调试：GDB（MI）+ GDB Server（openocd / J-Link）":
-    "Embedded debugging: GDB (MI) + GDB Server (openocd / J-Link)",
-  "屏幕共享：本机桌面 / VNC（可控制键鼠）/ RTSP / RTMP / H.264（FFmpeg 解码），支持全屏与快捷键":
-    "Screen sharing: local desktop, VNC (keyboard/mouse control), RTSP, RTMP and H.264 (FFmpeg decoding), with fullscreen and shortcuts",
-  "发送输入框内容": "Send input box contents",
-  "打开分析器所在目录": "Open analyzer folder",
-  "本会话的思考强度": "Reasoning effort for this session",
-  "后退": "Back",
-  "存为共享浏览器首页": "Save as shared browser home",
-  "按函数名或地址查找": "Find by function name or address",
-  "按调用深度自动分层，重新排版": "Lay out automatically by call depth",
-  "展开所有折叠分支": "Expand all collapsed branches",
-  "折叠选中分支；未选中时折叠所有有下游的分支":
-    "Collapse the selected branches; when nothing is selected, collapse every branch with outgoing calls",
-  "全固件包含所有被识别函数；main 运行链只显示入口可达与中断可达函数；函数调用链路只显示以选中函数为根的上下游链路":
-    "Full firmware includes every recognized function; main runtime shows only functions reachable from the entry or interrupts; call chains show only upstream/downstream functions rooted at the selection",
-  "链路方向：向下看它调用了谁，向上看谁调用了它":
-    "Chain direction: downstream shows what it calls; upstream shows its callers",
-  "从根函数向外展开的层数": "Number of levels to expand from the root function",
-  "回到全固件图；直接使用本地缓存，不重新分析":
-    "Return to the full-firmware graph; reuse the local cache without re-analysis",
-  "递归展开 main 可达调用": "Recursively expand calls reachable from main",
-  "先显示 main 入口和组件入口，点击节点逐步展开":
-    "Start with main and component entries, then expand nodes incrementally",
-  "勾选后收起库函数下游分支；取消勾选立即展开":
-    "When checked, collapse downstream library branches; uncheck to expand them immediately",
-  "DSLogic 的采样率是所有已启用通道共享的": "The DSLogic sample rate is shared by all enabled channels",
-  "在浏览器页查看共享页面": "View the shared page in Browser",
-  "查看当前页 HTML 源码": "View the current page HTML source",
-  "可留空；例：-ex \"target extended-remote :3333\"": "Optional; e.g. -ex \"target extended-remote :3333\"",
-  "0x08000101（可留空）": "0x08000101 (optional)",
-  "自动发现，可覆盖": "Auto-detected; can override",
-  "大图建议只突出选中节点的上下游链路": "For large graphs, highlight only the selected node's upstream/downstream chain",
-  "pyocd.exe 路径（CMSIS-DAP / WCH-Link / ST-Link）": "pyocd.exe path (CMSIS-DAP / WCH-Link / ST-Link)",
-  "选 pyocd.exe": "Choose pyocd.exe",
-  "esptool.exe 路径（ESP ROM 烧录）": "esptool.exe path (ESP ROM flashing)",
-  "选 esptool.exe": "Choose esptool.exe",
-  "wlink.exe 路径（RISC-V）": "wlink.exe path (RISC-V)",
-  "选 wlink.exe": "Choose wlink.exe",
-  "AURIXFlasher.exe 路径": "AURIXFlasher.exe path",
-  "选 AURIXFlasher.exe": "Choose AURIXFlasher.exe",
-  "可选，追加到工具命令末尾": "Optional; appended to the end of the tool command",
-  "多探针时填 pyOCD 的唯一 ID（可空）": "For multiple probes, enter the unique pyOCD ID (optional)",
-  "adb pair（只用一次；已配对设备不要重复配对）":
-    "adb pair (one-off; do not pair an already paired device again)",
-  "DSView 自带解码器": "Decoder bundled with DSView",
-};
+// English copy lives in a separate chunk so app logic and translations can be
+// cached and reviewed independently.
 const appI18n = createI18n(EN, LANG);
 const en = (t, values) => translate(appI18n, LANG, t, values);
 // 分文件写的小模块（批量文本/计算器）也要能翻译 + 切语言时重画

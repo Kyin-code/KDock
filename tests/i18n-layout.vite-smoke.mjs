@@ -1,18 +1,13 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { EN } from "../src/locales/en.js";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const main = await readFile(resolve(root, "src/main.js"), "utf8");
-const start = main.indexOf("const EN = {");
-const end = main.indexOf("\nconst appI18n", start);
-assert.ok(start >= 0 && end > start, "EN dictionary block not found");
-const objectSource = main.slice(main.indexOf("{", start), end).trim().replace(/;\s*$/, "");
-const dictionary = new Function(`return (${objectSource});`)();
+const dictionary = EN;
 
 const server = await createServer({
   root,
