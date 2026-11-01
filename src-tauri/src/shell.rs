@@ -9,26 +9,63 @@
 //!      所以这里用 `raw_arg` 把命令**原样**交给 cmd（cmd 自己解析）。
 //!   2. **编码**：cmd/PowerShell 在中文系统上按 OEM 代码页（GBK/936）输出，
 //!      直接 `from_utf8_lossy` 会得到一屏乱码（`10.opengl-2D������ת�ƶ�.gif`）。
-//!      这里先按 UTF-8 严格解，解不动就用 `MultiByteToWideChar(CP_OEMCP)` 兜底。
+//!      这里先按 UTF-8 严格解，再显式识别 GBK/CP936，最后用本机 OEM/ANSI
+//!      代码页兜底，因此英文和 CI Windows 也能正确解中文输出。
 
 use std::io::Read;
 use std::time::{Duration, Instant};
 
-/// 把一段字节解成文本：UTF-8 优先，解不动按当前机器的 OEM 代码页（中文系统就是 GBK）解。
+/// 把一段字节解成文本：UTF-8 优先；非 UTF-8 先识别明确的 GBK 中文，
+/// 否则按当前机器的 OEM/ANSI 代码页解。
 pub fn decode(bytes: &[u8]) -> String {
     if let Ok(s) = std::str::from_utf8(bytes) {
         return s.to_string();
     }
     #[cfg(windows)]
     {
-        if let Some(s) = decode_code_page(bytes, 1 /* CP_OEMCP */) {
+        let oem = decode_code_page(bytes, 1 /* CP_OEMCP */);
+        let ansi = decode_code_page(bytes, 0 /* CP_ACP */);
+        let gbk = decode_code_page(bytes, 936 /* GBK / CP936 */);
+        // CI 和英文 Windows 的 OEM 代码页是 437，会把 GBK 字节解成
+        // `╓╨╬─`。本机代码页解不出任何非 ASCII 字母、而 CP936 能解出
+        // CJK 时才采用 CP936，避免把 CP437 重音字符、日文或韩文误判成中文。
+        if let Some(gbk_text) = gbk.as_ref() {
+            if should_prefer_gbk(gbk_text, oem.as_deref(), ansi.as_deref()) {
+                return gbk_text.clone();
+            }
+        }
+        if let Some(s) = oem {
             return s;
         }
-        if let Some(s) = decode_code_page(bytes, 0 /* CP_ACP */) {
+        if let Some(s) = ansi {
             return s;
         }
     }
     String::from_utf8_lossy(bytes).to_string()
+}
+
+#[cfg(windows)]
+fn cjk_count(text: &str) -> usize {
+    text.chars()
+        .filter(|c| matches!(*c as u32, 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF))
+        .count()
+}
+
+#[cfg(windows)]
+fn should_prefer_gbk(gbk: &str, oem: Option<&str>, ansi: Option<&str>) -> bool {
+    let gbk_cjk = cjk_count(gbk);
+    let local_letters = oem
+        .map(non_ascii_alpha_count)
+        .unwrap_or(0)
+        .max(ansi.map(non_ascii_alpha_count).unwrap_or(0));
+    gbk_cjk >= 1 && local_letters == 0 && !gbk.contains('\u{FFFD}')
+}
+
+#[cfg(windows)]
+fn non_ascii_alpha_count(text: &str) -> usize {
+    text.chars()
+        .filter(|c| !c.is_ascii() && c.is_alphabetic())
+        .count()
 }
 
 #[cfg(windows)]
@@ -187,9 +224,17 @@ mod tests {
     #[test]
     fn utf8_passes_through_and_gbk_is_decoded() {
         assert_eq!(decode("中文 abc".as_bytes()), "中文 abc");
-        // GBK 的"中文" = D6 D0 CE C4：不是合法 UTF-8，应该按 OEM 代码页解回中文
-        let gbk = [0xD6u8, 0xD0, 0xCE, 0xC4];
-        assert_eq!(decode(&gbk), "中文");
+        #[cfg(windows)]
+        {
+            // GBK 的"中文" = D6 D0 CE C4。结果不能取决于机器的 OEM 代码页；
+            // 英文 CI Runner 的 CP437 会把它解成 `╓╨╬─`。
+            let gbk = [0xD6u8, 0xD0, 0xCE, 0xC4];
+            assert_eq!(decode(&gbk), "中文");
+            assert!(should_prefer_gbk("中文", Some("╓╨╬─"), None));
+            assert!(should_prefer_gbk("一", Some("╓"), None));
+            assert!(!should_prefer_gbk("中文", Some("你好"), None));
+            assert!(!should_prefer_gbk("中文", Some("café"), None));
+        }
     }
 
     #[cfg(windows)]

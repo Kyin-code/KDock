@@ -1508,9 +1508,12 @@ mod tests {
     fn chinese_text_is_text_not_binary() {
         let s = "# 服务器端 agent 需要完成的事项\n中文说明：这是一份纯文本，含标点。\n";
         assert_eq!(text_and_hex(s.as_bytes()), s, "UTF-8 中文文本应原样返回");
-        // GBK 的中文（不是合法 UTF-8）也按文本处理
-        let gbk = [0xD6u8, 0xD0, 0xCE, 0xC4, b'\n'];
-        assert_eq!(text_and_hex(&gbk), "中文\n", "GBK 文本应按本机代码页解出来");
+        #[cfg(windows)]
+        {
+            // GBK 的中文（不是合法 UTF-8）也按文本处理；解码结果不能依赖机器代码页。
+            let gbk = [0xD6u8, 0xD0, 0xCE, 0xC4, b'\n'];
+            assert_eq!(text_and_hex(&gbk), "中文\n", "GBK 文本应显式按 CP936 解出来");
+        }
         // 真二进制还是给 HEX
         let bin = [0x00u8, 0x01, 0x02, 0x00, 0x03, 0x00, 0xff, 0xfe];
         assert!(
