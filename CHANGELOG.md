@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.4 -->
+## v0.3.4
+
+### 新增
+
+- feat(agent): add sandboxed execution and orchestration upgrades
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.3 -->
 ## v0.3.3
 
