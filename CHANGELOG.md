@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.8 -->
+## v0.3.8
+
+### 修复
+
+- fix(build): use standalone pip zipapp
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.7 -->
 ## v0.3.7
 
