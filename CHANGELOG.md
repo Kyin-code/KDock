@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.7 -->
+## v0.3.7
+
+### 修复
+
+- docs(help): explain in-app update flow
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.6 -->
 ## v0.3.6
 
