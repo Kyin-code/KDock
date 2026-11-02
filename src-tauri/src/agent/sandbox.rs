@@ -187,10 +187,11 @@ mod windows {
         Ok(sid)
     }
 
-    fn grant_acl(path: &Path, sid: &str, rights: &str) -> Result<(), String> {
+    fn grant_acl(path: &Path, sid: &str, rights: &str, tree: bool) -> Result<(), String> {
         let cache = ACL_CACHE.get_or_init(|| Mutex::new(HashSet::new()));
         let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let cache_key = PathBuf::from(format!("{}|{}", key.display(), rights));
+        let cache_key =
+            PathBuf::from(format!("{}|{}|{}", key.display(), rights, tree));
         if cache.lock().map(|g| g.contains(&cache_key)).unwrap_or(false) {
             return Ok(());
         }
@@ -198,10 +199,11 @@ mod windows {
         let mut cmd = Command::new("icacls");
         cmd.arg(path)
             .arg("/grant")
-            .arg(grant)
-            .arg("/T")
-            .arg("/C")
-            .arg("/Q")
+            .arg(grant);
+        if tree {
+            cmd.arg("/T").arg("/C").arg("/Q");
+        }
+        cmd
             .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -295,14 +297,14 @@ mod windows {
     ) -> Result<(i32, String, String), String> {
         let sid = appcontainer_sid()?;
         let sid_text = sid_string(sid)?;
-        grant_acl(workspace, &sid_text, "(OI)(CI)M")?;
+        grant_acl(workspace, &sid_text, "(OI)(CI)M", true)?;
         let temp = workspace.join(".kdock-tmp");
         let _ = std::fs::create_dir_all(&temp);
-        grant_acl(&temp, &sid_text, "(OI)(CI)M")?;
+        grant_acl(&temp, &sid_text, "(OI)(CI)M", true)?;
         if !extra_path.trim().is_empty() {
             for path in std::env::split_paths(extra_path) {
                 if path.is_dir() {
-                    let _ = grant_acl(&path, &sid_text, "(OI)(CI)RX");
+                    let _ = grant_acl(&path, &sid_text, "(OI)(CI)RX", true);
                 }
             }
         }
@@ -580,8 +582,13 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn appcontainer_blocks_writes_outside_workspace() {
-        let workspace =
-            std::env::temp_dir().join(format!("kdock-sandbox-test-{}", std::process::id()));
+        let public_root = std::env::var_os("APPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let workspace = public_root
+            .join("com.kyin.kdock")
+            .join("agent")
+            .join(format!("sandbox-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&workspace);
         std::fs::create_dir_all(&workspace).unwrap();
         let inside = workspace.join("inside.txt");
