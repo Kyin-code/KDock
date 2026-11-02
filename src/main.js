@@ -8467,7 +8467,7 @@ async function mdAddModel() {
     reasoning_efforts: agRecommendedEfforts(m.id, m.reasoning),
     reasoning_effort: m.reasoning ? "medium" : "",
     context_window: m.ctx,
-    reserve_output: Math.max(1024, Math.min(m.out || 8192, 65536)),
+    max_output_tokens: Math.max(1024, Math.min(m.out || 32768, 65536)),
     max_messages: 40,
     supports_tools: true,
     supports_stream: true,
@@ -9517,7 +9517,7 @@ function agRenderInfo() {
   const providers = (agCfg && agCfg.providers) || [];
   const prov = providers.find((p) => p.id === ((agMeta && agMeta.provider_id) || "")) || providers[0] || null;
   const ctxWin = (prov && prov.context_window) || 0;
-  const budget = Math.max(0, ctxWin - ((prov && prov.reserve_output) || 0));
+  const budget = Math.max(4096, ctxWin - ((prov && (prov.max_output_tokens ?? prov.reserve_output)) || 32768));
   const used = (agMeta && agMeta.last_tokens) || 0;
   const pct = budget > 0 ? Math.min(100, Math.round((used / budget) * 100)) : 0;
   const inTok = (agMeta && agMeta.total_prompt) || 0;
@@ -10435,7 +10435,7 @@ async function agGuardContextFit() {
   if (agRunning) return;                       // 正在跑就交给后端这一轮的边界处理
   const np = (agCfg.providers || []).find((x) => x.id === agCfg.activeId);
   if (!np) return;
-  const budget = Math.max(0, (Number(np.context_window) || 0) - (Number(np.reserve_output) || 0));
+  const budget = Math.max(4096, (Number(np.context_window) || 0) - (Number(np.max_output_tokens ?? np.reserve_output) || 32768));
   if (!budget) return;
   let b;
   try { b = await invoke("agent_context_breakdown", { sessionId: sid }); } catch (_) { return; }
@@ -10483,7 +10483,15 @@ function agFillPricingForm(pricing) {
   agEl("ag-p-offpeak-out").value = p.offpeak_out;
 }
 
+function agNormalizedLimits() {
+  const context = Math.max(8192, Number(agEl("ag-p-ctx").value) || 128000);
+  const rawOut = Number(agEl("ag-p-res").value) || 32768;
+  const maxOutput = Math.max(1024, Math.min(65536, rawOut, context - 4096));
+  return { context, maxOutput };
+}
+
 function agFormProvider() {
+  const limits = agNormalizedLimits();
   return {
     id: (agEl("ag-p-id").value || "probe").trim(),
     name: (agEl("ag-p-name").value || "probe").trim(),
@@ -10494,8 +10502,8 @@ function agFormProvider() {
     temperature: Number(agEl("ag-p-temp").value) || 0.2,
     reasoning_efforts: agSelectedReasoningEfforts(),
     reasoning_effort: agEl("ag-p-reasoning") ? agEl("ag-p-reasoning").value : "",
-    context_window: Number(agEl("ag-p-ctx").value) || 128000,
-    reserve_output: Number(agEl("ag-p-res").value) || 8192,
+    context_window: limits.context,
+    max_output_tokens: limits.maxOutput,
     max_messages: 40,
     supports_tools: agEl("ag-p-tools").checked,
     supports_stream: agEl("ag-p-stream").checked,
@@ -10755,7 +10763,7 @@ function agFillProvider(id) {
   agEl("ag-p-key").value = "";
   agEl("ag-p-key").placeholder = en((agCfg.secrets || []).includes(p.api_key_ref) ? "已在密钥库里（留空=不改）" : "粘贴 API Key");
   agEl("ag-p-ctx").value = p.context_window;
-  agEl("ag-p-res").value = p.reserve_output;
+  agEl("ag-p-res").value = p.max_output_tokens ?? p.reserve_output ?? 32768;
   agEl("ag-p-temp").value = p.temperature;
   agSetReasoningModes(p.reasoning_efforts || [], p.reasoning_effort || "");
   agEl("ag-p-tools").checked = !!p.supports_tools;
@@ -10773,6 +10781,7 @@ async function agSaveProvider() {
   }
   if (!agEl("ag-p-endpoint").value.trim()) return toast("地址（endpoint）不能空");
   if (!agEl("ag-p-model").value.trim()) return toast("模型名不能空");
+  const limits = agNormalizedLimits();
   const provider = {
     id,
     name: agEl("ag-p-name").value.trim() || id,
@@ -10783,8 +10792,8 @@ async function agSaveProvider() {
     temperature: Number(agEl("ag-p-temp").value) || 0.2,
     reasoning_efforts: agSelectedReasoningEfforts(),
     reasoning_effort: agEl("ag-p-reasoning") ? agEl("ag-p-reasoning").value : "",
-    context_window: Number(agEl("ag-p-ctx").value) || 128000,
-    reserve_output: Number(agEl("ag-p-res").value) || 8192,
+    context_window: limits.context,
+    max_output_tokens: limits.maxOutput,
     max_messages: 40,
     supports_tools: agEl("ag-p-tools").checked,
     supports_stream: agEl("ag-p-stream").checked,

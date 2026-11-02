@@ -542,8 +542,8 @@ fn openai_body(provider: &Provider, messages: &[Value], tools: &[Value]) -> Valu
         "messages": messages,
         "temperature": provider.temperature,
     });
-    if provider.reserve_output > 0 {
-        body["max_tokens"] = json!(provider.reserve_output);
+    if provider.max_output_tokens > 0 {
+        body["max_tokens"] = json!(provider.max_output_tokens);
     }
     if !tools.is_empty() && provider.supports_tools {
         body["tools"] = json!(tools);
@@ -690,7 +690,12 @@ mod tests {
         }))
         .unwrap();
         let msgs = vec![json!({"role": "user", "content": "hi"})];
-        assert!(openai_body(&provider, &msgs, &[]).get("reasoning_effort").is_none());
+        let body = openai_body(&provider, &msgs, &[]);
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(
+            body["max_tokens"],
+            crate::agent::store::MAX_OUTPUT_TOKENS.min(32_768)
+        );
 
         provider.reasoning_effort = "high".into();
         let body = openai_body(&provider, &msgs, &[]);

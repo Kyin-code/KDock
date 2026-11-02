@@ -554,6 +554,9 @@ export const EN = {
   "不知道填多少就看服务商文档；填小了会频繁触发\"压缩上下文\"，填大了没坏处（超了服务端会报错）。":
     "Check the vendor docs if unsure. Too small triggers compaction often; too large is harmless (the server will error out if exceeded).",
   "最多回复": "Max reply", "单次回复最多多少 token": "Max tokens per reply",
+  "最大输出 tokens": "Max output tokens",
+  "单次回复最多多少 token；思考内容也计入这个额度": "Maximum tokens per reply; thinking tokens count toward this limit",
+  "代码 Agent 建议 32K~64K": "32K–64K recommended for coding agents",
   "留 2048~8192 就行": "2048–8192 is fine", "高级": "Advanced",
   "温度 = 回答的\"随机性\"：0 最稳（每次几乎一样，调试/工具调用建议 0~0.3）；\n                越高越发散（0.7~1.0 适合写东西）。这个助手要调工具、要准，建议 0.2。":
     "Temperature = randomness: 0 is most stable (debugging/tool calls prefer 0–0.3); higher is more creative (0.7–1.0 suits prose). For an assistant that calls tools, 0.2 is a good default.",

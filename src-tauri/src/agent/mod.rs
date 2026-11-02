@@ -572,7 +572,7 @@ fn probe_reasoning_core(
     for effort in requested {
         let mut p = provider.clone();
         p.reasoning_effort = effort.clone();
-        p.reserve_output = p.reserve_output.clamp(1_024, 4_096);
+        p.max_output_tokens = p.max_output_tokens.clamp(1_024, 4_096);
         let messages = vec![json!({ "role": "user", "content": prompt })];
         let stop = AtomicBool::new(false);
         match llm::chat(&p, key, &messages, &[], &stop, &mut llm::NullSink) {
@@ -1837,9 +1837,7 @@ fn compact_if_needed(
     let events = store::session_read(app, session_id);
     let ws = workspace_of(app, session_id);
     let messages = events_to_messages(app, session_id, &events, &ws);
-    let budget = provider
-        .context_window
-        .saturating_sub(provider.reserve_output) as usize;
+    let budget = provider.input_budget() as usize;
     if budget == 0 {
         return None;
     }
@@ -1950,9 +1948,9 @@ fn compact_if_needed(
     // 摘要这条也要留足输出额度：推理模型会把小额度全花在思考上、正文为空
     let mut summary_text = String::new();
     let mut last_err = String::new();
-    for budget in [provider.reserve_output.max(4000), 8000u32] {
+    for budget in [provider.max_output_tokens.max(4000), 8000u32] {
         let mut big = provider.clone();
-        big.reserve_output = budget;
+        big.max_output_tokens = budget;
         let stop = AtomicBool::new(false);
         match llm::chat(&big, key, &msgs, &[], &stop, &mut llm::NullSink) {
             Ok(o) if !o.content.trim().is_empty() => {
@@ -2137,7 +2135,7 @@ fn maybe_auto_title(app: &AppHandle, session_id: &str, provider: &Provider, key:
     let mut agent_name = String::new();
     for budget in [512u32, 2048u32] {
         let mut tiny = provider.clone();
-        tiny.reserve_output = budget;
+        tiny.max_output_tokens = budget;
         let stop = AtomicBool::new(false);
         match llm::chat(&tiny, key, &msgs, &[], &stop, &mut llm::NullSink) {
             Ok(o) => {
@@ -2370,9 +2368,7 @@ fn run_turn(
             // 运行中用户补进来的话：在这个轮次边界并进去，下一轮模型就能看到
             drain_pending(&app, &handle.pending, &session_id)?;
             let events = store::session_read(&app, &session_id);
-            let budget_now = provider
-                .context_window
-                .saturating_sub(provider.reserve_output) as usize;
+            let budget_now = provider.input_budget() as usize;
             // 摘要之外的再裁一道（只影响这次请求）。口径要和 provider 对齐：
             // 工具定义也在 prompt 里，估算时得一起算，否则阈值永远踩不准
             let tools_est =
@@ -3148,7 +3144,7 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
     let cfg = store::load_providers(&app);
     let prov = store::find_provider(&cfg, meta.as_ref().map(|m| m.provider_id.as_str()));
     let ctx = prov.as_ref().map(|p| p.context_window).unwrap_or(0);
-    let reserve = prov.as_ref().map(|p| p.reserve_output).unwrap_or(0);
+    let reserve = prov.as_ref().map(|p| p.max_output_tokens).unwrap_or(0);
     let budget = ctx.saturating_sub(reserve) as usize;
     let estimated = sys + tools_tok + summary + user + assistant + tool + mcp;
     let reported = meta.as_ref().map(|m| m.last_tokens).unwrap_or(0) as usize;

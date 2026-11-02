@@ -206,12 +206,22 @@ mod tests {
         .unwrap();
         let body = request_body(&provider, &[json!({"role": "user", "content": "hi"})], &[], false);
         assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["max_tokens"], 8_192);
         assert_eq!(body["thinking"]["budget_tokens"], 7168);
         assert_eq!(body["temperature"], 1.0);
 
         provider.reasoning_effort = "none".into();
         let body = request_body(&provider, &[json!({"role": "user", "content": "hi"})], &[], false);
         assert!(body.get("thinking").is_none());
+
+        provider.reasoning_effort = "high".into();
+        provider.max_output_tokens = crate::agent::store::MIN_OUTPUT_TOKENS;
+        let body = request_body(&provider, &[json!({"role": "user", "content": "hi"})], &[], false);
+        assert_eq!(body["max_tokens"], crate::agent::store::MIN_OUTPUT_TOKENS);
+        assert!(
+            body.get("thinking").is_none(),
+            "thinking budget must remain below max_tokens"
+        );
     }
 }
 
@@ -222,7 +232,11 @@ pub fn request_body(
     stream: bool,
 ) -> Value {
     let (system, msgs) = to_anthropic_messages(messages);
-    let max_tokens = if provider.reserve_output > 0 { provider.reserve_output } else { 4096 };
+    let max_tokens = if provider.max_output_tokens > 0 {
+        provider.max_output_tokens
+    } else {
+        4096
+    };
     let mut body = json!({
         "model": provider.model,
         "max_tokens": max_tokens,

@@ -50,10 +50,16 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 
 fn default_temperature() -> f32 { 0.2 }
 fn default_context_window() -> u32 { 128_000 }
-fn default_reserve_output() -> u32 { 8_192 }
+fn default_max_output_tokens() -> u32 { 32_768 }
 fn default_max_messages() -> u32 { 40 }
 fn default_true() -> bool { true }
 fn default_kind() -> String { "openai".into() }
+
+/// 输出额度既决定单次回复上限，也要从上下文窗口里扣掉。
+/// 过低会让 reasoning 吃掉全部额度；过高会把输入预算挤成 0。
+pub const MIN_OUTPUT_TOKENS: u32 = 1_024;
+pub const MAX_OUTPUT_TOKENS: u32 = 65_536;
+pub const MIN_INPUT_BUDGET: u32 = 4_096;
 
 pub const REASONING_EFFORTS: &[&str] = &[
     "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
@@ -115,8 +121,8 @@ pub struct Provider {
     pub reasoning_effort: String,
     #[serde(default = "default_context_window")]
     pub context_window: u32,
-    #[serde(default = "default_reserve_output")]
-    pub reserve_output: u32,
+    #[serde(default = "default_max_output_tokens", alias = "reserve_output")]
+    pub max_output_tokens: u32,
     #[serde(default = "default_max_messages")]
     pub max_messages: u32,
     #[serde(default = "default_true")]
@@ -129,6 +135,22 @@ pub struct Provider {
 }
 
 impl Provider {
+    pub fn normalize_limits(&mut self) {
+        self.context_window = self.context_window.clamp(8_192, 10_000_000);
+        let max_allowed = self
+            .context_window
+            .saturating_sub(MIN_INPUT_BUDGET)
+            .min(MAX_OUTPUT_TOKENS)
+            .max(MIN_OUTPUT_TOKENS);
+        self.max_output_tokens = self.max_output_tokens.clamp(MIN_OUTPUT_TOKENS, max_allowed);
+    }
+
+    pub fn input_budget(&self) -> u32 {
+        self.context_window
+            .saturating_sub(self.max_output_tokens)
+            .max(MIN_INPUT_BUDGET)
+    }
+
     pub fn chat_url(&self) -> String {
         let base = self.endpoint.trim().trim_end_matches('/');
         if base.ends_with("/chat/completions") {
@@ -172,6 +194,11 @@ impl Provider {
         if effort == "none" {
             return None;
         }
+        // Anthropic requires budget_tokens < max_tokens. With the configured
+        // minimum output there is no room for both thinking and a visible reply.
+        if self.max_output_tokens <= MIN_OUTPUT_TOKENS {
+            return None;
+        }
         let requested = match effort {
             "minimal" => 1_024,
             "low" => 2_048,
@@ -182,8 +209,11 @@ impl Provider {
             "ultra" => 32_768,
             _ => 4_096,
         };
-        let max_tokens = self.reserve_output.max(2_048);
-        Some(requested.min(max_tokens.saturating_sub(1_024)).max(1_024))
+        Some(
+            requested
+                .min(self.max_output_tokens.saturating_sub(1_024))
+                .max(1_024),
+        )
     }
 
     /// 会话选择的档位优先；不在该 profile 声明的列表里时回退到 profile 默认。
@@ -221,6 +251,7 @@ pub fn load_providers(app: &AppHandle) -> ProviderConfig {
     let mut cfg: ProviderConfig = read_json(&path).unwrap_or_default();
     for provider in &mut cfg.providers {
         provider.normalize_efforts();
+        provider.normalize_limits();
     }
     cfg
 }
@@ -229,6 +260,7 @@ pub fn save_providers(app: &AppHandle, cfg: &ProviderConfig) -> Result<(), Strin
     let mut normalized = cfg.clone();
     for provider in &mut normalized.providers {
         provider.normalize_efforts();
+        provider.normalize_limits();
     }
     write_json(&providers_path(app)?, &normalized)
 }
@@ -1798,6 +1830,40 @@ mod tests {
         let ids: std::collections::HashSet<String> =
             (0..1000).map(|_| make_session_id(1_800_000_000_000)).collect();
         assert_eq!(ids.len(), 1000);
+    }
+
+    #[test]
+    fn legacy_reserve_output_migrates_to_max_output_tokens() {
+        let mut p: Provider = serde_json::from_value(serde_json::json!({
+            "id": "legacy",
+            "name": "legacy",
+            "endpoint": "https://example.com/v1",
+            "model": "m",
+            "context_window": 1_000_000,
+            "reserve_output": 1_000_000
+        }))
+        .unwrap();
+        assert_eq!(p.max_output_tokens, 1_000_000);
+        p.normalize_limits();
+        assert_eq!(p.max_output_tokens, MAX_OUTPUT_TOKENS);
+        assert_eq!(p.input_budget(), 1_000_000 - MAX_OUTPUT_TOKENS);
+    }
+
+    #[test]
+    fn output_limit_never_eats_the_whole_context_window() {
+        let mut p: Provider = serde_json::from_value(serde_json::json!({
+            "id": "small",
+            "name": "small",
+            "endpoint": "https://example.com/v1",
+            "model": "m",
+            "context_window": 8192,
+            "max_output_tokens": 65536
+        }))
+        .unwrap();
+        p.normalize_limits();
+        assert_eq!(p.context_window, 8192);
+        assert_eq!(p.max_output_tokens, 4096);
+        assert_eq!(p.input_budget(), 4096);
     }
 
     #[test]

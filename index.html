@@ -357,9 +357,10 @@
                   </div>
                 </div>
                 <p class="hint">不知道填多少就看服务商文档；填小了会频繁触发"压缩上下文"，填大了没坏处（超了服务端会报错）。</p>
-                <div class="field"><label for="ag-p-res">最多回复</label>
-                  <input id="ag-p-res" class="num" type="number" value="8192" title="单次回复最多多少 token" />
-                  <span class="hint">留 2048~8192 就行</span>
+                <div class="field"><label for="ag-p-res">最大输出 tokens</label>
+                  <input id="ag-p-res" class="num" type="number" value="32768" min="1024" max="65536" step="1024"
+                         title="单次回复最多多少 token；思考内容也计入这个额度" />
+                  <span class="hint">代码 Agent 建议 32K~64K</span>
                 </div>
                 <div class="field"><label>可用思考强度</label>
                   <div id="ag-p-reasoning-modes" class="effortchips"></div>
