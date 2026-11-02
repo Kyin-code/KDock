@@ -2420,14 +2420,6 @@ fn run_turn(
                     },
                 )?;
             }
-            emit(
-                &app,
-                "agent://usage",
-                json!({ "session": session_id,
-                "prompt": out.usage.prompt_tokens, "completion": out.usage.completion_tokens,
-                "total": out.usage.total_tokens,
-                "cacheHit": out.usage.cache_hit_tokens, "cacheMiss": out.usage.cache_miss_tokens }),
-            );
             if out.usage.prompt_tokens > 0 || out.usage.completion_tokens > 0 {
                 if let Some(mut meta) = store::session_meta_of(&app, &session_id) {
                     let usage_ts = now_ms();
@@ -2491,6 +2483,17 @@ fn run_turn(
                     let _ = store::session_update_meta(&app, &meta);
                 }
             }
+            // Persist last_tokens/usage first, then notify the UI. The previous
+            // order made the progress UI render the old metadata and jump only
+            // after the turn finished.
+            emit(
+                &app,
+                "agent://usage",
+                json!({ "session": session_id,
+                "prompt": out.usage.prompt_tokens, "completion": out.usage.completion_tokens,
+                "total": out.usage.total_tokens,
+                "cacheHit": out.usage.cache_hit_tokens, "cacheMiss": out.usage.cache_miss_tokens }),
+            );
             // 出字速度：只在"真的在出字"的那段算（gen_ms 是首字→末字，工具调用/空闲不计）。
             // token 数优先用厂商报的 completion_tokens，没有就按字数估（中英混排也能看）。
             if out.gen_ms > 0 {

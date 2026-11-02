@@ -27,6 +27,21 @@ try {
   await page.goto(`http://127.0.0.1:${port}/tests/all-pages.vite.html`);
   await page.waitForFunction(() => document.documentElement.dataset.allPagesReady === "1");
 
+  const progressAnimation = await page.evaluate(() => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      '<div class="aginfo"><div class="bar"><i style="width:25%"></i></div></div>' +
+      '<div class="agctx-bar"><i style="width:25%"></i></div>';
+    document.body.appendChild(host);
+    const info = getComputedStyle(host.querySelector(".aginfo .bar > i")).animationName;
+    const breakdown = getComputedStyle(host.querySelector(".agctx-bar > i")).animationName;
+    host.remove();
+    return { info, breakdown };
+  });
+  if (progressAnimation.info !== "none" || progressAnimation.breakdown !== "none") {
+    throw new Error(`context bars must not replay from zero: ${JSON.stringify(progressAnimation)}`);
+  }
+
   await page.evaluate(() => window.__showAllPagesPage("scope"));
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const scope = await page.evaluate(() => {
@@ -103,7 +118,7 @@ try {
     await page.screenshot({ path: resolve(root, process.env.KDOCK_UI_BATCH_SHOT) });
   }
 
-  console.log(JSON.stringify({ ok: true, scope, batch }, null, 2));
+  console.log(JSON.stringify({ ok: true, progressAnimation, scope, batch }, null, 2));
 } finally {
   await browser?.close();
   await server.close();

@@ -9575,10 +9575,15 @@ function agRenderInfo() {
 
 /* ── 上下文成分分析（参考 opencode 的 context 面板）：把占 token 的东西按类目拆开 ── */
 let agBreak = null;
+let agBreakRequest = 0;
 async function agRefreshBreakdown() {
-  if (!agMeta) { agBreak = null; agRenderBreakdown(); return; }
+  const request = ++agBreakRequest;
+  const sessionId = agMeta && agMeta.id;
+  if (!sessionId) { agBreak = null; agRenderBreakdown(); return; }
   try {
-    agBreak = await invoke("agent_context_breakdown", { sessionId: agMeta.id });
+    const next = await invoke("agent_context_breakdown", { sessionId });
+    if (request !== agBreakRequest || !agMeta || agMeta.id !== sessionId) return;
+    agBreak = next;
   } catch (_) {
     return;
   }
@@ -12464,6 +12469,7 @@ async function bindAgentEvents() {
   await agOn("agent://usage", (ev) => {
     const p = ev.payload || {};
     if (agMeta && p.session !== agMeta.id) return;
+    if (agMeta && Number(p.prompt) > 0) agMeta.last_tokens = Number(p.prompt);
     const el = agEl("ag-usage");
     const cache = p.cacheHit || p.cacheMiss ? ` · ${en("缓存命中")} ${agK(p.cacheHit || 0)}` : "";
     if (el) el.textContent =
