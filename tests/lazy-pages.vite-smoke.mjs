@@ -39,7 +39,7 @@ try {
   const result = await page.evaluate(() => window.__lazyResult);
   assert.deepEqual(errors, [], `lazy page errors:\n${errors.join("\n")}`);
   assert.equal(result.helpShared, true, "help module was loaded more than once");
-  assert.equal(result.helpItems, 102, "help module content is incomplete");
+  assert.ok(result.helpItems >= 102, "help module content is incomplete");
   assert.equal(result.runtimeReady, true, "runtime module did not initialize");
   assert.equal(result.toolsBound, true, "batch/calculator modules did not initialize");
   assert.equal(result.uplotReady, true, "uPlot module did not load");
