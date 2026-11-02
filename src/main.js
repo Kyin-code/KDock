@@ -8,7 +8,12 @@ import { FLASH_ROM_TOOLS, flashToolUi, isFlashRomTool, isSerialRomTool } from ".
 import { ADVANCED_TABS, initAdvancedNav, openAdvancedNavFor } from "./nav-advanced.js";
 import { createShortcutManager, mountShortcutSettings } from "./shortcuts.js";
 import { mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "./agent-session.js";
-import { buildActivityItems, partitionAgentEvents, summarizeActivity } from "./agent-activity.js";
+import {
+  buildActivityItems,
+  partitionAgentEvents,
+  summarizeActivity,
+  summarizeToolArgs,
+} from "./agent-activity.js";
 import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
 import { EN } from "./locales/en.js";
 import {
@@ -8682,11 +8687,17 @@ function agToolNode(ev) {
   head.className = "th";
   const nm = document.createElement("span");
   nm.className = "nm";
-  nm.textContent = ev.name + (ev.args && Object.keys(ev.args).length ? " · " + agArgSummary(ev.args) : "");
+  nm.textContent = ev.name;
+  const summary = agArgSummary(ev.name, ev.args);
+  const asum = document.createElement("span");
+  asum.className = "asum";
+  asum.textContent = summary;
+  asum.title = summary;
   const st = document.createElement("span");
   st.className = "st";
   st.textContent = ev.ok === false ? en("失败") : ev.ok ? en("完成") : en("执行中…");
   head.appendChild(nm);
+  if (summary) head.appendChild(asum);
   head.appendChild(st);
   const bd = document.createElement("div");
   bd.className = "bd";
@@ -8695,7 +8706,7 @@ function agToolNode(ev) {
     const argBox = document.createElement("details");
     argBox.className = "agargs";
     const argSum = document.createElement("summary");
-    argSum.textContent = en("参数") + " · " + agArgSummary(args);
+    argSum.textContent = en("参数") + " · " + Object.keys(args).length + " " + en("个字段");
     const argPre = document.createElement("pre");
     argPre.textContent = JSON.stringify(args, null, 2);
     argBox.appendChild(argSum);
@@ -8713,21 +8724,8 @@ function agToolNode(ev) {
 }
 
 /** 参数摘要：只露 3 个关键值，避免一长串 JSON 占屏 */
-function agArgSummary(args) {
-  const keys = Object.keys(args || {});
-  if (!keys.length) return en("无");
-  const one = (v) => {
-    if (typeof v === "string") {
-      const s = v.replace(/\s+/g, " ").trim();
-      return s.length > 48 ? s.slice(0, 48) + "…" : s;
-    }
-    if (Array.isArray(v)) return `[${v.length}]`;
-    if (v && typeof v === "object") return "{…}";
-    return String(v);
-  };
-  let s = keys.slice(0, 3).map((k) => `${k}=${one(args[k])}`).join(" · ");
-  if (keys.length > 3) s += ` · +${keys.length - 3}`;
-  return s;
+function agArgSummary(tool, args) {
+  return summarizeToolArgs(tool, args) || en("无");
 }
 
 function agExitBadge(text) {

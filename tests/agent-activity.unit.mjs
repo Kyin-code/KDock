@@ -3,6 +3,7 @@ import {
   buildActivityItems,
   partitionAgentEvents,
   summarizeActivity,
+  summarizeToolArgs,
 } from "../src/agent-activity.js";
 
 const events = [
@@ -39,4 +40,27 @@ assert.deepEqual(summary.names, [
   ["workspace_read", 1],
 ]);
 
-console.log(JSON.stringify({ ok: true, summary }, null, 2));
+const longCommand = summarizeToolArgs("workspace_run", {
+  cmd: "arm-none-eabi-gcc -c src/main.c -o build/main.o\r\narm-none-eabi-gcc -c src/next.c -o build/next.o",
+  cwd: "build",
+  timeout_ms: 120000,
+});
+assert.ok(longCommand.startsWith("cmd · "));
+assert.ok(!longCommand.includes("\n"));
+assert.ok(longCommand.includes("…"));
+assert.ok(longCommand.length <= 96);
+
+assert.equal(
+  summarizeToolArgs("workspace_read", { paths: ["src/a.c", "src/b.c", "inc/c.h"] }),
+  "3 files · a.c, b.c",
+);
+assert.equal(
+  summarizeToolArgs("workspace_edit", {
+    path: "src/a.c",
+    edits: [{ old_text: "a", new_text: "b" }, { old_text: "c", new_text: "d" }],
+    replace_all: false,
+  }),
+  "2 edits · src/a.c · +1",
+);
+
+console.log(JSON.stringify({ ok: true, summary, longCommand }, null, 2));

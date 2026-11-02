@@ -121,3 +121,87 @@ export function summarizeActivity(items) {
     names: [...names.entries()].sort((a, b) => b[1] - a[1]),
   };
 }
+
+function oneLine(value, max = 72) {
+  const text = String(value == null ? "" : value).replace(/\s+/g, " ").trim();
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function baseName(value) {
+  return String(value || "").split(/[\\/]/).filter(Boolean).pop() || String(value || "");
+}
+
+function namesPreview(values, max = 2) {
+  return (values || []).slice(0, max).map(baseName).join(", ");
+}
+
+/**
+ * Turn arbitrary tool arguments into one compact, semantic line for the
+ * collapsed card header. Raw JSON remains available in the expanded details.
+ */
+export function summarizeToolArgs(tool, args, limit = 96) {
+  const value = args && typeof args === "object" && !Array.isArray(args) ? args : {};
+  const keys = Object.keys(value);
+  if (!keys.length) return "";
+  const parts = [];
+  const add = (text) => {
+    const line = oneLine(text, limit);
+    if (line) parts.push(line);
+  };
+
+  if (typeof value.cmd === "string" && value.cmd.trim()) {
+    parts.push(`cmd · ${oneLine(value.cmd, 72)}`);
+  } else if (Array.isArray(value.paths) && value.paths.length) {
+    parts.push(`${value.paths.length} files`);
+    const preview = namesPreview(value.paths);
+    if (preview) parts.push(preview);
+  } else if (Array.isArray(value.files) && value.files.length) {
+    parts.push(`${value.files.length} files`);
+    const preview = namesPreview(value.files.map((item) => item && item.path));
+    if (preview) parts.push(preview);
+  } else if (Array.isArray(value.edits) && value.edits.length) {
+    parts.push(`${value.edits.length} edits`);
+    const path = value.path || (value.edits.find((item) => item && item.path) || {}).path;
+    if (path) parts.push(oneLine(path, 48));
+  } else if (typeof value.path === "string" && value.path.trim()) {
+    parts.push(oneLine(value.path, 72));
+  }
+
+  if (typeof value.pattern === "string" && value.pattern.trim()) {
+    add(`"${oneLine(value.pattern, 42)}"`);
+  }
+  if (typeof value.url === "string" && value.url.trim()) {
+    add(oneLine(value.url, 72));
+  }
+  if (typeof value.query === "string" && value.query.trim()) {
+    add(`"${oneLine(value.query, 42)}"`);
+  }
+  if (typeof value.name === "string" && value.name.trim() && !parts.length) {
+    add(value.name);
+  }
+  if (typeof value.id === "string" && value.id.trim() && !parts.length) {
+    add(value.id);
+  }
+  if (typeof value.content === "string") {
+    add(`${value.content.length} chars`);
+  } else if (typeof value.text === "string") {
+    add(`${value.text.length} chars`);
+  }
+
+  if (!parts.length) {
+    const fields = [];
+    for (const [key, item] of Object.entries(value)) {
+      if (item == null) continue;
+      if (Array.isArray(item)) fields.push(`${key}[${item.length}]`);
+      else if (typeof item === "object") fields.push(`${key}{${Object.keys(item).length}}`);
+      else fields.push(`${key}=${oneLine(item, 28)}`);
+      if (fields.length >= 2) break;
+    }
+    if (fields.length) parts.push(fields.join(" · "));
+  }
+
+  const shown = new Set(["cmd", "paths", "files", "edits", "path", "pattern", "url", "query", "name", "id", "content", "text"]);
+  const extra = keys.filter((key) => !shown.has(key)).length;
+  if (extra && parts.length) parts.push(`+${extra}`);
+  return oneLine(parts.join(" · "), limit);
+}

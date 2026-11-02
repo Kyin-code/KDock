@@ -41,6 +41,26 @@ try {
   if (progressAnimation.info !== "none" || progressAnimation.breakdown !== "none") {
     throw new Error(`context bars must not replay from zero: ${JSON.stringify(progressAnimation)}`);
   }
+  const toolHeader = await page.evaluate(() => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      '<div class="agtool"><div class="th"><span class="nm">workspace_read</span>' +
+      '<span class="asum">4 files · MainLoop.c, h7_service.c, ISR.c, ctshell_port_user.c</span>' +
+      '<span class="st">完成</span></div></div>';
+    document.body.appendChild(host);
+    const head = host.querySelector(".agtool > .th");
+    const sum = host.querySelector(".agtool > .th .asum");
+    const result = {
+      height: Math.round(head.getBoundingClientRect().height),
+      whiteSpace: getComputedStyle(sum).whiteSpace,
+      overflow: getComputedStyle(sum).overflowX,
+    };
+    host.remove();
+    return result;
+  });
+  if (toolHeader.height > 34 || toolHeader.whiteSpace !== "nowrap" || toolHeader.overflow !== "hidden") {
+    throw new Error(`tool argument header is not a single ellipsized line: ${JSON.stringify(toolHeader)}`);
+  }
 
   await page.evaluate(() => window.__showAllPagesPage("scope"));
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -118,7 +138,7 @@ try {
     await page.screenshot({ path: resolve(root, process.env.KDOCK_UI_BATCH_SHOT) });
   }
 
-  console.log(JSON.stringify({ ok: true, progressAnimation, scope, batch }, null, 2));
+  console.log(JSON.stringify({ ok: true, progressAnimation, toolHeader, scope, batch }, null, 2));
 } finally {
   await browser?.close();
   await server.close();
