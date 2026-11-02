@@ -1,11 +1,16 @@
-# 更新日志
+# Changelog
+
+## 更新日志
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)：`MAJOR.MINOR.PATCH`。
-每次发版请同步更新这三处的版本号，并打一个 `vX.Y.Z` 的 tag：
+版本号由 Semifold 管理，不再手工改三份清单。每次 `npm run tauri build` 都会：
 
-- `src-tauri/tauri.conf.json` → `version`
-- `src-tauri/Cargo.toml` → `version`（跟随 workspace）
-- `package.json` → `version`
+1. 自动生成一条 patch 变更集；
+2. 执行 `smif version` 更新 npm / Cargo workspace / 变更日志；
+3. 同步 `src-tauri/tauri.conf.json` 和 `package-lock.json`；
+4. CI 打包成功后把版本变更自动提交回 `main`。
+
+配置在 `.changes/config.toml`，构建入口是 `scripts/semfold-version.ps1`。
 
 > **tag 现状（2026-10-15）**：已撤回 `v0.1.0` / `v0.2.0` / `v0.3.0` 三个 tag —— 这几个版本还没到能
 > 对外发布的程度。**提交全部保留**（都还在 `main` 上，什么都没丢），各版本改了什么见下面各段落：

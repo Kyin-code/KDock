@@ -5,6 +5,7 @@
 
 mod agent;
 mod android;
+mod app_update;
 mod checksum;
 mod debug;
 mod desktop_ui;
@@ -3792,6 +3793,7 @@ pub fn run() {
             show_main_window,
             ui_prefs_get,
             ui_prefs_set,
+            app_update::app_update_check,
             workspace_git,
             ui_ready,
             splash_show,

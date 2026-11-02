@@ -1,0 +1,51 @@
+[branches]
+base = "main"
+release = "release"
+
+[tags]
+chore = "维护"
+feat = "新增"
+fix = "修复"
+perf = "性能"
+refactor = "重构"
+
+[changelog]
+template = """
+## v{{ package.next_version }}
+
+{% for section in sections %}### {{ section.name }}
+
+{% for entry in section.entries %}{{ entry.content }}{% if not loop.last %}
+{% endif %}{% endfor %}{% if not loop.last or dependency_updates %}
+
+{% endif %}{% endfor %}{% if dependency_updates %}### Dependencies
+
+{% for dependency in dependency_updates %}- Update {{ dependency.package }} to {{ dependency.next_version }}.{% if not loop.last %}
+{% endif %}{% endfor %}{% endif %}"""
+changeset-template = """
+- {% if changeset.commit and changeset.commit.web_url %}[`{{ changeset.commit.short_sha }}`]({{ changeset.commit.web_url }}): {% endif %}{{ changeset.summary_paragraphs[0] | join(" ") }}{% if changeset.pull_request %} {% if changeset.pull_request.web_url %}([#{{ changeset.pull_request.number }}]({{ changeset.pull_request.web_url }}){% else %}(#{{ changeset.pull_request.number }}{% endif %}{% if changeset.pull_request.author %} by @{{ changeset.pull_request.author }}{% endif %}){% endif %}{% for paragraph in changeset.summary_paragraphs %}{% if not loop.first %}
+
+    {{ paragraph | join(" ") }}{% endif %}{% endfor %}{% if changeset.summary_paragraphs | length > 1 %}
+{% endif %}"""
+
+[packages.kdock-core]
+path = "crates/kdock-core"
+resolver = "rust"
+publish = false
+github-release = false
+
+[packages.nodejs-kdock]
+path = "."
+resolver = "nodejs"
+publish = false
+github-release = false
+
+[packages.rust-kdock]
+path = "src-tauri"
+resolver = "rust"
+publish = false
+github-release = false
+
+[resolver.rust]
+
+[resolver.nodejs]

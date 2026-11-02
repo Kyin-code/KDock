@@ -75,15 +75,17 @@ npm run tauri dev
 # 测试与正式出包
 npm run test:vite
 cargo test --workspace --locked
+# 自动调用 Semifold 递增版本；首次会通过 cargo 安装 semifold 0.3.4
 npm run tauri build
 ```
 
 产物：
 
 - `target/release/kdock.exe`
-- `target/release/bundle/nsis/KDock_0.3.0_x64-setup.exe`
+- `target/release/bundle/nsis/KDock_<Semifold 生成的版本>_x64-setup.exe`
 
 不要直接用 `cargo build --release` 代替 Tauri 打包，否则前端资源和 `devUrl` 配置不会完整。
+版本由 `.changes/config.toml` 和 `scripts/semfold-version.ps1` 统一管理，不要手工改三份清单。
 
 ## 界面展示
 

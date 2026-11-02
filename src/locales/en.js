@@ -563,6 +563,13 @@ export const EN = {
   "正在中断…": "Interrupting…",
   "停止当前轮，立即发送待发送区的全部内容": "Stop the current turn and send everything pending now",
   "等待当前轮停止超时，请稍后重试": "Timed out waiting for the current turn to stop. Please try again.",
+  "发现新版本": "New version available",
+  "本次跳过": "Skip this version",
+  "稍后提醒": "Remind me later",
+  "下载安装包": "Download installer",
+  "当前版本": "Current version",
+  "KDock 不会自动安装；下载后运行安装包即可覆盖升级，数据和会话会保留。":
+    "KDock will not install automatically. Run the downloaded installer to upgrade in place; data and sessions are preserved.",
   "留 2048~8192 就行": "2048–8192 is fine", "高级": "Advanced",
   "温度 = 回答的\"随机性\"：0 最稳（每次几乎一样，调试/工具调用建议 0~0.3）；\n                越高越发散（0.7~1.0 适合写东西）。这个助手要调工具、要准，建议 0.2。":
     "Temperature = randomness: 0 is most stable (debugging/tool calls prefer 0–0.3); higher is more creative (0.7–1.0 suits prose). For an assistant that calls tools, 0.2 is a good default.",
@@ -703,10 +710,11 @@ export const EN = {
   "更新日志": "Changelog", "更多（版本管理 / 数据目录）…": "More (versioning / data folder)…",
   "版本管理": "Versioning",
   "Apache-2.0（见仓库里的 LICENSE / NOTICE）": "Apache-2.0 (see LICENSE / NOTICE in the repo)",
-  "tauri.conf.json · Cargo.toml · package.json（三处保持一致）":
-    "tauri.conf.json · Cargo.toml · package.json (kept in sync)",
+  "Semifold 自动递增；npm / Cargo / Tauri 清单同步":
+    "Incremented automatically by Semifold; npm / Cargo / Tauri manifests stay in sync",
   "CHANGELOG.md（每次发版追加一段）": "CHANGELOG.md (a new section per release)",
-  "打 tag：": "tag it: ",
+  "打包时自动执行 smif version，CI 成功后提交版本变更":
+    "Runs smif version before packaging; CI commits the version change after a successful build",
   "三段式 PD_HW.PD_SW.PD_FIX（写在 .fw 包头里，与应用版本无关）":
     "three-segment PD_HW.PD_SW.PD_FIX, stored in the .fw header (unrelated to the app version)",
   "内存": "Memory", "时间": "Time", "进程": "Processes", "GitHub 仓库": "GitHub repo",

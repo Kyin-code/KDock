@@ -76,6 +76,9 @@ jobs:
       - name: Test agent activity grouping
         run: npm run test:activity
 
+      - name: Test update manifest contract
+        run: npm run test:update
+
       - name: Check workspace
         run: cargo check --workspace --locked
 
@@ -92,6 +95,7 @@ jobs:
       # Persistent cargo cache outside the checkout, so that
       # actions/checkout's `git clean -ffdx` cannot wipe it.
       CARGO_TARGET_DIR: D:/CI/cargo-target/kdock
+      KDOCK_BUILD_ID: ${{ github.sha }}
     defaults:
       run:
         shell: pwsh
@@ -99,6 +103,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Link cargo target directory
         # Why this exists: tauri-build resolves the plugin permission files under
@@ -125,6 +131,17 @@ jobs:
           cargo --version
           node --version
           npm --version
+
+      - name: Install Semifold
+        run: |
+          $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" }
+          $bin = Join-Path $cargoHome "bin"
+          $env:PATH = "$bin;$env:PATH"
+          if (-not (Get-Command smif -ErrorAction SilentlyContinue)) {
+            cargo install semifold --version 0.3.4 --locked
+          }
+          smif --version
+          "SMIF_BIN=$bin" >> $env:GITHUB_ENV
 
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
@@ -161,7 +178,18 @@ jobs:
           Write-Output "portable analyzer self-check: $check"
 
       - name: Build Tauri app (release)
-        run: npm run tauri build
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+            if ("v$ver" -ne $env:GITHUB_REF_NAME) {
+              throw "tag $env:GITHUB_REF_NAME does not match app version v$ver"
+            }
+            $env:KDOCK_VERSION_PREPARED = "1"
+          } else {
+            $env:PATH = "$env:SMIF_BIN;$env:PATH"
+            smif --version
+          }
+          npm run tauri build
 
       - name: Stage artifacts
         run: |
@@ -191,6 +219,26 @@ jobs:
             "> :warning: no installer was produced in this run" >> $env:GITHUB_STEP_SUMMARY
           }
           Get-ChildItem release -Recurse -File -Name
+
+      - name: Commit automatic Semifold version
+        id: version_commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md package.json package-lock.json Cargo.toml Cargo.lock `
+            crates/kdock-core/Cargo.toml crates/kdock-core/CHANGELOG.md `
+            src-tauri/Cargo.toml src-tauri/CHANGELOG.md src-tauri/tauri.conf.json .changes
+          if (git diff --cached --quiet) {
+            throw "Semifold did not produce a version change"
+          }
+          git commit -m "chore(release): v$ver [skip ci]"
+          git push origin HEAD:main
+          $sha = (git rev-parse HEAD).Trim()
+          "sha=$sha" >> $env:GITHUB_OUTPUT
+          "version=$ver" >> $env:GITHUB_OUTPUT
+          Write-Output "committed automatic version v$ver at $sha"
 
       - name: Package portable zip
         if: github.event_name != 'pull_request'
@@ -235,6 +283,25 @@ jobs:
           ) -join "`r`n"
           Set-Content -Path "pack/$name/README-first.txt" -Value $note -Encoding UTF8
           Compress-Archive -Path "pack/$name/*" -DestinationPath "pack/$name.zip" -Force
+          $ref = "${{ github.ref }}"
+          $tag = if ($ref.StartsWith("refs/tags/v")) { "${{ github.ref_name }}" } else { "test-latest" }
+          $repo = "${{ github.repository }}"
+          $setup = Get-ChildItem release -Filter *setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "installer is required for the update manifest" }
+          $notes = if ("${{ steps.version_commit.outputs.sha }}") {
+            (git log -2 --pretty=%s)[1]
+          } else {
+            (git log -1 --pretty=%s).Trim()
+          }
+          node scripts/release-manifest.mjs `
+            --output release/kdock-update.json `
+            --version $ver `
+            --build "${{ github.sha }}" `
+            --installer-url "https://github.com/$repo/releases/download/$tag/$($setup.Name)" `
+            --portable-url "https://github.com/$repo/releases/download/$tag/$name.zip" `
+            --release-url "https://github.com/$repo/releases/tag/$tag" `
+            --notes "$notes"
+          if ($LASTEXITCODE -ne 0) { throw "update manifest generation failed" }
           "zip=pack/$name.zip" >> $env:GITHUB_OUTPUT
           Get-ChildItem pack -File -Name
 
@@ -244,9 +311,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $repo  = "${{ github.repository }}"
-          $sha   = "${{ github.sha }}"
-          $short = $sha.Substring(0, 7)
+          $buildSha = "${{ github.sha }}"
+          $short = $buildSha.Substring(0, 7)
           $ref   = "${{ github.ref }}"
+          $releaseSha = "${{ steps.version_commit.outputs.sha }}"
+          if (-not $releaseSha) { $releaseSha = $buildSha }
           $ver   = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmm")
           # A v* tag push becomes a normal release. A push to main keeps ONE rolling
@@ -278,11 +347,11 @@ jobs:
           ) -join "`n"
           $payload = @{
             tag_name         = $tag
-            name             = if ($isStable) { "KDock $ver" } else { "KDock test build (latest: $stamp, $short)" }
+            name             = if ($isStable) { "KDock $ver" } else { "KDock test build $ver (latest: $stamp, $short)" }
             body             = $body
             draft            = $false
             prerelease       = -not $isStable
-            target_commitish = $sha
+            target_commitish = $releaseSha
           } | ConvertTo-Json -Depth 6
           # Existing rolling release? Then wipe its old assets and update it in place.
           $existing = $null
@@ -307,7 +376,7 @@ jobs:
             $relUrl = $rel.html_url
             Write-Output "created release: $relUrl"
           }
-          $assets = @("${{ steps.pack.outputs.zip }}", "release/kdock.exe")
+          $assets = @("${{ steps.pack.outputs.zip }}", "release/kdock.exe", "release/kdock-update.json")
           $assets += (Get-ChildItem release -Filter *setup.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
           foreach ($f in $assets) {
             $n = Split-Path $f -Leaf
@@ -319,7 +388,7 @@ jobs:
           # Keep the rolling tag pointing at the build that is actually attached to it.
           if (-not $isStable) {
             try {
-              $refPayload = @{ sha = $sha; force = $true } | ConvertTo-Json
+              $refPayload = @{ sha = $releaseSha; force = $true } | ConvertTo-Json
               Invoke-RestMethod -Method Patch -Uri "https://api.github.com/repos/$repo/git/refs/tags/$tag" `
                 -Headers $head -ContentType "application/json" -Body $refPayload | Out-Null
               Write-Output "moved tag $tag -> $short"

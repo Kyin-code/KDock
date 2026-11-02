@@ -2218,6 +2218,7 @@ dependencies = [
  "md-5",
  "rustls",
  "screenshots",
+ "semver",
  "serde",
  "serde_json",
  "serialport",

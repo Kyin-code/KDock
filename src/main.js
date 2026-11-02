@@ -17,6 +17,7 @@ import {
 import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
 import { bindAgentResize } from "./agent-layout.js";
 import { pendingBatchText } from "./agent-pending.js";
+import { remindUpdateLater, shouldOfferUpdate, skipUpdate } from "./app-update.js";
 import { EN } from "./locales/en.js";
 import {
   loadHelpPage,
@@ -11741,9 +11742,80 @@ const TOOL_DESC_EN = {
 const KDOCK_REPO = "https://github.com/Kyin-code/KDock";
 const KDOCK_AUTHOR = "https://github.com/Kyin-code";
 let appVersion = "0.1.0";
+let pendingAppUpdate = null;
 
 function openExternal(url) {
   invoke("browser_open_external", { path: url }).catch((e) => toast(String(e)));
+}
+
+function hideAppUpdatePrompt() {
+  const box = document.getElementById("app-update-dlg");
+  if (box) box.hidden = true;
+  pendingAppUpdate = null;
+  kbSyncSoon();
+}
+
+function showAppUpdatePrompt(info) {
+  const box = document.getElementById("app-update-dlg");
+  const text = document.getElementById("app-update-text");
+  if (!box || !text) return;
+  pendingAppUpdate = info;
+  const currentBuild = String(info.currentBuild || "").slice(0, 7);
+  const latestBuild = String(info.latestBuild || "").slice(0, 7);
+  const notes = String(info.notes || "").trim().slice(0, 600);
+  text.textContent = [
+    `${en("当前版本")} v${info.currentVersion}${currentBuild ? ` (${currentBuild})` : ""} → v${info.latestVersion}${latestBuild ? ` (${latestBuild})` : ""}`,
+    notes,
+    en("KDock 不会自动安装；下载后运行安装包即可覆盖升级，数据和会话会保留。"),
+  ].filter(Boolean).join("\n\n");
+  box.hidden = false;
+  kbSyncSoon();
+  setTimeout(() => document.getElementById("app-update-download")?.focus(), 30);
+}
+
+async function checkAppUpdateOnStartup() {
+  try {
+    const info = await invoke("app_update_check");
+    if (shouldOfferUpdate(info)) showAppUpdatePrompt(info);
+  } catch (_) {
+    // Update checks are best-effort and must never block or disturb startup.
+  }
+}
+
+function bindAppUpdatePrompt() {
+  const box = document.getElementById("app-update-dlg");
+  if (!box) return;
+  const bind = (id, fn) => {
+    const button = document.getElementById(id);
+    if (button) button.onclick = fn;
+  };
+  bind("app-update-skip", () => {
+    if (pendingAppUpdate) skipUpdate(pendingAppUpdate);
+    hideAppUpdatePrompt();
+  });
+  bind("app-update-later", () => {
+    if (pendingAppUpdate) remindUpdateLater(pendingAppUpdate);
+    hideAppUpdatePrompt();
+  });
+  bind("app-update-download", () => {
+    const info = pendingAppUpdate;
+    if (!info) return;
+    remindUpdateLater(info);
+    hideAppUpdatePrompt();
+    openExternal(info.installerUrl);
+  });
+  box.onclick = (event) => {
+    if (event.target !== box) return;
+    if (pendingAppUpdate) remindUpdateLater(pendingAppUpdate);
+    hideAppUpdatePrompt();
+  };
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || box.hidden) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (pendingAppUpdate) remindUpdateLater(pendingAppUpdate);
+    hideAppUpdatePrompt();
+  }, true);
 }
 
 function aboutRow(box, k, v, cls, title) {
@@ -11780,9 +11852,9 @@ function agRenderAbout() {
   if (ver) {
     ver.textContent = "";
     aboutRow(ver, en("当前版本"), "v" + appVersion, "ok");
-    aboutRow(ver, en("版本号来源"), en("tauri.conf.json · Cargo.toml · package.json（三处保持一致）"));
+    aboutRow(ver, en("版本号来源"), en("Semifold 自动递增；npm / Cargo / Tauri 清单同步"));
     aboutRow(ver, en("变更记录"), en("CHANGELOG.md（每次发版追加一段）"));
-    aboutRow(ver, en("发版约定"), en("打 tag：") + "v" + appVersion);
+    aboutRow(ver, en("发版约定"), en("打包时自动执行 smif version，CI 成功后提交版本变更"));
     aboutRow(ver, en("固件包版本"), en("三段式 PD_HW.PD_SW.PD_FIX（写在 .fw 包头里，与应用版本无关）"));
   }
 }
@@ -13215,7 +13287,9 @@ async function main() {
   bindDebug();
   bindEnv();                    // 环境配置：驱动 / 工具链
   bindUsb();                    // USB 诊断
+  bindAppUpdatePrompt();
   setTimeout(envFirstRunCheck, 900);       // 首次运行检查：缺必需驱动才提示一次（不挡启动）
+  setTimeout(checkAppUpdateOnStartup, 8000); // 应用更新只在启动后检查一次，运行中不轮询
   listen("debug://gdb", (ev) => { if (window.__dbgOnGdb) window.__dbgOnGdb(String(ev.payload || "")); });
   listen("debug://server", (ev) => { dbgPrint("[server] " + String(ev.payload || "") + "\n"); });
   bindScrollFollow();

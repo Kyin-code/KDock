@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:tauri": "node scripts/prepare-tauri-build.mjs",
+    "version:bump": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/semfold-version.ps1",
     "preview": "vite preview",
     "test:vite": "node tests/runtime-graph.vite-smoke.mjs",
     "test:vite:rtos": "node tests/runtime-rtos.vite-smoke.mjs",
@@ -19,6 +21,7 @@
     "test:vite:shortcuts": "node tests/shortcuts.vite-smoke.mjs",
     "test:vite:session": "node tests/agent-session.vite-smoke.mjs",
     "test:activity": "node tests/agent-activity.unit.mjs",
+    "test:update": "node tests/app-update.unit.mjs",
     "test:browser": "node tests/shared-browser.unit.mjs",
     "test:bundle": "node tests/bundle-budget.unit.mjs",
     "test:i18n": "node tests/i18n.unit.mjs",
