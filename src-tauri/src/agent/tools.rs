@@ -1650,7 +1650,10 @@ mod tests {
     fn inline_powershell_script_runs_and_is_removed() {
         let (cmd, path) =
             inline_script_command("Write-Output 'inline-script-ok'", "powershell").unwrap();
-        let (code, out, err) = crate::shell::run(&cmd, 5000, &|| false).unwrap();
+        // GitHub's fresh Windows runners can spend several seconds creating
+        // the first Windows PowerShell session. This test checks execution,
+        // not startup latency.
+        let (code, out, err) = crate::shell::run(&cmd, 20_000, &|| false).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(code, 0, "stderr={err}");
         assert!(out.contains("inline-script-ok"));

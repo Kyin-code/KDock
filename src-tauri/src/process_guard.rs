@@ -218,7 +218,10 @@ mod tests {
                     break pid;
                 }
             }
-            if start.elapsed() > Duration::from_secs(8) {
+            // Hosted CI can cold-start Windows PowerShell significantly
+            // slower than a developer machine. Keep a generous startup budget
+            // so this still tests tree reaping rather than shell latency.
+            if start.elapsed() > Duration::from_secs(30) {
                 let _ = launcher.kill();
                 panic!("grandchild PID file was not produced");
             }
@@ -228,7 +231,7 @@ mod tests {
 
         drop(job); // kill-on-close: launcher and its ping.exe child
         let _ = launcher.wait();
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(10);
         while process_alive(pid) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
         }

@@ -244,14 +244,15 @@ mod tests {
         // 这条以前会被外层引号搞坏：$_.Name 变成 .Name、D:\ 被当成转义引号
         let (code, out, _) = run(
             "powershell -NoProfile -Command \"$v = 41; Write-Output ('KDOCK_' + ($v + 1))\"",
-            20_000,
+            // Allow for a cold Windows PowerShell start on CI.
+            60_000,
             &|| false,
         )
         .expect("跑得起来");
         assert_eq!(code, 0, "退出码应为 0，输出：{out}");
         assert!(out.contains("KDOCK_42"), "$_ / $var 不该被外层吃掉，实际输出：{out}");
         // 结尾反斜杠：以前会被当成转义引号
-        let (_, out2, _) = run("cmd /C dir /b C:\\", 20_000, &|| false).expect("跑得起来");
+        let (_, out2, _) = run("cmd /C dir /b C:\\", 60_000, &|| false).expect("跑得起来");
         assert!(!out2.contains("syntax is incorrect"), "dir C:\\ 不该报语法错：{out2}");
     }
 }

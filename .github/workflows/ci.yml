@@ -60,8 +60,18 @@ jobs:
       - name: Test responsive UI matrix
         run: npm run test:vite:pages
 
+      # A cold Windows PowerShell start can take much longer on a fresh hosted
+      # runner than on a developer machine. Warm it once before the Rust suite,
+      # which contains several real PowerShell process tests.
+      - name: Warm Windows PowerShell
+        timeout-minutes: 2
+        run: powershell.exe -NoLogo -NoProfile -NonInteractive -Command 'Write-Output "powershell-ready"'
+
       - name: Test workspace
-        run: cargo test --workspace --locked
+        # Process-tree and shell tests start real Windows children. Running the
+        # test binaries serially avoids cold-start/cache contention on 2-core
+        # hosted runners while still exercising every test.
+        run: cargo test --workspace --locked -- --test-threads=1
 
       - name: Test agent activity grouping
         run: npm run test:activity
