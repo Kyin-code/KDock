@@ -204,8 +204,18 @@ body {
   color: hsl(var(--muted-foreground));
 }
 .chip.ok { color: hsl(var(--success)); border-color: hsl(var(--success) / 0.4); }
-.ipchip { color: hsl(var(--primary)); border-color: hsl(var(--primary) / 0.38); background: hsl(var(--primary) / 0.10); font-weight: 600; max-width: 13rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ipchip.blocked { color: hsl(var(--destructive)); border-color: hsl(var(--destructive) / 0.4); background: hsl(var(--destructive) / 0.10); }
+.ipchip {
+  color: color-mix(in srgb, hsl(var(--primary)) 82%, hsl(var(--foreground)) 18%);
+  border-color: color-mix(in srgb, hsl(var(--primary)) 34%, hsl(var(--border)) 66%);
+  background: color-mix(in srgb, hsl(var(--primary)) 8%, var(--toolbar-chip-bg));
+  box-shadow: inset 0 1px 0 hsl(var(--primary) / 0.08);
+  font-weight: 600; max-width: 13rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ipchip.blocked {
+  color: color-mix(in srgb, hsl(var(--destructive)) 84%, hsl(var(--primary)) 16%);
+  border-color: color-mix(in srgb, hsl(var(--destructive)) 36%, hsl(var(--border)) 64%);
+  background: color-mix(in srgb, hsl(var(--destructive)) 9%, var(--toolbar-chip-bg));
+}
 
 /* ── 分栏 ── */
 /* 左中右：导航 | 操作区 | 参数区（两条拖动条都能调宽） */

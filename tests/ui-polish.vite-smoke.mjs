@@ -62,6 +62,35 @@ try {
     throw new Error(`tool argument header is not a single ellipsized line: ${JSON.stringify(toolHeader)}`);
   }
 
+  const ipChipTheme = await page.evaluate(() => {
+    const chip = document.createElement("span");
+    chip.id = "ip-location-chip";
+    chip.className = "chip ipchip";
+    chip.textContent = "当前：中国";
+    document.body.appendChild(chip);
+    const root = document.documentElement;
+    const read = () => {
+      const css = getComputedStyle(chip);
+      return { color: css.color, border: css.borderColor, background: css.backgroundColor };
+    };
+    root.style.setProperty("--primary", "18 82% 62%");
+    const warm = read();
+    root.style.setProperty("--primary", "210 88% 68%");
+    const cool = read();
+    chip.classList.add("blocked");
+    const blocked = read();
+    chip.remove();
+    root.style.removeProperty("--primary");
+    return { warm, cool, blocked };
+  });
+  if (ipChipTheme.warm.color === ipChipTheme.cool.color
+      || ipChipTheme.warm.background === ipChipTheme.cool.background) {
+    throw new Error(`Public IP chip does not follow the active theme: ${JSON.stringify(ipChipTheme)}`);
+  }
+  if (ipChipTheme.blocked.color === ipChipTheme.cool.color) {
+    throw new Error(`Public IP quota warning lost its destructive contrast: ${JSON.stringify(ipChipTheme)}`);
+  }
+
   await page.evaluate(() => window.__showAllPagesPage("scope"));
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const scope = await page.evaluate(() => {
@@ -138,7 +167,7 @@ try {
     await page.screenshot({ path: resolve(root, process.env.KDOCK_UI_BATCH_SHOT) });
   }
 
-  console.log(JSON.stringify({ ok: true, progressAnimation, toolHeader, scope, batch }, null, 2));
+  console.log(JSON.stringify({ ok: true, progressAnimation, toolHeader, ipChipTheme, scope, batch }, null, 2));
 } finally {
   await browser?.close();
   await server.close();
