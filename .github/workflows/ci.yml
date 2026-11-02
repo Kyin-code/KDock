@@ -179,6 +179,13 @@ jobs:
 
       - name: Build Tauri app (release)
         run: |
+          # CARGO_TARGET_DIR is persistent on the self-hosted runner. Remove the
+          # previous NSIS output so a stale installer cannot satisfy the staging
+          # step when this build fails to produce one.
+          $nsis = "$env:CARGO_TARGET_DIR\release\bundle\nsis"
+          if (Test-Path -LiteralPath $nsis) {
+            Remove-Item -LiteralPath $nsis -Recurse -Force
+          }
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
             if ("v$ver" -ne $env:GITHUB_REF_NAME) {
@@ -196,8 +203,9 @@ jobs:
           # The frontend is compiled into the executable by `tauri build`,
           # so the dist folder is a build intermediate and must not ship.
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item -Path "$env:CARGO_TARGET_DIR\release\*.exe" -Destination release -Force
-          if (-not (Get-ChildItem release -Filter *.exe)) { throw "no executable was staged" }
+          $exe = "$env:CARGO_TARGET_DIR\release\kdock.exe"
+          if (-not (Test-Path -LiteralPath $exe)) { throw "kdock.exe was not produced" }
+          Copy-Item -LiteralPath $exe -Destination release -Force
           Get-ChildItem release -Recurse -File -Name
 
       - name: Upload artifacts
@@ -212,12 +220,13 @@ jobs:
         run: |
           # `tauri build` produces the NSIS installer under the cargo target dir.
           $nsis = "$env:CARGO_TARGET_DIR\release\bundle\nsis"
-          Get-ChildItem $nsis -Filter *.exe -ErrorAction SilentlyContinue |
-            Copy-Item -Destination release -Force
-          if (-not (Get-ChildItem release -Filter *setup.exe -ErrorAction SilentlyContinue)) {
-            Write-Warning "no NSIS installer was produced - this release will only carry the portable zip"
-            "> :warning: no installer was produced in this run" >> $env:GITHUB_STEP_SUMMARY
+          $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $name = "KDock_${ver}_x64-setup.exe"
+          $setup = Get-ChildItem -LiteralPath $nsis -Filter $name -File -ErrorAction SilentlyContinue
+          if (-not $setup) {
+            throw "expected NSIS installer was not produced: $name"
           }
+          Copy-Item -LiteralPath $setup.FullName -Destination release -Force
           Get-ChildItem release -Recurse -File -Name
 
       - name: Commit automatic Semifold version
@@ -286,7 +295,8 @@ jobs:
           $ref = "${{ github.ref }}"
           $tag = if ($ref.StartsWith("refs/tags/v")) { "${{ github.ref_name }}" } else { "test-latest" }
           $repo = "${{ github.repository }}"
-          $setup = Get-ChildItem release -Filter *setup.exe | Select-Object -First 1
+          $setupName = "KDock_${ver}_x64-setup.exe"
+          $setup = Get-Item -LiteralPath "release/$setupName" -ErrorAction SilentlyContinue
           if (-not $setup) { throw "installer is required for the update manifest" }
           $notes = if ("${{ steps.version_commit.outputs.sha }}") {
             (git log -2 --pretty=%s)[1]

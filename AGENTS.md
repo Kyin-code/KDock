@@ -3,7 +3,8 @@
 ## Versioning
 
 - Never hand-edit the application version in `package.json`, `Cargo.toml`, `package-lock.json`, or `src-tauri/tauri.conf.json`.
-- `npm run tauri build` must be the packaging entry point. Its `beforeBuildCommand` runs Semifold and increments the version automatically.
+- `npm run tauri build` must be the packaging entry point. `scripts/tauri-entry.mjs` runs Semifold before Tauri starts, because Tauri reads `tauri.conf.json` before `beforeBuildCommand`.
+- `beforeBuildCommand` verifies the marker set by that wrapper. Direct `npx tauri build`, cargo packaging, or another Tauri entry point must fail instead of producing an unbumped package.
 - CI runs `smif version` during packaging and commits the generated version/changelog changes back to `main` after a successful build.
 - Use `scripts/semfold-version.ps1 -DryRun` to preview a release without changing files.
 - Do not bypass the Semifold flow with `cargo build --release` when producing a distributable package.

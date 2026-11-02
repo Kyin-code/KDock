@@ -61,12 +61,36 @@ const [main, html] = await Promise.all([
   readFile(resolve(root, "src/main.js"), "utf8"),
   readFile(resolve(root, "index.html"), "utf8"),
 ]);
+const [pkg, tauriConf, tauriEntry, buildGuard, ciWorkflow] = await Promise.all([
+  readFile(resolve(root, "package.json"), "utf8").then(JSON.parse),
+  readFile(resolve(root, "src-tauri/tauri.conf.json"), "utf8").then(JSON.parse),
+  readFile(resolve(root, "scripts/tauri-entry.mjs"), "utf8"),
+  readFile(resolve(root, "scripts/verify-tauri-build-entry.mjs"), "utf8"),
+  readFile(resolve(root, ".github/workflows/ci.yml"), "utf8"),
+]);
 assert.match(main, /setTimeout\(checkAppUpdateOnStartup, 8000\)/);
 assert.doesNotMatch(main, /setInterval\([^)]*checkAppUpdateOnStartup/);
 assert.match(main, /shouldOfferUpdate\(info\)/);
 assert.match(html, /id="app-update-skip"/);
 assert.match(html, /id="app-update-later"/);
 assert.match(html, /id="app-update-download"/);
+assert.equal(pkg.scripts.tauri, "node scripts/tauri-entry.mjs");
+assert.equal(pkg.scripts["build:tauri"], "node scripts/verify-tauri-build-entry.mjs && npm run build");
+assert.equal(tauriConf.build.beforeBuildCommand, "npm run build:tauri");
+assert.match(tauriEntry, /process\.env\.KDOCK_VERSION_PREPARED = "1"/);
+assert.match(buildGuard, /KDOCK_VERSION_PREPARED !== "1"/);
+assert.ok(
+  tauriEntry.indexOf("semfold-version.ps1") < tauriEntry.indexOf("@tauri-apps/cli/tauri.js"),
+  "Semifold must finish before Tauri reads tauri.conf.json",
+);
+const cleanIndex = ciWorkflow.indexOf("Remove-Item -LiteralPath $nsis -Recurse -Force");
+const buildIndex = ciWorkflow.indexOf("npm run tauri build");
+assert.ok(cleanIndex >= 0 && cleanIndex < buildIndex, "CI must clear stale NSIS output before building");
+assert.match(
+  ciWorkflow,
+  /Get-ChildItem -LiteralPath \$nsis -Filter \$name -File/,
+  "CI must stage only the installer matching the current Semifold version",
+);
 
 console.log(JSON.stringify({
   ok: true,

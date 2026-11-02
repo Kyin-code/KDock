@@ -274,6 +274,48 @@ try {
         }, { pane, lang: language });
         results.push({ profile: profile.name, settings: true, ...state });
       }
+
+      await page.evaluate((lang) => {
+        const t = (text) => lang === "en" ? (window.__I18N_EN__[text] || text) : text;
+        const notes = (lang === "en"
+          ? "This build fixes the update workflow, validates the installer version, and adds long release notes to exercise the dialog layout. "
+          : "本次构建修复更新流程、校验安装包版本，并加入较长发布说明以验证弹窗布局。"
+        ).repeat(8).slice(0, 600);
+        const dialog = document.getElementById("app-update-dlg");
+        const text = document.getElementById("app-update-text");
+        text.textContent = [
+          t("当前版本") + " v0.3.1 (a0e1939) → v0.3.2 (37b84da)",
+          notes,
+          t("KDock 不会自动安装；下载后运行安装包即可覆盖升级，数据和会话会保留。"),
+        ].join("\n\n");
+        dialog.hidden = false;
+        window.__setI18nLanguage(lang);
+      }, language);
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+      const updateState = await page.evaluate(() => {
+        const modal = document.getElementById("app-update-dlg");
+        const box = modal.querySelector(".dlgbox");
+        const text = document.getElementById("app-update-text");
+        const rect = box.getBoundingClientRect();
+        const buttons = [...box.querySelectorAll(".dlgacts .btn")];
+        const outOfBox = buttons.filter((button) => {
+          const buttonRect = button.getBoundingClientRect();
+          return buttonRect.left < rect.left - 1
+            || buttonRect.right > rect.right + 1
+            || buttonRect.bottom > rect.bottom + 1;
+        });
+        return {
+          updatePrompt: true,
+          boxOverflow: box.scrollWidth - box.clientWidth,
+          viewportOverflow: Math.max(0, -rect.top, rect.bottom - window.innerHeight),
+          textScrollable: text.scrollHeight > text.clientHeight,
+          buttonsOutside: outOfBox.map((button) => button.textContent.trim()),
+        };
+      });
+      await page.evaluate(() => {
+        document.getElementById("app-update-dlg").hidden = true;
+      });
+      results.push({ profile: profile.name, language, ...updateState });
     }
   }
 
@@ -285,6 +327,8 @@ try {
     || item.clipped?.length
     || item.collisions?.length
     || item.untranslated?.length
+    || item.viewportOverflow > 2
+    || item.buttonsOutside?.length
     || (item.agentProblem && (item.agentProblem.chatHeight < 55 || item.agentProblem.overlap > 2)),
   );
   assert.deepEqual(

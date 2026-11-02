@@ -2380,6 +2380,12 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .dlgtext { font-size: 12.5px; line-height: 1.6; color: hsl(var(--muted-foreground)); white-space: pre-wrap; }
 .dlginput { height: 32px; font-size: 12.5px; }
 .dlgacts { gap: 8px; }
+#app-update-dlg .dlgbox { max-height: calc(var(--app-vh) * 90); }
+#app-update-dlg .dlgtext {
+  min-height: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
 
 /* 导航条：贴右边、给正文留出右边距，别压住模型输出 */
 .agentbox { position: relative; }
