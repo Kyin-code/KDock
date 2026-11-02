@@ -57,20 +57,14 @@ try {
     & $uv.Source pip install --python $py --target $site --no-cache --no-build-isolation "--only-binary=$native" -r $src | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "dependency installation failed" }
   } else {
-    $getPip = Join-Path $stage "get-pip.py"
-    Download "https://bootstrap.pypa.io/get-pip.py" $getPip
-    & $py $getPip --no-warn-script-location --target $buildTools | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-      # Some build hosts already expose a user/site pip through import site.
-      # get-pip then refuses to replace it, but its suggested explicit
-      # force-reinstall still installs a private pip under this stage.
-      Write-Host "== get-pip found an existing pip; installing private copy =="
-      & $py -m pip install --upgrade --force-reinstall --no-warn-script-location --target $buildTools pip | Out-Host
-      if ($LASTEXITCODE -ne 0) { throw "pip bootstrap failed" }
-    }
-    & $py -m pip install --target $buildTools --no-cache-dir @pinnedBuildTools | Out-Host
+    # Do not bootstrap a pip installation: get-pip inspects the host's
+    # user/site state and can refuse to replace an existing pip. The official
+    # pip zipapp is self-contained and works directly from this stage.
+    $pipPyz = Join-Path $stage "pip.pyz"
+    Download "https://bootstrap.pypa.io/pip/pip.pyz" $pipPyz
+    & $py $pipPyz install --target $buildTools --no-cache-dir @pinnedBuildTools | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "build tool installation failed" }
-    & $py -m pip install --target $site --no-cache-dir --no-build-isolation "--only-binary=$native" -r $src | Out-Host
+    & $py $pipPyz install --target $site --no-cache-dir --no-build-isolation "--only-binary=$native" -r $src | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "dependency installation failed" }
   }
 
