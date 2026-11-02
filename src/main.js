@@ -9295,14 +9295,40 @@ function agRenderTree() {
     if (!open) continue;
     // 会话多的时候别一次性铺满 DOM（几百个按钮会明显拖慢切页/打字）——
     // 先渲染最近 40 个，剩下的点一下"还有 N 个"再放出来（参考 codex/opencode 的做法）
+    const byParent = new Map();
+    for (const session of kids) {
+      if (!session.parent_session) continue;
+      if (!byParent.has(session.parent_session)) byParent.set(session.parent_session, []);
+      byParent.get(session.parent_session).push(session);
+    }
+    const roots = kids.filter((session) => !session.parent_session);
     const shownN = agSessShown[w.id] || 40;
-    for (const x of kids.slice(0, shownN)) {
+    const renderSession = (x, depth) => {
       const b = document.createElement("button");
-      b.className = "sess" + (agMeta && agMeta.id === x.id ? " active" : "");
+      b.className = "sess" + (agMeta && agMeta.id === x.id ? " active" : "") +
+        (depth ? " subagent" : "");
+      b.style.paddingLeft = (24 + depth * 14) + "px";
+      if (agRunSessions.has(x.id)) b.classList.add("running");
+      const role = document.createElement("span");
+      role.className = "role " + (depth ? "sub" : "main");
+      role.textContent = depth
+        ? String(x.agent_role || "subagent").slice(0, 8).toUpperCase()
+        : "MAIN";
       const tt = document.createElement("span");
-      tt.className = "t"; tt.textContent = en(x.title || "（无标题）");   // 后端给新会话的默认名就是"新会话"（存的是数据），显示时过一遍
-      tt.title = (x.title || "") + " · " + new Date(x.updated).toLocaleString();
-      b.appendChild(tt);
+      tt.className = "t";
+      tt.textContent = en(x.title || "（无标题）");
+      tt.title = [
+        x.title || "",
+        x.task_summary || "",
+        new Date(x.updated).toLocaleString(),
+      ].filter(Boolean).join(" · ");
+      b.append(role, tt);
+      if (agRunSessions.has(x.id)) {
+        const run = document.createElement("span");
+        run.className = "run";
+        run.title = en("运行中");
+        b.appendChild(run);
+      }
       // 点会话：先确保中间已经切到 Agent 页再加载
       // （原来只加载、不切页 —— 在「传输」页点会话会看着没反应，必须先点一下 Agent）
       b.onclick = (e) => { e.stopPropagation(); agFocus(); agOpenSession(x.id); };
@@ -9315,7 +9341,9 @@ function agRenderTree() {
       };
       b.title = en("右键可以删除");
       box.appendChild(b);
-    }
+      for (const child of (byParent.get(x.id) || [])) renderSession(child, depth + 1);
+    };
+    for (const x of roots.slice(0, shownN)) renderSession(x, 0);
     if (!kids.length) {
       const e0 = document.createElement("div");
       e0.className = "sess";
@@ -9324,10 +9352,10 @@ function agRenderTree() {
       e0.appendChild(tt);
       box.appendChild(e0);
     }
-    if (kids.length > shownN) {
+    if (roots.length > shownN) {
       const more = document.createElement("button");
       more.className = "sess more";
-      more.textContent = en("… 还有 ") + (kids.length - shownN) + en(" 个对话（点开）");
+      more.textContent = en("… 还有 ") + (roots.length - shownN) + en(" 个对话（点开）");
       more.onclick = (e) => {
         e.stopPropagation();
         agSessShown[w.id] = shownN + 100;
@@ -9421,6 +9449,13 @@ function agUpdateHeader() {
   }
   if (agEl("ag-m-wsname")) agEl("ag-m-wsname").textContent = agMeta ? (agMeta.workspace || en("（默认）")) : en("（无）");
   if (agEl("ag-stop")) agEl("ag-stop").hidden = !agRunning;
+  const runningSubs = agMeta
+    ? agSessions.filter((s) => s.parent_session === agMeta.id && agRunSessions.has(s.id))
+    : [];
+  if (agEl("ag-stop-all")) {
+    agEl("ag-stop-all").hidden = runningSubs.length === 0;
+    agEl("ag-stop-all").textContent = `⏹ 子任务 ${runningSubs.length}`;
+  }
 }
 
 /* ── Agent 信息面板（参考 opencode 的状态栏）：上下文占用 / 工作区 git / token / 缓存命中 / 花费 ── */
@@ -9738,6 +9773,12 @@ async function agOpenSession(id) {
     agRender();
     if (agEl("ag-usage")) agEl("ag-usage").textContent = "";
     if (agEl("ag-perm")) agEl("ag-perm").value = agMeta.perm || "ask";
+    if (agEl("ag-sandbox")) {
+      const sandboxMode = agMeta.sandbox_mode || "workspace";
+      agEl("ag-sandbox").value = sandboxMode === "trusted"
+        ? "trusted"
+        : (agMeta.sandbox_network ? "workspace-net" : "workspace");
+    }
     agOpenWs[agMeta.ws || "default"] = true;
     agUpdateHeader();
     agBuildRail();
@@ -9993,7 +10034,10 @@ async function agSlash(text) {
         });
         const t = r.task || {};
         note(`已创建定时任务 ${t.id}\n下次：${new Date(t.next_at_ms).toLocaleString()}` +
-          (kind === "at" && daily ? "（每日）" : repeatMs ? `（每 ${agDur(repeatMs)}）` : ""));
+          (kind === "at" && daily ? "（每日）" : repeatMs ? `（每 ${agDur(repeatMs)}）` : "") +
+          (r.external?.ok
+            ? "\n外部调度：已注册到 Windows Task Scheduler，KDock 关闭时也会唤醒执行。"
+            : `\n外部调度未注册：${r.external?.error || "未知原因"}；KDock 打开时仍会执行。`));
       } catch (e) { note(String(e)); }
       return true;
     }
@@ -10241,6 +10285,24 @@ async function bindAgent() {
       } catch (e) { toast(String(e)); }
     };
   }
+  if (agEl("ag-sandbox")) {
+    agEl("ag-sandbox").onchange = async () => {
+      if (!agMeta) return toast("先建一个会话");
+      const value = agEl("ag-sandbox").value;
+      const mode = value === "trusted" ? "trusted" : "workspace";
+      const network = value === "workspace-net";
+      try {
+        const r = await invoke("agent_session_set_sandbox", { id: agMeta.id, mode, network });
+        agMeta.sandbox_mode = r.mode;
+        agMeta.sandbox_network = r.network;
+        toast(mode === "trusted"
+          ? "宿主权限：命令可访问整台机器，请只在必要时使用"
+          : network ? "工作区 AppContainer：仅工作区写入，允许网络" : "工作区 AppContainer：仅工作区写入，默认断网");
+      } catch (e) {
+        toast(String(e));
+      }
+    };
+  }
   if (agEl("ag-attach")) {
     agEl("ag-attach").onclick = async () => {
       if (!agMeta) await agNewSession();
@@ -10312,6 +10374,20 @@ async function bindAgent() {
       agState("正在停止…", "err");
       const acts = document.querySelector("#ag-chat .agapprove .acts");
       if (acts) acts.innerHTML = '<span class="hint">已停止</span>';
+    };
+  }
+  if (agEl("ag-stop-all")) {
+    agEl("ag-stop-all").onclick = async () => {
+      if (!agMeta) return;
+      const children = agSessions
+        .filter((s) => s.parent_session === agMeta.id && agRunSessions.has(s.id))
+        .map((s) => s.id);
+      if (!children.length) return;
+      await Promise.all(children.map((id) =>
+        invoke("agent_stop", { session: id }).catch(() => {})));
+      toast(`已请求停止 ${children.length} 个子任务`);
+      await agSyncRunning();
+      agLoadTree();
     };
   }
   agEl("ag-input").addEventListener("keydown", (e) => {
@@ -11639,7 +11715,7 @@ const TOOL_DESC_EN = {
   device_push: "Push a local file to the device.",
   firmware_info: "Read version / size / CRC32 of a .fw package.",
   firmware_upgrade: "Upgrade the device with a .fw package (serial or network). **Reboots the device** — verify the version afterwards.",
-  local_run: "Run a command on this PC (cmd /C) and return the exit code and output.",
+  local_run: "Run a command under the current session sandbox and return the exit code/output. Workspace mode uses AppContainer with no network by default; host mode is explicitly unsandboxed.",
   flash: "Flash the chip with an external programmer (J-Link / openocd / STM32CubeProgrammer).",
   scope: "Send a SCPI command to the oscilloscope (Rigol) and return its reply.",
   scope_connect: "Connect to the oscilloscope (RIGOL DS1000Z series, SCPI over TCP). Returns *IDN?.",
@@ -11698,16 +11774,27 @@ const TOOL_DESC_EN = {
   workspace_edit: "Structured file edit: replace old_text with new_text and return a unified diff. Supports an edits array for batch edits across positions/files; old_text must be unique (unless replace_all=true).",
   workspace_diff: "Review workspace changes: git status + unified diff inside a git repo (optional path to narrow it down); non-git folders return a clear error.",
   workspace_search: "Substring search in the workspace (skips .git/target/node_modules), returns path:line: text. Safer and faster than running grep through local_run.",
-  workspace_run: "Run a local command inside the workspace and return exit code/output. For multi-step probing, pass a PowerShell script in script= so one round replaces write+run; cmd and script are exclusive. Needs approval.",
+  workspace_run: "Run a local command inside the workspace under the session sandbox and return exit code/output. Workspace mode is file-isolated and network-denied by default. For multi-step probing, pass a PowerShell script in script=; cmd and script are exclusive. Needs approval.",
   workspace_test: "Run project tests: auto-detects Cargo.toml / package.json / pytest, or takes an explicit cmd; runs in the workspace and returns the exit code plus the tail of the output.",
   workspace_context: "One-shot context: directory listing + optional search hits + file contents. Use it to look around before editing instead of many workspace_list/search/read calls.",
   workspace_check: "One-shot verification: git status/diff + project tests (auto-detected or explicit cmd) returned as two sections. Prefer this after edits over separate diff + test calls.",
   plan_write: "Update the current session plan/todos. items is an array of {id?, title, status}; status is pending / in_progress / completed. List a plan first for multi-step work, then update it each step.",
   plan_read: "Read the current session plan/todos.",
-  subagent_spawn: "Spawn a subsession to run an independent task in the background (inherits the workspace and permissions; returns the subsession id). Good for parallel independent investigations; use subagent_wait for the result.",
+  subagent_spawn: "Spawn a visible subsession to run an independent task in the background (inherits workspace, permissions and sandbox; returns the subsession id). Good for parallel investigations; file writes and commands are serialized across Agents.",
   subagent_wait: "Wait for a subsession to finish (up to timeout_ms) and return its status and last reply.",
   subagent_result: "Read a subsession's final reply and tool-call summary (does not wait).",
   parallel_read: "Run several read-only tools in parallel (workspace_read / workspace_list / workspace_search / output_read / port_list / port_state / port_read / net_local_ips / adb_devices / adb_mdns / screen_list / skill_list / history_search) and return all results at once. Cuts model round-trips when reading many files.",
+  tool_search: "Search built-in and MCP tools, including tools not loaded in this session. refresh=true probes MCP again.",
+  tool_load: "Load selected tools into the current session and advance the tool epoch; they become callable on the next model round.",
+  tool_refresh: "Probe MCP again and rebuild the current session tool-schema epoch without starting a new session.",
+  tool_batch: "Programmatically batch multiple read-only tool calls; write tools are rejected.",
+  browser_snapshot: "Read a compact structured page state: URL, title, visible text, controls and forms.",
+  browser_wait: "Wait for selector/text/URL conditions after asynchronous rendering or navigation.",
+  browser_assert: "Assert page selectors, text, URL and input values to verify the actual UI state after an action.",
+  browser_network: "Read bounded resource/fetch/XHR status entries and front-end errors without request bodies, cookies or Authorization.",
+  desktop_windows: "List visible local Windows top-level windows with handles, process, class and bounds.",
+  desktop_ui: "Read a Windows UI Automation control tree with a Win32 fallback for legacy/MFC windows.",
+  desktop_action: "Invoke/focus/fill/click a local Windows control, send a menu command or keyboard chord. Requires approval.",
   adb_devices: "List Android devices (USB plus already-connected wireless debugging). Start here for anything Android.",
   adb_mdns: "List wireless-debugging advertisements (Android 11+ `adb mdns services`): see the device name and IP:port before pairing.",
   adb_connect: "Connect to a wireless-debugging device (`adb connect`). Requires Developer options → Wireless debugging to be on and the device to be paired already.",
@@ -12434,6 +12521,7 @@ async function agSyncRunning() {
     agRunning = !!(agMeta && agRunSessions.has(agMeta.id));
     agState(agRunning ? en("思考中…") : en("空闲"), agRunning ? "ok" : "");
     if (agEl("ag-stop")) agEl("ag-stop").hidden = !agRunning;
+    agUpdateHeader();
     agSetSendDisabled(agRunning);
     agSyncReasoningControl();
   } catch (_) {}

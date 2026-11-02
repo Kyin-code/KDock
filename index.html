@@ -922,6 +922,7 @@
             <span id="ag-state" class="agst" title="空闲"><span class="led"></span><span class="spin"></span></span>
             <span id="ag-goal" class="aggoal" hidden></span>
             <span class="grow"></span>
+            <button id="ag-stop-all" class="btn small" hidden title="停止当前会话创建的全部子任务">⏹ 子任务</button>
             <button id="ag-stop" class="btn small" hidden>⏹ 停止</button>
             <div class="aghistwrap">
               <button id="ag-more" class="btn small" title="更多">⋮</button>
@@ -967,6 +968,14 @@
                   <option value="read">只读</option>
                   <option value="ask" selected>需要批准</option>
                   <option value="auto">自动</option>
+                </select>
+              </label>
+              <label class="agctl">
+                <span class="agctl-label">沙箱</span>
+                <select id="ag-sandbox" class="tight" title="命令执行边界：工作区 AppContainer 默认断网；宿主权限只用于明确需要整机访问的工具">
+                  <option value="workspace">工作区</option>
+                  <option value="workspace-net">工作区+网络</option>
+                  <option value="trusted">宿主权限</option>
                 </select>
               </label>
               <span class="grow"></span>

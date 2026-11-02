@@ -17,6 +17,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::webview::PageLoadEvent;
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Webview, WebviewBuilder, WebviewUrl,
@@ -297,6 +298,9 @@ fn show_inner(
                     if event != PageLoadEvent::Finished {
                         return;
                     }
+                    // Instrument fetch/XHR and runtime errors early enough for agent
+                    // actions performed after the load to be observable.
+                    let _ = webview.eval(BROWSER_PROBE_JS);
 
                     // The page-load hook only carries the URL. Query the real title
                     // after the document is ready and publish it to the Agent pane.
@@ -675,6 +679,209 @@ pub fn fill_json(
     );
     eval_json(kind, js)
 }
+
+/// Compact, structured page state for Agent decisions. Unlike raw HTML this
+/// keeps only visible/interactable elements and bounded text.
+pub fn snapshot_json(kind: &str, max_chars: usize) -> Result<String, String> {
+    let max_chars = max_chars.clamp(500, 60_000);
+    let js = format!(
+        r#"(() => {{
+          const maxChars = {max_chars};
+          const visible = (el) => {{
+            if (!el || !(el instanceof Element)) return false;
+            const s = getComputedStyle(el);
+            const r = el.getBoundingClientRect();
+            return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 1 && r.height > 1;
+          }};
+          const label = (el) => (el.getAttribute('aria-label') || el.getAttribute('placeholder') ||
+            el.getAttribute('title') || el.innerText || el.value || el.name || '').trim().replace(/\s+/g, ' ').slice(0,180);
+          const node = (el) => {{
+            const r = el.getBoundingClientRect();
+            return {{
+              tag: el.tagName.toLowerCase(),
+              role: el.getAttribute('role') || '',
+              type: el.getAttribute('type') || '',
+              name: el.getAttribute('name') || '',
+              id: el.id || '',
+              text: label(el),
+              value: ('value' in el ? String(el.value || '') : '').slice(0,180),
+              disabled: !!el.disabled,
+              checked: ('checked' in el ? !!el.checked : undefined),
+              x: Math.round(r.x), y: Math.round(r.y),
+              width: Math.round(r.width), height: Math.round(r.height)
+            }};
+          }};
+          const all = [...document.querySelectorAll('a,button,input,textarea,select,[role=button],[role=link],[contenteditable=true]')]
+            .filter(visible);
+          const interactive = all.slice(0,300).map(node);
+          const forms = [...document.forms].slice(0,30).map((f, i) => ({{
+            index:i, id:f.id || '', name:f.name || '', action:f.action || '', method:(f.method||'').toUpperCase(),
+            fields:[...f.elements].filter(visible).slice(0,80).map(node)
+          }}));
+          return JSON.stringify({{
+            ok:true,
+            url:location.href,
+            title:document.title || '',
+            readyState:document.readyState,
+            text:(document.body?.innerText || '').replace(/\n{{3,}}/g,'\n\n').trim().slice(0,maxChars),
+            interactive,
+            forms,
+            counts:{{interactive:all.length, inputs:all.filter(e=>['INPUT','TEXTAREA','SELECT'].includes(e.tagName)).length, links:document.links.length}}
+          }});
+        }})()"#
+    );
+    eval_json(kind, js)
+}
+
+/// Wait for one or more page conditions. Polling happens in Rust so each JS
+/// round-trip remains a bounded state read rather than arbitrary script eval.
+pub fn wait_for_json(
+    kind: &str,
+    selector: &str,
+    text: &str,
+    url_contains: &str,
+    timeout_ms: u64,
+) -> Result<String, String> {
+    let timeout = Duration::from_millis(timeout_ms.clamp(100, 30_000));
+    let start = Instant::now();
+    loop {
+        let selector = serde_json::to_string(selector).map_err(|e| e.to_string())?;
+        let text = serde_json::to_string(text).map_err(|e| e.to_string())?;
+        let url_contains = serde_json::to_string(url_contains).map_err(|e| e.to_string())?;
+        let js = format!(
+            r#"(() => {{
+              const selector={selector}, wanted=({text}||'').trim(), urlWanted=({url_contains}||'').trim();
+              const visible = (el) => {{
+                if (!el) return false;
+                const s=getComputedStyle(el), r=el.getBoundingClientRect();
+                return s.display!=='none' && s.visibility!=='hidden' && r.width>1 && r.height>1;
+              }};
+              const node=selector ? document.querySelector(selector) : null;
+              const body=(document.body?.innerText||'');
+              const checks={{
+                selector: !selector || !!node,
+                visible: !selector || visible(node),
+                text: !wanted || body.includes(wanted),
+                url: !urlWanted || location.href.includes(urlWanted)
+              }};
+              return JSON.stringify({{ok:Object.values(checks).every(Boolean), checks, url:location.href, title:document.title||''}});
+            }})()"#
+        );
+        let raw = eval_json(kind, js)?;
+        let value: Value = serde_json::from_str(&raw)
+            .map_err(|e| format!("等待条件返回异常：{e}"))?;
+        if value["ok"].as_bool().unwrap_or(false) {
+            return Ok(raw);
+        }
+        if start.elapsed() >= timeout {
+            return Err(format!(
+                "等待页面条件超时 {}ms：{}",
+                timeout.as_millis(),
+                raw
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(120));
+    }
+}
+
+pub fn assert_json(
+    kind: &str,
+    selector: &str,
+    text: &str,
+    url_contains: &str,
+    value_equals: &str,
+) -> Result<String, String> {
+    let selector = serde_json::to_string(selector).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string(text).map_err(|e| e.to_string())?;
+    let url_contains = serde_json::to_string(url_contains).map_err(|e| e.to_string())?;
+    let value_equals = serde_json::to_string(value_equals).map_err(|e| e.to_string())?;
+    let js = format!(
+        r#"(() => {{
+          const selector={selector}, wanted=({text}||'').trim(), urlWanted=({url_contains}||'').trim(), valueWanted={value_equals};
+          const node=selector ? document.querySelector(selector) : null;
+          const body=(document.body?.innerText||'');
+          const checks={{
+            selector: !selector || !!node,
+            text: !wanted || body.includes(wanted),
+            url: !urlWanted || location.href.includes(urlWanted),
+            value: !valueWanted || (!!node && String(node.value ?? node.textContent ?? '') === valueWanted)
+          }};
+          return JSON.stringify({{ok:Object.values(checks).every(Boolean), checks, url:location.href, title:document.title||''}});
+        }})()"#
+    );
+    eval_json(kind, js)
+}
+
+pub fn network_json(kind: &str, clear: bool) -> Result<String, String> {
+    let clear_js = if clear { "true" } else { "false" };
+    let js = format!(
+        r#"(() => {{
+          const obs = window.__kdockObs || {{network:[],errors:[]}};
+          const resources = performance.getEntriesByType('resource').slice(-300).map(r => ({{
+            kind:'resource', name:String(r.name||'').slice(0,500), type:r.initiatorType||'',
+            start:Math.round(r.startTime||0), duration:Math.round(r.duration||0),
+            transfer:r.transferSize||0, encoded:r.encodedBodySize||0
+          }}));
+          const result={{ok:true,url:location.href,network:[...resources,...obs.network].slice(-500),errors:obs.errors.slice(-100)}};
+          if ({clear_js}) {{ obs.network=[]; obs.errors=[]; window.__kdockObs=obs; }}
+          return JSON.stringify(result);
+        }})()"#
+    );
+    eval_json(kind, js)
+}
+
+const BROWSER_PROBE_JS: &str = r#"(() => {
+  if (window.__kdockProbeInstalled) return;
+  window.__kdockProbeInstalled = true;
+  const obs = window.__kdockObs = window.__kdockObs || { network: [], errors: [] };
+  const push = (kind, data) => {
+    if (kind === 'error') {
+      obs.errors.push({ kind, message: String(data?.message || data || '').slice(0, 800), at: Date.now() });
+      if (obs.errors.length > 100) obs.errors.shift();
+      return;
+    }
+    obs.network.push({ kind, ...data, at: Date.now() });
+    if (obs.network.length > 400) obs.network.shift();
+  };
+  const oldError = console.error;
+  console.error = function(...args) {
+    try { push('error', args.map(x => x?.message || String(x)).join(' ')); } catch (_) {}
+    return oldError.apply(this, args);
+  };
+  addEventListener('error', e => push('error', e.error || e.message));
+  addEventListener('unhandledrejection', e => push('error', e.reason || 'unhandled rejection'));
+  const oldFetch = window.fetch;
+  if (oldFetch) {
+    window.fetch = async function(input, init) {
+      const start = performance.now();
+      const url = String(input?.url || input || '');
+      const method = String(init?.method || input?.method || 'GET').toUpperCase();
+      try {
+        const res = await oldFetch.apply(this, arguments);
+        push('network', { method, url: url.slice(0,500), status: res.status, duration: Math.round(performance.now()-start) });
+        return res;
+      } catch (e) {
+        push('network', { method, url: url.slice(0,500), status: 0, error: String(e).slice(0,300), duration: Math.round(performance.now()-start) });
+        throw e;
+      }
+    };
+  }
+  const oldOpen = XMLHttpRequest.prototype.open;
+  const oldSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(method, url) {
+    this.__kdockReq = { method: String(method || 'GET').toUpperCase(), url: String(url || ''), start: 0 };
+    return oldOpen.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.send = function() {
+    const req = this.__kdockReq || {};
+    req.start = performance.now();
+    this.addEventListener('loadend', () => push('network', {
+      method: req.method || 'GET', url: String(req.url || '').slice(0,500), status: Number(this.status || 0),
+      duration: Math.round(performance.now() - (req.start || performance.now()))
+    }), { once: true });
+    return oldSend.apply(this, arguments);
+  };
+})()"#;
 
 #[cfg(test)]
 mod tests {

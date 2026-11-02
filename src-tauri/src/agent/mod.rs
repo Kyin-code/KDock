@@ -16,6 +16,7 @@ pub mod fingerprint;
 pub mod llm;
 pub mod mcp;
 pub mod pricing;
+pub mod sandbox;
 pub mod schedule;
 pub mod store;
 pub mod tools;
@@ -75,6 +76,9 @@ pub struct AgentState {
     /// host 工具会直接操作同一个界面（示波器/流程/逻辑分析仪），
     /// 多会话同时调用时串行执行，避免两路 UI 操作互相打断。
     pub host_gate: Mutex<()>,
+    /// 多个 Agent/子 Agent 对工作区的写操作串行化。读操作和调查仍可并行；
+    /// 命令执行也拿同一把锁，避免一个构建过程与另一个写文件互相踩踏。
+    pub workspace_write_gate: Mutex<()>,
     /// 传输页那条主连接是多会话共享的；写入/开关串行化，避免字节交错。
     pub port_gate: Mutex<()>,
     pub host_waiters: Mutex<HashMap<u64, (String, Sender<Result<String, String>>)>>,
@@ -679,6 +683,39 @@ pub fn agent_session_set_perm(app: AppHandle, id: String, perm: String) -> Resul
     Ok(json!({ "ok": true, "perm": meta.perm, "autoApproved": approved }))
 }
 
+/// 设置本会话的命令执行边界。`workspace` = Windows AppContainer，
+/// `trusted` = 明确使用宿主权限。网络能力默认关闭，只有 sandbox=true 时才可能开启。
+#[tauri::command]
+pub fn agent_session_set_sandbox(
+    app: AppHandle,
+    id: String,
+    mode: String,
+    network: Option<bool>,
+) -> Result<Value, String> {
+    let mut meta = store::session_meta_of(&app, &id).ok_or("找不到这个会话")?;
+    let parsed = sandbox::SandboxMode::parse(&mode);
+    meta.sandbox_mode = parsed.as_str().to_string();
+    if let Some(on) = network {
+        // trusted 始终使用宿主网络；这里只记录 workspace 模式的能力选择。
+        meta.sandbox_network = parsed == sandbox::SandboxMode::Workspace && on;
+    }
+    meta.updated = now_ms();
+    store::session_update_meta(&app, &meta)?;
+    append_state_note(&app, &id);
+    Ok(json!({
+        "ok": true,
+        "mode": meta.sandbox_mode,
+        "network": meta.sandbox_network,
+        "policy": sandbox::policy_for(parsed, meta.sandbox_network),
+        "implementation": sandbox::describe().unwrap_or_else(|e| json!({ "error": e }))
+    }))
+}
+
+#[tauri::command]
+pub fn agent_sandbox_info() -> Value {
+    sandbox::describe().unwrap_or_else(|e| json!({ "ok": false, "error": e }))
+}
+
 /// 设置/清除本次会话的目标（`/goal xxx` / `/goal clear`）。
 /// 目标存在会话 meta 里，每一轮都会拼进系统提示 —— 相当于一个"一直记着"的长期指令。
 #[tauri::command]
@@ -702,7 +739,13 @@ fn append_state_note(app: &AppHandle, session_id: &str) {
     let Some(m) = store::session_meta_of(app, session_id) else {
         return;
     };
-    let Some(note) = state_note(&m.perm, &m.goal, &names_line(app, session_id)) else {
+    let Some(note) = state_note(
+        &m.perm,
+        &m.sandbox_mode,
+        m.sandbox_network,
+        &m.goal,
+        &names_line(app, session_id),
+    ) else {
         return;
     };
     let events = store::session_read(app, session_id);
@@ -1444,7 +1487,13 @@ fn system_prompt(app: &AppHandle, workspace: &std::path::Path) -> String {
 
 /// 会话状态注记：权限 / 目标 / 称呼。变了才追加一条（尾部几十 token），
 /// 不再每次改动都重写系统提示。
-fn state_note(perm: &str, goal: &str, names: &str) -> Option<String> {
+fn state_note(
+    perm: &str,
+    sandbox_mode: &str,
+    sandbox_network: bool,
+    goal: &str,
+    names: &str,
+) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     parts.push(format!(
         "权限={}",
@@ -1453,6 +1502,14 @@ fn state_note(perm: &str, goal: &str, names: &str) -> Option<String> {
             "auto" => "自动",
             _ => "需要批准",
         }
+    ));
+    parts.push(format!(
+        "命令沙箱={}；网络={}",
+        match sandbox::SandboxMode::parse(sandbox_mode) {
+            sandbox::SandboxMode::Workspace => "工作区 AppContainer",
+            sandbox::SandboxMode::Trusted => "宿主权限",
+        },
+        if sandbox_network { "允许" } else { "禁止" }
     ));
     if !goal.trim().is_empty() {
         parts.push(format!("目标={}", goal.trim()));
@@ -1488,22 +1545,13 @@ fn tools_frozen(app: &AppHandle, session_id: &str) -> Vec<String> {
         }
     }
     let off = store::tools_off(app);
-    let mut names: Vec<String> = tools::catalog()
+    // 新会话默认只带核心工具包，其余内置/MCP 工具由 tool_search +
+    // tool_load 按需扩展。这样工具 schema 不再从第一轮就吃掉大量上下文。
+    let names: Vec<String> = tools::catalog()
         .iter()
-        .filter(|t| !off.contains(&t.name.to_string()))
+        .filter(|t| tools::is_core_tool(t.name) && !off.contains(&t.name.to_string()))
         .map(|t| t.name.to_string())
         .collect();
-    // MCP 工具也属于这次会话的骨架。以前这里只存了内置工具名，
-    // 统计面板按冻结清单过滤时永远看不到 MCP 工具，而真实请求又全塞进去，
-    // 两边口径对不上。第一次请求时把当前 MCP 清单一起冻结，之后新会话才更新。
-    let (mcp_schemas, _) = mcp::all_tool_schemas_cached(app);
-    for s in &mcp_schemas {
-        if let Some(n) = s["function"]["name"].as_str() {
-            if !names.iter().any(|x| x == n) {
-                names.push(n.to_string());
-            }
-        }
-    }
     if let Some(mut m) = store::session_meta_of(app, session_id) {
         m.tools = names.clone();
         let _ = store::session_update_meta(app, &m);
@@ -2364,11 +2412,6 @@ fn run_turn(
         // all_tool_schemas_cached 按"配置指纹 + 10 分钟"复用，并把顺序排死。
         // 顺手把本会话工作区告诉 MCP 层：filesystem 这类 server 会把它当成可访问目录加进去
         mcp::set_extra_roots(vec![ws.to_string_lossy().to_string()]);
-        // 真实请求必须和统计面板用同一份冻结骨架：否则设置页关掉的工具、
-        // 会话中途新增/变化的 MCP 工具都会混进来，前缀缓存和上下文账本都失真。
-        // 完整 schema 也按会话冻结。MCP 服务即使原地换了同名工具的 schema，
-        // 本会话发出去的 tools 前缀也保持不变；新工具/新版本到新会话再生效。
-        let tools_schema = tools_schema_frozen(&app, &session_id);
         // 截断续写的次数（跨轮累计，别每轮清零 —— 不然就变成"无限续写"了）
         let mut trunc_continues = 0usize;
         let mut last_round_sig = String::new();
@@ -2390,6 +2433,9 @@ fn run_turn(
             // 运行中用户补进来的话：在这个轮次边界并进去，下一轮模型就能看到
             drain_pending(&app, &handle.pending, &session_id)?;
             let events = store::session_read(&app, &session_id);
+            // tool_load / tool_refresh 会清掉 schema 快照；每轮重新取一次。
+            // 没变化时仍然复用冻结文件，不会每轮重新探测 MCP。
+            let tools_schema = tools_schema_frozen(&app, &session_id);
             let budget_now = provider.input_budget() as usize;
             // 摘要之外的再裁一道（只影响这次请求）。口径要和 provider 对齐：
             // 工具定义也在 prompt 里，估算时得一起算，否则阈值永远踩不准

@@ -7,7 +7,8 @@ use std::sync::Mutex;
 use chrono::{Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
+use std::os::windows::process::CommandExt;
+use tauri::{AppHandle, Emitter, Manager};
 
 use super::store;
 
@@ -29,6 +30,9 @@ pub struct ScheduleTask {
     pub daily: bool,
     #[serde(default)]
     pub created_ms: i64,
+    /// Windows Task Scheduler 里的配套任务名。空 = 只依赖应用内 ticker。
+    #[serde(default)]
+    pub external_task: String,
 }
 
 fn now_ms() -> i64 {
@@ -49,6 +53,75 @@ fn save(app: &AppHandle, tasks: &[ScheduleTask]) -> Result<(), String> {
     let path = tasks_path(app)?;
     let text = serde_json::to_string_pretty(tasks).map_err(|e| e.to_string())?;
     std::fs::write(&path, text).map_err(|e| format!("写 {} 失败: {e}", path.display()))
+}
+
+fn external_task_name(id: &str) -> String {
+    format!("KDock\\AgentSchedule-{id}")
+}
+
+fn register_external(task: &ScheduleTask) -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("读取当前程序路径失败：{e}"))?;
+    let task_name = external_task_name(&task.id);
+    let Some(dt) = Local.timestamp_millis_opt(task.next_at_ms).single() else {
+        return Err("定时任务时间无效".into());
+    };
+    let mut cmd = std::process::Command::new("schtasks.exe");
+    cmd.arg("/Create")
+        .arg("/TN")
+        .arg(&task_name)
+        .arg("/TR")
+        .arg(format!("\"{}\" --automation-run {}", exe.display(), task.id))
+        .arg("/ST")
+        .arg(dt.format("%H:%M").to_string())
+        .arg("/F")
+        .arg("/IT")
+        .creation_flags(0x0800_0000);
+    if task.daily {
+        cmd.arg("/SC").arg("DAILY");
+    } else if task.repeat_ms > 0 {
+        if task.repeat_ms < 60_000 {
+            return Err("Windows 外部调度最小重复间隔是 1 分钟；当前任务仍可在 KDock 打开时执行"
+                .into());
+        }
+        cmd.arg("/SC")
+            .arg("MINUTE")
+            .arg("/MO")
+            .arg(((task.repeat_ms + 59_999) / 60_000).to_string());
+    } else {
+        cmd.arg("/SC")
+            .arg("ONCE")
+            .arg("/SD")
+            .arg(dt.format("%m/%d/%Y").to_string());
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+    let out = crate::process_guard::spawn(&mut cmd)
+        .map_err(|e| format!("启动 schtasks 失败：{e}"))?
+        .wait_with_output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "注册 Windows 计划任务失败（{}）：{}",
+            out.status.code().unwrap_or(-1),
+            err.trim()
+        ));
+    }
+    Ok(task_name)
+}
+
+fn delete_external(name: &str) {
+    if name.trim().is_empty() {
+        return;
+    }
+    let mut cmd = std::process::Command::new("schtasks.exe");
+    cmd.args(["/Delete", "/TN", name, "/F"])
+        .creation_flags(0x0800_0000)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let _ = crate::process_guard::spawn(&mut cmd).and_then(|mut c| c.wait());
 }
 
 /// 10s / 5m / 2h / 1d
@@ -156,7 +229,7 @@ pub fn agent_schedule_add(
         "at" => (parse_at(&at.unwrap_or_default())?, daily.unwrap_or(false)),
         _ => return Err("kind 只能是 countdown 或 at".into()),
     };
-    let task = ScheduleTask {
+    let mut task = ScheduleTask {
         id: format!("sch{now}-{}", SEQ.fetch_add(1, Ordering::Relaxed)),
         session_id,
         prompt,
@@ -165,6 +238,14 @@ pub fn agent_schedule_add(
         repeat_ms: repeat_ms.unwrap_or(0).max(0),
         daily: daily_flag,
         created_ms: now,
+        external_task: String::new(),
+    };
+    let external = match register_external(&task) {
+        Ok(name) => {
+            task.external_task = name;
+            json!({ "ok": true })
+        }
+        Err(error) => json!({ "ok": false, "error": error }),
     };
     {
         let _guard = IO_LOCK.lock().map_err(|_| "定时任务锁失效".to_string())?;
@@ -173,7 +254,7 @@ pub fn agent_schedule_add(
         tasks.sort_by_key(|t| t.next_at_ms);
         save(&app, &tasks)?;
     }
-    Ok(json!({ "ok": true, "task": task }))
+    Ok(json!({ "ok": true, "task": task, "external": external }))
 }
 
 #[tauri::command]
@@ -191,6 +272,7 @@ pub fn agent_schedule_list(app: AppHandle) -> Vec<Value> {
                 "id": t.id, "session": t.session_id, "prompt": t.prompt, "kind": t.kind,
                 "next_at_ms": t.next_at_ms, "in_ms": (t.next_at_ms - now).max(0),
                 "repeat_ms": t.repeat_ms, "daily": t.daily
+                ,"external_task": t.external_task
             })
         })
         .collect()
@@ -201,13 +283,122 @@ pub fn agent_schedule_cancel(app: AppHandle, id: String) -> Result<Value, String
     let _guard = IO_LOCK.lock().map_err(|_| "定时任务锁失效".to_string())?;
     let mut tasks = load(&app);
     let before = tasks.len();
-    if id == "all" {
+    let removed: Vec<ScheduleTask> = if id == "all" {
+        let all = tasks.clone();
         tasks.clear();
+        all
     } else {
+        let all = tasks.iter().filter(|t| t.id == id).cloned().collect();
         tasks.retain(|t| t.id != id);
+        all
+    };
+    for task in &removed {
+        delete_external(&task.external_task);
     }
     save(&app, &tasks)?;
     Ok(json!({ "ok": true, "removed": before - tasks.len() }))
+}
+
+fn claim_external(app: &AppHandle, id: &str) -> Result<ScheduleTask, String> {
+    let _guard = IO_LOCK.lock().map_err(|_| "定时任务锁失效".to_string())?;
+    let mut tasks = load(app);
+    let now = now_ms();
+    let Some(mut task) = tasks.iter().find(|t| t.id == id).cloned() else {
+        return Err(format!("找不到定时任务 {id}"));
+    };
+    if task.next_at_ms > now + 2_000 {
+        return Err(format!("定时任务 {id} 还不到执行时间（可能已由应用内调度领取）"));
+    }
+    if task.daily {
+        while task.next_at_ms <= now {
+            task.next_at_ms = next_daily(task.next_at_ms);
+        }
+        for item in tasks.iter_mut() {
+            if item.id == id {
+                item.next_at_ms = task.next_at_ms;
+            }
+        }
+    } else if task.repeat_ms > 0 {
+        while task.next_at_ms <= now {
+            task.next_at_ms += task.repeat_ms;
+        }
+        for item in tasks.iter_mut() {
+            if item.id == id {
+                item.next_at_ms = task.next_at_ms;
+            }
+        }
+    } else {
+        tasks.retain(|t| t.id != id);
+    }
+    save(app, &tasks)?;
+    Ok(task)
+}
+
+/// Windows Task Scheduler 拉起 KDock 时调用。
+pub fn handle_cli_argv(app: &AppHandle, argv: &[String]) -> bool {
+    let Some(pos) = argv.iter().position(|x| x == "--automation-run") else {
+        return false;
+    };
+    let Some(id) = argv.get(pos + 1).cloned() else {
+        return false;
+    };
+    let app2 = app.clone();
+    std::thread::spawn(move || {
+        let exit_after = std::env::var("KDOCK_AUTOMATION_RUN").ok().as_deref() == Some(id.as_str());
+        let task = match claim_external(&app2, &id) {
+            Ok(t) => t,
+            Err(e) => {
+                let _ = app2.emit("agent://toast", json!({ "text": e }));
+                if exit_after { app2.exit(1); }
+                return;
+            }
+        };
+        if let Err(e) = super::agent_send(
+            app2.clone(),
+            task.session_id.clone(),
+            task.prompt.clone(),
+            None,
+        ) {
+            let _ = app2.emit(
+                "agent://toast",
+                json!({ "text": format!("外部定时任务 {} 触发失败：{e}", task.id) }),
+            );
+            if exit_after { app2.exit(1); }
+            return;
+        }
+        let _ = app2.emit(
+            "agent://toast",
+            json!({ "text": format!("外部定时任务 {} 已触发", task.id) }),
+        );
+        if !exit_after {
+            return;
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+        let start_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let st = app2.state::<std::sync::Arc<super::AgentState>>().inner().clone();
+            if !st.running(Some(&task.session_id)) && std::time::Instant::now() < start_deadline {
+                continue;
+            }
+            if !st.running(Some(&task.session_id)) {
+                app2.exit(0);
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                app2.exit(2);
+                return;
+            }
+        }
+    });
+    true
+}
+
+pub fn handle_startup_cli(app: &AppHandle) {
+    if let Ok(id) = std::env::var("KDOCK_AUTOMATION_RUN") {
+        let argv = vec!["kdock".to_string(), "--automation-run".to_string(), id];
+        let _ = handle_cli_argv(app, &argv);
+    }
 }
 
 fn tick_once(app: &AppHandle) {
@@ -224,6 +415,7 @@ fn tick_once(app: &AppHandle) {
                 continue;
             }
             if store::session_meta_of(app, &t.session_id).is_none() {
+                delete_external(&t.external_task);
                 let _ = app.emit(
                     "agent://toast",
                     json!({ "text": format!("定时任务 {} 的会话已不存在，已取消", t.id) }),
@@ -232,6 +424,9 @@ fn tick_once(app: &AppHandle) {
                 continue;
             }
             due.push(t.clone());
+            if !t.daily && t.repeat_ms <= 0 {
+                delete_external(&t.external_task);
+            }
             // 先推进下一次并落盘，再发消息：进程如果恰好在这中间退出，也不会重复触发。
             if t.daily {
                 while t.next_at_ms <= now {
@@ -290,6 +485,14 @@ mod tests {
         assert_eq!(parse_delay("1d"), Some(86_400_000));
         assert_eq!(parse_delay("0m"), None);
         assert_eq!(parse_delay("abc"), None);
+    }
+
+    #[test]
+    fn external_tasks_are_namespaced_per_schedule() {
+        assert_eq!(
+            external_task_name("sch123-1"),
+            "KDock\\AgentSchedule-sch123-1"
+        );
     }
 
     #[test]

@@ -2248,6 +2248,17 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .navsub .sess.active { background: hsl(var(--primary) / 0.12); border-color: hsl(var(--primary) / 0.35); color: hsl(var(--foreground)); }
 .navsub .sess .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .navsub .sess .n { flex: 0 0 auto; font-size: 10px; opacity: .6; }
+.navsub .sess .role {
+  flex: 0 0 auto; padding: 1px 4px; border-radius: 4px;
+  font: 650 8.5px/1.35 var(--font-mono); letter-spacing: .05em;
+}
+.navsub .sess .role.main { color: hsl(var(--muted-foreground)); background: var(--surface-3); }
+.navsub .sess .role.sub { color: hsl(var(--primary)); background: hsl(var(--primary) / .12); }
+.navsub .sess.subagent { color: hsl(var(--muted-foreground)); }
+.navsub .sess .run {
+  width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%;
+  background: hsl(var(--success)); box-shadow: 0 0 0 3px hsl(var(--success) / .12);
+}
 
 /* 审批卡片 */
 .agapprove {

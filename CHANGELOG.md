@@ -51,6 +51,22 @@
 ## [未发布]
 
 ### 新增
+- **Agent 本机命令沙箱**：`workspace_run` / `local_run` 默认通过 Windows
+  AppContainer 执行，未授予网络能力时断网，只向工作区和 KDock 工具目录授予 ACL；
+  每条命令使用独立 Job Object 限制 64 个进程、4 GiB 单进程内存并回收整棵进程树。
+  Agent 输入栏可按会话选择“工作区 / 工作区+网络 / 宿主权限”。
+- **共享浏览器可观测性**：新增 `browser_snapshot`、`browser_wait`、`browser_assert`
+  和 `browser_network`，支持结构化控件快照、异步等待、页面状态断言、资源/fetch/XHR
+  状态和前端错误观察，不采集请求体、Cookie 或 Authorization。
+- **子 Agent 可见化与写协调**：会话树显示父/子关系、SUB 标记、任务摘要和运行状态；
+  支持一键停止当前父会话的全部子任务。多个 Agent 的文件写入和命令执行共用工作区写锁，
+  只读调查仍可并行。
+- **工具按需发现与 epoch**：新会话默认只加载核心工具包；新增 `tool_search`、
+  `tool_load`、`tool_refresh` 和 `tool_batch`，可在当前会话发现、加载内置/MCP 工具
+  并递增 tool epoch，不必新开会话即可刷新 schema。
+- **Windows 外部长期调度**：创建定时任务时同步注册当前用户的 Windows Task Scheduler
+  项，KDock 关闭时也能通过 `kdock.exe --automation-run <id>` 唤醒执行；外部运行完成后
+  自动退出，并与应用内 ticker 做领取去重。
 - **WCH-Link / WCH-LinkE 驱动修复**：环境配置不再把 MI_00 绑定到通用 WinUSB，而是
   下载 WCH 官方包并只执行 `WCHLinkDrv_WHQL_S.exe`；按实际 PnP 状态区分“驱动已注册”、
   “检测到设备但驱动未加载”和“已就绪”。INF 改为精确匹配，避免残留的

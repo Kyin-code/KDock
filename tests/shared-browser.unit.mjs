@@ -55,6 +55,12 @@ assert.match(main, /!agBrSource\) return/);
 assert.match(html, /id="ag-br-show"/);
 assert.match(html, /id="kb-back"/);
 assert.match(kbview, /pub fn read_dom_json/);
+assert.match(kbview, /pub fn snapshot_json/);
+assert.match(kbview, /pub fn wait_for_json/);
+assert.match(kbview, /pub fn assert_json/);
+assert.match(kbview, /pub fn network_json/);
+assert.match(kbview, /const BROWSER_PROBE_JS/);
+assert.match(kbview, /__kdockObs/);
 assert.match(kbview, /pub fn open/);
 assert.match(kbview, /pub fn open_and_wait/);
 assert.match(kbview, /pub fn open_and_read_json/);
@@ -79,6 +85,10 @@ assert.match(kbview, /pub fn navigate/);
 assert.match(kbview, /if w <= 1\.0 \|\| h <= 1\.0 \{[\s\S]*?wv\.hide\(\)/);
 assert.match(tools, /crate::shared_browser::read_dom_json/);
 assert.match(tools, /browser_navigate/);
+assert.match(tools, /browser_snapshot/);
+assert.match(tools, /browser_wait/);
+assert.match(tools, /browser_assert/);
+assert.match(tools, /browser_network/);
 assert.equal((tools.match(/crate::shared_browser::open_and_wait/g) || []).length, 2);
 assert.equal((tools.match(/crate::shared_browser::open_and_read_json/g) || []).length, 1);
 assert.doesNotMatch(agent, /pub fn browser_fetch|pub fn browser_back|pub fn browser_current/);
@@ -98,7 +108,11 @@ assert.doesNotMatch(help, /id:\s*"help-agent-links"|title:\s*"页面里的链接
 console.log(JSON.stringify({
   ok: true,
   host: "browser",
-  sharedTools: ["browser_open", "browser_navigate", "browser_read", "browser_find"],
+  sharedTools: [
+    "browser_open", "browser_navigate", "browser_read", "browser_find",
+    "browser_click", "browser_fill", "browser_snapshot", "browser_wait",
+    "browser_assert", "browser_network"
+  ],
   checks: [
     "hide-resets-placement",
     "legacy-storage-cleanup",
@@ -108,5 +122,8 @@ console.log(JSON.stringify({
     "scheme-allowlist",
     "shell-open",
     "address-draft",
+    "structured-snapshot",
+    "wait-and-assert",
+    "bounded-network-observation",
   ],
 }, null, 2));

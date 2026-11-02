@@ -3577,7 +3577,10 @@ pub fn run() {
     builder = builder
         // 单实例必须**第一个**装：第二个实例直接退出去叫醒已有窗口，
         // 不去碰 WebView2 的用户数据目录（两个实例抢同一个目录 = HRESULT(0x8007139F) 起不来）
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if agent::schedule::handle_cli_argv(app, &argv) {
+                return;
+            }
             focus_main(app);
             if let Some(w) = app.get_window("main") {
                 let _ = w.show();
@@ -3632,6 +3635,19 @@ pub fn run() {
             // 它内部要跑 PowerShell + WMI（好几秒），别挡着窗口显示 —— 丢后台线程慢慢补名字
             std::thread::spawn(refresh_friendly);
             agent::schedule::start(app.handle().clone());
+            agent::schedule::handle_startup_cli(app.handle());
+            if std::env::var("KDOCK_AUTOMATION_RUN").is_ok() {
+                let app_bg = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(350));
+                    if let Some(w) = app_bg.get_window("main") {
+                        let _ = w.hide();
+                    }
+                    if let Some(w) = app_bg.get_window("splash") {
+                        let _ = w.hide();
+                    }
+                });
+            }
             netip::start_monitor(app.handle().clone());
             // 任务栏/标题栏图标：显式再设一次。
             // 实测这台机器上 WM_GETICON 的**大图标是 0**（只有小图标有值），
@@ -3905,6 +3921,8 @@ pub fn run() {
                 agent::agent_session_set_provider,
             agent::agent_session_set_reasoning,
             agent::agent_session_set_perm,
+            agent::agent_session_set_sandbox,
+            agent::agent_sandbox_info,
             agent::agent_session_set_goal,
             agent::agent_approval_result,
             agent::agent_workspace_write_bytes,

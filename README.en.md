@@ -49,7 +49,8 @@ Test builds can change local settings or crash; back up first.
 - **Devices**: `.fw` upgrade, OpenOCD/J-Link, device files, FTP/FTPS/TFTP and ADB.
 - **Analysis**: ELF/BIN runtime graph, call chains, CFG and logic analyzer.
 - **Tools**: scope, commands, live charts, batch text, calculator and workflow.
-- **Agent**: chat, skills, MCP, workspaces, approvals, device analysis and a shared browser (same login state and current page as the Browser tab).
+- **Agent**: chat, skills, MCP, workspaces, approvals, device analysis, a shared browser with structured UI assertions,
+  local Windows UI automation, AppContainer command sandboxing, subagents and schedules that can wake KDock while closed.
 
 ## Working together
 

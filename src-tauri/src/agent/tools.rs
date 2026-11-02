@@ -435,7 +435,9 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
         json!({"type":"object","properties":{
             "task":{"type":"string","description":"交给子会话的完整任务"},
             "title":{"type":"string","description":"可选标题"},
-            "provider_id":{"type":"string","description":"可选模型 profile；默认继承当前会话"}
+            "provider_id":{"type":"string","description":"可选模型 profile；默认继承当前会话"},
+            "role":{"type":"string","description":"可选角色名，例如 reviewer / explorer / implementer"},
+            "instructions":{"type":"string","description":"可选角色指令，会放在任务前"}
         },"required":["task"]}),
         false,
     );
@@ -463,6 +465,41 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
             "ops":{"type":"array","items":{"type":"object","properties":{
                 "tool":{"type":"string"},
                 "args":{"type":"object"}
+            },"required":["tool"]}}
+        },"required":["ops"]}),
+        false,
+    );
+    push(
+        "tool_search",
+        "搜索尚未加载的内置/MCP 工具。返回工具名、类别、说明和当前是否已加载；refresh=true 时先重新探测 MCP 工具。",
+        json!({"type":"object","properties":{
+            "query":{"type":"string"},
+            "category":{"type":"string"},
+            "limit":{"type":"integer","description":"默认 20，最大 80"},
+            "refresh":{"type":"boolean","description":"默认 false；true 时重新读取 MCP tools/list"}
+        }}),
+        false,
+    );
+    push(
+        "tool_load",
+        "把搜索结果中的工具加载到当前会话。下一轮请求即可调用；会建立新的工具 epoch，并清掉本会话 schema 快照以便重新冻结。",
+        json!({"type":"object","properties":{
+            "names":{"type":"array","items":{"type":"string"},"minItems":1}
+        },"required":["names"]}),
+        false,
+    );
+    push(
+        "tool_refresh",
+        "重新探测 MCP 工具并重建当前会话的工具 schema epoch。用于服务新增/升级工具而不必新开会话。",
+        json!({"type":"object","properties":{}}),
+        false,
+    );
+    push(
+        "tool_batch",
+        "程序化批量调用多个只读工具，参数与 parallel_read 相同。适合一次读取多文件、多个端口或浏览器状态；写操作会被拒绝。",
+        json!({"type":"object","properties":{
+            "ops":{"type":"array","items":{"type":"object","properties":{
+                "tool":{"type":"string"},"args":{"type":"object"}
             },"required":["tool"]}}
         },"required":["ops"]}),
         false,
@@ -537,6 +574,44 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
             "text":{"type":"string","description":"没有 selector 时，按 placeholder / aria-label / name 包含匹配"},
             "value":{"type":"string"}
         },"required":["value"]}),
+        false,
+    );
+    push(
+        "browser_snapshot",
+        "读取共享内部浏览器的结构化页面状态：URL、标题、可见文本、按钮/链接/输入框以及表单字段。比整页 HTML 更省上下文，适合点击或填表前定位目标。",
+        json!({"type":"object","properties":{
+            "max_chars":{"type":"integer","description":"可见文本上限，默认 12000，最大 60000"}
+        }}),
+        false,
+    );
+    push(
+        "browser_wait",
+        "等待共享浏览器满足 selector 存在且可见、正文包含 text、URL 包含 url_contains 中的全部条件。用于等待异步渲染、登录跳转和表单提交结果。",
+        json!({"type":"object","properties":{
+            "selector":{"type":"string"},
+            "text":{"type":"string"},
+            "url_contains":{"type":"string"},
+            "timeout_ms":{"type":"integer","description":"默认 10000，最大 30000"}
+        }}),
+        false,
+    );
+    push(
+        "browser_assert",
+        "断言当前页面的 selector、正文、URL 或输入值。返回每项检查结果；用于验证点击/填写后的真实前端状态，而不是只相信动作成功。",
+        json!({"type":"object","properties":{
+            "selector":{"type":"string"},
+            "text":{"type":"string"},
+            "url_contains":{"type":"string"},
+            "value_equals":{"type":"string","description":"要求 selector 对应元素的 value/textContent 完全相等"}
+        }}),
+        false,
+    );
+    push(
+        "browser_network",
+        "读取共享浏览器最近的网络请求和前端错误。资源加载来自 Performance API，fetch/XHR 由页面探针记录；不采集请求体、Cookie 或 Authorization。可清空当前观察缓冲。",
+        json!({"type":"object","properties":{
+            "clear":{"type":"boolean","description":"读取后清空本次页面的探针缓冲，默认 false"}
+        }}),
         false,
     );
     push(
@@ -1404,11 +1479,23 @@ fn format_plan(items: &[Value]) -> String {
 
 fn subagent_spawn(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let task = arg_str(args, "task").ok_or("缺少 task")?;
+    let task = match arg_str(args, "instructions").filter(|s| !s.trim().is_empty()) {
+        Some(instructions) => format!(
+            "角色指令：\n{}\n\n任务：\n{}",
+            instructions.trim(),
+            task.trim()
+        ),
+        None => task,
+    };
     let parent = store::session_meta_of(ctx.app, ctx.session).ok_or("找不到当前会话")?;
     let title = arg_str(args, "title")
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| {
-            let head: String = task.chars().take(24).collect();
+            let head: String = arg_str(args, "task")
+                .unwrap_or_else(|| task.clone())
+                .chars()
+                .take(24)
+                .collect();
             format!("子任务：{head}")
         });
     let provider = arg_str(args, "provider_id").or_else(|| {
@@ -1435,6 +1522,11 @@ fn subagent_spawn(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     // parent_session 必须落盘成功，否则父会话无法 wait/result，停止时也会漏掉这个孤儿会话。
     sub_meta.perm = parent.perm.clone();
     sub_meta.parent_session = ctx.session.to_string();
+    sub_meta.agent_role = arg_str(args, "role")
+        .map(|s| s.trim().chars().take(40).collect::<String>())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "subagent".to_string());
+    sub_meta.task_summary = task.chars().take(600).collect();
     if let Err(e) = store::session_update_meta(ctx.app, &sub_meta) {
         let _ = store::session_delete(ctx.app, &sub.id);
         return Err(format!("子会话元数据写入失败，已取消启动：{e}"));
@@ -1526,6 +1618,10 @@ fn parallel_safe(name: &str) -> bool {
             | "screen_list"
             | "skill_list"
             | "history_search"
+            | "browser_snapshot"
+            | "browser_wait"
+            | "browser_assert"
+            | "browser_network"
     )
 }
 
@@ -1593,6 +1689,140 @@ fn parallel_read(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     Ok(out.join("\n\n"))
 }
 
+fn known_tool_entries(
+    ctx: &ToolCtx,
+    refresh_mcp: bool,
+) -> Result<Vec<Value>, String> {
+    if refresh_mcp {
+        super::mcp::invalidate_cache();
+    }
+    let loaded: std::collections::HashSet<String> =
+        super::tools_frozen(ctx.app, ctx.session).into_iter().collect();
+    let mut out: Vec<Value> = catalog()
+        .into_iter()
+        .map(|tool| {
+            json!({
+                "name": tool.name,
+                "category": tool_category(tool.name),
+                "description": tool.description,
+                "source": "builtin",
+                "core": is_core_tool(tool.name),
+                "loaded": loaded.contains(tool.name),
+            })
+        })
+        .collect();
+    let (schemas, _refreshed) = super::mcp::all_tool_schemas_cached(ctx.app);
+    for schema in schemas {
+        if let Some(function) = schema.get("function") {
+            if let Some(name) = function.get("name").and_then(|v| v.as_str()) {
+                out.push(json!({
+                    "name": name,
+                    "category": tool_category(name),
+                    "description": function.get("description").and_then(|v| v.as_str()).unwrap_or(""),
+                    "source": "mcp",
+                    "core": false,
+                    "loaded": loaded.contains(name),
+                }));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn tool_search(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let query = arg_str(args, "query").unwrap_or_default().to_ascii_lowercase();
+    let category = arg_str(args, "category").unwrap_or_default();
+    let limit = arg_u64(args, "limit", 20).clamp(1, 80) as usize;
+    let refresh = args
+        .get("refresh")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let mut entries = known_tool_entries(ctx, refresh)?;
+    entries.retain(|entry| {
+        if entry.get("error").and_then(|v| v.as_bool()).unwrap_or(false) {
+            return true;
+        }
+        let name = entry["name"].as_str().unwrap_or("");
+        let desc = entry["description"].as_str().unwrap_or("");
+        let cat = entry["category"].as_str().unwrap_or("");
+        let text = format!("{name} {desc} {cat}").to_ascii_lowercase();
+        (query.is_empty() || text.contains(&query))
+            && (category.is_empty() || cat == category)
+    });
+    entries.sort_by_key(|entry| {
+        let loaded = entry["loaded"].as_bool().unwrap_or(false);
+        let core = entry["core"].as_bool().unwrap_or(false);
+        let source = entry["source"].as_str().unwrap_or("");
+        (loaded, core, source != "builtin")
+    });
+    entries.truncate(limit);
+    Ok(serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?)
+}
+
+fn tool_load(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let names: Vec<String> = args
+        .get("names")
+        .and_then(|v| v.as_array())
+        .ok_or("names 必须是数组")?
+        .iter()
+        .filter_map(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if names.is_empty() {
+        return Err("names 不能为空".into());
+    }
+    let known: std::collections::HashSet<String> = known_tool_entries(ctx, false)?
+        .into_iter()
+        .filter_map(|v| v["name"].as_str().map(str::to_string))
+        .collect();
+    if let Some(unknown) = names.iter().find(|name| !known.contains(*name)) {
+        return Err(format!("未知工具：{unknown}；可先 tool_search"));
+    }
+    let mut meta = store::session_meta_of(ctx.app, ctx.session).ok_or("找不到当前会话")?;
+    let mut merged = super::tools_frozen(ctx.app, ctx.session);
+    for name in &names {
+        if !merged.iter().any(|existing| existing == name) {
+            merged.push(name.clone());
+        }
+    }
+    meta.tools = merged.clone();
+    meta.tool_epoch = meta.tool_epoch.saturating_add(1);
+    store::session_update_meta(ctx.app, &meta)?;
+    store::session_tool_schemas_clear(ctx.app, ctx.session)?;
+    Ok(format!(
+        "工具 epoch 已切到 {}；下一轮可用：{}",
+        meta.tool_epoch,
+        names.join(", ")
+    ))
+}
+
+fn tool_refresh(ctx: &ToolCtx, _args: &Value) -> Result<String, String> {
+    let entries = known_tool_entries(ctx, true)?;
+    let mut meta = store::session_meta_of(ctx.app, ctx.session).ok_or("找不到当前会话")?;
+    let mut names = super::tools_frozen(ctx.app, ctx.session);
+    for entry in entries {
+        if entry.get("error").and_then(|v| v.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        let Some(name) = entry["name"].as_str() else {
+            continue;
+        };
+        let is_mcp = entry["source"].as_str() == Some("mcp");
+        if is_mcp && !names.iter().any(|existing| existing == name) {
+            names.push(name.to_string());
+        }
+    }
+    meta.tools = names;
+    meta.tool_epoch = meta.tool_epoch.saturating_add(1);
+    store::session_update_meta(ctx.app, &meta)?;
+    store::session_tool_schemas_clear(ctx.app, ctx.session)?;
+    Ok(format!(
+        "MCP 工具已重新探测；工具 epoch={}，下一轮生效",
+        meta.tool_epoch
+    ))
+}
+
 /// 会改设备/改盘上东西的工具：权限管的就是这些
 #[cfg(test)]
 mod tests {
@@ -1657,13 +1887,21 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn inline_powershell_script_runs_and_is_removed() {
-        let (cmd, path) =
-            inline_script_command("Write-Output 'inline-script-ok'", "powershell").unwrap();
+        let workspace =
+            std::env::temp_dir().join(format!("kdock-inline-script-{}", std::process::id()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let (cmd, path) = inline_script_command(
+            "Write-Output 'inline-script-ok'",
+            "powershell",
+            &workspace,
+        )
+        .unwrap();
         // GitHub's fresh Windows runners can spend several seconds creating
         // the first Windows PowerShell session. This test checks execution,
         // not startup latency.
         let (code, out, err) = crate::shell::run(&cmd, 20_000, &|| false).unwrap();
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&workspace);
         assert_eq!(code, 0, "stderr={err}");
         assert!(out.contains("inline-script-ok"));
     }
@@ -1802,9 +2040,17 @@ mod tests {
             "web_download",
             "browser_click",
             "browser_fill",
+            "browser_snapshot",
+            "browser_wait",
+            "browser_assert",
+            "browser_network",
             "desktop_windows",
             "desktop_ui",
             "desktop_action",
+            "tool_search",
+            "tool_load",
+            "tool_refresh",
+            "tool_batch",
         ] {
             assert!(names.contains(&n), "缺工具 {n}");
         }
@@ -2135,6 +2381,7 @@ pub fn tool_category(name: &str) -> &'static str {
         || name.starts_with("plan_")
         || name.starts_with("subagent_")
         || name.starts_with("parallel_")
+        || name.starts_with("tool_")
         || name.starts_with("web_")
         || matches!(name, "local_run" | "output_read")
     {
@@ -2188,6 +2435,10 @@ pub fn is_core_tool(name: &str) -> bool {
             | "output_read"
             | "skill_list"
             | "skill_read"
+            | "tool_search"
+            | "tool_load"
+            | "tool_refresh"
+            | "tool_batch"
     )
 }
 
@@ -2440,7 +2691,7 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "device_push" => device_push(ctx, args),
         "firmware_info" => firmware_info(args),
         "firmware_upgrade" => firmware_upgrade(ctx, args),
-        "local_run" => local_run(args),
+        "local_run" => with_workspace_write_gate(ctx, || local_run(ctx, args)),
         "flash" => flash(ctx, args),
         "adb_devices" => adb_devices_text(),
         "adb_mdns" => adb_mdns_text(),
@@ -2519,16 +2770,20 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "browser_navigate" => browser_navigate(ctx, args),
         "browser_click" => browser_click(ctx, args),
         "browser_fill" => browser_fill(ctx, args),
+        "browser_snapshot" => browser_snapshot(ctx, args),
+        "browser_wait" => browser_wait(ctx, args),
+        "browser_assert" => browser_assert(ctx, args),
+        "browser_network" => browser_network(ctx, args),
         "web_fetch" => web_fetch(ctx, args),
         "web_download" => web_download(ctx, args),
         "workspace_list" => workspace_list(ctx, args),
         "workspace_read" => workspace_read(ctx, args),
-        "workspace_write" => workspace_write(ctx, args),
-        "workspace_mkdir" => workspace_mkdir(ctx, args),
-        "workspace_edit" => workspace_edit(ctx, args),
+        "workspace_write" => with_workspace_write_gate(ctx, || workspace_write(ctx, args)),
+        "workspace_mkdir" => with_workspace_write_gate(ctx, || workspace_mkdir(ctx, args)),
+        "workspace_edit" => with_workspace_write_gate(ctx, || workspace_edit(ctx, args)),
         "workspace_diff" => workspace_diff(ctx, args),
         "workspace_search" => workspace_search(ctx, args),
-        "workspace_run" => workspace_run(ctx, args),
+        "workspace_run" => with_workspace_write_gate(ctx, || workspace_run(ctx, args)),
         "workspace_test" => workspace_test(ctx, args),
         "workspace_context" => workspace_context(ctx, args),
         "workspace_check" => workspace_check(ctx, args),
@@ -2611,6 +2866,10 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
         "subagent_wait" => subagent_wait(ctx, args),
         "subagent_result" => subagent_result(ctx, args),
         "parallel_read" => parallel_read(ctx, args),
+        "tool_batch" => parallel_read(ctx, args),
+        "tool_search" => tool_search(ctx, args),
+        "tool_load" => tool_load(ctx, args),
+        "tool_refresh" => tool_refresh(ctx, args),
         "ssh_run" => ssh_run(ctx, args),
         other if other.starts_with("mcp__") => super::mcp::call_by_full_name(ctx.app, other, args),
         other if !is_known(other) => Err(format!("不认识工具 {other}")),
@@ -2961,19 +3220,55 @@ fn env_path_prefix() -> String {
     parts.join(";")
 }
 
-fn local_run(args: &Value) -> Result<String, String> {
+fn sandbox_settings(
+    ctx: &ToolCtx,
+) -> (crate::agent::sandbox::SandboxMode, bool) {
+    match store::session_meta_of(ctx.app, ctx.session) {
+        Some(meta) => (
+            crate::agent::sandbox::SandboxMode::parse(&meta.sandbox_mode),
+            meta.sandbox_network,
+        ),
+        None => (crate::agent::sandbox::SandboxMode::Workspace, false),
+    }
+}
+
+fn with_workspace_write_gate<T>(
+    ctx: &ToolCtx,
+    run: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _guard = ctx
+        .state
+        .workspace_write_gate
+        .lock()
+        .map_err(|_| "工作区写锁不可用".to_string())?;
+    run()
+}
+
+fn local_run(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let cmd = arg_str(args, "cmd").ok_or("缺少 cmd")?;
     let timeout = Duration::from_millis(arg_u64(args, "timeout_ms", 15_000));
     // 引号与输出编码统一走 shell 模块：以前 args(["/C", cmd]) 会被再包一层引号，
     // 命令里的 $_ / $env: 被外层吃掉、结尾的 D:\ 被当成转义引号，中文输出还会变乱码
     // 再把 KDock 自己的工具目录塞进 PATH 最前面 —— agent 就不用去找 adb/ffmpeg 在哪了
-    let (code, stdout, stderr) = crate::shell::run_with_path(
+    let (mode, network) = sandbox_settings(ctx);
+    let (code, stdout, stderr) = crate::agent::sandbox::run(
+        mode,
         &cmd,
         timeout.as_millis() as u64,
         &crate::agent::stop_requested,
         &env_path_prefix(),
+        Some(&ctx.workspace),
+        network,
     )?;
-    let mut text = format!("exit={code}\n");
+    let mut text = format!(
+        "sandbox={} network={}\nexit={code}\n",
+        mode.as_str(),
+        if mode == crate::agent::sandbox::SandboxMode::Workspace {
+            if network { "on" } else { "off" }
+        } else {
+            "host"
+        }
+    );
     if !stdout.trim().is_empty() {
         text.push_str(&format!("--- stdout ---\n{}\n", stdout.trim_end()));
     }
@@ -3861,6 +4156,65 @@ fn browser_fill(_ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     }
 }
 
+fn browser_snapshot(_ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let max = arg_u64(args, "max_chars", 12_000) as usize;
+    crate::shared_browser::snapshot_json("browser", max)
+}
+
+fn browser_wait(_ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let selector = arg_str(args, "selector").unwrap_or_default();
+    let text = arg_str(args, "text").unwrap_or_default();
+    let url_contains = arg_str(args, "url_contains").unwrap_or_default();
+    if selector.trim().is_empty() && text.trim().is_empty() && url_contains.trim().is_empty() {
+        return Err("selector / text / url_contains 至少给一个".into());
+    }
+    crate::shared_browser::wait_for_json(
+        "browser",
+        &selector,
+        &text,
+        &url_contains,
+        arg_u64(args, "timeout_ms", 10_000),
+    )
+}
+
+fn browser_assert(_ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    let selector = arg_str(args, "selector").unwrap_or_default();
+    let text = arg_str(args, "text").unwrap_or_default();
+    let url_contains = arg_str(args, "url_contains").unwrap_or_default();
+    let value_equals = arg_str(args, "value_equals").unwrap_or_default();
+    if selector.trim().is_empty()
+        && text.trim().is_empty()
+        && url_contains.trim().is_empty()
+        && value_equals.trim().is_empty()
+    {
+        return Err("至少要给一个断言条件".into());
+    }
+    if !value_equals.is_empty() && selector.trim().is_empty() {
+        return Err("value_equals 必须和 selector 一起使用".into());
+    }
+    let raw = crate::shared_browser::assert_json(
+        "browser",
+        &selector,
+        &text,
+        &url_contains,
+        &value_equals,
+    )?;
+    let value: Value =
+        serde_json::from_str(&raw).map_err(|e| format!("断言返回异常：{e}"))?;
+    if value["ok"].as_bool().unwrap_or(false) {
+        Ok(raw)
+    } else {
+        Err(format!("页面断言失败：{raw}"))
+    }
+}
+
+fn browser_network(_ctx: &ToolCtx, args: &Value) -> Result<String, String> {
+    crate::shared_browser::network_json(
+        "browser",
+        args.get("clear").and_then(|v| v.as_bool()).unwrap_or(false),
+    )
+}
+
 fn checked_web_url(raw: &str) -> Result<String, String> {
     let parsed = url::Url::parse(raw.trim()).map_err(|e| format!("网址无效：{e}"))?;
     if !matches!(parsed.scheme(), "http" | "https") {
@@ -4347,18 +4701,21 @@ fn workspace_run(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let mut temp_script: Option<std::path::PathBuf> = None;
     let cmd = if let Some(body) = script {
         let shell = arg_str(args, "shell").unwrap_or_else(|| "powershell".into());
-        let (command, path) = inline_script_command(&body, &shell)?;
+        let (command, path) = inline_script_command(&body, &shell, &ctx.workspace)?;
         temp_script = Some(path);
         command
     } else {
         cmd_arg.ok_or("缺少 cmd 或 script")?
     };
-    let (code, stdout, stderr) = crate::shell::run_with_path_in(
+    let (mode, network) = sandbox_settings(ctx);
+    let (code, stdout, stderr) = crate::agent::sandbox::run(
+        mode,
         &cmd,
         timeout,
         &crate::agent::stop_requested,
         &env_path_prefix(),
-        &cwd,
+        Some(&cwd),
+        network,
     )
     .inspect_err(|_| {
         if let Some(p) = temp_script.as_ref() {
@@ -4368,7 +4725,15 @@ fn workspace_run(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     if let Some(p) = temp_script.as_ref() {
         let _ = std::fs::remove_file(p);
     }
-    let mut text = format!("exit={code}\n");
+    let mut text = format!(
+        "sandbox={} network={}\nexit={code}\n",
+        mode.as_str(),
+        if mode == crate::agent::sandbox::SandboxMode::Workspace {
+            if network { "on" } else { "off" }
+        } else {
+            "host"
+        }
+    );
     if !stdout.trim().is_empty() {
         text.push_str(&format!("--- stdout ---\n{}\n", stdout.trim_end()));
     }
@@ -4378,7 +4743,11 @@ fn workspace_run(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     Ok(truncate_chars(text, 16_000))
 }
 
-fn inline_script_command(body: &str, shell: &str) -> Result<(String, std::path::PathBuf), String> {
+fn inline_script_command(
+    body: &str,
+    shell: &str,
+    workspace: &std::path::Path,
+) -> Result<(String, std::path::PathBuf), String> {
     static SCRIPT_SEQ: std::sync::atomic::AtomicU64 =
         std::sync::atomic::AtomicU64::new(1);
     let ext = if shell.eq_ignore_ascii_case("cmd") {
@@ -4387,7 +4756,9 @@ fn inline_script_command(body: &str, shell: &str) -> Result<(String, std::path::
         "ps1"
     };
     let seq = SCRIPT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
+    let dir = workspace.join(".kdock-tmp");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建临时脚本目录失败：{e}"))?;
+    let path = dir.join(format!(
         "kdock-agent-{}-{seq}.{ext}",
         std::process::id()
     ));

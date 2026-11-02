@@ -561,6 +561,9 @@ pub struct SessionMeta {
     /// 所以也按会话冻住；新会话才吃新的开关。
     #[serde(default)]
     pub tools: Vec<String>,
+    /// 工具 schema epoch。tool_load / tool_refresh 递增，用于明确缓存边界。
+    #[serde(default)]
+    pub tool_epoch: u64,
     /// 最近几轮的用量（每轮：prompt / 命中 / 未命中 / 输出），给界面看命中率走势。
     /// 只留最近 40 轮，不做累积（累积看 total_* 那几个）。
     #[serde(default)]
@@ -568,6 +571,12 @@ pub struct SessionMeta {
     /// 权限：read(只读) / ask(危险动作先问) / auto(自动)
     #[serde(default = "default_perm")]
     pub perm: String,
+    /// 命令执行边界：workspace=Windows AppContainer；trusted=明确使用宿主权限。
+    #[serde(default = "default_sandbox")]
+    pub sandbox_mode: String,
+    /// AppContainer 是否授予 InternetClient 能力。默认关闭。
+    #[serde(default)]
+    pub sandbox_network: bool,
     /// 用户点过「本会话都允许」的工具名：这些不再弹审批（一次任务里点 20 多次太累）
     #[serde(default)]
     pub allow: Vec<String>,
@@ -589,10 +598,24 @@ pub struct SessionMeta {
     /// 由 subagent_spawn 创建时的父会话；只有父会话能 wait/read 它。
     #[serde(default)]
     pub parent_session: String,
+    /// main / subagent / custom。旧会话默认为 main。
+    #[serde(default = "default_agent_role")]
+    pub agent_role: String,
+    /// 子 Agent 的任务摘要，供侧栏和活动面板显示。
+    #[serde(default)]
+    pub task_summary: String,
 }
 
 fn default_perm() -> String {
     "ask".into()
+}
+
+fn default_sandbox() -> String {
+    "workspace".into()
+}
+
+fn default_agent_role() -> String {
+    "main".into()
 }
 
 fn sessions_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -621,6 +644,15 @@ pub fn session_tool_schemas_get(app: &AppHandle, id: &str) -> Vec<serde_json::Va
 
 pub fn session_tool_schemas_save(app: &AppHandle, id: &str, schemas: &[serde_json::Value]) -> Result<(), String> {
     write_json(&session_tools_schema(app, id)?, &schemas)
+}
+
+pub fn session_tool_schemas_clear(app: &AppHandle, id: &str) -> Result<(), String> {
+    let path = session_tools_schema(app, id)?;
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("清除工具 schema 快照失败：{e}")),
+    }
 }
 
 /// 只允许字母数字和 `-_.`，防止拿 id 拼路径时跑到外面去
@@ -741,9 +773,12 @@ pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<Sess
         warned_overhead: false,
         system_prompt: String::new(),
         tools: Vec::new(),
+        tool_epoch: 0,
         usage_recent: Vec::new(),
         turns: 0,
         perm: default_perm(),
+        sandbox_mode: default_sandbox(),
+        sandbox_network: false,
         allow: Vec::new(),
         allow_cmd: Vec::new(),
         plan: Vec::new(),
@@ -751,6 +786,8 @@ pub fn session_new(app: &AppHandle, title: &str, workspace: &str) -> Result<Sess
         user_name: String::new(),
         agent_name: String::new(),
         parent_session: String::new(),
+        agent_role: default_agent_role(),
+        task_summary: String::new(),
     };
     std::fs::File::create(session_jsonl(app, &meta.id)?).map_err(|e| e.to_string())?;
     write_json(&session_meta(app, &meta.id)?, &meta)?;

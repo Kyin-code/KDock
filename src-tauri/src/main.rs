@@ -7,6 +7,12 @@ fn main() {
         let _ = kdock_lib::usb::usb_dump_to(&path);
         return;
     }
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(pos) = args.iter().position(|arg| arg == "--automation-run") {
+        if let Some(id) = args.get(pos + 1) {
+            std::env::set_var("KDOCK_AUTOMATION_RUN", id);
+        }
+    }
     kdock_lib::run()
 }
 

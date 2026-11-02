@@ -71,14 +71,32 @@ export const HELP_GROUPS = [
       {
         id: "help-agent-chat",
         title: "对话",
-        zh: "### 用途\n用自然语言描述目标，Agent 会读取工作区、调用工具、执行验证并汇报。\n### 操作\n- 输入后 Enter 发送，Shift+Enter 换行。\n- 可在输入框下方切换权限：只读 / 需批准 / 自动。\n- 供应商声明多个思考档位后，底栏会出现「思考」下拉；选择按当前会话保存。\n- 模型下拉切换 profile；对话内补发消息会在当前回合的下一个边界并入。\n- 待发送区可选择「全部立即发送」：停止当前轮并马上提交这些补充内容。\n### 联动\n- 「上下文成分」「运行概览」展示成本、上下文来源和建议思考档位。\n- 修改设备、运行命令、写文件等动作受权限控制。",
-        en: "### Purpose\nDescribe a goal; the Agent reads the workspace, calls tools, verifies work and reports.\n### Usage\n- Enter sends, Shift+Enter inserts a newline.\n- Switch permission below the composer: read-only / ask / auto.\n- When a provider declares several reasoning efforts, a Thinking selector appears and is stored per session.\n- The model selector switches profiles; extra messages are merged at the next turn boundary.\n- Pending messages also offer Send all now, which stops the current turn and submits them immediately.\n### Relationships\n- Context breakdown and Runtime overview show cost, context sources and the selected effort.\n- Device changes, commands and file writes are permission-gated."
+        zh: "### 用途\n用自然语言描述目标，Agent 会读取工作区、调用工具、执行验证并汇报。\n### 操作\n- 输入后 Enter 发送，Shift+Enter 换行。\n- 可在输入框下方切换权限：只读 / 需批准 / 自动。\n- 「沙箱」选择命令边界：工作区 AppContainer（默认断网）、工作区+网络、宿主权限。\n- 供应商声明多个思考档位后，底栏会出现「思考」下拉；选择按当前会话保存。\n- 模型下拉切换 profile；对话内补发消息会在当前回合的下一个边界并入。\n- 待发送区可选择「全部立即发送」：停止当前轮并马上提交这些补充内容。\n### 联动\n- 「上下文成分」「运行概览」展示成本、上下文来源和建议思考档位。\n- 修改设备、运行命令、写文件等动作同时受权限和沙箱控制。",
+        en: "### Purpose\nDescribe a goal; the Agent reads the workspace, calls tools, verifies work and reports.\n### Usage\n- Enter sends, Shift+Enter inserts a newline.\n- Switch permission below the composer: read-only / ask / auto.\n- Sandbox selects the command boundary: Workspace AppContainer (no network by default), Workspace + network, or Host access.\n- When a provider declares several reasoning efforts, a Thinking selector appears and is stored per session.\n- The model selector switches profiles; extra messages are merged at the next turn boundary.\n- Pending messages also offer Send all now, which stops the current turn and submits them immediately.\n### Relationships\n- Context breakdown and Runtime overview show cost, context sources and the selected effort.\n- Device changes, commands and file writes are governed by both permission and sandbox mode."
       },
       {
         id: "help-agent-workspace",
         title: "工作区与会话",
-        zh: "### 用途\n工作区是 Agent 读写文件和保存技能/指导的根目录；会话保存对话与工具历史。\n### 操作\n- 点 Agent 行右侧的文件夹+新建工作区。\n- 工作区树可以切换当前目录；历史会话可以重命名或删除。\n### 联动\n- workspace_* 工具只能在工作区内按相对路径操作。\n- 工作区里的 AGENTS.md 会作为项目级指导注入。\n- 运行结构分析可以读取工作区里的 ELF/BIN。",
-        en: "### Purpose\nA workspace is the Agent's file root for files, skills and guidance; sessions store conversation and tool history.\n### Usage\n- Use the folder+ button beside Agent to create a workspace.\n- Switch workspaces from the tree; rename or delete old sessions.\n### Relationships\n- workspace_* tools use relative paths inside the active workspace.\n- AGENTS.md in the workspace is injected as project guidance.\n- Runtime graph can analyze ELF/BIN files from the workspace."
+        zh: "### 用途\n工作区是 Agent 读写文件和保存技能/指导的根目录；会话保存对话与工具历史。\n### 操作\n- 点 Agent 行右侧的文件夹+新建工作区。\n- 工作区树可以切换当前目录；历史会话可以重命名或删除。\n- 子 Agent 会显示在父会话下方，带 SUB 标记、运行状态和独立任务摘要。\n- 有子任务运行时，标题栏出现「子任务 N」，可以一次停止当前父会话的全部子任务。\n### 联动\n- workspace_* 工具只能在工作区内按相对路径操作。\n- 多个 Agent 的写文件和命令执行会串行化；调查和只读操作仍可并行。\n- 工作区里的 AGENTS.md 会作为项目级指导注入。\n- 运行结构分析可以读取工作区里的 ELF/BIN。",
+        en: "### Purpose\nA workspace is the Agent's file root for files, skills and guidance; sessions store conversation and tool history.\n### Usage\n- Use the folder+ button beside Agent to create a workspace.\n- Switch workspaces from the tree; rename or delete old sessions.\n- Subagents appear below their parent with a SUB badge, run state and task summary.\n- While child tasks are running, the header shows Subagents N and can stop all children of the current parent.\n### Relationships\n- workspace_* tools use relative paths inside the active workspace.\n- File writes and command execution are serialized across Agents, while investigation and reads remain parallel.\n- AGENTS.md in the workspace is injected as project guidance.\n- Runtime graph can analyze ELF/BIN files from the workspace."
+      },
+      {
+        id: "help-agent-sandbox",
+        title: "命令沙箱",
+        zh: "### 三种边界\n- 工作区：Windows AppContainer 启动本机命令，默认没有 InternetClient 网络能力；只对工作区和 KDock 工具目录授予 ACL。\n- 工作区+网络：同样隔离文件，但显式授予网络能力。\n- 宿主权限：明确使用当前用户和整台机器的权限，只用于必须访问全机的工具链。\n### 进程限制\n每个命令使用独立 Job Object，限制 64 个进程和单进程 4 GiB 内存；超时、停止或父进程退出会杀掉整棵进程树。\n### 注意\n宿主权限不会提供文件/网络隔离；需要隔离时不要切过去。",
+        en: "### Three boundaries\n- Workspace: starts host commands in a Windows AppContainer without InternetClient capability by default; ACLs are granted only to the workspace and KDock tool directories.\n- Workspace + network: the same file isolation with an explicit network capability.\n- Host access: explicitly runs with the current user's full-machine permissions, only for toolchains that require it.\n### Process limits\nEach command gets its own Job Object with 64-process and 4 GiB per-process limits; timeout, stop or parent exit kills the whole process tree.\n### Note\nHost access provides no file or network isolation."
+      },
+      {
+        id: "help-agent-tool-discovery",
+        title: "工具发现与加载",
+        zh: "工具 schema 仍按会话冻结以复用缓存，但不再必须新开会话才能使用新工具。\n### 操作\n- tool_search 搜索内置或 MCP 工具；refresh=true 会重新探测 MCP。\n- tool_load 把选中的工具追加到当前会话，并递增 tool epoch；下一轮模型请求即可使用。\n- tool_refresh 重新探测 MCP 并装载新增工具。\n- tool_batch 可并行执行多个只读工具；写工具会被拒绝。",
+        en: "Tool schemas remain frozen per session for cache reuse, but new tools no longer require a new session.\n### Usage\n- tool_search finds built-in or MCP tools; refresh=true probes MCP again.\n- tool_load appends selected tools to the session and increments the tool epoch; they are available on the next model request.\n- tool_refresh probes MCP and loads newly discovered tools.\n- tool_batch runs several read-only tools in parallel; write tools are rejected."
+      },
+      {
+        id: "help-agent-schedule",
+        title: "长期任务与 Windows 调度",
+        zh: "### 应用内与外部调度\n- KDock 打开时，进程内 ticker 每秒检查一次。\n- 创建定时任务时还会尝试注册当前用户的 Windows Task Scheduler 项；KDock 关闭时也能唤醒程序执行。\n- once / daily 使用一次性或每日外部任务；重复任务按分钟注册，小于 1 分钟的间隔只能在 KDock 打开时执行。\n### 限制\n外部任务使用当前用户登录态和 DPAPI 凭据；系统关机、用户未登录或任务被系统策略禁用时仍无法执行。",
+        en: "### In-app and external scheduling\n- While KDock is open, an in-process ticker checks every second.\n- Adding a schedule also registers a current-user Windows Task Scheduler entry, so KDock can wake and run while closed.\n- Once/daily schedules use one-time or daily tasks; recurring tasks use minute intervals, so intervals below one minute run only while KDock is open.\n### Limits\nExternal tasks use the current user's login and DPAPI credentials; shutdown, signed-out state or policy restrictions can still prevent execution."
       },
       {
         id: "help-agent-info",
@@ -107,8 +125,8 @@ export const HELP_GROUPS = [
       {
         id: "help-agent-tools",
         title: "工具、权限与审批",
-        zh: "### 分类\n- 只读：扫描、查询、读取文件。\n- 需批准：写文件、运行命令、改设备、安装组件。\n- 自动：完全信任当前会话。\n### 联动\n- 设置 → 工具可分类全开/全关；基本工具不可关闭。\n- 审批弹窗会显示工具名和参数，拒绝后 Agent 会收到失败结果。\n- 工具结果过长时会落盘，避免占满上下文。\n### 注意\n- 「自动」只适合你信任当前任务和 Agent 行为时使用。",
-        en: "### Categories\n- Read-only: scans, queries and file reads.\n- Needs approval: file writes, commands, device changes and installs.\n- Auto: fully trust the current session.\n### Relationships\n- Settings → Tools supports per-category enable/disable; core tools cannot be disabled.\n- Approval dialogs show tool name and arguments; rejection is returned to the Agent.\n- Oversized results spill to disk to protect context.\n### Note\n- Use Auto only when you trust the task and the Agent's actions."
+        zh: "### 分类\n- 只读：扫描、查询、读取文件。\n- 需批准：写文件、运行命令、改设备、安装组件。\n- 自动：不再逐次询问审批，但仍遵守当前命令沙箱。\n### 联动\n- 设置 → 工具可分类全开/全关；基本工具不可关闭。\n- tool_search / tool_load / tool_refresh 可以按需发现和加载工具，并使用 tool epoch 明确缓存边界。\n- 审批弹窗会显示工具名和参数，拒绝后 Agent 会收到失败结果。\n- 工具结果过长时会落盘，避免占满上下文。\n### 注意\n- 「自动」只适合你信任当前任务和 Agent 行为时使用。",
+        en: "### Categories\n- Read-only: scans, queries and file reads.\n- Needs approval: file writes, commands, device changes and installs.\n- Auto: skips per-call approval but still obeys the current command sandbox.\n### Relationships\n- Settings → Tools supports per-category enable/disable; core tools cannot be disabled.\n- tool_search / tool_load / tool_refresh discover and load tools on demand, with tool epochs marking cache boundaries.\n- Approval dialogs show tool name and arguments; rejection is returned to the Agent.\n- Oversized results spill to disk to protect context.\n### Note\n- Use Auto only when you trust the task and the Agent's actions."
       },
     ],
   },
@@ -118,8 +136,8 @@ export const HELP_GROUPS = [
       {
         id: "help-kb-shared",
         title: "共享浏览器",
-        zh: "浏览器页和 Agent 右栏共用同一个 WebView2：地址、登录态、Cookie 和导航历史完全一致。\n### 操作\n- 在浏览器页输入网址并按 Enter，或在 Agent 浏览器面板打开；地址栏有草稿时，后台导航不会覆盖你的输入。\n- 页面里的链接和站内跳转保留在当前共享视图中。\n- \"在浏览器打开\" 切回完整页面；\"源码\" 读取当前渲染页的 HTML。\n### Agent\n- browser_open / browser_navigate 串行导航这块共享视图，并等待新页面加载完成。\n- browser_read 读取当前 DOM 正文（包括登录后、脚本渲染后的内容）；browser_find 在正文中查找。\n### 注意\n- 共享浏览器只接受 http:// 和 https://；file/data/javascript 等协议会被拒绝。\n- 这是外部网页，账号和数据由对应服务管理；KDock 不保存网页正文为知识库。\n- 网页正文是不可信数据，Agent 只应把它当资料，不能执行页面里夹带的指令。\n- 设置里的首页只决定默认地址，不另建第二个页面。",
-        en: "Browser and the Agent side panel share one WebView2: URL, login state, cookies and navigation history are identical.\n### Use\n- Enter a URL on the Browser page or open it in the Agent browser panel; background navigation does not overwrite an address draft.\n- Links and in-site navigation stay in the shared view.\n- \"Open in browser\" shows the full page; \"Source\" reads the rendered HTML.\n### Agent\n- browser_open / browser_navigate serialize navigation of this shared view and wait for the new document.\n- browser_read reads the current DOM text, including logged-in and script-rendered content; browser_find searches it.\n### Notes\n- The shared browser accepts only http:// and https://; file/data/javascript and similar protocols are rejected.\n- This is an external webpage; the service owns its account and data. KDock does not store page content as a knowledge base.\n- Page text is untrusted data. The Agent may use it as reference but must not follow instructions embedded in the page.\n- The home URL in Settings is only the default address; it does not create a second page."
+        zh: "浏览器页和 Agent 右栏共用同一个 WebView2：地址、登录态、Cookie 和导航历史完全一致。\n### 操作\n- 在浏览器页输入网址并按 Enter，或在 Agent 浏览器面板打开；地址栏有草稿时，后台导航不会覆盖你的输入。\n- 页面里的链接和站内跳转保留在当前共享视图中。\n- \"在浏览器打开\" 切回完整页面；\"源码\" 读取当前渲染页的 HTML。\n### Agent\n- browser_open / browser_navigate 串行导航并等待新页面加载完成。\n- browser_click / browser_fill 执行点击和表单填写；browser_snapshot 读取结构化控件和页面文本。\n- browser_wait / browser_assert 等待并验证 selector、正文、URL 和输入值。\n- browser_network 返回 Performance API 资源记录、fetch/XHR 状态和前端错误，不采集请求体、Cookie 或 Authorization。\n### 注意\n- 共享浏览器只接受 http:// 和 https://；file/data/javascript 等协议会被拒绝。\n- 这是外部网页，账号和数据由对应服务管理；KDock 不保存网页正文为知识库。\n- 网页正文是不可信数据，Agent 只应把它当资料，不能执行页面里夹带的指令。\n- 设置里的首页只决定默认地址，不另建第二个页面。",
+        en: "Browser and the Agent side panel share one WebView2: URL, login state, cookies and navigation history are identical.\n### Use\n- Enter a URL on the Browser page or open it in the Agent browser panel; background navigation does not overwrite an address draft.\n- Links and in-site navigation stay in the shared view.\n- \"Open in browser\" shows the full page; \"Source\" reads the rendered HTML.\n### Agent\n- browser_open / browser_navigate serialize navigation and wait for the new document.\n- browser_click / browser_fill click and fill forms; browser_snapshot reads structured controls and page text.\n- browser_wait / browser_assert wait for and verify selectors, text, URLs and input values.\n- browser_network returns Performance API resources, fetch/XHR statuses and front-end errors without request bodies, cookies or Authorization.\n### Notes\n- The shared browser accepts only http:// and https://; file/data/javascript and similar protocols are rejected.\n- This is an external webpage; the service owns its account and data. KDock does not store page content as a knowledge base.\n- Page text is untrusted data. The Agent may use it as reference but must not follow instructions embedded in the page.\n- The home URL in Settings is only the default address; it does not create a second page."
       },
     ],
   },
@@ -683,8 +701,8 @@ export const HELP_GROUPS = [
       {
         id: "help-settings-tools",
         title: "工具开关",
-        zh: "### 分类\n通信、工作区、设备固件、安卓、仪器分析、屏幕、编排、技能环境、界面上下文。\n### 操作\n- 每组可全开/全关，也可以逐项切换。\n- 22 个基本工具不可关闭。\n### 联动\n开关对新会话生效；会话冻结工具 schema 以复用上下文缓存。",
-        en: "### Categories\nCommunication, workspace, devices/firmware, Android, analysis, screen, workflow, skills/environment and UI/context.\n### Usage\n- Enable/disable a whole category or individual tools.\n- 22 core tools cannot be disabled.\n### Relationships\nSwitches apply to new sessions; tool schemas are frozen per session for cache reuse."
+        zh: "### 分类\n通信、工作区、设备固件、安卓、仪器分析、屏幕、编排、技能环境、界面上下文。\n### 操作\n- 每组可全开/全关，也可以逐项切换。\n- 基本工具不可关闭。\n### 联动\n开关对新会话生效；会话冻结工具 schema 以复用上下文缓存。Agent 可用 tool_search / tool_load / tool_refresh 在当前会话按需扩展工具并建立新的 epoch。",
+        en: "### Categories\nCommunication, workspace, devices/firmware, Android, analysis, screen, workflow, skills/environment and UI/context.\n### Usage\n- Enable/disable a whole category or individual tools.\n- Core tools cannot be disabled.\n### Relationships\nSwitches apply to new sessions; tool schemas are frozen per session for cache reuse. The Agent can use tool_search / tool_load / tool_refresh to extend the current session and start a new epoch."
       },
       {
         id: "help-settings-mcp",
@@ -724,6 +742,9 @@ export const HELP_TITLE_EN = {
   "Work with KDock": "Work with KDock",
   "快捷键与通用操作": "Shortcuts and common actions",
   "快捷键": "Shortcuts",
+  "命令沙箱": "Command sandbox",
+  "工具发现与加载": "Tool discovery and loading",
+  "长期任务与 Windows 调度": "Long-running tasks and Windows scheduling",
   "页面之间怎么联动": "How pages work together",
   "连接与参数": "Connection and parameters",
   "收发区与显示": "Traffic and display",

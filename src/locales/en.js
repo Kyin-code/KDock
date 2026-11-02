@@ -471,6 +471,12 @@ export const EN = {
   "📎 文件": "📎 File",
   "agent 的权限：只读 / 危险动作先问 / 全自动": "Agent permission: read-only / ask before risky actions / fully automatic",
   "只读": "Read-only", "需要批准": "Ask", "自动": "Auto",
+  "沙箱": "Sandbox", "工作区": "Workspace", "工作区+网络": "Workspace + network",
+  "宿主权限": "Host access",
+  "命令执行边界：工作区 AppContainer 默认断网；宿主权限只用于明确需要整机访问的工具":
+    "Command boundary: Workspace AppContainer has no network by default; Host access is only for tools that require the full machine",
+  "运行中": "Running", "子任务": "Subagents",
+  "停止当前会话创建的全部子任务": "Stop all subagents created by this session",
   "思考强度": "Reasoning effort", "跟随模型默认": "Use model default",
   "可用思考强度": "Available reasoning efforts",
   "只勾选这个供应商/模型确认支持的档位。Agent 面板会按这里列出可选值；不同厂商未支持的档位可能返回 400。":
