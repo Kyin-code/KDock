@@ -10743,6 +10743,7 @@ function bindQuickModels() {
         });
         agMeta.reasoning_effort = r.reasoning_effort || "";
         toast(`${en("本会话思考强度：")}${agReasoningName(agMeta.reasoning_effort) || en("供应商默认")}`);
+        agRenderInfo();
       } catch (e) {
         toast(String(e));
         agSyncReasoningControl();
