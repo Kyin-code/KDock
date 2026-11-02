@@ -11830,6 +11830,8 @@ const KDOCK_REPO = "https://github.com/Kyin-code/KDock";
 const KDOCK_AUTHOR = "https://github.com/Kyin-code";
 let appVersion = "0.1.0";
 let pendingAppUpdate = null;
+let pendingAppUpdateDownload = null;
+let appUpdateBusy = false;
 
 function openExternal(url) {
   invoke("browser_open_external", { path: url }).catch((e) => toast(String(e)));
@@ -11837,9 +11839,28 @@ function openExternal(url) {
 
 function hideAppUpdatePrompt() {
   const box = document.getElementById("app-update-dlg");
+  if (appUpdateBusy) return;
   if (box) box.hidden = true;
   pendingAppUpdate = null;
+  pendingAppUpdateDownload = null;
   kbSyncSoon();
+}
+
+function appUpdateProgress(phase, pct, text) {
+  const wrap = document.getElementById("app-update-progress");
+  const bar = document.getElementById("app-update-progress-bar");
+  const status = document.getElementById("app-update-status");
+  if (!wrap || !bar || !status) return;
+  wrap.hidden = false;
+  status.hidden = false;
+  if (pct < 0) {
+    bar.style.width = "28%";
+    wrap.classList.add("indeterminate");
+  } else {
+    wrap.classList.remove("indeterminate");
+    bar.style.width = Math.max(0, Math.min(100, Number(pct) || 0)) + "%";
+  }
+  status.textContent = text || (phase === "verify" ? en("正在校验安装包…") : en("正在下载安装包…"));
 }
 
 function showAppUpdatePrompt(info) {
@@ -11847,14 +11868,29 @@ function showAppUpdatePrompt(info) {
   const text = document.getElementById("app-update-text");
   if (!box || !text) return;
   pendingAppUpdate = info;
+  pendingAppUpdateDownload = null;
+  appUpdateBusy = false;
   const currentBuild = String(info.currentBuild || "").slice(0, 7);
   const latestBuild = String(info.latestBuild || "").slice(0, 7);
   const notes = String(info.notes || "").trim().slice(0, 600);
   text.textContent = [
     `${en("当前版本")} v${info.currentVersion}${currentBuild ? ` (${currentBuild})` : ""} → v${info.latestVersion}${latestBuild ? ` (${latestBuild})` : ""}`,
     notes,
-    en("KDock 不会自动安装；下载后运行安装包即可覆盖升级，数据和会话会保留。"),
+    en("KDock 会在应用内下载并校验安装包；下载完成后由你确认启动，覆盖升级会保留数据和会话。"),
   ].filter(Boolean).join("\n\n");
+  const progress = document.getElementById("app-update-progress");
+  const status = document.getElementById("app-update-status");
+  const download = document.getElementById("app-update-download");
+  if (progress) progress.hidden = true;
+  if (status) { status.hidden = true; status.textContent = ""; }
+  if (download) {
+    download.disabled = false;
+    download.textContent = en("下载安装包");
+  }
+  for (const id of ["app-update-skip", "app-update-later"]) {
+    const button = document.getElementById(id);
+    if (button) button.disabled = false;
+  }
   box.hidden = false;
   kbSyncSoon();
   setTimeout(() => document.getElementById("app-update-download")?.focus(), 30);
@@ -11876,23 +11912,77 @@ function bindAppUpdatePrompt() {
     const button = document.getElementById(id);
     if (button) button.onclick = fn;
   };
+  listen("app-update://progress", (event) => {
+    if (box.hidden || !pendingAppUpdate) return;
+    const p = event.payload || {};
+    const pct = Number(p.pct);
+    const gotMb = Number(p.received || 0) / 1048576;
+    const totalMb = Number(p.total || 0) / 1048576;
+    let text = en("正在下载安装包…");
+    if (p.phase === "verify") text = en("正在校验安装包…");
+    else if (p.phase === "done") text = en("下载完成");
+    else if (pct >= 0 && totalMb > 0) text = `${en("正在下载安装包…")} ${Math.round(pct)}% · ${gotMb.toFixed(1)} / ${totalMb.toFixed(1)} MB`;
+    else if (gotMb > 0) text = `${en("正在下载安装包…")} ${gotMb.toFixed(1)} MB`;
+    appUpdateProgress(p.phase, pct, text);
+  });
   bind("app-update-skip", () => {
+    if (appUpdateBusy) return;
     if (pendingAppUpdate) skipUpdate(pendingAppUpdate);
     hideAppUpdatePrompt();
   });
   bind("app-update-later", () => {
+    if (appUpdateBusy) return;
     if (pendingAppUpdate) remindUpdateLater(pendingAppUpdate);
     hideAppUpdatePrompt();
   });
-  bind("app-update-download", () => {
+  bind("app-update-download", async () => {
     const info = pendingAppUpdate;
-    if (!info) return;
-    remindUpdateLater(info);
-    hideAppUpdatePrompt();
-    openExternal(info.installerUrl);
+    if (!info || appUpdateBusy) return;
+    if (pendingAppUpdateDownload) {
+      try {
+        await invoke("app_update_launch", { path: pendingAppUpdateDownload });
+        hideAppUpdatePrompt();
+        toast(en("正在启动安装程序…"));
+      } catch (e) {
+        appUpdateProgress("error", 100, en("无法启动安装程序：") + String(e));
+      }
+      return;
+    }
+    appUpdateBusy = true;
+    const download = document.getElementById("app-update-download");
+    for (const id of ["app-update-skip", "app-update-later", "app-update-download"]) {
+      const button = document.getElementById(id);
+      if (button) button.disabled = true;
+    }
+    if (download) download.textContent = en("正在下载安装包…");
+    appUpdateProgress("download", -1, en("正在下载安装包…"));
+    try {
+      const got = await invoke("app_update_download", {
+        url: info.installerUrl,
+        sha256: String(info.sha256 || ""),
+      });
+      pendingAppUpdateDownload = got.path;
+      if (got.verified) {
+        appUpdateProgress("done", 100, en("安装包已下载，SHA-256 校验通过"));
+      } else {
+        appUpdateProgress("done", 100, en("安装包已下载；旧版更新清单未提供 SHA-256"));
+      }
+      if (download) download.textContent = en("启动安装程序");
+    } catch (e) {
+      appUpdateProgress("error", 100, en("下载失败：") + String(e));
+      toast(String(e));
+    } finally {
+      appUpdateBusy = false;
+      if (download && !pendingAppUpdateDownload) download.textContent = en("下载安装包");
+      for (const id of ["app-update-skip", "app-update-later", "app-update-download"]) {
+        const button = document.getElementById(id);
+        if (button) button.disabled = false;
+      }
+    }
   });
   box.onclick = (event) => {
     if (event.target !== box) return;
+    if (appUpdateBusy) return;
     if (pendingAppUpdate) remindUpdateLater(pendingAppUpdate);
     hideAppUpdatePrompt();
   };
@@ -11900,6 +11990,7 @@ function bindAppUpdatePrompt() {
     if (event.key !== "Escape" || box.hidden) return;
     event.preventDefault();
     event.stopPropagation();
+    if (appUpdateBusy) return;
     if (pendingAppUpdate) remindUpdateLater(pendingAppUpdate);
     hideAppUpdatePrompt();
   }, true);

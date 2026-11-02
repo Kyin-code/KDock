@@ -3810,6 +3810,8 @@ pub fn run() {
             ui_prefs_get,
             ui_prefs_set,
             app_update::app_update_check,
+            app_update::app_update_download,
+            app_update::app_update_launch,
             workspace_git,
             ui_ready,
             splash_show,

@@ -7,6 +7,7 @@ export function makeManifest({
   version,
   build,
   installerUrl,
+  installerSha256,
   portableUrl,
   releaseUrl,
   notes = "",
@@ -16,6 +17,9 @@ export function makeManifest({
     throw new Error(`invalid release version: ${version}`);
   }
   if (!build) throw new Error("release build id is required");
+  if (!/^[0-9a-f]{64}$/i.test(String(installerSha256 || ""))) {
+    throw new Error(`invalid installer SHA-256: ${installerSha256}`);
+  }
   for (const [name, url] of [
     ["installer", installerUrl],
     ["portable", portableUrl],
@@ -32,6 +36,7 @@ export function makeManifest({
     published_at: publishedAt,
     notes: String(notes || "").trim(),
     installer_url: installerUrl,
+    sha256: String(installerSha256).toLowerCase(),
     portable_url: portableUrl,
     release_url: releaseUrl,
   };
@@ -50,6 +55,7 @@ async function main() {
     version: cliValue(args, "--version"),
     build: cliValue(args, "--build"),
     installerUrl: cliValue(args, "--installer-url"),
+    installerSha256: cliValue(args, "--installer-sha256"),
     portableUrl: cliValue(args, "--portable-url"),
     releaseUrl: cliValue(args, "--release-url"),
     notes: cliValue(args, "--notes"),

@@ -2397,6 +2397,16 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   overflow: auto;
   overflow-wrap: anywhere;
 }
+.updprogress {
+  height: 5px; overflow: hidden; border-radius: 999px;
+  background: var(--surface-3); border: 1px solid var(--surface-line);
+}
+.updprogress > div {
+  width: 0; height: 100%; border-radius: inherit;
+  background: hsl(var(--primary));
+  transition: width .18s ease;
+}
+.updstatus { min-height: 18px; font-size: 11.5px; color: hsl(var(--muted-foreground)); }
 
 /* 导航条：贴右边、给正文留出右边距，别压住模型输出 */
 .agentbox { position: relative; }

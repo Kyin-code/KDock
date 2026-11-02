@@ -574,8 +574,17 @@ export const EN = {
   "稍后提醒": "Remind me later",
   "下载安装包": "Download installer",
   "当前版本": "Current version",
-  "KDock 不会自动安装；下载后运行安装包即可覆盖升级，数据和会话会保留。":
-    "KDock will not install automatically. Run the downloaded installer to upgrade in place; data and sessions are preserved.",
+  "KDock 会在应用内下载并校验安装包；下载完成后由你确认启动，覆盖升级会保留数据和会话。":
+    "KDock downloads and verifies the installer in-app, then asks you to launch it. An in-place upgrade preserves data and sessions.",
+  "正在下载安装包…": "Downloading installer…",
+  "正在校验安装包…": "Verifying installer…",
+  "下载完成": "Download complete",
+  "启动安装程序": "Launch installer",
+  "安装包已下载，SHA-256 校验通过": "Installer downloaded; SHA-256 verified",
+  "安装包已下载；旧版更新清单未提供 SHA-256": "Installer downloaded; the legacy update manifest has no SHA-256 value",
+  "下载失败：": "Download failed: ",
+  "无法启动安装程序：": "Could not launch the installer: ",
+  "正在启动安装程序…": "Launching installer…",
   "留 2048~8192 就行": "2048–8192 is fine", "高级": "Advanced",
   "温度 = 回答的\"随机性\"：0 最稳（每次几乎一样，调试/工具调用建议 0~0.3）；\n                越高越发散（0.7~1.0 适合写东西）。这个助手要调工具、要准，建议 0.2。":
     "Temperature = randomness: 0 is most stable (debugging/tool calls prefer 0–0.3); higher is more creative (0.7–1.0 suits prose). For an assistant that calls tools, 0.2 is a good default.",

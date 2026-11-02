@@ -298,6 +298,7 @@ jobs:
           $setupName = "KDock_${ver}_x64-setup.exe"
           $setup = Get-Item -LiteralPath "release/$setupName" -ErrorAction SilentlyContinue
           if (-not $setup) { throw "installer is required for the update manifest" }
+          $installerSha256 = (Get-FileHash -LiteralPath $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           $notes = if ("${{ steps.version_commit.outputs.sha }}") {
             (git log -2 --pretty=%s)[1]
           } else {
@@ -308,6 +309,7 @@ jobs:
             --version $ver `
             --build "${{ github.sha }}" `
             --installer-url "https://github.com/$repo/releases/download/$tag/$($setup.Name)" `
+            --installer-sha256 $installerSha256 `
             --portable-url "https://github.com/$repo/releases/download/$tag/$name.zip" `
             --release-url "https://github.com/$repo/releases/tag/$tag" `
             --notes "$notes"
