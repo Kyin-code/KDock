@@ -2050,6 +2050,16 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .modalcontent .cardtitle:first-child { margin-top: 0; }
 .modalcontent .field { grid-template-columns: 100px minmax(0, 1fr); align-items: center; margin-bottom: 10px; }
 .modalcontent .field > label { font-size: 12.5px; }
+.modalcontent .field.ag-limit-field { grid-template-columns: 118px minmax(0, 1fr); }
+.ag-token-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ag-token-input {
+  flex: 0 0 10rem; width: 10rem; min-width: 10rem; max-width: 12rem;
+  font-variant-numeric: tabular-nums;
+  appearance: textfield; -moz-appearance: textfield;
+}
+.ag-token-input::-webkit-inner-spin-button,
+.ag-token-input::-webkit-outer-spin-button { margin: 0; -webkit-appearance: none; }
+.ag-token-hint { flex: 1 1 12rem; min-width: 0; margin: 0; }
 .modalcontent input[type="text"], .modalcontent input[type="number"],
 .modalcontent input[type="password"], .modalcontent input:not([type]), .modalcontent select {
   height: 32px; font-size: 12.5px;
@@ -2771,6 +2781,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 @container app (max-width: 720px) {
   .mdgrid { grid-template-columns: 1fr; height: min(520px, calc(var(--app-vh) * 52)); }
   .mdproviders { max-height: 150px; }
+  .ag-token-input { flex: 1 1 10rem; width: 100%; max-width: none; }
 }
 
 /* 表单最下面那条：保存按钮单独一行、放最底下 */

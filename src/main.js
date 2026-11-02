@@ -10228,6 +10228,7 @@ async function bindAgent() {
       agEl("ag-p-endpoint").value = p.endpoint;
       agEl("ag-p-model").value = p.model;
       agEl("ag-p-ctx").value = p.ctx;
+      agSyncTokenLimitBounds(true);
       agSetReasoningModes(agRecommendedEfforts(p.model, false),
         agRecommendedEfforts(p.model, false).includes("medium") ? "medium" : "");
       agFillPricingForm(agPriceFallback(p.model));
@@ -10239,8 +10240,16 @@ async function bindAgent() {
     };
   }
   document.querySelectorAll("#ag-ctx-presets .chipbtn").forEach((b) => {
-    b.onclick = () => { agEl("ag-p-ctx").value = b.dataset.ctx; };
+    b.onclick = () => {
+      agEl("ag-p-ctx").value = b.dataset.ctx;
+      agSyncTokenLimitBounds(true);
+    };
   });
+  if (agEl("ag-p-ctx")) {
+    agEl("ag-p-ctx").oninput = () => agSyncTokenLimitBounds(false);
+    agEl("ag-p-ctx").onchange = () => agSyncTokenLimitBounds(true);
+  }
+  if (agEl("ag-p-res")) agEl("ag-p-res").onchange = () => agSyncTokenLimitBounds(true);
   agEl("ag-prov-save").onclick = agSaveProvider;
   if (agEl("ag-prov-import")) agEl("ag-prov-import").onclick = agImportProviders;
   if (agEl("ag-prov-export")) agEl("ag-prov-export").onclick = agExportProviders;
@@ -10483,11 +10492,36 @@ function agFillPricingForm(pricing) {
   agEl("ag-p-offpeak-out").value = p.offpeak_out;
 }
 
+function agTokenLimits() {
+  const rawContext = Number(agEl("ag-p-ctx").value);
+  const rawOutput = Number(agEl("ag-p-res").value);
+  const context = Math.max(
+    8192,
+    Math.min(10_000_000, Number.isFinite(rawContext) && rawContext > 0 ? Math.floor(rawContext) : 128000),
+  );
+  const requestedOutput =
+    Number.isFinite(rawOutput) && rawOutput > 0 ? Math.floor(rawOutput) : 32768;
+  const maxAllowed = Math.max(1024, Math.min(65536, context - 4096));
+  const maxOutput = Math.max(1024, Math.min(maxAllowed, requestedOutput));
+  return { context, maxAllowed, maxOutput };
+}
+
+function agSyncTokenLimitBounds(normalize) {
+  const ctx = agEl("ag-p-ctx");
+  const out = agEl("ag-p-res");
+  if (!ctx || !out) return agTokenLimits();
+  const limits = agTokenLimits();
+  out.max = String(limits.maxAllowed);
+  if (normalize) {
+    ctx.value = String(limits.context);
+    out.value = String(limits.maxOutput);
+  }
+  return limits;
+}
+
 function agNormalizedLimits() {
-  const context = Math.max(8192, Number(agEl("ag-p-ctx").value) || 128000);
-  const rawOut = Number(agEl("ag-p-res").value) || 32768;
-  const maxOutput = Math.max(1024, Math.min(65536, rawOut, context - 4096));
-  return { context, maxOutput };
+  const limits = agTokenLimits();
+  return { context: limits.context, maxOutput: limits.maxOutput };
 }
 
 function agFormProvider() {
@@ -10765,6 +10799,7 @@ function agFillProvider(id) {
   agEl("ag-p-key").placeholder = en((agCfg.secrets || []).includes(p.api_key_ref) ? "已在密钥库里（留空=不改）" : "粘贴 API Key");
   agEl("ag-p-ctx").value = p.context_window;
   agEl("ag-p-res").value = p.max_output_tokens ?? p.reserve_output ?? 32768;
+  agSyncTokenLimitBounds(false);
   agEl("ag-p-temp").value = p.temperature;
   agSetReasoningModes(p.reasoning_efforts || [], p.reasoning_effort || "");
   agEl("ag-p-tools").checked = !!p.supports_tools;
@@ -10782,6 +10817,7 @@ async function agSaveProvider() {
   }
   if (!agEl("ag-p-endpoint").value.trim()) return toast("地址（endpoint）不能空");
   if (!agEl("ag-p-model").value.trim()) return toast("模型名不能空");
+  agSyncTokenLimitBounds(true);
   const limits = agNormalizedLimits();
   const provider = {
     id,

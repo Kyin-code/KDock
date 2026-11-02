@@ -41,13 +41,26 @@ try {
 
   const layout = await page.evaluate(() => {
     const panel = document.querySelector('[data-setpane="model"]');
+    const ctx = document.getElementById("ag-p-ctx");
+    const out = document.getElementById("ag-p-res");
+    out.value = "10000";
     return {
       width: panel.getBoundingClientRect().width,
       overflow: panel.scrollWidth - panel.clientWidth,
       selected: [...document.querySelectorAll("#ag-p-reasoning-modes input:checked")].map((x) => x.value),
+      ctxWidth: ctx.getBoundingClientRect().width,
+      outWidth: out.getBoundingClientRect().width,
+      outStep: out.step,
+      outValidArbitraryInteger: out.validity.valid,
     };
   });
   if (layout.overflow > 1) throw new Error(`Reasoning panel overflows by ${layout.overflow}px`);
+  if (layout.ctxWidth < 160 || layout.outWidth < 160) {
+    throw new Error(`Token inputs are too narrow: ${JSON.stringify(layout)}`);
+  }
+  if (layout.outStep !== "1" || !layout.outValidArbitraryInteger) {
+    throw new Error(`Arbitrary output token values are not accepted: ${JSON.stringify(layout)}`);
+  }
 
   if (process.env.KDOCK_REASONING_SCREENSHOT) {
     await page.screenshot({ path: resolve(root, process.env.KDOCK_REASONING_SCREENSHOT), fullPage: true });

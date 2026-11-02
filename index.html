@@ -342,9 +342,11 @@
                 <div class="field"><label for="ag-p-key">API Key</label>
                   <input id="ag-p-key" type="password" placeholder="粘贴 Key（已保存的会留空）" />
                 </div>
-                <div class="field"><label for="ag-p-ctx">上下文窗口</label>
+                <div class="field ag-limit-field"><label for="ag-p-ctx">上下文窗口</label>
                   <div class="trow grow">
-                    <input id="ag-p-ctx" class="num" type="number" value="128000" title="这个模型最多能记多少 token" />
+                    <input id="ag-p-ctx" class="num ag-token-input" type="number" inputmode="numeric"
+                           value="128000" min="8192" max="10000000" step="1"
+                           title="这个模型最多能记多少 token" />
                     <span id="ag-ctx-presets" class="chips">
                       <button class="chipbtn" data-ctx="32000">32K</button>
                       <button class="chipbtn" data-ctx="65536">64K</button>
@@ -357,10 +359,13 @@
                   </div>
                 </div>
                 <p class="hint">不知道填多少就看服务商文档；填小了会频繁触发"压缩上下文"，填大了没坏处（超了服务端会报错）。</p>
-                <div class="field"><label for="ag-p-res">最大输出 tokens</label>
-                  <input id="ag-p-res" class="num" type="number" value="32768" min="1024" max="65536" step="1024"
-                         title="单次回复最多多少 token；思考内容也计入这个额度" />
-                  <span class="hint">代码 Agent 建议 32K~64K</span>
+                <div class="field ag-limit-field"><label for="ag-p-res">最大输出 tokens</label>
+                  <div class="trow grow ag-token-line">
+                    <input id="ag-p-res" class="num ag-token-input" type="number" inputmode="numeric"
+                           value="32768" min="1024" max="65536" step="1"
+                           title="单次回复最多多少 token；思考内容也计入这个额度" />
+                    <span class="hint ag-token-hint">代码 Agent 建议 32K~64K</span>
+                  </div>
                 </div>
                 <div class="field"><label>可用思考强度</label>
                   <div id="ag-p-reasoning-modes" class="effortchips"></div>
