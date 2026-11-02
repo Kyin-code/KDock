@@ -22,6 +22,12 @@ export const HELP_GROUPS = [
         zh: "### 连接类\n- 「传输」是主连接；Agent、实时图表、批量文本和中控编排都可以复用它。\n- 「监听」使用独立的抓包会话，不会占用传输页的串口。\n### 设备类\n- 「固件升级」处理 .fw，走设备的串口/网口升级通道。\n- 「烧录」调用 OpenOCD、J-Link、pyOCD 等外部烧录器。\n- 「文件管理」走设备文件服务、FTP/FTPS/TFTP 或内置 TFTP。\n- 「安卓 ADB」与普通串口/网络连接相互独立。\n### 分析类\n- 「运行结构」分析 ELF/BIN 调用图，并可作为 Agent 的结构化上下文。\n- 「示波器」「逻辑分析仪」「屏幕共享」分别管理各自设备/来源。\n### 配置类\n- 「环境配置」安装的驱动和工具会被烧录、监听、逻辑分析仪、ADB 和运行结构复用。",
         en: "### Links\n- Transfer is the main link; Agent, Charts, Batch text and Workflow can reuse it.\n- Monitor uses independent capture sessions and does not take the Transfer serial port.\n### Devices\n- Firmware upgrade handles .fw packages over the device's serial/network upgrade channel.\n- Flash runs external tools such as OpenOCD, J-Link or pyOCD.\n- Files uses device services, FTP/FTPS/TFTP, or the built-in TFTP server.\n- Android ADB is independent from ordinary serial/network links.\n### Analysis\n- Runtime graph analyzes ELF/BIN call graphs and can feed structured context to the Agent.\n- Scope, Logic analyzer and Screen share manage their own devices or sources.\n### Configuration\n- Drivers and tools installed from Environment setup are reused by flashing, Monitor, Logic analyzer, ADB and Runtime graph."
       },
+      {
+        id: "help-app-update",
+        title: "应用更新",
+        zh: "发现新版本后，KDock 会在应用内下载安装包并显示进度。更新清单提供 SHA-256 时，下载完成会先校验；通过后按钮变为「启动安装程序」，仍需用户再次点击，不会静默安装。安装包目前未做 Authenticode 签名，Windows 仍可能提示未知发布者或 SmartScreen。",
+        en: "When a new version is available, KDock downloads the installer in-app and shows progress. If the update manifest provides SHA-256, KDock verifies it before enabling Launch installer; the user must click again and nothing installs silently. The installer is not Authenticode-signed yet, so Windows may still show Unknown publisher or SmartScreen warnings."
+      },
     ],
   },
   {
@@ -748,6 +754,7 @@ export const HELP_TITLE_EN = {
   "Work with KDock": "Work with KDock",
   "快捷键与通用操作": "Shortcuts and common actions",
   "快捷键": "Shortcuts",
+  "应用更新": "App updates",
   "命令沙箱": "Command sandbox",
   "工具发现与加载": "Tool discovery and loading",
   "长期任务与 Windows 调度": "Long-running tasks and Windows scheduling",
