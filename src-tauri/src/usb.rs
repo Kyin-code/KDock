@@ -95,6 +95,7 @@ fn list_devices() -> Vec<Value> {
                 .unwrap_or_default();
             let class = reg_string(h, &info, SPDRP_CLASS).unwrap_or_default();
             let service = reg_string(h, &info, SPDRP_SERVICE).unwrap_or_default();
+            let driver_inf = reg_string(h, &info, SPDRP_DRIVER).unwrap_or_default();
             let location = reg_string(h, &info, SPDRP_LOCATION_INFORMATION).unwrap_or_default();
             let manufacturer = reg_string(h, &info, SPDRP_MFG).unwrap_or_default();
             // 问题码：22=已停用、28=没有驱动、10=无法启动、43=驱动故障…
@@ -109,6 +110,7 @@ fn list_devices() -> Vec<Value> {
                 "pid": pid,
                 "class": class,
                 "service": service,
+                "driverInf": driver_inf,
                 "location": location,
                 "manufacturer": manufacturer,
                 "problem": problem,
@@ -139,12 +141,11 @@ fn wch_link_status_from_devices(devices: &[Value]) -> Value {
         let name = d["name"].as_str().unwrap_or("").to_ascii_lowercase();
         is_wch(d) && (instance.contains("&MI_00") || name.contains("wch-link"))
     };
-    let interface = devices
+    let interfaces: Vec<&Value> = devices
         .iter()
         .filter(|d| is_debug_interface(d))
-        .find(|d| d["problem"].as_u64().unwrap_or(1) == 0)
-        .or_else(|| devices.iter().find(|d| is_debug_interface(d)));
-    let Some(interface) = interface else {
+        .collect();
+    if interfaces.is_empty() {
         if let Some(parent) = devices.iter().find(|d| {
             is_wch(d)
                 && !d["instance"]
@@ -162,7 +163,11 @@ fn wch_link_status_from_devices(devices: &[Value]) -> Value {
                 "instance": parent["instance"].as_str().unwrap_or(""),
                 "class": parent["class"].as_str().unwrap_or(""),
                 "service": parent["service"].as_str().unwrap_or(""),
+                "driverInf": "",
+                "manufacturer": parent["manufacturer"].as_str().unwrap_or(""),
                 "port": null,
+                "count": 0,
+                "interfaces": [],
                 "detail": "检测到 WCH 复合设备，但 MI_00 调试接口没有枚举出来",
             });
         }
@@ -175,62 +180,156 @@ fn wch_link_status_from_devices(devices: &[Value]) -> Value {
             "instance": "",
             "class": "",
             "service": "",
+            "driverInf": "",
+            "manufacturer": "",
             "port": null,
+            "count": 0,
+            "interfaces": [],
             "detail": "未检测到 WCH-Link / WCH-LinkE 调试接口",
         });
-    };
+    }
 
-    let problem = interface["problem"].as_u64().unwrap_or(0) as u32;
-    let name = interface["name"].as_str().unwrap_or("WCH-Link").to_string();
-    let instance = interface["instance"].as_str().unwrap_or("").to_string();
-    let class = interface["class"].as_str().unwrap_or("").to_string();
-    let service = interface["service"].as_str().unwrap_or("").to_string();
-    let vid = interface["vid"].as_str().unwrap_or("?");
-    let pid = interface["pid"].as_str().unwrap_or("?");
-    let ready = problem == 0
-        && (class.eq_ignore_ascii_case("WCH")
-            || service.to_ascii_lowercase().starts_with("wchlink")
-            || name.to_ascii_lowercase().contains("wch-link"));
-    let state = if ready {
-        "ready"
-    } else if problem != 0 {
-        "driver-error"
-    } else {
-        "driver-unknown"
-    };
-    let port = crate::list_ports().ok().and_then(|ports| {
+    let ports = crate::list_ports().unwrap_or_default();
+    let mut rows = Vec::with_capacity(interfaces.len());
+    for interface in interfaces {
+        let problem = interface["problem"].as_u64().unwrap_or(0) as u32;
+        let name = interface["name"]
+            .as_str()
+            .unwrap_or("WCH-Link")
+            .to_string();
+        let instance = interface["instance"].as_str().unwrap_or("").to_string();
+        let class = interface["class"].as_str().unwrap_or("").to_string();
+        let service = interface["service"].as_str().unwrap_or("").to_string();
+        let driver_inf = interface["driverInf"].as_str().unwrap_or("").to_string();
+        let manufacturer = interface["manufacturer"].as_str().unwrap_or("").to_string();
+        let vid = interface["vid"].as_str().unwrap_or("?");
+        let pid = interface["pid"].as_str().unwrap_or("?");
         let want_vid = u16::from_str_radix(vid, 16).ok();
         let want_pid = u16::from_str_radix(pid, 16).ok();
-        ports
-            .into_iter()
+        let port = ports
+            .iter()
             .find(|p| {
                 want_vid.is_some()
                     && want_pid.is_some()
                     && p.vid == want_vid
                     && p.pid == want_pid
             })
-            .map(|p| p.port_name)
-    });
-    let mut detail = format!("{name} · {vid}:{pid}");
-    if !service.is_empty() {
-        detail.push_str(&format!(" · {service}"));
+            .map(|p| p.port_name.clone());
+
+        // WCH 官方 INF 把 PID_8010 绑定到 WCHLink_A64 内核驱动，把
+        // PID_8012（CMSIS-DAP）绑定到 WinUSB，但两者都属于 WCH 类，
+        // 且 Manufacturer 为 wch.cn。不能只看服务名，更不能看友好名：
+        // KDock 以前生成的通用 WinUSB 同样会把设备命名为 “WCH-Link”。
+        let manufacturer_lc = manufacturer.to_ascii_lowercase();
+        let vendor_manufacturer = manufacturer_lc == "wch.cn"
+            || manufacturer_lc == "wch"
+            || manufacturer_lc.contains("qinheng");
+        let vendor_class = class.eq_ignore_ascii_case("WCH");
+        let vendor_service = service.to_ascii_lowercase().starts_with("wchlink");
+        let official_wch = vendor_class
+            && (vendor_manufacturer
+                || vendor_service
+                || (pid.eq_ignore_ascii_case("8012")
+                    && service.eq_ignore_ascii_case("WINUSB")));
+        let generic_winusb = (!official_wch
+            && service.eq_ignore_ascii_case("WINUSB"))
+            || manufacturer_lc.contains("kdock");
+        let ready = problem == 0 && official_wch;
+        let driver_state = if ready {
+            "ready"
+        } else if problem != 0 {
+            "driver-error"
+        } else if generic_winusb {
+            "generic-winusb"
+        } else {
+            "driver-unknown"
+        };
+
+        let mut detail = format!("{name} · {vid}:{pid}");
+        if !manufacturer.is_empty() {
+            detail.push_str(&format!(" · {manufacturer}"));
+        }
+        if !driver_inf.is_empty() {
+            detail.push_str(&format!(" · {driver_inf}"));
+        }
+        if !service.is_empty() {
+            detail.push_str(&format!(" · {service}"));
+        }
+        if let Some(p) = port.as_ref() {
+            detail.push_str(&format!(" · {p}"));
+        }
+        if problem != 0 {
+            detail.push_str(&format!(" · Problem {problem}"));
+        } else if generic_winusb {
+            detail.push_str(" · 通用 WinUSB（非 WCH 官方驱动）");
+        }
+
+        rows.push(json!({
+            "ready": ready,
+            "state": driver_state,
+            "problem": problem,
+            "name": name,
+            "instance": instance,
+            "vid": vid,
+            "pid": pid,
+            "class": class,
+            "service": service,
+            "driverInf": driver_inf,
+            "manufacturer": manufacturer,
+            "port": port,
+            "detail": detail,
+        }));
     }
-    if let Some(p) = port.as_ref() {
-        detail.push_str(&format!(" · {p}"));
-    }
-    if problem != 0 {
-        detail.push_str(&format!(" · Problem {problem}"));
-    }
+
+    let ready = rows.iter().all(|r| r["ready"].as_bool().unwrap_or(false));
+    let state = if ready {
+        "ready"
+    } else if rows
+        .iter()
+        .any(|r| r["state"].as_str() == Some("driver-error"))
+    {
+        "driver-error"
+    } else if rows
+        .iter()
+        .any(|r| r["state"].as_str() == Some("generic-winusb"))
+    {
+        "generic-winusb"
+    } else {
+        "driver-unknown"
+    };
+    let join_unique = |key: &str| {
+        let mut values: Vec<String> = Vec::new();
+        for row in &rows {
+            if let Some(value) = row[key].as_str().filter(|v| !v.is_empty()) {
+                if !values.iter().any(|v| v == value) {
+                    values.push(value.to_string());
+                }
+            }
+        }
+        values.join(" + ")
+    };
+    let problems: Vec<u64> = rows
+        .iter()
+        .filter_map(|r| r["problem"].as_u64().filter(|p| *p != 0))
+        .collect();
+    let detail = rows
+        .iter()
+        .filter_map(|r| r["detail"].as_str())
+        .collect::<Vec<_>>()
+        .join("；");
     json!({
         "present": true,
         "ready": ready,
         "state": state,
-        "problem": problem,
-        "name": name,
-        "instance": instance,
-        "class": class,
-        "service": service,
-        "port": port,
+        "problem": problems.first().copied(),
+        "name": join_unique("name"),
+        "instance": rows.first().and_then(|r| r["instance"].as_str()).unwrap_or(""),
+        "class": join_unique("class"),
+        "service": join_unique("service"),
+        "manufacturer": join_unique("manufacturer"),
+        "port": rows.iter().find_map(|r| r["port"].as_str()),
+        "count": rows.len(),
+        "interfaces": rows,
         "detail": detail,
     })
 }
@@ -461,6 +560,7 @@ mod tests {
             "pid": "8010",
             "class": "WCH",
             "service": "WCHLink_A64",
+            "manufacturer": "wch.cn",
             "problem": 0
         }]);
         let got = wch_link_status_from_devices(healthy.as_array().unwrap());
@@ -484,6 +584,107 @@ mod tests {
 
         let absent = wch_link_status_from_devices(&[]);
         assert_eq!(absent["state"], json!("not-detected"));
+    }
+
+    #[test]
+    fn wch_status_rejects_kdock_generic_winusb_even_when_named_wch_link() {
+        let generic = json!([{
+            "instance": "USB\\VID_1A86&PID_8010&MI_00\\7&1&0&0000",
+            "name": "WCH-Link",
+            "vid": "1A86",
+            "pid": "8010",
+            "class": "USBDevice",
+            "service": "WINUSB",
+            "manufacturer": "KDock",
+            "problem": 0
+        }]);
+        let got = wch_link_status_from_devices(generic.as_array().unwrap());
+        assert_eq!(got["present"], json!(true));
+        assert_eq!(got["ready"], json!(false));
+        assert_eq!(got["state"], json!("generic-winusb"));
+        assert_eq!(got["interfaces"][0]["state"], json!("generic-winusb"));
+        assert!(got["detail"]
+            .as_str()
+            .unwrap_or("")
+            .contains("非 WCH 官方驱动"));
+    }
+
+    #[test]
+    fn wch_status_accepts_official_cmsis_dap_winusb_driver() {
+        let dap = json!([{
+            "instance": "USB\\VID_1A86&PID_8012&MI_00\\7&1&0&0000",
+            "name": "WCH CMSIS-DAP",
+            "vid": "1A86",
+            "pid": "8012",
+            "class": "WCH",
+            "service": "WinUSB",
+            "manufacturer": "wch.cn",
+            "problem": 0
+        }]);
+        let got = wch_link_status_from_devices(dap.as_array().unwrap());
+        assert_eq!(got["ready"], json!(true));
+        assert_eq!(got["state"], json!("ready"));
+        assert_eq!(got["interfaces"][0]["pid"], json!("8012"));
+    }
+
+    #[test]
+    fn wch_status_reports_both_rv_and_dap_interfaces() {
+        let both = json!([
+            {
+                "instance": "USB\\VID_1A86&PID_8010&MI_00\\7&1&0&0000",
+                "name": "WCH-LinkRV",
+                "vid": "1A86",
+                "pid": "8010",
+                "class": "WCH",
+                "service": "WCHLink_A64",
+                "manufacturer": "wch.cn",
+                "problem": 0
+            },
+            {
+                "instance": "USB\\VID_1A86&PID_8012&MI_00\\7&2&0&0000",
+                "name": "WCH CMSIS-DAP",
+                "vid": "1A86",
+                "pid": "8012",
+                "class": "WCH",
+                "service": "WinUSB",
+                "manufacturer": "wch.cn",
+                "problem": 0
+            }
+        ]);
+        let got = wch_link_status_from_devices(both.as_array().unwrap());
+        assert_eq!(got["ready"], json!(true));
+        assert_eq!(got["count"], json!(2));
+        assert!(got["name"].as_str().unwrap_or("").contains("WCH-LinkRV"));
+        assert!(got["name"].as_str().unwrap_or("").contains("WCH CMSIS-DAP"));
+    }
+
+    #[test]
+    fn wch_status_is_not_ready_if_only_one_interface_uses_generic_winusb() {
+        let mixed = json!([
+            {
+                "instance": "USB\\VID_1A86&PID_8010&MI_00\\7&1&0&0000",
+                "name": "WCH-LinkRV",
+                "vid": "1A86",
+                "pid": "8010",
+                "class": "WCH",
+                "service": "WCHLink_A64",
+                "manufacturer": "wch.cn",
+                "problem": 0
+            },
+            {
+                "instance": "USB\\VID_1A86&PID_8012&MI_00\\7&2&0&0000",
+                "name": "WCH CMSIS-DAP",
+                "vid": "1A86",
+                "pid": "8012",
+                "class": "USBDevice",
+                "service": "WINUSB",
+                "manufacturer": "KDock",
+                "problem": 0
+            }
+        ]);
+        let got = wch_link_status_from_devices(mixed.as_array().unwrap());
+        assert_eq!(got["ready"], json!(false));
+        assert_eq!(got["state"], json!("generic-winusb"));
     }
 
     #[test]

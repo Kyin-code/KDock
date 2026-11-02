@@ -338,6 +338,12 @@ export const HELP_GROUPS = [
         en: "Shared location for portable tools, toolchains and Git repositories. Blank uses the default; scans and installs use the selected directory afterward. Avoid temporary folders."
       },
       {
+        id: "help-env-wch",
+        title: "WCH 驱动与烧录通道",
+        zh: "### 两条链路\n- CH32H417 芯片自带的 USB Bootloader（常见 4348:55E0 / 1A86:55E0）走 WCHISPTool 或 wchisp，不属于 WCH-Link 驱动。\n- WCH-Link：PID_8010 是 RV 模式，PID_8012 是 DAP 模式，两者都由 WCH-LinkUtility 的官方 INF 覆盖。\n### 一键安装判定\n- 8010 应绑定 WCHLink_A64 一类 WCH 内核驱动；8012 可由 WCH 官方 INF 绑定 WinUSB。\n- 设备名显示 “WCH-Link” 且没有感叹号，不代表官方驱动已绑定。KDock 会核对 Manufacturer 和 Class；旧版 KDock 生成的通用 WinUSB 会显示为待修复。\n- 复合设备的 MI_01 串口保持系统 usbser，不会被改成 WinUSB。",
+        en: "### Two separate paths\n- The CH32H417 built-in USB bootloader (commonly 4348:55E0 / 1A86:55E0) uses WCHISPTool or wchisp, not the WCH-Link driver.\n- WCH-Link: PID_8010 is RV mode and PID_8012 is DAP mode; both are covered by the official WCH-LinkUtility INF.\n### One-click checks\n- PID_8010 should bind a WCH kernel driver such as WCHLink_A64; PID_8012 may use WinUSB through the official WCH INF.\n- A friendly name containing “WCH-Link” with no warning icon does not prove the official driver is active. KDock checks Manufacturer and Class, and flags the legacy generic WinUSB package for repair.\n- MI_01 remains on the system usbser driver and is never switched to WinUSB."
+      },
+      {
         id: "help-env-progress",
         title: "安装进度与日志",
         zh: "进度条和日志分别显示下载、解包、提权、安装和重新扫描。失败时保留最后几行输出；驱动类安装后通常需要完整重启。",
@@ -788,6 +794,7 @@ export const HELP_TITLE_EN = {
   "常用命令": "Common commands",
   "扫描与状态": "Scan and status",
   "安装位置": "Install location",
+  "WCH 驱动与烧录通道": "WCH drivers and flashing paths",
   "安装进度与日志": "Install progress and log",
   "一键安装 / 检查 / 重装": "Install / check / reinstall",
   "固件运行结构分析器": "Firmware runtime analyzer",

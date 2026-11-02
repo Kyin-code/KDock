@@ -1498,6 +1498,8 @@ export const EN = {
   "沁恒 WCH-Link / WCH-LinkE 调试接口，板载 LinkE 也覆盖。只处理 MI_00 的厂商 WCH 驱动；串口 MI_01 保持系统 usbser，不改成通用 WinUSB。":
     "Debug interface for WCH-Link / WCH-LinkE, including onboard LinkE. Only MI_00 uses the vendor WCH driver; serial interface MI_01 keeps the system usbser driver and is not switched to generic WinUSB.",
   "调试接口驱动未加载": "debug interface driver is not loaded",
+  "检测到非 WCH 官方驱动": "a non-WCH driver is bound",
+  "等待 UAC，随后静默安装 WCH 官方驱动…": "Waiting for UAC, then installing the official WCH driver silently…",
   "未检测到设备": "no device detected",
   "检测到设备": "device detected",
   "修复 / 重装": "Repair / reinstall",

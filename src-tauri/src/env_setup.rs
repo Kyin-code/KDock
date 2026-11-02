@@ -1436,6 +1436,10 @@ fn has_original_inf(infs: &str, name: &str) -> bool {
     })
 }
 
+fn wch_driver_installed(ready: bool, present: bool, registered: bool) -> bool {
+    ready || (registered && !present)
+}
+
 fn reg_query(key: &str, value: &str) -> Option<String> {
     let out = run_out("reg.exe", &["query", key, "/v", value])?;
     for line in out.lines() {
@@ -1588,11 +1592,19 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
         let present = status["present"].as_bool().unwrap_or(false);
         let ready = status["ready"].as_bool().unwrap_or(false);
         let registered = has_original_inf(infs, "wchlinkwdm.inf");
-        // 设备存在就值得提醒，即使驱动包还没进 DriverStore；驱动包存在但
-        // 没接设备时则显示“未检测到设备”，而不是假装调试器已就绪。
-        installed = present || registered;
+        let state = status["state"]
+            .as_str()
+            .unwrap_or("not-detected")
+            .to_string();
+        // “设备插着且无黄色感叹号”不等于厂商驱动已就绪。KDock 以前生成
+        // 的通用 WinUSB 也能满足这个条件，必须按当前绑定的驱动判定。
+        installed = wch_driver_installed(ready, present, registered);
         warning = if present && !ready {
-            "调试接口驱动未加载"
+            if state == "generic-winusb" {
+                "检测到非 WCH 官方驱动"
+            } else {
+                "调试接口驱动未加载"
+            }
         } else if registered && !present {
             "未检测到设备"
         } else {
@@ -1611,10 +1623,7 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
         wch_driver = Some((
             ready,
             present,
-            status["state"]
-                .as_str()
-                .unwrap_or("not-detected")
-                .to_string(),
+            state,
         ));
     }
     if it.id == "usbpcap" {
@@ -1971,11 +1980,11 @@ fn run_wchlink_driver_installer(app: &tauri::AppHandle, exe: &Path) -> Result<()
             out.trim()
         ));
     }
-    emit(app, "wchlink", "install", 78, "等待 UAC，随后安装 WCH 官方驱动…");
+    emit(app, "wchlink", "install", 78, "等待 UAC，随后静默安装 WCH 官方驱动…");
     let path = exe.to_string_lossy().replace('\'', "''");
     let ps = format!(
         "$ErrorActionPreference='Stop'; \
-         $p=Start-Process -FilePath '{path}' -Verb RunAs -PassThru; \
+         $p=Start-Process -FilePath '{path}' -ArgumentList '/S' -Verb RunAs -WindowStyle Hidden -PassThru; \
          Write-Output ('driver-pid=' + $p.Id); exit 0"
     );
     let (code, out) = run_out_status(
@@ -2642,6 +2651,14 @@ Original Name:      wchlinkwdm.inf
     }
 
     #[test]
+    fn wchlink_installed_requires_ready_driver_or_registered_package_without_device() {
+        assert!(wch_driver_installed(true, true, false));
+        assert!(wch_driver_installed(false, false, true));
+        assert!(!wch_driver_installed(false, true, true));
+        assert!(!wch_driver_installed(false, false, false));
+    }
+
+    #[test]
     fn wchlink_package_finds_only_the_vendor_driver() {
         let root = std::env::temp_dir().join(format!("kdock-wch-{}", std::process::id()));
         let nested = root.join("Drv_Link");
@@ -2673,6 +2690,12 @@ Original Name:      wchlinkwdm.inf
         assert_eq!(got["driverReady"], json!(true));
         assert_eq!(got["installed"], json!(true));
         assert_eq!(got["warning"], json!(""));
+        let detail = got["detail"].as_str().unwrap_or("");
+        assert!(detail.contains("WCH-LinkRV"), "{detail}");
+        assert!(detail.contains("WCH CMSIS-DAP"), "{detail}");
+        assert!(detail.contains("wch.cn"), "{detail}");
+        assert!(detail.contains("WCHLink_A64"), "{detail}");
+        assert!(detail.contains("WinUSB"), "{detail}");
     }
 
     #[test]
