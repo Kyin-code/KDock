@@ -141,6 +141,28 @@ fn finish_run_slot(
     Some((next, pending.join("\n\n")))
 }
 
+/// Mark every matching run while holding the same lock used by agent_send and
+/// finish_run_slot. If a run swaps its slot just before this call, the new slot
+/// is still in the map and gets the stop signal; if it swaps afterwards, it sees
+/// the stopped old handle and refuses to create a replacement.
+fn mark_runs_stopped(
+    st: &AgentState,
+    wanted: Option<&std::collections::HashSet<String>>,
+) -> Result<Vec<String>, String> {
+    let runs = st.runs.lock().map_err(|_| "run mutex".to_string())?;
+    let mut stopped = Vec::new();
+    for (sid, handle) in runs.iter() {
+        if wanted.map(|set| set.contains(sid)).unwrap_or(true) {
+            handle.stop.store(true, Ordering::Relaxed);
+            if let Ok(mut pending) = handle.pending.lock() {
+                pending.clear();
+            }
+            stopped.push(sid.clone());
+        }
+    }
+    Ok(stopped)
+}
+
 fn session_closure(
     metas: &[(String, String)],
     root: &str,
@@ -2834,39 +2856,22 @@ pub async fn agent_running(app: AppHandle, session: Option<String>) -> Value {
 #[tauri::command]
 pub fn agent_stop(app: AppHandle, session: Option<String>) -> Result<Value, String> {
     let st = app.state::<Arc<AgentState>>().inner().clone();
-    let targets: Vec<(String, Arc<RunHandle>)> = if let Some(sid) = session.as_deref() {
+    let wanted = if let Some(sid) = session.as_deref() {
         // 递归带上由这个会话创建的 subagent；父会话停止后不能在后台继续烧 token。
         let metas: Vec<(String, String)> = store::sessions_list(&app)
             .into_iter()
             .map(|m| (m.id, m.parent_session))
             .collect();
-        let wanted = session_closure(&metas, sid);
-        st.runs
-            .lock()
-            .map_err(|_| "run mutex".to_string())?
-            .iter()
-            .filter(|(sid, _)| wanted.contains(*sid))
-            .map(|(sid, h)| (sid.clone(), h.clone()))
-            .collect()
+        Some(session_closure(&metas, sid))
     } else {
-        st.runs
-            .lock()
-            .map_err(|_| "run mutex".to_string())?
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect()
+        None
     };
-    for (_sid, h) in &targets {
-        h.stop.store(true, Ordering::Relaxed);
-        if let Ok(mut p) = h.pending.lock() {
-            p.clear();
-        }
-    }
+    let stopped = mark_runs_stopped(&st, wanted.as_ref())?;
     // 兼容旧调用：没有指定会话时才动全局 STOPPED（UI 上的升级/烧录等非 agent 操作仍用它）。
     if session.is_none() {
         STOPPED.store(true, Ordering::Relaxed);
     }
-    let want: std::collections::HashSet<String> = targets.into_iter().map(|(s, _)| s).collect();
+    let want: std::collections::HashSet<String> = stopped.into_iter().collect();
     let approvals: Vec<(u64, Sender<bool>)> = {
         let mut g = st
             .approve_waiters
@@ -3463,6 +3468,26 @@ mod tests {
         assert!(ids.contains("child"));
         assert!(ids.contains("grandchild"));
         assert!(!ids.contains("unrelated"));
+    }
+
+    #[test]
+    fn stop_targets_the_current_slot_after_supplement_rollover() {
+        let st = AgentState::default();
+        let old = Arc::new(RunHandle::new());
+        old.pending.lock().unwrap().push("continue".into());
+        st.runs
+            .lock()
+            .unwrap()
+            .insert("session".into(), old.clone());
+
+        // The finishing turn swaps to a new run handle before Stop acquires the
+        // runs lock. mark_runs_stopped must still stop the handle now in the map.
+        let (next, _) = finish_run_slot(&st, "session", &old).expect("pending turn");
+        let wanted = std::collections::HashSet::from(["session".to_string()]);
+        let stopped = mark_runs_stopped(&st, Some(&wanted)).unwrap();
+        assert_eq!(stopped, vec!["session".to_string()]);
+        assert!(next.stop.load(Ordering::Relaxed));
+        assert!(finish_run_slot(&st, "session", &next).is_none());
     }
 
     #[test]

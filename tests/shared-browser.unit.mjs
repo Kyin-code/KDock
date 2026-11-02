@@ -57,8 +57,13 @@ assert.match(html, /id="kb-back"/);
 assert.match(kbview, /pub fn read_dom_json/);
 assert.match(kbview, /pub fn open/);
 assert.match(kbview, /pub fn open_and_wait/);
+assert.match(kbview, /pub fn open_and_read_json/);
 assert.match(kbview, /pub fn wait_for_load/);
-assert.match(kbview, /static NAV: LazyLock<Mutex<\(\)>>/);
+assert.match(kbview, /static BROWSER_OP: LazyLock<Mutex<\(\)>>/);
+assert.ok(
+  (kbview.match(/BROWSER_OP\s*\.lock\(\)/g) || []).length >= 8,
+  "navigation, DOM reads, clicks and fills must share one browser operation gate",
+);
 assert.match(kbview, /static OPEN_GATE: LazyLock<Mutex<\(\)>>/);
 assert.match(kbview, /fn begin_navigation/);
 assert.match(kbview, /request_started/);
@@ -74,7 +79,8 @@ assert.match(kbview, /pub fn navigate/);
 assert.match(kbview, /if w <= 1\.0 \|\| h <= 1\.0 \{[\s\S]*?wv\.hide\(\)/);
 assert.match(tools, /crate::shared_browser::read_dom_json/);
 assert.match(tools, /browser_navigate/);
-assert.equal((tools.match(/crate::shared_browser::open_and_wait/g) || []).length, 3);
+assert.equal((tools.match(/crate::shared_browser::open_and_wait/g) || []).length, 2);
+assert.equal((tools.match(/crate::shared_browser::open_and_read_json/g) || []).length, 1);
 assert.doesNotMatch(agent, /pub fn browser_fetch|pub fn browser_back|pub fn browser_current/);
 assert.doesNotMatch(agent, /Command::new\("cmd"\)[\s\S]{0,120}start/);
 assert.match(agent, /ShellExecuteW/);

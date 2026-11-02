@@ -62,7 +62,8 @@ pub static BLOCKS: &[Block] = &[
                需要多步探测时优先用 workspace_run 的 script 参数一次跑完整段 PowerShell，不要“写一个 probe.ps1 再运行”反复占轮次；\n\
                静态网页/API 用 web_fetch，下载安装包或固件用 web_download；需要登录态或 JS 渲染时再用 browser_*；\n\
                操作未知 Windows 软件先 desktop_windows 定位窗口，再 desktop_ui 读控件树，最后 desktop_action；\n\
-               MFC 自绘控件不暴露 UIA 时，用 desktop_action(action=menu, command_id=...) 发稳定的菜单命令；\n\
+               MFC 控件不暴露 UIA 时会自动回退到 Win32 子控件，按 id:<控件ID> 操作；菜单用 action=menu，快捷键用 action=keys（如 alt+f3）；\n\
+               不要为窗口枚举、控件定位或按键反复手写 PowerShell/Win32 脚本，优先用这组结构化工具；\n\
                · 多个互不依赖的只读操作可以用 parallel_read 一次并行；独立子任务用 subagent_spawn，再用 subagent_wait 收结果。\n\
                · 尽量一次工具调用覆盖一个阶段：workspace_read(paths=[...]) 批量读、workspace_write(files=[...]) 批量写、\n\
                workspace_edit(edits=[...]) 批量改、workspace_context 一次拿目录+搜索+文件、workspace_check 一次做 diff+测试；\n\

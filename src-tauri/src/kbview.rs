@@ -25,9 +25,9 @@ use tauri::{
 static KB: LazyLock<Mutex<HashMap<String, Webview>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static LOADS: LazyLock<Mutex<HashMap<String, LoadState>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-/// Agent 的导航必须串行。共享页只有一个，两个会话同时打开不同 URL 时，
-/// 旧调用不能把另一个会话的完成事件误当成自己的结果。
-static NAV: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+/// 共享页只有一个，所有会读写当前文档的动作都串行。两个会话同时导航、一个
+/// 在点击而另一个在填表时，不能让 DOM 动作落到导航中的半成品页面上。
+static BROWSER_OP: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 /// Serialize "check whether the view exists, then create it". Without this,
 /// the Browser page and a scheduled Agent run can both observe no view and one
 /// of them can lose its initial URL.
@@ -390,19 +390,26 @@ pub fn hide_all() {
 
 /// 共享浏览器唯一入口：已有视图就导航，没有就创建一块隐藏视图。调用方不需要
 /// 先猜视图是否存在，避免 Agent 刚建页、前端事件还没到时重复创建或只挪位置。
-pub fn open(app: &AppHandle, kind: &str, url: &str) -> Result<(), String> {
-    let _gate = OPEN_GATE
-        .lock()
-        .map_err(|_| "浏览器创建锁不可用".to_string())?;
+fn open_inner(app: &AppHandle, kind: &str, url: &str) -> Result<(), String> {
     let exists = {
         let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
         map.contains_key(kind)
     };
     if exists {
-        navigate(kind, url)
+        navigate_inner(kind, url)
     } else {
         show_inner(app, kind, url, 0.0, 0.0, 0.0, 0.0)
     }
+}
+
+pub fn open(app: &AppHandle, kind: &str, url: &str) -> Result<(), String> {
+    let _op = BROWSER_OP
+        .lock()
+        .map_err(|_| "浏览器操作锁不可用".to_string())?;
+    let _gate = OPEN_GATE
+        .lock()
+        .map_err(|_| "浏览器创建锁不可用".to_string())?;
+    open_inner(app, kind, url)
 }
 
 /// Navigation used by Agent tools. Calls are serialized because the browser is
@@ -413,15 +420,52 @@ pub fn open_and_wait(
     url: &str,
     timeout: Duration,
 ) -> Result<String, String> {
-    let _nav = NAV.lock().map_err(|_| "浏览器导航锁不可用".to_string())?;
+    let _op = BROWSER_OP
+        .lock()
+        .map_err(|_| "浏览器操作锁不可用".to_string())?;
+    open_and_wait_locked(app, kind, url, timeout)
+}
+
+fn open_and_wait_locked(
+    app: &AppHandle,
+    kind: &str,
+    url: &str,
+    timeout: Duration,
+) -> Result<String, String> {
     let request = begin_navigation(kind)?;
-    open(app, kind, url)?;
+    {
+        // Only the create-or-navigate decision needs OPEN_GATE. Holding it while
+        // waiting for the network would also block harmless UI repositioning.
+        let _gate = OPEN_GATE
+            .lock()
+            .map_err(|_| "浏览器创建锁不可用".to_string())?;
+        open_inner(app, kind, url)?;
+    }
     wait_for_request(kind, request, Duration::from_millis(300), timeout)?;
     current_url(kind).ok_or_else(|| "页面加载后没有可用地址".to_string())
 }
 
+/// Navigate and read in one serialized operation. This prevents another Agent
+/// session from replacing the page between browser_read(url)'s navigation and
+/// its DOM read.
+pub fn open_and_read_json(
+    app: &AppHandle,
+    kind: &str,
+    url: &str,
+    timeout: Duration,
+) -> Result<String, String> {
+    let _op = BROWSER_OP
+        .lock()
+        .map_err(|_| "浏览器操作锁不可用".to_string())?;
+    open_and_wait_locked(app, kind, url, timeout)?;
+    read_dom_json_inner(kind)
+}
+
 /// 刷新（重载当前地址）
 pub fn reload(kind: &str) -> Result<(), String> {
+    let _op = BROWSER_OP
+        .lock()
+        .map_err(|_| "浏览器操作锁不可用".to_string())?;
     let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
     let wv = map.get(kind).ok_or("这块还没打开过")?;
     let url = wv.url().map_err(|e| e.to_string())?;
@@ -435,20 +479,33 @@ pub fn current_url(kind: &str) -> Option<String> {
     wv.url().ok().map(|u| u.to_string())
 }
 
-pub fn navigate(kind: &str, url: &str) -> Result<(), String> {
+fn navigate_inner(kind: &str, url: &str) -> Result<(), String> {
     let parsed = normalize_url(url)?;
     let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
     let wv = map.get(kind).ok_or("浏览器还没有打开页面")?;
     wv.navigate(parsed).map_err(|e| format!("跳转失败：{e}"))
 }
 
+pub fn navigate(kind: &str, url: &str) -> Result<(), String> {
+    let _op = BROWSER_OP
+        .lock()
+        .map_err(|_| "浏览器操作锁不可用".to_string())?;
+    navigate_inner(kind, url)
+}
+
 pub fn back(kind: &str) -> Result<(), String> {
+    let _op = BROWSER_OP
+        .lock()
+        .map_err(|_| "浏览器操作锁不可用".to_string())?;
     let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
     let wv = map.get(kind).ok_or("浏览器还没有打开页面")?;
     wv.eval("history.back()").map_err(|e| e.to_string())
 }
 
 pub fn source(app: &AppHandle, kind: &str) -> Result<(), String> {
+    let _op = BROWSER_OP
+        .lock()
+        .map_err(|_| "浏览器操作锁不可用".to_string())?;
     let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
     let wv = map.get(kind).ok_or("浏览器还没有打开页面")?;
     let app = app.clone();
@@ -462,6 +519,9 @@ pub fn source(app: &AppHandle, kind: &str) -> Result<(), String> {
 }
 
 pub fn read_dom(app: &AppHandle, kind: &str) -> Result<(), String> {
+    let _op = BROWSER_OP
+        .lock()
+        .map_err(|_| "浏览器操作锁不可用".to_string())?;
     let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
     let wv = map.get(kind).ok_or("浏览器还没有打开页面")?;
     let app = app.clone();
@@ -486,6 +546,13 @@ pub fn read_dom(app: &AppHandle, kind: &str) -> Result<(), String> {
 /// 同步读取当前 WebView2 的 DOM。Agent 工具在命令线程里调用；回调通过 channel
 /// 回来，避免为了读一次网页就复制一套浏览器/会话。
 pub fn read_dom_json(kind: &str) -> Result<String, String> {
+    let _op = BROWSER_OP
+        .lock()
+        .map_err(|_| "浏览器操作锁不可用".to_string())?;
+    read_dom_json_inner(kind)
+}
+
+fn read_dom_json_inner(kind: &str) -> Result<String, String> {
     wait_for_load(kind, Duration::from_secs(8))?;
     let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
     let wv = map.get(kind).ok_or("共享浏览器还没有打开页面")?;
@@ -515,6 +582,9 @@ pub fn read_dom_json(kind: &str) -> Result<String, String> {
 }
 
 fn eval_json(kind: &str, js: String) -> Result<String, String> {
+    let _op = BROWSER_OP
+        .lock()
+        .map_err(|_| "浏览器操作锁不可用".to_string())?;
     wait_for_load(kind, Duration::from_secs(8))?;
     let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
     let wv = map.get(kind).ok_or("共享浏览器还没有打开页面")?;

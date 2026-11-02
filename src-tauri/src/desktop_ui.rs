@@ -58,6 +58,50 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class KDockDesktopTreeNative {
+  public delegate bool EnumProc(IntPtr hwnd, IntPtr lParam);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+  public sealed class Node {
+    public long hwnd;
+    public int id;
+    public string text = "";
+    public string cls = "";
+    public bool visible;
+    public int x, y, width, height;
+  }
+  [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumProc cb, IntPtr p);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern int GetDlgCtrlID(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+  public static Node[] Children(IntPtr root, int max) {
+    var list = new List<Node>();
+    EnumChildWindows(root, (h, p) => {
+      if (list.Count >= max) return false;
+      var t = new StringBuilder(2048);
+      var c = new StringBuilder(256);
+      GetWindowText(h, t, t.Capacity);
+      GetClassName(h, c, c.Capacity);
+      RECT r;
+      if (!GetWindowRect(h, out r)) return true;
+      var n = new Node {
+        hwnd = h.ToInt64(), id = GetDlgCtrlID(h), text = t.ToString(),
+        cls = c.ToString(), visible = IsWindowVisible(h),
+        x = r.Left, y = r.Top, width = r.Right - r.Left, height = r.Bottom - r.Top
+      };
+      list.Add(n);
+      return true;
+    }, IntPtr.Zero);
+    return list.ToArray();
+  }
+}
+'@
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 $windows = $root.FindAll(
   [System.Windows.Automation.TreeScope]::Children,
@@ -131,6 +175,36 @@ function Walk($el, $level) {
 $wc = $window.Current
 Walk $window 0
 $r = $wc.BoundingRectangle
+if ($script:nodes.Count -eq 0 -and $wc.NativeWindowHandle -ne 0) {
+  $native = [KDockDesktopTreeNative]::Children([IntPtr]$wc.NativeWindowHandle, $MaxNodes)
+  foreach ($n in $native) {
+    if (-not $n.visible) { continue }
+    $type = switch -Regex ($n.cls) {
+      '^Button$' { 'Button'; break }
+      '^Edit$' { 'Edit'; break }
+      '^ComboBox' { 'ComboBox'; break }
+      '^Static$' { 'Text'; break }
+      '^SysListView32$' { 'List'; break }
+      '^Toolbar' { 'ToolBar'; break }
+      default { $n.cls }
+    }
+    if (-not $n.text -and $type -notin @('Button','Edit','ComboBox','List','ToolBar')) { continue }
+    [void]$script:nodes.Add([pscustomobject]@{
+      level = 1
+      type = $type
+      name = $n.text
+      automationId = "id:$($n.id)"
+      class = $n.cls
+      enabled = $true
+      offscreen = $false
+      x = $n.x
+      y = $n.y
+      width = $n.width
+      height = $n.height
+      patterns = @('Win32')
+    })
+  }
+}
 [pscustomobject]@{
   ok = $true
   window = [pscustomobject]@{
@@ -154,7 +228,7 @@ param(
   [string]$Title = '',
   [string]$AutomationId = '',
   [string]$Name = '',
-  [ValidateSet('invoke','click','set_value','focus','menu')]
+  [ValidateSet('invoke','click','set_value','focus','menu','keys')]
   [string]$Action = 'invoke',
   [string]$Value = '',
   [int]$CommandId = 0
@@ -166,11 +240,59 @@ Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public static class KDockDesktopNative {
+  [StructLayout(LayoutKind.Sequential)] public struct INPUT {
+    public uint type;
+    public KEYBDINPUT ki;
+    public long padding;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT {
+    public ushort wVk;
+    public ushort wScan;
+    public uint dwFlags;
+    public uint time;
+    public IntPtr dwExtraInfo;
+  }
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
+  [DllImport("user32.dll")] public static extern uint SendInput(uint count, INPUT[] inputs, int size);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
   [DllImport("user32.dll")] public static extern IntPtr PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageText(IntPtr hWnd, uint msg, IntPtr wParam, string text);
+  [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr parent, int id);
+  [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr hWnd);
+  public static void Activate(IntPtr hWnd) {
+    uint pid;
+    uint foreground = GetWindowThreadProcessId(GetForegroundWindow(), out pid);
+    uint mine = GetCurrentThreadId();
+    bool attached = AttachThreadInput(mine, foreground, true);
+    ShowWindow(hWnd, 9);
+    BringWindowToTop(hWnd);
+    SetForegroundWindow(hWnd);
+    if (attached) AttachThreadInput(mine, foreground, false);
+    System.Threading.Thread.Sleep(250);
+  }
+  public static uint SendChord(IntPtr hWnd, int[] keys) {
+    Activate(hWnd);
+    var inputs = new INPUT[keys.Length * 2];
+    for (int i = 0; i < keys.Length; i++) {
+      inputs[i].type = 1;
+      inputs[i].ki.wVk = (ushort)keys[i];
+    }
+    for (int i = 0; i < keys.Length; i++) {
+      int at = keys.Length + i;
+      inputs[at].type = 1;
+      inputs[at].ki.wVk = (ushort)keys[keys.Length - 1 - i];
+      inputs[at].ki.dwFlags = 2;
+    }
+    return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+  }
 }
 '@
 
@@ -191,7 +313,16 @@ foreach ($w in $windows) {
 if (-not $window) { throw "没有找到目标窗口（hwnd=$Hwnd title=$Title）" }
 $wc = $window.Current
 $hwndValue = if ($wc.NativeWindowHandle -ne 0) { [IntPtr]$wc.NativeWindowHandle } else { [IntPtr]$Hwnd }
-[void][KDockDesktopNative]::SetForegroundWindow($hwndValue)
+[void][KDockDesktopNative]::Activate($hwndValue)
+
+if ($Action -eq 'keys') {
+  $keys = @($Value.Split(',') | Where-Object { $_.Trim() } | ForEach-Object { [int]$_.Trim() })
+  if ($keys.Count -lt 1) { throw 'keys 动作没给按键' }
+  $sent = [KDockDesktopNative]::SendChord($hwndValue, $keys)
+  [pscustomobject]@{ ok = ($sent -eq $keys.Count * 2); action = 'keys'; events = $sent } |
+    ConvertTo-Json -Compress
+  exit 0
+}
 
 if ($Action -eq 'menu') {
   if ($CommandId -le 0) { throw 'menu 动作必须给 command_id' }
@@ -212,6 +343,29 @@ foreach ($el in $all) {
     if ($AutomationId -and $c.AutomationId -eq $AutomationId) { $target = $el; break }
     if (-not $AutomationId -and $Name -and $c.Name -like "*$Name*") { $target = $el; break }
   } catch {}
+}
+if (-not $target -and $AutomationId -match '^id:(\d+)$') {
+  $nativeHwnd = [KDockDesktopNative]::GetDlgItem($hwndValue, [int]$Matches[1])
+  if ($nativeHwnd -eq [IntPtr]::Zero) {
+    throw "没有找到 Win32 控件（$AutomationId）"
+  }
+  switch ($Action) {
+    'invoke' { [void][KDockDesktopNative]::SendMessage($nativeHwnd, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) }
+    'click' { [void][KDockDesktopNative]::SendMessage($nativeHwnd, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) }
+    'focus' { [void][KDockDesktopNative]::SetFocus($nativeHwnd) }
+    'set_value' {
+      [void][KDockDesktopNative]::SendMessageText($nativeHwnd, 0x000C, [IntPtr]::Zero, $Value)
+    }
+    default { throw "Win32 控件不支持动作 $Action" }
+  }
+  [pscustomobject]@{
+    ok = $true
+    action = $Action
+    type = 'Win32Control'
+    name = ''
+    automationId = $AutomationId
+  } | ConvertTo-Json -Compress
+  exit 0
 }
 if (-not $target) { throw "没有找到控件（automation_id=$AutomationId name=$Name）" }
 $tc = $target.Current
@@ -366,11 +520,20 @@ pub fn action(
     value: &str,
     command_id: u32,
 ) -> Result<String, String> {
+    let value = if action == "keys" {
+        hotkey_codes(value)?
+    } else {
+        value.to_string()
+    };
     if action == "menu" && command_id == 0 {
         return Err("menu 动作必须给 command_id".into());
     }
-    if action != "menu" && automation_id.trim().is_empty() && name.trim().is_empty() {
-        return Err("非 menu 动作必须给 automation_id 或 name".into());
+    if action != "menu"
+        && action != "keys"
+        && automation_id.trim().is_empty()
+        && name.trim().is_empty()
+    {
+        return Err("这个动作必须给 automation_id 或 name".into());
     }
     let args = vec![
         "-Hwnd".into(),
@@ -384,16 +547,106 @@ pub fn action(
         "-Action".into(),
         action.into(),
         "-Value".into(),
-        value.into(),
+        value,
         "-CommandId".into(),
         command_id.to_string(),
     ];
     run_ps("action", ACTION_PS, &args)
 }
 
+fn hotkey_codes(spec: &str) -> Result<String, String> {
+    let parts: Vec<String> = spec
+        .trim()
+        .to_ascii_lowercase()
+        .split('+')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .collect();
+    if parts.is_empty() {
+        return Err("keys 动作必须给快捷键，例如 alt+f3".into());
+    }
+    let mut codes = Vec::new();
+    let mut key = None;
+    for part in parts {
+        let code = match part.as_str() {
+            "alt" => 0x12,
+            "ctrl" | "control" => 0x11,
+            "shift" => 0x10,
+            "enter" | "return" => 0x0D,
+            "tab" => 0x09,
+            "esc" | "escape" => 0x1B,
+            "space" => 0x20,
+            "backspace" => 0x08,
+            "delete" | "del" => 0x2E,
+            "up" => 0x26,
+            "down" => 0x28,
+            "left" => 0x25,
+            "right" => 0x27,
+            "home" => 0x24,
+            "end" => 0x23,
+            "pgup" | "pageup" => 0x21,
+            "pgdn" | "pagedown" => 0x22,
+            _ if part.len() >= 2
+                && part.starts_with('f')
+                && part[1..].parse::<u8>().ok().is_some_and(|n| (1..=24).contains(&n)) =>
+            {
+                0x6F + part[1..].parse::<u8>().unwrap()
+            }
+            _ if part.len() == 1 && part.as_bytes()[0].is_ascii_alphanumeric() => {
+                part.as_bytes()[0].to_ascii_uppercase()
+            }
+            _ => return Err(format!("不认识的按键：{part}")),
+        };
+        match part.as_str() {
+            "alt" | "ctrl" | "control" | "shift" => codes.push(code),
+            _ => {
+                if key.replace(code).is_some() {
+                    return Err("一个 keys 动作只能有一个非修饰键".into());
+                }
+            }
+        }
+    }
+    let key = key.ok_or("keys 动作至少要有一个非修饰键，例如 alt+f3")?;
+    codes.push(key);
+    Ok(codes
+        .into_iter()
+        .map(|code| code.to_string())
+        .collect::<Vec<_>>()
+        .join(","))
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hotkey_chords_are_translated_to_virtual_keys() {
+        assert_eq!(hotkey_codes("alt+f3").unwrap(), "18,114");
+        assert_eq!(hotkey_codes("Ctrl+Shift+s").unwrap(), "17,16,83");
+        assert_eq!(hotkey_codes("f12").unwrap(), "123");
+        assert!(hotkey_codes("alt+").is_err());
+        assert!(hotkey_codes("alt+f3+x").is_err());
+        assert!(hotkey_codes("hyper+f3").is_err());
+    }
+
+    #[test]
+    fn desktop_action_script_compiles_before_window_lookup() {
+        let err = action(
+            0,
+            "__kdock_window_that_does_not_exist__",
+            "",
+            "",
+            "keys",
+            "f24",
+            0,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("没有找到目标窗口"),
+            "action script did not reach window lookup: {err}"
+        );
+    }
 
     #[test]
     #[ignore = "requires an interactive Windows desktop"]

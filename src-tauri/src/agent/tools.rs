@@ -777,7 +777,7 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
     );
     push(
         "desktop_ui",
-        "读取一个窗口的 Windows UI Automation 控件树，返回按钮/输入框/菜单项的名称、AutomationId、类名、边界矩形和可用模式。比截图 OCR 更适合定位控件；MFC 自绘控件不暴露时可改用 desktop_action 的 menu 命令 ID。",
+        "读取一个窗口的控件树，返回按钮/输入框/菜单项的名称、AutomationId、类名、边界矩形和可用模式。优先读 UIA；MFC/自绘窗口不暴露 UIA 时自动回退到 Win32 子控件，并用 automation_id=id:<控件ID> 标识。比截图 OCR 更适合定位控件。",
         json!({"type":"object","properties":{
             "hwnd":{"type":"integer","description":"desktop_windows 返回的句柄；0 表示按 title 找"},
             "title":{"type":"string","description":"窗口标题包含的文字"},
@@ -789,14 +789,14 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
     );
     push(
         "desktop_action",
-        "操作本机窗口控件或发送菜单命令。action=invoke/focus/set_value/click 按 AutomationId 或 Name 找控件；action=menu 直接向窗口发送 WM_COMMAND，适合 MFC 自绘工具栏。会真的改变其他软件状态，需要审批。",
+        "操作本机窗口控件、发送菜单命令或按键和弦。action=invoke/focus/set_value/click 按 AutomationId 或 Name 找控件；action=menu 直接向窗口发 WM_COMMAND；action=keys 用 value 发快捷键，例如 alt+f3、ctrl+s、f10。Win32 子控件用 desktop_ui 返回的 id:<控件ID>。会真的改变其他软件状态，需要审批。",
         json!({"type":"object","properties":{
             "hwnd":{"type":"integer","description":"desktop_windows 返回的句柄；0 表示按 title 找"},
             "title":{"type":"string","description":"窗口标题包含的文字"},
             "automation_id":{"type":"string","description":"控件 AutomationId"},
             "name":{"type":"string","description":"控件名称包含的文字"},
-            "action":{"type":"string","enum":["invoke","click","set_value","focus","menu"]},
-            "value":{"type":"string","description":"set_value 要填的内容"},
+            "action":{"type":"string","enum":["invoke","click","set_value","focus","menu","keys"]},
+            "value":{"type":"string","description":"set_value 要填的内容；action=keys 时是快捷键和弦，例如 alt+f3"},
             "command_id":{"type":"integer","description":"menu 动作的 Win32 菜单命令 ID"}
         },"required":["action"]}),
         false,
@@ -1424,11 +1424,20 @@ fn subagent_spawn(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         provider,
         Some(parent.ws.clone()),
     )?;
-    if let Some(mut m) = store::session_meta_of(ctx.app, &sub.id) {
-        // 子会话继承父会话权限；父会话是 auto 时子会话也自动，避免后台任务卡在没人看的审批上。
-        m.perm = parent.perm.clone();
-        m.parent_session = ctx.session.to_string();
-        let _ = store::session_update_meta(ctx.app, &m);
+    let mut sub_meta = match store::session_meta_of(ctx.app, &sub.id) {
+        Some(meta) => meta,
+        None => {
+            let _ = store::session_delete(ctx.app, &sub.id);
+            return Err("子会话已创建，但读不到它的元数据；已取消启动".into());
+        }
+    };
+    // 子会话继承父会话权限；父会话是 auto 时子会话也自动，避免后台任务卡在没人看的审批上。
+    // parent_session 必须落盘成功，否则父会话无法 wait/result，停止时也会漏掉这个孤儿会话。
+    sub_meta.perm = parent.perm.clone();
+    sub_meta.parent_session = ctx.session.to_string();
+    if let Err(e) = store::session_update_meta(ctx.app, &sub_meta) {
+        let _ = store::session_delete(ctx.app, &sub.id);
+        return Err(format!("子会话元数据写入失败，已取消启动：{e}"));
     }
     if let Err(e) = crate::agent::agent_send(ctx.app.clone(), sub.id.clone(), task, None) {
         let _ = store::session_delete(ctx.app, &sub.id);
@@ -1827,6 +1836,15 @@ mod tests {
         assert!(props.contains_key("cmd"));
         assert!(props.contains_key("script"));
         assert!(props.contains_key("shell"));
+        let desktop = catalog()
+            .into_iter()
+            .find(|d| d.name == "desktop_action")
+            .unwrap();
+        assert!(desktop.schema["properties"]["action"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "keys"));
         assert_eq!(tool_category("web_download"), "工作区与执行");
         assert_eq!(tool_category("desktop_ui"), "屏幕与图像");
     }
@@ -3141,9 +3159,9 @@ fn desktop_action(_ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let action = arg_str(args, "action").ok_or("缺少 action")?;
     if !matches!(
         action.as_str(),
-        "invoke" | "click" | "set_value" | "focus" | "menu"
+        "invoke" | "click" | "set_value" | "focus" | "menu" | "keys"
     ) {
-        return Err("action 只支持 invoke / click / set_value / focus / menu".into());
+        return Err("action 只支持 invoke / click / set_value / focus / menu / keys".into());
     }
     crate::desktop_ui::action(
         hwnd,
@@ -3603,7 +3621,7 @@ fn flash(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
                 "write_flash".into(), addr.clone(), file.clone(),
             ];
         }
-        _ => {
+        "stm32" => {
             argv = vec![
                 "-c".into(),
                 "port=SWD".into(),
@@ -3614,6 +3632,7 @@ fn flash(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
                 "-rst".into(),
             ];
         }
+        other => return Err(format!("不支持的烧录工具 {other}")),
     }
     let (log, app) = (ctx.log, ctx.app);
     (log)(&format!("[agent] 烧录: {} {}\n", exe, argv.join(" ")));
@@ -3753,24 +3772,24 @@ fn browser_navigate(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
 }
 
 fn browser_read(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
-    if let Some(url) = arg_str(args, "url") {
-        crate::shared_browser::open_and_wait(
+    let max = arg_u64(args, "max_chars", 12_000) as usize;
+    let raw = if let Some(url) = arg_str(args, "url") {
+        crate::shared_browser::open_and_read_json(
             ctx.app,
             "browser",
             &url,
             Duration::from_secs(20),
-        )?;
-    }
-    let max = arg_u64(args, "max_chars", 12_000) as usize;
-    if crate::shared_browser::current_url("browser").is_some() {
-        let raw = crate::shared_browser::read_dom_json("browser")?;
-        let page: crate::shared_browser::Page = serde_json::from_str(&raw)
-            .map_err(|e| format!("读当前页失败：{e}"))?;
-        let body: String = page.text.chars().take(max).collect();
-        let more = if page.text.chars().count() > max { "\n…(截断)" } else { "" };
-        return Ok(format!("{}\n标题：{}\n--- 正文 ---\n{}{}", page.url, page.title, body, more));
-    }
-    Err("共享浏览器还没有打开页面，先 browser_open".into())
+        )?
+    } else if crate::shared_browser::current_url("browser").is_some() {
+        crate::shared_browser::read_dom_json("browser")?
+    } else {
+        return Err("共享浏览器还没有打开页面，先 browser_open".into());
+    };
+    let page: crate::shared_browser::Page = serde_json::from_str(&raw)
+        .map_err(|e| format!("读当前页失败：{e}"))?;
+    let body: String = page.text.chars().take(max).collect();
+    let more = if page.text.chars().count() > max { "\n…(截断)" } else { "" };
+    Ok(format!("{}\n标题：{}\n--- 正文 ---\n{}{}", page.url, page.title, body, more))
 }
 
 
