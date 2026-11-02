@@ -629,7 +629,7 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 }
 #ag-usage:empty { display: none; }
 #ag-input {
-  min-height: 94px; padding: 12px 14px; resize: vertical;
+  flex: 1 1 auto; min-height: 84px; padding: 12px 14px; resize: none;
   font-family: var(--ui-font, var(--font-ui)); font-size: 14px; line-height: 1.65; letter-spacing: .05px;
   background: var(--surface-0); border-radius: 12px; caret-color: hsl(var(--primary));
 }
@@ -1434,8 +1434,13 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .split { background: var(--surface-1); }
 .work { padding: 0; }
 .workpane:not(.shell) { padding: 10px 12px; }
-/* Agent：对话区高度可拖（上面那条 vsplit），输入区始终贴底 */
-.workpane[data-work="agent"] > .inpane { margin-top: auto; }
+/* Agent：中间把手改变输入区基线；对话区吃掉剩余高度，不能再产生空挡。 */
+.workpane[data-work="agent"] > #ag-box {
+  flex: 1 1 0; min-height: 140px;
+}
+.workpane[data-work="agent"] > .inpane {
+  flex: 0 1 220px; min-height: 180px; overflow: auto;
+}
 
 /* ==========================================================================
    1) 输入区高度：把手放到**输出框**右下角（原来靠 textarea 自带的 resize，

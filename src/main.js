@@ -15,6 +15,7 @@ import {
   summarizeToolArgs,
 } from "./agent-activity.js";
 import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
+import { bindAgentResize } from "./agent-layout.js";
 import { EN } from "./locales/en.js";
 import {
   loadHelpPage,
@@ -7228,40 +7229,6 @@ async function uiPrefsLoad() {
   syncUiScaleControls();
   const s2 = uiPrefsSnapshot();
   uiPrefsLast = [s2.theme, s2.scheme, s2.lang, s2.fontScale, s2.zoom, s2.font, JSON.stringify(s2.shortcuts)].join("|");
-}
-
-/** Agent 对话区高度：拖动它上面那条把手（和传输页的输出框一个路子），双击复位。 */
-function bindAgentResize() {
-  const grip = $("ag-chat-grip"), box = $("ag-box");
-  if (!grip || !box) return;
-  const KEY = "kdock_agent_chat_h";
-  const apply = (h) => {
-    box.style.height = h ? h + "px" : "";
-    box.style.flex = h ? "0 0 auto" : "";      // 有显式高度时别让 flex 把它拉回满高
-  };
-  const saved = Number(localStorage.getItem(KEY) || 0);
-  if (saved > 80) apply(Math.round(saved));
-  let sy = 0, h0 = 0;
-  grip.addEventListener("pointerdown", (e) => {
-    sy = e.clientY; h0 = box.getBoundingClientRect().height;
-    grip.classList.add("dragging");
-    try { grip.setPointerCapture(e.pointerId); } catch (_) { /* 某些环境不支持 */ }
-    e.preventDefault();
-  });
-  grip.addEventListener("pointermove", (e) => {
-    if (!grip.classList.contains("dragging")) return;
-    const pane = box.parentElement.getBoundingClientRect().height;
-    const want = Math.max(120, Math.min(h0 - (e.clientY - sy), Math.round(pane * 0.9)));
-    apply(Math.round(want));
-  });
-  const stop = () => {
-    if (!grip.classList.contains("dragging")) return;
-    grip.classList.remove("dragging");
-    localStorage.setItem(KEY, String(Math.round(box.getBoundingClientRect().height)));
-  };
-  grip.addEventListener("pointerup", stop);
-  grip.addEventListener("pointercancel", stop);
-  grip.addEventListener("dblclick", () => { localStorage.removeItem(KEY); apply(0); });
 }
 
 // ---------------- 内嵌调试（GDB/MI + GDB Server） ----------------

@@ -65,6 +65,80 @@ try {
     results.push(state);
   }
 
+  await page.evaluate(() => window.__showAllPagesPage("agent"));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const agentLayout = await page.evaluate(() => {
+    const grip = document.getElementById("ag-chat-grip");
+    const box = document.getElementById("ag-box");
+    const inputPane = grip.nextElementSibling;
+    const work = document.querySelector('[data-work="agent"]');
+    const drag = (from, to) => {
+      grip.dispatchEvent(new PointerEvent("pointerdown", {
+        bubbles: true, pointerId: 1, button: 0, clientY: from,
+      }));
+      grip.dispatchEvent(new PointerEvent("pointermove", {
+        bubbles: true, pointerId: 1, buttons: 1, clientY: to,
+      }));
+      grip.dispatchEvent(new PointerEvent("pointerup", {
+        bubbles: true, pointerId: 1, clientY: to,
+      }));
+    };
+    const bounds = () => {
+      const b = box.getBoundingClientRect();
+      const i = inputPane.getBoundingClientRect();
+      const w = work.getBoundingClientRect();
+      return {
+        chat: Math.round(b.height),
+        input: Math.round(i.height),
+        inputBottom: Math.round(i.bottom),
+        workBottom: Math.round(w.bottom),
+      };
+    };
+
+    const gripY = grip.getBoundingClientRect().top + 3;
+    drag(gripY, gripY + 1600);
+    const smallestInput = bounds();
+    drag(gripY, gripY - 2200);
+    const smallestChat = bounds();
+    return {
+      smallestInput,
+      smallestChat,
+      textareaResize: getComputedStyle(document.getElementById("ag-input")).resize,
+    };
+  });
+  await page.setViewportSize({ width: 1180, height: 700 });
+  await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const agentAfterWindowShrink = await page.evaluate(() => {
+    const work = document.querySelector('[data-work="agent"]').getBoundingClientRect();
+    const input = document.querySelector('[data-work="agent"] .inpane').getBoundingClientRect();
+    const chat = document.getElementById("ag-box").getBoundingClientRect();
+    return {
+      chat: Math.round(chat.height),
+      input: Math.round(input.height),
+      inputBottom: Math.round(input.bottom),
+      workBottom: Math.round(work.bottom),
+    };
+  });
+  if (agentLayout.textareaResize !== "none") {
+    throw new Error(`Agent textarea still exposes its native resize handle: ${agentLayout.textareaResize}`);
+  }
+  if (agentLayout.smallestInput.input < 178 || agentLayout.smallestInput.chat < 138) {
+    throw new Error(`Agent panes ignore their minimum sizes: ${JSON.stringify(agentLayout.smallestInput)}`);
+  }
+  if (agentLayout.smallestChat.chat < 138 || agentLayout.smallestChat.input < 178) {
+    throw new Error(`Agent panes ignore their opposite minimums: ${JSON.stringify(agentLayout.smallestChat)}`);
+  }
+  for (const [name, value] of [
+    ["dragged", agentLayout.smallestChat],
+    ["shrunk-window", agentAfterWindowShrink],
+  ]) {
+    if (value.inputBottom > value.workBottom + 2) {
+      throw new Error(`Agent composer is pushed outside the work area (${name}): ${JSON.stringify(value)}`);
+    }
+  }
+  await page.setViewportSize({ width: 1500, height: 950 });
+
   // Resolution / UI zoom matrix. Representative pages cover the densest
   // layouts (Agent, runtime, scope, env, browser, USB and tools).
   const matrixPages = ["link", "agent", "kb", "env", "runtime", "scope", "logic", "usb", "calc"];
@@ -124,8 +198,6 @@ try {
       matrixResults.push({ profile: profile.name, ...state });
     }
   }
-  await page.setViewportSize({ width: 1500, height: 950 });
-
   await page.evaluate(() => localStorage.removeItem("kdock_nav_advanced_open"));
   await page.reload();
   await page.waitForFunction(() => document.documentElement.dataset.allPagesReady === "1");
@@ -140,6 +212,8 @@ try {
     ok: true,
     pageCount: pages.length,
     pages: results,
+    agentLayout,
+    agentAfterWindowShrink,
     responsiveMatrix: {
       profiles: matrix.length,
       pageChecks: matrixResults.length,

@@ -15,6 +15,7 @@
   <div id="ui-root"></div>
   <script type="module">
     import { initAdvancedNav, openAdvancedNavFor } from "/src/nav-advanced.js";
+    import { bindAgentResize } from "/src/agent-layout.js";
 
     const source = await fetch("/index.html").then((r) => r.text());
     const parsed = new DOMParser().parseFromString(source, "text/html");
@@ -22,6 +23,7 @@
     if (!split) throw new Error("Main split markup missing");
     const root = document.getElementById("ui-root");
     root.appendChild(split);
+    bindAgentResize();
 
     const advanced = initAdvancedNav();
     const debugBtn = document.querySelector('.navitem[data-tab="debug"]');
