@@ -8068,6 +8068,7 @@ let agThinkNode = null;           // 正在流式写入的"思考过程"块
 let agReasonText = "";
 let agRunning = false;
 const agRunSessions = new Set();
+const agPending = new Map();      // session id -> 尚未并入对话的补充消息
 let agSkills = [];
 let agAlways = { slugs: [], bytes: 0, limit: 16384 };   // 常驻技能：正文每轮注入系统提示的那些
 const agIsAlways = (slug) => (agAlways.slugs || []).includes(slug);
@@ -8076,6 +8077,52 @@ let agToolCards = {};             // call id -> 卡片元素
 let agToolArgs = {};              // call id -> 参数（结果事件不带参数，替换卡片时要沿用）
 
 const agEl = (id) => document.getElementById(id);
+
+function agPendingPush(sid, text) {
+  if (!sid) return;
+  const rows = agPending.get(sid) || [];
+  rows.push(text);
+  agPending.set(sid, rows);
+}
+
+function agPendingEnsure(sid, text) {
+  if (!sid) return;
+  const rows = agPending.get(sid) || [];
+  if (!rows.includes(text)) {
+    rows.push(text);
+    agPending.set(sid, rows);
+  }
+}
+
+function agPendingTake(sid, text) {
+  const rows = agPending.get(sid) || [];
+  const i = rows.findIndex((x) => x === text);
+  if (i < 0) return false;
+  rows.splice(i, 1);
+  if (rows.length) agPending.set(sid, rows);
+  else agPending.delete(sid);
+  return true;
+}
+
+function agRenderPending() {
+  const box = agEl("ag-pending");
+  if (!box) return;
+  const rows = (agMeta && agPending.get(agMeta.id)) || [];
+  box.innerHTML = "";
+  box.hidden = rows.length === 0;
+  for (const text of rows) {
+    const row = document.createElement("div");
+    row.className = "agpending-item";
+    const tag = document.createElement("span");
+    tag.className = "agpending-tag";
+    tag.textContent = en("待发送 · 下一步并入");
+    const body = document.createElement("span");
+    body.className = "agpending-text";
+    body.textContent = text;
+    row.append(tag, body);
+    box.appendChild(row);
+  }
+}
 
 /**
  * 自绘确认/输入弹窗。
@@ -9161,6 +9208,7 @@ function agSetMeta(m, why) {
   agRunning = !!(m && agRunSessions.has(m.id));
   if (agEl("ag-stop")) agEl("ag-stop").hidden = !agRunning;
   agSetSendDisabled(agRunning);
+  agRenderPending();
 }
 let agOpenWs = {};          // 哪些工作区是展开的
 let agSessShown = {};       // 每个工作区先渲染多少个会话（会话多了别一次铺满 DOM）
@@ -9981,30 +10029,49 @@ async function agSend() {
     await agSlash(text);
     return;
   }
+  const runningNow = agRunSessions.has(agMeta.id);
   const backup = box.value;
   box.value = "";
-  // **先把用户这条上屏，再发**：后端一进 run_turn 就会推 agent://state / agent://reason，
-  // 那个"思考中"块是直接 append 到对话底部的；以前是先 invoke 再上屏，等 Promise 回来时
-  // 思考块已经在了 —— 第一轮就会看到「agent 在上面、用户的提问在下面」的错位（实测）。
-  // 被拒时不能让用户的话丢掉，所以下面 catch 里回滚这一条。
-  agEvents.push({ type: "user", text, ts: Date.now() });
-  agAppendEvent({ type: "user", text });
-  agUpdateHeader();
+  // 空闲发送时先乐观上屏，避免思考块抢在用户消息前面。
+  // 运行中补充只进入输入框上方的待发送区；后端真正并入后才转成正式消息。
+  if (runningNow) {
+    agPendingPush(agMeta.id, text);
+    agRenderPending();
+  } else {
+    agEvents.push({ type: "user", text, ts: Date.now() });
+    agAppendEvent({ type: "user", text });
+    agUpdateHeader();
+  }
   try {
-    // 先发再上屏的老顾虑（被拒时话丢了）靠上面的回滚兜住
     const r = await invoke("agent_send", { sessionId: agMeta.id, text, providerId: agCfg ? agCfg.activeId : null });
     if (r && r.queued) {
-      // 边跑边补充：这条已经在屏上了，只把它标成"排队中"；后端并进对话后会发
-      // agent://user 把它换成正式的（见那个监听）。
-      const last = agEvents[agEvents.length - 1];
-      if (last && last.type === "user" && last.text === text) last.queued = true;
-      agRender();
+      if (!runningNow) {
+        // 竞态：发送瞬间上一轮刚开始。撤回乐观消息，改放待发送区。
+        const i = agEvents.length - 1;
+        if (i >= 0 && agEvents[i].type === "user" && agEvents[i].text === text) {
+          agEvents.splice(i, 1);
+        }
+        agPendingEnsure(agMeta.id, text);
+        agRender();
+      }
+      agRenderPending();
       return;
     }
+    if (runningNow) {
+      // 竞态：发送前一轮刚好结束。消息没有排队，转为正常发送。
+      agPendingTake(agMeta.id, text);
+      agEvents.push({ type: "user", text, ts: Date.now() });
+      agAppendEvent({ type: "user", text });
+      agUpdateHeader();
+      agRenderPending();
+    }
   } catch (e) {
-    // 回滚刚上屏的那一条
+    agPendingTake(agMeta.id, text);
+    agRenderPending();
     const i = agEvents.length - 1;
-    if (i >= 0 && agEvents[i].type === "user" && agEvents[i].text === text) agEvents.splice(i, 1);
+    if (!runningNow && i >= 0 && agEvents[i].type === "user" && agEvents[i].text === text) {
+      agEvents.splice(i, 1);
+    }
     agRender();
     box.value = backup;
     agRunning = false;
@@ -10041,6 +10108,7 @@ function agFlushStream() {
 
 async function bindAgent() {
   if (!agEl("ag-chat")) return;
+  if (window.kdockOnLang) window.kdockOnLang(agRenderPending);
   agInitReasoningModes();
   await agLoadConfig();
   await agLoadTree();
@@ -12557,17 +12625,15 @@ async function bindAgentEvents() {
   // 边跑边补充：排队的消息（后端会在这一轮的下一个边界并入）
   await agOn("agent://queued", (ev) => {
     const p = ev.payload || {};
-    if (agMeta && p.session !== agMeta.id) return;
-    agEvents.push({ type: "user", text: p.text, queued: true });
-    agAppendEvent({ type: "user", text: p.text, queued: true });
-    agUpdateHeader();
+    agPendingEnsure(p.session, p.text);
+    if (agMeta && p.session === agMeta.id) agRenderPending();
   });
   // 排队的那条真的并进对话了：把"排队中"的临时气泡换掉
   await agOn("agent://user", (ev) => {
     const p = ev.payload || {};
     if (agMeta && p.session !== agMeta.id) return;
-    const i = agEvents.findIndex((e) => e.type === "user" && e.queued && e.text === p.text);
-    if (i >= 0) agEvents.splice(i, 1);
+    agPendingTake(p.session, p.text);
+    agRenderPending();
     agEvents.push({ type: "user", text: p.text });
     agRender();
   });
@@ -12662,7 +12728,11 @@ async function bindAgentEvents() {
   });
   await agOn("agent://done", async (ev) => {
     const sid = ev.payload && ev.payload.session;
-    if (sid) agRunSessions.delete(sid);
+    if (sid) {
+      agRunSessions.delete(sid);
+      agPending.delete(sid);
+      if (agMeta && sid === agMeta.id) agRenderPending();
+    }
     if (agMeta && sid === agMeta.id) {
       agRunning = false;
       agState("空闲");

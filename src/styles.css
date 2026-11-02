@@ -638,6 +638,22 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
   border-color: hsl(var(--ring) / 0.72);
   box-shadow: 0 0 0 3px hsl(var(--ring) / 0.12);
 }
+.agpending { display: flex; flex-direction: column; gap: 6px; }
+.agpending[hidden] { display: none; }
+.agpending-item {
+  display: flex; align-items: flex-start; gap: 8px; min-width: 0;
+  padding: 7px 9px; border: 1px dashed hsl(var(--primary) / 0.35);
+  border-radius: 10px; background: hsl(var(--primary) / 0.07);
+}
+.agpending-tag {
+  flex: 0 0 auto; padding: 1px 6px; border-radius: 999px;
+  background: hsl(var(--primary) / 0.14); color: hsl(var(--primary));
+  font-size: 10.5px; line-height: 1.5;
+}
+.agpending-text {
+  min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere;
+  color: hsl(var(--foreground)); font-size: 12px; line-height: 1.55;
+}
 
 /* 「⋯」面板：把不常用的收进来，按分区竖排 */
 .panelbox {
