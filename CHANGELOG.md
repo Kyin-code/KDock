@@ -1,5 +1,15 @@
 # Changelog
 
+<!-- semifold:release version=0.3.1 -->
+## v0.3.1
+
+### 修复
+
+- fix(ci): allow generated artifacts during Semifold packaging
+<!-- semifold:release:end -->
+
+
+
 ## 更新日志
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)：`MAJOR.MINOR.PATCH`。
