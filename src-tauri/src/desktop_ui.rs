@@ -643,7 +643,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.contains("没有找到目标窗口"),
+            err.contains("__kdock_window_that_does_not_exist__"),
             "action script did not reach window lookup: {err}"
         );
     }
