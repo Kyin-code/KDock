@@ -1,5 +1,19 @@
 # Changelog
 
+<!-- semifold:release version=0.3.5 -->
+## v0.3.5
+
+### 修复
+
+- fix(agent): make sandbox traversal portable across CI
+
+### Dependencies
+
+- Update kdock-core to 0.3.5.
+<!-- semifold:release:end -->
+
+
+
 <!-- semifold:release version=0.3.4 -->
 ## v0.3.4
 
