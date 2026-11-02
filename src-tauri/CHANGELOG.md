@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.6 -->
+## v0.3.6
+
+### 新增
+
+- feat(update): download installers in-app with hash verification
+
+### Dependencies
+
+- Update kdock-core to 0.3.6.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.5 -->
 ## v0.3.5
 
