@@ -257,15 +257,15 @@ pub fn catalog() -> Vec<ToolDef> {
         }}), false);
     push(
         "workspace_list",
-        "列 agent 工作区里的文件。",
-        json!({"type":"object","properties":{"path":{"type":"string","description":"相对路径，默认 ."}}}),
+        "列工作区或本机绝对路径目录里的文件（只读）。相对路径按工作区解析，绝对路径可直接读取。",
+        json!({"type":"object","properties":{"path":{"type":"string","description":"相对工作区路径或绝对路径，默认 ."}}}),
         false,
     );
     push(
         "workspace_read",
-        "读工作区里的文本文件。一次可以给 path，或者给 paths 数组批量读多个文件（推荐）。",
+        "读文本文件（只读）。相对路径按工作区解析；绝对路径可直接读取，包括工作区外项目。一次可以给 path，或 paths 数组批量读（推荐）。修改仍需 workspace_edit/write，且只能写工作区。",
         json!({"type":"object","properties":{
-            "path":{"type":"string","description":"单个文件路径"},
+            "path":{"type":"string","description":"单个文件；相对工作区或绝对路径"},
             "paths":{"type":"array","items":{"type":"string"},"description":"批量读取多个文件"},
             "max_bytes":{"type":"integer","description":"默认 65536"}
         }}),
@@ -317,10 +317,10 @@ pub fn catalog() -> Vec<ToolDef> {
     );
     push(
         "workspace_search",
-        "在工作区里按子串搜索代码（自动跳过 .git/target/node_modules 等），返回 路径:行号: 文本。比全盘 local_run grep 更安全、更快。",
+        "按子串搜索代码（只读，自动跳过 .git/target/node_modules 等），返回 路径:行号: 文本。相对路径按工作区，绝对路径可搜索工作区外项目；比 local_run grep 更快、更省上下文。",
         json!({"type":"object","properties":{
             "pattern":{"type":"string","description":"要找的子串"},
-            "path":{"type":"string","description":"搜索起点，默认工作区根"},
+            "path":{"type":"string","description":"搜索起点：相对工作区或绝对路径，默认工作区根"},
             "ext":{"type":"string","description":"可选扩展名过滤，如 rs 或 .rs"},
             "max_results":{"type":"integer","description":"默认 50，最多 500"},
             "case_sensitive":{"type":"boolean","description":"默认 false"}
@@ -349,9 +349,9 @@ pub fn catalog() -> Vec<ToolDef> {
     );
     push(
         "workspace_context",
-        "一次拿齐上下文：目录列表 + 可选搜索命中 + 指定文件内容。适合“先看项目再动手”，减少多次 workspace_list/search/read。",
+        "一次拿齐只读上下文：目录列表 + 可选搜索命中 + 指定文件内容。相对路径按工作区，绝对路径也可读；适合先看项目并减少多次 list/search/read。",
         json!({"type":"object","properties":{
-            "path":{"type":"string","description":"目录，默认工作区根"},
+            "path":{"type":"string","description":"目录：相对工作区或绝对路径，默认工作区根"},
             "pattern":{"type":"string","description":"可选搜索词"},
             "paths":{"type":"array","items":{"type":"string"},"description":"要一起读的文件"},
             "max_files":{"type":"integer","description":"目录最多列多少项，默认 80"},
@@ -3588,9 +3588,8 @@ fn find_in_text(url: &str, text: &str, needle: &str, max_hits: usize) -> Result<
 fn workspace_list(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     cached_read(ctx, "workspace_list", args, || {
         let rel = arg_str(args, "path").unwrap_or_else(|| ".".into());
-        let dir = store::resolve_in_workspace(&ctx.workspace, &rel)?;
-        std::fs::create_dir_all(&dir).ok();
-        let mut lines = vec![format!("工作区 {}/ 下：", rel)];
+        let dir = store::resolve_read_path(&ctx.workspace, &rel)?;
+        let mut lines = vec![format!("列出 {}：", dir.display())];
         for entry in std::fs::read_dir(&dir)
             .map_err(|e| format!("读目录失败: {e}"))?
             .flatten()
@@ -3619,7 +3618,7 @@ fn workspace_read(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
             let mut out = Vec::new();
             for p in paths {
                 let rel = p.as_str().ok_or("paths 里必须是字符串")?;
-                let path = store::resolve_in_workspace(&ctx.workspace, rel)?;
+                let path = store::resolve_read_path(&ctx.workspace, rel)?;
                 let data = std::fs::read(&path).map_err(|e| format!("读不了 {rel}: {e}"))?;
                 let cut = &data[..data.len().min(max)];
                 out.push(format!(
@@ -3632,7 +3631,7 @@ fn workspace_read(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         }
         let rel = arg_str(args, "path").ok_or("缺少 path")?;
         let max = arg_u64(args, "max_bytes", 65_536) as usize;
-        let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
+        let path = store::resolve_read_path(&ctx.workspace, &rel)?;
         let data = std::fs::read(&path).map_err(|e| format!("读不了 {rel}: {e}"))?;
         let cut = &data[..data.len().min(max)];
         Ok(text_and_hex(cut))
@@ -3837,7 +3836,7 @@ fn workspace_search_inner(ctx: &ToolCtx, args: &Value) -> Result<String, String>
         return Err("pattern 不能为空".into());
     }
     let root_rel = arg_str(args, "path").unwrap_or_else(|| ".".into());
-    let root = store::resolve_in_workspace(&ctx.workspace, &root_rel)?;
+    let root = store::resolve_read_path(&ctx.workspace, &root_rel)?;
     let ext = arg_str(args, "ext").map(|s| {
         let s = s.trim().trim_start_matches('.').to_lowercase();
         format!(".{s}")
@@ -3992,7 +3991,7 @@ fn workspace_context(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
             let mut reads = Vec::new();
             for p in paths {
                 let Some(rel) = p.as_str() else { continue };
-                let path = store::resolve_in_workspace(&ctx.workspace, rel)?;
+                let path = store::resolve_read_path(&ctx.workspace, rel)?;
                 let data = std::fs::read(&path).map_err(|e| format!("读不了 {rel}: {e}"))?;
                 let body = text_and_hex(&data[..data.len().min(max)]);
                 reads.push(format!("===== {rel} =====\n{body}"));

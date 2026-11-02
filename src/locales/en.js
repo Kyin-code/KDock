@@ -975,6 +975,11 @@ export const EN = {
   // ============ 共享内部浏览器 ============
   "知识库": "Knowledge base", "浏览器": "Browser",
   "共享浏览器": "Shared browser", "共享浏览器首页": "Shared browser home",
+  "在工作区中打开": "Open workspace folder", "复制工作区路径": "Copy workspace path",
+  "在这里新建对话": "New chat here", "工作区路径为空": "Workspace path is empty",
+  "已复制路径": "Path copied", "本轮活动": "This turn", "次工具": "tool call(s)",
+  "进行中": "In progress",
+  "本机粗估": "Local estimate", "校准": "calibration",
   "在浏览器打开": "Open in browser",
   "输入网址或域名": "Enter a URL or domain", "https://…（可留空）": "https://… (optional)",
   "首页": "Home", "打开浏览器": "Open browser",

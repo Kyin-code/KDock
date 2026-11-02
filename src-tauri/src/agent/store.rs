@@ -1772,6 +1772,23 @@ pub fn resolve_in_workspace(root: &Path, rel: &str) -> Result<PathBuf, String> {
     Ok(out)
 }
 
+/// Read-only file tools may inspect an absolute path anywhere the KDock process
+/// can read. Relative paths keep the workspace boundary, and every mutating
+/// tool must continue to use `resolve_in_workspace`.
+pub fn resolve_read_path(root: &Path, requested: &str) -> Result<PathBuf, String> {
+    let requested = requested.trim();
+    if requested.is_empty() {
+        return Err("路径不能为空".into());
+    }
+    let path = PathBuf::from(requested);
+    if path.is_absolute() {
+        return path
+            .canonicalize()
+            .map_err(|e| format!("读取路径不存在或不可访问: {requested}: {e}"));
+    }
+    resolve_in_workspace(root, requested)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1781,6 +1798,32 @@ mod tests {
         let ids: std::collections::HashSet<String> =
             (0..1000).map(|_| make_session_id(1_800_000_000_000)).collect();
         assert_eq!(ids.len(), 1000);
+    }
+
+    #[test]
+    fn absolute_paths_are_read_only_not_writable_workspace_paths() {
+        let workspace = tmp_dir("read-scope-workspace");
+        let outside = tmp_dir("read-scope-outside");
+        let file = outside.join("outside.txt");
+        std::fs::write(&file, "outside").unwrap();
+
+        let absolute = file.to_string_lossy().to_string();
+        assert_eq!(
+            resolve_read_path(&workspace, &absolute).unwrap(),
+            file.canonicalize().unwrap(),
+            "absolute paths should be readable"
+        );
+        assert!(
+            resolve_in_workspace(&workspace, &absolute).is_err(),
+            "write tools must still reject absolute paths"
+        );
+        assert!(
+            resolve_read_path(&workspace, "../outside.txt").is_err(),
+            "relative workspace escapes should remain rejected"
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 
     fn tmp_dir(tag: &str) -> PathBuf {

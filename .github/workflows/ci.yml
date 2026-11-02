@@ -63,6 +63,9 @@ jobs:
       - name: Test workspace
         run: cargo test --workspace --locked
 
+      - name: Test agent activity grouping
+        run: npm run test:activity
+
       - name: Check workspace
         run: cargo check --workspace --locked
 

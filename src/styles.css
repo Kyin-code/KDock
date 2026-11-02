@@ -2251,6 +2251,21 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .navsub .wsrow .p { flex: 0 1 auto; min-width: 0; font-size: 10px; opacity: .55; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .navsub .sess { padding-left: 24px; }
 
+/* Workspace context menu (right-click / Shift+F10). */
+.wsctxmenu {
+  position: fixed; z-index: 1800; min-width: 188px; padding: 5px;
+  background: var(--surface-overlay); border: 1px solid var(--surface-line);
+  border-radius: 10px; box-shadow: var(--shadow-2);
+}
+.wsctxmenu button {
+  display: flex; width: 100%; height: 30px; align-items: center;
+  padding: 0 10px; border: none; border-radius: 7px; background: transparent;
+  color: hsl(var(--foreground)); font: inherit; font-size: 12px;
+  text-align: left; cursor: pointer;
+}
+.wsctxmenu button:hover { background: var(--surface-3); }
+.wsctxmenu button.danger { color: hsl(var(--destructive)); }
+
 /* 对话头：名字 + 轮数 */
 .agtitle { font-size: 13px; font-weight: 650; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agturn { font-size: 11px; color: hsl(var(--muted-foreground)); padding: 1px 7px; border-radius: 999px; background: var(--surface-3); }

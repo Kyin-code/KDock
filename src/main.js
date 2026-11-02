@@ -8,6 +8,7 @@ import { FLASH_ROM_TOOLS, flashToolUi, isFlashRomTool, isSerialRomTool } from ".
 import { ADVANCED_TABS, initAdvancedNav, openAdvancedNavFor } from "./nav-advanced.js";
 import { createShortcutManager, mountShortcutSettings } from "./shortcuts.js";
 import { mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "./agent-session.js";
+import { buildActivityItems, partitionAgentEvents, summarizeActivity } from "./agent-activity.js";
 import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
 import { EN } from "./locales/en.js";
 import {
@@ -8957,6 +8958,71 @@ function agToolGroupNode(group) {
   return wrap;
 }
 
+function agActivityDuration(ms) {
+  if (!(ms > 0)) return "";
+  if (ms < 1000) return "<1s";
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s`;
+}
+
+/** One Codex-style activity block for a complete assistant turn. */
+function agActivityNode(events) {
+  const items = buildActivityItems(events);
+  if (!items.length) return null;
+  const stats = summarizeActivity(items);
+  const wrap = document.createElement("div");
+  wrap.className = "agtoolgroup agactivity";
+  if (stats.pending) wrap.classList.add("live");
+  if (stats.failures) wrap.classList.add("bad");
+  const head = document.createElement("div");
+  head.className = "ghead";
+  const name = document.createElement("span");
+  name.className = "gname";
+  name.textContent = stats.tools
+    ? `${en("本轮活动")} · ${stats.tools} ${en("次工具")}`
+    : en("本轮活动");
+  const list = document.createElement("span");
+  list.className = "glist";
+  const names = stats.names.slice(0, 3).map(([tool, count]) => `${tool}×${count}`).join(" · ");
+  list.textContent = [names, stats.reasons ? `${en("思考")}×${stats.reasons}` : ""]
+    .filter(Boolean)
+    .join(" · ");
+  const status = document.createElement("span");
+  status.className = "gst" + (stats.failures ? " bad" : "");
+  const duration = agActivityDuration(stats.durationMs);
+  status.textContent = stats.pending
+    ? `${en("进行中")} ${stats.pending}`
+    : stats.failures
+      ? `${stats.failures} ${en("个失败")}`
+      : en("完成");
+  if (duration) status.textContent += ` · ${duration}`;
+  head.append(name, list, status);
+  const body = document.createElement("div");
+  body.className = "gbody";
+  for (const item of items) {
+    if (item.kind === "reasoning") {
+      body.appendChild(agThinkNodeFrom(item.text));
+      continue;
+    }
+    const node = agToolNode({
+      name: item.name,
+      args: item.args,
+      ok: item.result ? item.result.ok : undefined,
+      text: item.result ? item.result.text : undefined,
+    });
+    if (item.id) {
+      agToolArgs[item.id] = item.args;
+      agToolCards[item.id] = node;
+    }
+    body.appendChild(node);
+  }
+  head.onclick = () => wrap.classList.toggle("open");
+  wrap.append(head, body);
+  return wrap;
+}
+
 function agWelcomeNode() {
   const welcome = document.createElement("div");
   welcome.className = "agwelcome";
@@ -9004,20 +9070,13 @@ function agRender() {
   agChatEl = box;
   agToolCards = {};
   agToolArgs = {};
-  let i = 0;
-  while (i < agEvents.length) {
-    if (agEvents[i].type === "tool_call" || agEvents[i].type === "tool_result") {
-      const group = [];
-      while (i < agEvents.length
-             && (agEvents[i].type === "tool_call" || agEvents[i].type === "tool_result")) {
-        group.push(agEvents[i]);
-        i += 1;
-      }
-      box.appendChild(agToolGroupNode(group));
-      continue;
+  for (const part of partitionAgentEvents(agEvents)) {
+    if (part.kind === "activity") {
+      const node = agActivityNode(part.events);
+      if (node) box.appendChild(node);
+    } else {
+      agAppendEvent(part.event, false);
     }
-    agAppendEvent(agEvents[i], false);
-    i += 1;
   }
   agSyncWelcome();
   if (agCfg && !(agCfg.providers || []).length && agEvents.length) {
@@ -9111,6 +9170,8 @@ function agRenderTree() {
     // 免得看着跟 Agent 那一行"不是一套 UI"
     const isCurrent = !!agMeta && (agMeta.ws || "default") === w.id;
     row.className = "wsrow" + (open ? " open" : "") + (isCurrent ? " current" : "");
+    row.tabIndex = 0;
+    row.title = w.path || "";
     const caret = document.createElement("span");
     caret.className = "caret"; caret.textContent = open ? "▾" : "▸";
     const t = document.createElement("span");
@@ -9136,6 +9197,16 @@ function agRenderTree() {
     };
     t.onclick = () => { agOpenWs[w.id] = !open; agRenderTree(); };
     caret.onclick = () => { agOpenWs[w.id] = !open; agRenderTree(); };
+    row.oncontextmenu = (e) => {
+      e.preventDefault();
+      agWorkspaceMenu(w, e.clientX, e.clientY);
+    };
+    row.onkeydown = (e) => {
+      if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
+      e.preventDefault();
+      const r = row.getBoundingClientRect();
+      agWorkspaceMenu(w, r.left + 24, r.top + r.height);
+    };
     caret.style.cursor = "pointer";
     row.appendChild(caret); row.appendChild(t); row.appendChild(p);
     if (w.id !== "default") row.appendChild(del);
@@ -9185,6 +9256,60 @@ function agRenderTree() {
       box.appendChild(more);
     }
   }
+}
+
+function agWorkspaceMenu(workspace, x, y) {
+  document.querySelectorAll(".wsctxmenu").forEach((node) => node.remove());
+  const menu = document.createElement("div");
+  menu.className = "wsctxmenu";
+  menu.setAttribute("role", "menu");
+  const add = (label, action, danger = false) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = danger ? "danger" : "";
+    button.textContent = en(label);
+    button.onclick = async (event) => {
+      event.stopPropagation();
+      close();
+      await action();
+    };
+    menu.appendChild(button);
+  };
+  const path = String(workspace.path || "").trim();
+  add("在工作区中打开", async () => {
+    if (!path) return toast(en("工作区路径为空"));
+    await invoke("open_folder", { path }).catch((error) => toast(String(error)));
+  });
+  add("复制工作区路径", async () => {
+    if (!path) return toast(en("工作区路径为空"));
+    try {
+      await navigator.clipboard.writeText(path);
+      toast(en("已复制路径"));
+    } catch (_) {
+      toast(en("复制失败"));
+    }
+  });
+  add("在这里新建对话", async () => {
+    agFocus();
+    await agNewSession(workspace.id);
+  });
+  document.body.appendChild(menu);
+  const close = () => {
+    menu.remove();
+    document.removeEventListener("pointerdown", outside, true);
+    document.removeEventListener("keydown", escape, true);
+  };
+  const outside = (event) => { if (!menu.contains(event.target)) close(); };
+  const escape = (event) => { if (event.key === "Escape") close(); };
+  requestAnimationFrame(() => {
+    const r = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(6, Math.min(x, window.innerWidth - r.width - 6))}px`;
+    menu.style.top = `${Math.max(6, Math.min(y, window.innerHeight - r.height - 6))}px`;
+  });
+  setTimeout(() => {
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("keydown", escape, true);
+  }, 0);
 }
 
 async function agNewWorkspace() {
@@ -9496,7 +9621,9 @@ function agRenderBreakdown() {
     (b.dropped
       ? `<div class="sub">${en("已被摘要压掉")}: ${agK(b.dropped)} tokens · ${b.coveredEvents} ${en("条旧事件；原文仍在会话文件里，可用 history_search 回查")}</div>`
       : "") +
-    `<div class="sub">${en("本机估算")} ${agK(b.used)} · ${en("模型上报")} ${agK(b.lastPromptTokens)} · ${en("窗口预算")} ${agK(b.budget)}</div>`;
+    (b.calibrated
+      ? `<div class="sub">${en("本机粗估")} ${agK(b.estimated || b.used)} · ${en("模型上报")} ${agK(b.lastPromptTokens)} · ${en("校准")} ×${Number(b.estimateScale || 1).toFixed(2)} · ${en("窗口预算")} ${agK(b.budget)}</div>`
+      : `<div class="sub">${en("本机估算")} ${agK(b.used)} · ${en("窗口预算")} ${agK(b.budget)}</div>`);
 }
 
 /** 余额（DeepSeek 有 /user/balance；其它厂商返回"无接口"）。60 秒内不重复查。 */
@@ -11298,8 +11425,8 @@ const TOOL_DESC_EN = {
   scope_waveform: "Read a waveform: a summary (points, span, min/max, Vpp, average, estimated frequency) plus an ASCII plot.",
   scope_screenshot: "Screenshot the scope as a PNG and report where it was saved.",
   scope_control: "Change scope settings: channel scale/offset/display/coupling/probe, timebase, trigger source & level, sweep, RUN/STOP, autoset.",
-  workspace_list: "List files in the agent workspace.",
-  workspace_read: "Read a text file from the workspace.",
+  workspace_list: "List a workspace-relative or absolute directory (read-only).",
+  workspace_read: "Read workspace-relative or absolute text files (read-only; writes stay inside the workspace).",
   workspace_write: "Write a file into the workspace (creates directories).",
   workspace_mkdir: "Create a directory in the workspace.",
   skill_list: "List installed skills (name + description).",

@@ -54,13 +54,15 @@ pub static BLOCKS: &[Block] = &[
         note: "通用软件工程闭环：计划、搜索、结构化编辑、测试、并行读取、子任务",
         body: "做代码/文件任务时按闭环走：\n\
                · 多步任务先 plan_write 列计划，完成一步就更新状态；\n\
-               · 先 workspace_search / workspace_read 看清现状，别盲改；\n\
+               · 先 workspace_search / workspace_read 看清现状，别盲改；读取工具允许本机绝对路径，\n\
+                 工作区外项目可直接读，不要改用 local_run 的 dir/type/grep 绕路；\n\
                · 改文件优先 workspace_edit（精确替换并回 unified diff），改完用 workspace_diff 审查；\n\
                · 有测试就跑 workspace_test（自动识别 cargo/npm/pytest），用 workspace_run 处理其它项目命令；\n\
                · 多个互不依赖的只读操作可以用 parallel_read 一次并行；独立子任务用 subagent_spawn，再用 subagent_wait 收结果。\n\
                · 尽量一次工具调用覆盖一个阶段：workspace_read(paths=[...]) 批量读、workspace_write(files=[...]) 批量写、\n\
                workspace_edit(edits=[...]) 批量改、workspace_context 一次拿目录+搜索+文件、workspace_check 一次做 diff+测试；\n\
-               这些工具比 local_run 里手写 grep/sed/git diff 更安全，也少烧模型轮次。",
+               这些工具比 local_run 里手写 grep/sed/git diff 更安全，也少烧模型轮次；\n\
+               注意只有读取工具可访问绝对路径，write/edit/mkdir/run/test 仍限制在工作区内。",
     },
     Block {
         id: "context-hygiene",

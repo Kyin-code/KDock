@@ -18,6 +18,7 @@
     "test:vite:ui": "node tests/ui-polish.vite-smoke.mjs",
     "test:vite:shortcuts": "node tests/shortcuts.vite-smoke.mjs",
     "test:vite:session": "node tests/agent-session.vite-smoke.mjs",
+    "test:activity": "node tests/agent-activity.unit.mjs",
     "test:browser": "node tests/shared-browser.unit.mjs",
     "test:bundle": "node tests/bundle-budget.unit.mjs",
     "test:i18n": "node tests/i18n.unit.mjs",

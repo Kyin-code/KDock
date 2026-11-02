@@ -2876,7 +2876,7 @@ pub fn agent_workspace_write(
     Ok(target.to_string_lossy().to_string())
 }
 
-/// 读工作区里的文件（文本页"打开工作区文件"用）
+/// 读文件（文本页"打开文件"用；绝对路径只读）。
 #[tauri::command]
 pub fn agent_workspace_read(
     app: AppHandle,
@@ -2884,7 +2884,7 @@ pub fn agent_workspace_read(
     path: String,
 ) -> Result<String, String> {
     let ws = workspace_of(&app, &session_id);
-    let target = store::resolve_in_workspace(&ws, &path)?;
+    let target = store::resolve_read_path(&ws, &path)?;
     std::fs::read_to_string(&target).map_err(|e| format!("读失败: {e}"))
 }
 
@@ -3076,32 +3076,52 @@ pub fn agent_context_breakdown(app: AppHandle, session_id: String) -> Value {
     let ctx = prov.as_ref().map(|p| p.context_window).unwrap_or(0);
     let reserve = prov.as_ref().map(|p| p.reserve_output).unwrap_or(0);
     let budget = ctx.saturating_sub(reserve) as usize;
-    let used = sys + tools_tok + summary + user + assistant + tool + mcp;
+    let estimated = sys + tools_tok + summary + user + assistant + tool + mcp;
+    let reported = meta.as_ref().map(|m| m.last_tokens).unwrap_or(0) as usize;
+    let scale = context_estimate_scale(estimated, reported);
+    let calibrated = |value: usize| {
+        if scale == 1.0 {
+            value
+        } else {
+            ((value as f64) * scale).round() as usize
+        }
+    };
+    let used = if reported > 0 { reported } else { estimated };
 
     json!({
-        "system": sys,
-        "systemBuiltin": builtin_tok,
-        "systemSkills": index_tok,
-        "systemGuidance": guidance_tok,
-        "tools": tools_tok,
-        "summary": summary,
-        "user": user,
-        "assistant": assistant,
-        "tool": tool,
-        "mcpTool": mcp,
-        "note": note,
-        "dropped": dropped,                 // 已被摘要顶掉、不再进请求的那部分
+        "system": calibrated(sys),
+        "systemBuiltin": calibrated(builtin_tok),
+        "systemSkills": calibrated(index_tok),
+        "systemGuidance": calibrated(guidance_tok),
+        "tools": calibrated(tools_tok),
+        "summary": calibrated(summary),
+        "user": calibrated(user),
+        "assistant": calibrated(assistant),
+        "tool": calibrated(tool),
+        "mcpTool": calibrated(mcp),
+        "note": calibrated(note),
+        "dropped": calibrated(dropped),     // 已被摘要顶掉、不再进请求的那部分
         "coveredEvents": covered,
         "used": used,
+        "estimated": estimated,
+        "estimateScale": scale,
+        "calibrated": reported > 0,
         "free": budget.saturating_sub(used),
         "contextWindow": ctx,
         "reserve": reserve,
         "budget": budget,
-        "lastPromptTokens": meta.as_ref().map(|m| m.last_tokens).unwrap_or(0),
+        "lastPromptTokens": reported,
         "model": prov.as_ref().map(|p| p.model.clone()).unwrap_or_default(),
         "kind": prov.as_ref().map(|p| p.kind.clone()).unwrap_or_default(),
         "events": events.len(),
     })
+}
+
+fn context_estimate_scale(estimated: usize, reported: usize) -> f64 {
+    if estimated == 0 || reported == 0 {
+        return 1.0;
+    }
+    ((reported as f64) / (estimated as f64)).clamp(0.25, 8.0)
 }
 
 #[cfg(test)]
@@ -3110,6 +3130,13 @@ mod tests {
 
     fn msg(role: &str, content: &str) -> Value {
         json!({ "role": role, "content": content })
+    }
+
+    #[test]
+    fn context_estimate_is_scaled_to_provider_usage() {
+        assert!((context_estimate_scale(80_000, 124_000) - 1.55).abs() < 0.001);
+        assert_eq!(context_estimate_scale(0, 124_000), 1.0);
+        assert_eq!(context_estimate_scale(80_000, 0), 1.0);
     }
 
     #[test]
