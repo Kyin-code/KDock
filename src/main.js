@@ -16,6 +16,7 @@ import {
 } from "./agent-activity.js";
 import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
 import { bindAgentResize } from "./agent-layout.js";
+import { pendingBatchText } from "./agent-pending.js";
 import { EN } from "./locales/en.js";
 import {
   loadHelpPage,
@@ -8036,6 +8037,8 @@ let agReasonText = "";
 let agRunning = false;
 const agRunSessions = new Set();
 const agPending = new Map();      // session id -> 尚未并入对话的补充消息
+const agPendingSending = new Set();
+const agDoneWaiters = new Map();
 let agSkills = [];
 let agAlways = { slugs: [], bytes: 0, limit: 16384 };   // 常驻技能：正文每轮注入系统提示的那些
 const agIsAlways = (slug) => (agAlways.slugs || []).includes(slug);
@@ -8044,6 +8047,36 @@ let agToolCards = {};             // call id -> 卡片元素
 let agToolArgs = {};              // call id -> 参数（结果事件不带参数，替换卡片时要沿用）
 
 const agEl = (id) => document.getElementById(id);
+
+function agWaitForDone(sid, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const old = agDoneWaiters.get(sid);
+    if (old) {
+      clearTimeout(old.timer);
+      old.resolve();
+    }
+    const timer = setTimeout(() => {
+      agDoneWaiters.delete(sid);
+      reject(new Error(en("等待当前轮停止超时，请稍后重试")));
+    }, timeoutMs);
+    agDoneWaiters.set(sid, { resolve, reject, timer });
+  });
+}
+
+function agResolveDone(sid) {
+  const waiter = agDoneWaiters.get(sid);
+  if (!waiter) return;
+  clearTimeout(waiter.timer);
+  agDoneWaiters.delete(sid);
+  waiter.resolve();
+}
+
+function agCancelDoneWait(sid) {
+  const waiter = agDoneWaiters.get(sid);
+  if (!waiter) return;
+  clearTimeout(waiter.timer);
+  agDoneWaiters.delete(sid);
+}
 
 function agPendingPush(sid, text) {
   if (!sid) return;
@@ -8077,6 +8110,21 @@ function agRenderPending() {
   const rows = (agMeta && agPending.get(agMeta.id)) || [];
   box.innerHTML = "";
   box.hidden = rows.length === 0;
+  if (rows.length) {
+    const busy = agPendingSending.has(agMeta.id);
+    const guide = document.createElement("div");
+    guide.className = "agpending-guide";
+    const hint = document.createElement("span");
+    hint.textContent = en("下一步自动并入；也可以现在发送");
+    const sendNow = document.createElement("button");
+    sendNow.className = "btn small primary";
+    sendNow.textContent = en(busy ? "正在中断…" : "全部立即发送");
+    sendNow.title = en("停止当前轮，立即发送待发送区的全部内容");
+    sendNow.disabled = busy;
+    sendNow.onclick = () => agPendingSendNow();
+    guide.append(hint, sendNow);
+    box.appendChild(guide);
+  }
   for (const text of rows) {
     const row = document.createElement("div");
     row.className = "agpending-item";
@@ -9985,6 +10033,78 @@ async function agSlash(text) {
 }
 
 // ---------- 发送 / 流 ----------
+async function agPendingSendNow() {
+  if (!agMeta || agPendingSending.has(agMeta.id)) return;
+  const sid = agMeta.id;
+  const rows = (agPending.get(sid) || []).slice();
+  const text = pendingBatchText(rows);
+  if (!text) return;
+
+  agPendingSending.add(sid);
+  agRenderPending();
+  let optimistic = false;
+  try {
+    if (agRunSessions.has(sid)) {
+      const stopped = agWaitForDone(sid);
+      try {
+        await invoke("agent_stop", { session: sid });
+      } catch (e) {
+        agCancelDoneWait(sid);
+        stopped.catch(() => {});
+        throw e;
+      }
+      await stopped;
+    }
+
+    agPending.delete(sid);
+    const sameView = !!(agMeta && agMeta.id === sid);
+    if (sameView) {
+      agEvents.push({ type: "user", text, ts: Date.now() });
+      agAppendEvent({ type: "user", text });
+      agUpdateHeader();
+      agRenderPending();
+      optimistic = true;
+    }
+    const r = await invoke("agent_send", {
+      sessionId: sid,
+      text,
+      providerId: agCfg ? agCfg.activeId : null,
+    });
+    if (r && r.queued) {
+      if (sameView && optimistic) {
+        const i = agEvents.length - 1;
+        if (i >= 0 && agEvents[i].type === "user" && agEvents[i].text === text) {
+          agEvents.splice(i, 1);
+        }
+        agRender();
+      }
+      agPending.set(sid, rows);
+      agRenderPending();
+      return;
+    }
+    agRunSessions.add(sid);
+    if (sameView) {
+      agRunning = true;
+      agState("思考中…", "ok");
+      agSetSendDisabled(true);
+    }
+  } catch (e) {
+    if (optimistic && agMeta && agMeta.id === sid) {
+      const i = agEvents.length - 1;
+      if (i >= 0 && agEvents[i].type === "user" && agEvents[i].text === text) {
+        agEvents.splice(i, 1);
+      }
+      agRender();
+    }
+    agPending.set(sid, rows);
+    agRenderPending();
+    toast(String(e && e.message ? e.message : e));
+  } finally {
+    agPendingSending.delete(sid);
+    agRenderPending();
+  }
+}
+
 async function agSend() {
   const box = agEl("ag-input");
   const text = (box.value || "").trim();
@@ -12696,6 +12816,7 @@ async function bindAgentEvents() {
   await agOn("agent://done", async (ev) => {
     const sid = ev.payload && ev.payload.session;
     if (sid) {
+      agResolveDone(sid);
       agRunSessions.delete(sid);
       agPending.delete(sid);
       if (agMeta && sid === agMeta.id) agRenderPending();

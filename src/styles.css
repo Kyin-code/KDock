@@ -640,6 +640,14 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 }
 .agpending { display: flex; flex-direction: column; gap: 6px; }
 .agpending[hidden] { display: none; }
+.agpending-guide {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  color: hsl(var(--muted-foreground)); font-size: 11px;
+}
+.agpending-guide > span {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.agpending-guide > .btn { flex: 0 0 auto; margin-left: auto; }
 .agpending-item {
   display: flex; align-items: flex-start; gap: 8px; min-width: 0;
   padding: 7px 9px; border: 1px dashed hsl(var(--primary) / 0.35);

@@ -71,8 +71,8 @@ export const HELP_GROUPS = [
       {
         id: "help-agent-chat",
         title: "对话",
-        zh: "### 用途\n用自然语言描述目标，Agent 会读取工作区、调用工具、执行验证并汇报。\n### 操作\n- 输入后 Enter 发送，Shift+Enter 换行。\n- 可在输入框下方切换权限：只读 / 需批准 / 自动。\n- 供应商声明多个思考档位后，底栏会出现「思考」下拉；选择按当前会话保存。\n- 模型下拉切换 profile；对话内补发消息会在当前回合的下一个边界并入。\n### 联动\n- 「上下文成分」「运行概览」展示成本、上下文来源和建议思考档位。\n- 修改设备、运行命令、写文件等动作受权限控制。",
-        en: "### Purpose\nDescribe a goal; the Agent reads the workspace, calls tools, verifies work and reports.\n### Usage\n- Enter sends, Shift+Enter inserts a newline.\n- Switch permission below the composer: read-only / ask / auto.\n- When a provider declares several reasoning efforts, a Thinking selector appears and is stored per session.\n- The model selector switches profiles; extra messages are merged at the next turn boundary.\n### Relationships\n- Context breakdown and Runtime overview show cost, context sources and the selected effort.\n- Device changes, commands and file writes are permission-gated."
+        zh: "### 用途\n用自然语言描述目标，Agent 会读取工作区、调用工具、执行验证并汇报。\n### 操作\n- 输入后 Enter 发送，Shift+Enter 换行。\n- 可在输入框下方切换权限：只读 / 需批准 / 自动。\n- 供应商声明多个思考档位后，底栏会出现「思考」下拉；选择按当前会话保存。\n- 模型下拉切换 profile；对话内补发消息会在当前回合的下一个边界并入。\n- 待发送区可选择「全部立即发送」：停止当前轮并马上提交这些补充内容。\n### 联动\n- 「上下文成分」「运行概览」展示成本、上下文来源和建议思考档位。\n- 修改设备、运行命令、写文件等动作受权限控制。",
+        en: "### Purpose\nDescribe a goal; the Agent reads the workspace, calls tools, verifies work and reports.\n### Usage\n- Enter sends, Shift+Enter inserts a newline.\n- Switch permission below the composer: read-only / ask / auto.\n- When a provider declares several reasoning efforts, a Thinking selector appears and is stored per session.\n- The model selector switches profiles; extra messages are merged at the next turn boundary.\n- Pending messages also offer Send all now, which stops the current turn and submits them immediately.\n### Relationships\n- Context breakdown and Runtime overview show cost, context sources and the selected effort.\n- Device changes, commands and file writes are permission-gated."
       },
       {
         id: "help-agent-workspace",

@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   buildActivityItems,
   partitionAgentEvents,
   summarizeActivity,
   summarizeToolArgs,
 } from "../src/agent-activity.js";
+import { pendingBatchText } from "../src/agent-pending.js";
 
 const events = [
   { type: "user", text: "检查项目", ts: 1 },
@@ -78,5 +82,21 @@ assert.equal(
   }),
   "2 edits · src/a.c · +1",
 );
+assert.equal(
+  pendingBatchText(["  先检查驱动 ", "", "再复测烧录"]),
+  "先检查驱动\n\n再复测烧录",
+);
+assert.equal(pendingBatchText([]), "");
+
+const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const main = await readFile(resolve(root, "src/main.js"), "utf8");
+assert.match(main, /agpending-guide/);
+assert.match(main, /全部立即发送/);
+assert.match(
+  main,
+  /invoke\("agent_stop", \{ session: sid \}\)[\s\S]{0,160}?await stopped/,
+  "Send all now must wait for the current run to stop before starting a new turn",
+);
+assert.match(main, /agResolveDone\(sid\)/);
 
 console.log(JSON.stringify({ ok: true, summary, longCommand }, null, 2));
