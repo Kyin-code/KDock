@@ -26,8 +26,15 @@ try {
   if (-not $DryRun -and -not $AllowDirty) {
     $dirty = @(git status --porcelain)
     if ($LASTEXITCODE -ne 0) { throw "git status failed" }
+    if ($env:GITHUB_ACTIONS -eq "true") {
+      # CI intentionally has generated frontend/analyzer artifacts before Tauri
+      # invokes this hook. The release workflow stages only explicit version files.
+      $AllowDirty = $true
+    }
     if ($dirty.Count -gt 0) {
-      throw "Working tree is not clean. Commit code changes first, or pass -AllowDirty explicitly."
+      if (-not $AllowDirty) {
+        throw "Working tree is not clean. Commit code changes first, or pass -AllowDirty explicitly:`n$($dirty -join "`n")"
+      }
     }
   }
 
