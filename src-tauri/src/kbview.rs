@@ -514,6 +514,98 @@ pub fn read_dom_json(kind: &str) -> Result<String, String> {
     Ok(js_string_value(raw))
 }
 
+fn eval_json(kind: &str, js: String) -> Result<String, String> {
+    wait_for_load(kind, Duration::from_secs(8))?;
+    let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
+    let wv = map.get(kind).ok_or("共享浏览器还没有打开页面")?;
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    wv.eval_with_callback(js, move |s| {
+        let _ = tx.send(s);
+    })
+    .map_err(|e| e.to_string())?;
+    let raw = rx
+        .recv_timeout(Duration::from_secs(8))
+        .map_err(|e| format!("执行页面动作超时：{e}"))?;
+    Ok(js_string_value(raw))
+}
+
+/// 按 CSS 选择器或可见文字点击页面元素。只执行一条明确的 DOM click，
+/// 不开放任意 JavaScript，避免模型把浏览器变成脚本执行器。
+pub fn click_json(kind: &str, selector: &str, text: &str) -> Result<String, String> {
+    let selector = serde_json::to_string(selector).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string(text).map_err(|e| e.to_string())?;
+    let js = format!(
+        r#"(() => {{
+          const selector = {selector};
+          const wanted = ({text} || '').trim();
+          const candidates = selector
+            ? [...document.querySelectorAll(selector)]
+            : [...document.querySelectorAll('a,button,input[type=button],input[type=submit],[role=button],label')];
+          const target = candidates.find(el => {{
+            if (!selector) return !!(wanted && ((el.innerText || el.value || el.getAttribute('aria-label') || '').trim().includes(wanted)));
+            return true;
+          }});
+          if (!target) return JSON.stringify({{ok:false,error:'没有找到可点击元素',selector,wanted}});
+          target.scrollIntoView({{block:'center',inline:'center'}});
+          target.click();
+          return JSON.stringify({{
+            ok:true,
+            tag: target.tagName,
+            text:(target.innerText || target.value || '').trim().slice(0,160),
+            url: location.href
+          }});
+        }})()"#
+    );
+    eval_json(kind, js)
+}
+
+/// 填写 input / textarea / contenteditable，并触发 input 与 change。
+pub fn fill_json(
+    kind: &str,
+    selector: &str,
+    text: &str,
+    value: &str,
+) -> Result<String, String> {
+    let selector = serde_json::to_string(selector).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string(text).map_err(|e| e.to_string())?;
+    let value = serde_json::to_string(value).map_err(|e| e.to_string())?;
+    let js = format!(
+        r#"(() => {{
+          const selector = {selector};
+          const wanted = ({text} || '').trim();
+          const value = {value};
+          const candidates = selector
+            ? [...document.querySelectorAll(selector)]
+            : [...document.querySelectorAll('input,textarea,[contenteditable=true]')];
+          const target = candidates.find(el => {{
+            if (!selector) {{
+              const label = el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.name || '';
+              return !!(wanted && label.includes(wanted));
+            }}
+            return true;
+          }});
+          if (!target) return JSON.stringify({{ok:false,error:'没有找到输入元素',selector,wanted}});
+          target.focus();
+          if (target.isContentEditable) {{
+            target.textContent = value;
+          }} else {{
+            const proto = target.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+            if (setter) setter.call(target, value); else target.value = value;
+          }}
+          target.dispatchEvent(new Event('input', {{bubbles:true}}));
+          target.dispatchEvent(new Event('change', {{bubbles:true}}));
+          return JSON.stringify({{
+            ok:true,
+            tag:target.tagName,
+            name:target.name || '',
+            value:String(value).slice(0,160)
+          }});
+        }})()"#
+    );
+    eval_json(kind, js)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

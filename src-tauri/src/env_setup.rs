@@ -95,6 +95,9 @@ pub enum Plan {
     /// 生成 INF + 自签名目录 → pnputil 安装。厂商安装包要登录/直链被墙时的通用做法，
     /// 也是 OpenOCD / pyOCD / probe-rs 在 Windows 上认探针所需要的。
     WinUsb { hwids: &'static [&'static str], label: &'static str },
+    /// WCH-Link / WCH-LinkE 使用厂商 WDM 驱动。通用 WinUSB 不能替代，
+    /// 因此下载官方包并只运行其中的 WCHLinkDrv_WHQL_S.exe。
+    WchLink,
     /// DSView 解码引擎：夜间版 sigrok-cli + DSView 自带的 Python 解码器
     /// （只改注册元数据和 matched 适配，解码状态机原样保留）。
     DsView,
@@ -638,7 +641,7 @@ pub static ITEMS: &[Item] = &[
         id: "wchlink",
         name: "WCH-Link / WCH-LinkE 驱动",
         kind_cn: "调试器",
-        desc: "沁恒 WCH-Link / WCH-LinkE 的 CMSIS-DAP 调试接口。只绑定 MI_00，串口（MI_01）保持系统自带驱动可用。",
+        desc: "沁恒 WCH-Link / WCH-LinkE 调试接口，板载 LinkE 也覆盖。只处理 MI_00 的厂商 WCH 驱动；串口 MI_01 保持系统 usbser，不改成通用 WinUSB。",
         url: "https://www.wch.cn/downloads/WCH-LinkUtility_ZIP.html",
         required: false,
         min_version: None,
@@ -646,15 +649,12 @@ pub static ITEMS: &[Item] = &[
         rules: &[
             inf("wchlink.inf"),
             inf("wchlinke.inf"),
+            inf("wchlinkwdm.inf"),
             device("WCH CMSIS-DAP"),
+            device("WCH-LinkRV"),
+            device("WCH-Link"),
         ],
-        plan: Plan::WinUsb {
-            label: "WCH CMSIS-DAP",
-            hwids: &[
-                "USB\\VID_1A86&PID_8012&MI_00",
-                "USB\\VID_1A86&PID_8010&MI_00",
-            ],
-        },
+        plan: Plan::WchLink,
     },
     Item {
         id: "wlink",
@@ -1209,7 +1209,10 @@ pub static ITEMS: &[Item] = &[
 
 fn run_out_status(prog: &str, args: &[&str]) -> Option<(i32, String)> {
     let mut c = Command::new(prog);
-    c.args(args);
+    c.args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -1420,6 +1423,19 @@ fn pnputil_infs() -> String {
     run_out("pnputil.exe", &["/enum-drivers"]).unwrap_or_default().to_lowercase()
 }
 
+/// `pnputil /enum-drivers` 里的 “Original Name” 才是驱动的原始 INF 文件名。
+/// 必须精确匹配：KDock 以前给 WCH 生成过 `kdock_wchlink.inf`，子串判断会把
+/// 残留的通用 WinUSB 包误当成厂商驱动。
+fn has_original_inf(infs: &str, name: &str) -> bool {
+    let want = name.trim().to_ascii_lowercase();
+    infs.lines().any(|line| {
+        line.to_ascii_lowercase()
+            .split_once("original name:")
+            .map(|(_, value)| value.trim() == want)
+            .unwrap_or(false)
+    })
+}
+
 fn reg_query(key: &str, value: &str) -> Option<String> {
     let out = run_out("reg.exe", &["query", key, "/v", value])?;
     for line in out.lines() {
@@ -1488,7 +1504,11 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
     for r in it.rules {
         match r.kind {
             Kind::Inf => {
-                if infs.contains(&r.a.to_lowercase()) { installed = true; detail = format!("已注册驱动 {}", r.a); break; }
+                if has_original_inf(infs, r.a) {
+                    installed = true;
+                    detail = format!("已注册驱动 {}", r.a);
+                    break;
+                }
             }
             Kind::Reg => {
                 if let Some(v) = reg_query(r.a, r.b) {
@@ -1562,6 +1582,41 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
             Kind::Manual => {}
         }
     }
+    let mut wch_driver: Option<(bool, bool, String)> = None;
+    if it.id == "wchlink" {
+        let status = crate::usb::wch_link_status();
+        let present = status["present"].as_bool().unwrap_or(false);
+        let ready = status["ready"].as_bool().unwrap_or(false);
+        let registered = has_original_inf(infs, "wchlinkwdm.inf");
+        // 设备存在就值得提醒，即使驱动包还没进 DriverStore；驱动包存在但
+        // 没接设备时则显示“未检测到设备”，而不是假装调试器已就绪。
+        installed = present || registered;
+        warning = if present && !ready {
+            "调试接口驱动未加载"
+        } else if registered && !present {
+            "未检测到设备"
+        } else {
+            ""
+        };
+        detail = if present {
+            status["detail"]
+                .as_str()
+                .unwrap_or("WCH-Link")
+                .to_string()
+        } else if registered {
+            "WCH 官方驱动已注册 · 未检测到设备".to_string()
+        } else {
+            "未检测到 WCH-Link / WCH-LinkE 调试接口".to_string()
+        };
+        wch_driver = Some((
+            ready,
+            present,
+            status["state"]
+                .as_str()
+                .unwrap_or("not-detected")
+                .to_string(),
+        ));
+    }
     if it.id == "usbpcap" {
         let status = crate::usbcapture::status_snapshot();
         if version.is_none() {
@@ -1611,12 +1666,21 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
         "detail": detail,
         "autoInstall": !matches!(it.plan, Plan::Manual),
     });
-    if it.id == "usbpcap" {
-        let (driver_ready, driver_state) =
-            usbpcap_driver.unwrap_or((false, "unknown"));
+    if it.id == "usbpcap" || it.id == "wchlink" {
+        let (driver_ready, driver_state, detected) = if it.id == "usbpcap" {
+            let (ready, state) = usbpcap_driver.unwrap_or((false, "unknown"));
+            (ready, state.to_string(), false)
+        } else {
+            let (ready, present, state) =
+                wch_driver.unwrap_or((false, false, "not-detected".to_string()));
+            (ready, state, present)
+        };
         out["warning"] = json!(warning);
         out["driverReady"] = json!(driver_ready);
         out["driverState"] = json!(driver_state);
+        if it.id == "wchlink" {
+            out["detected"] = json!(detected);
+        }
     }
     out
 }
@@ -1833,6 +1897,209 @@ fn unzip_into(app: &tauri::AppHandle, id: &str, zip: &Path, dst: &Path, strip: u
     }
 }
 
+const WCH_LINK_ZIP_URL: &str = "https://file.wch.cn/download/file?id=418";
+const WCH_LINK_DRIVER: &str = "WCHLinkDrv_WHQL_S.exe";
+
+fn find_named_file(root: &Path, name: &str, depth: u8) -> Option<PathBuf> {
+    if depth == 0 || !root.is_dir() {
+        return None;
+    }
+    let rd = std::fs::read_dir(root).ok()?;
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if p.is_file()
+            && p.file_name()
+                .map(|n| n.to_string_lossy().eq_ignore_ascii_case(name))
+                .unwrap_or(false)
+        {
+            return Some(p);
+        }
+    }
+    for entry in std::fs::read_dir(root).ok()?.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            if let Some(found) = find_named_file(&p, name, depth - 1) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn bundled_wchlink_package() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?.join("drivers").join("wchlink");
+    let rd = std::fs::read_dir(dir).ok()?;
+    let mut zip = None;
+    for entry in rd.flatten() {
+        let p = entry.path();
+        let ext = p
+            .extension()
+            .map(|x| x.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        if p.is_file()
+            && p.file_name()
+                .map(|n| n.to_string_lossy().eq_ignore_ascii_case(WCH_LINK_DRIVER))
+                .unwrap_or(false)
+        {
+            return Some(p);
+        }
+        if p.is_file() && ext == "zip" {
+            zip = Some(p);
+        }
+    }
+    zip
+}
+
+fn run_wchlink_driver_installer(app: &tauri::AppHandle, exe: &Path) -> Result<(), String> {
+    let verify_path = exe.to_string_lossy().replace('\'', "''");
+    let verify = format!(
+        "$s=Get-AuthenticodeSignature -LiteralPath '{verify_path}'; \
+         if ($s.Status -ne 'Valid') {{ throw ('signature=' + $s.Status) }}; \
+         if ($s.SignerCertificate.Subject -notmatch 'Qinheng|WCH') {{ \
+           throw ('unexpected signer=' + $s.SignerCertificate.Subject) \
+         }}; Write-Output $s.SignerCertificate.Subject"
+    );
+    let (code, out) = run_out_status(
+        "powershell.exe",
+        &["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &verify],
+    )
+    .ok_or_else(|| "无法校验 WCH 驱动安装器签名".to_string())?;
+    if code != 0 {
+        return Err(format!(
+            "WCH 驱动安装器签名校验失败，已拒绝提权运行：{}",
+            out.trim()
+        ));
+    }
+    emit(app, "wchlink", "install", 78, "等待 UAC，随后安装 WCH 官方驱动…");
+    let path = exe.to_string_lossy().replace('\'', "''");
+    let ps = format!(
+        "$ErrorActionPreference='Stop'; \
+         $p=Start-Process -FilePath '{path}' -Verb RunAs -PassThru; \
+         Write-Output ('driver-pid=' + $p.Id); exit 0"
+    );
+    let (code, out) = run_out_status(
+        "powershell.exe",
+        &["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps],
+    )
+    .ok_or_else(|| "没能启动 WCH 驱动安装器（UAC 被拒绝？）".to_string())?;
+    if code != 0 {
+        return Err(format!(
+            "启动 WCH 驱动安装器失败（退出码 {code}）：{}",
+            out.trim()
+        ));
+    }
+    Ok(())
+}
+
+fn install_wchlink(
+    app: &tauri::AppHandle,
+    target: &str,
+    dry: bool,
+    force: bool,
+) -> Result<String, String> {
+    let before = crate::usb::wch_link_status();
+    let present = before["present"].as_bool().unwrap_or(false);
+    let ready = before["ready"].as_bool().unwrap_or(false);
+    let infs = pnputil_infs();
+    let registered = has_original_inf(&infs, "wchlinkwdm.inf");
+    if ready && !force {
+        return Ok(format!(
+            "{} 已就绪，无需重装。",
+            before["detail"].as_str().unwrap_or("WCH-Link")
+        ));
+    }
+    if registered && !present && !force {
+        return Ok(
+            "WCH 官方驱动已经注册，但当前没有检测到设备。请接上 WCH-Link，必要时重新插拔后再扫描。"
+                .into(),
+        );
+    }
+
+    let dst = Path::new(target).join("wchlink");
+    let mut installer = find_named_file(&dst, WCH_LINK_DRIVER, 5);
+    if installer.is_none() {
+        let package = if let Some(p) = bundled_wchlink_package() {
+            p
+        } else {
+            download(app, "wchlink", WCH_LINK_ZIP_URL, "WCH-LinkUtility.zip")?
+        };
+        if package
+            .file_name()
+            .map(|n| n.to_string_lossy().eq_ignore_ascii_case(WCH_LINK_DRIVER))
+            .unwrap_or(false)
+        {
+            installer = Some(package);
+        } else {
+            if dry {
+                return Ok(format!(
+                    "（模拟）会解压 {} 到 {}，并运行其中的 {}",
+                    package.display(),
+                    dst.display(),
+                    WCH_LINK_DRIVER
+                ));
+            }
+            unzip_into(app, "wchlink", &package, &dst, 1)?;
+            installer = find_named_file(&dst, WCH_LINK_DRIVER, 5);
+        }
+    }
+    let installer = installer.ok_or_else(|| {
+        format!(
+            "WCH 官方包里没找到 {}。请使用 WCH-LinkUtility v3.x；不要运行无关的 CH372DRV_S.exe。",
+            WCH_LINK_DRIVER
+        )
+    })?;
+    if dry {
+        return Ok(format!("（模拟）会运行 {}", installer.display()));
+    }
+
+    run_wchlink_driver_installer(app, &installer)?;
+    // 厂商安装器会自解压并拉起子进程，外壳进程本身可能一直不退。
+    // 以设备/PnP 状态为准，而不是盲等安装器退出。
+    for sec in 0..120u64 {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let status = crate::usb::wch_link_status();
+        if status["ready"].as_bool().unwrap_or(false) {
+            emit(app, "wchlink", "done", 100, "WCH 调试驱动已就绪");
+            return Ok(format!(
+                "WCH 官方驱动已生效：{}。无需重启；串口接口保持系统 usbser 驱动。",
+                status["detail"].as_str().unwrap_or("WCH-Link")
+            ));
+        }
+        if sec % 5 == 0 {
+            emit(
+                app,
+                "wchlink",
+                "install",
+                80 + (sec / 3).min(18) as i32,
+                "等待 WCH-Link 重新枚举…",
+            );
+            let infs = pnputil_infs();
+            if has_original_inf(&infs, "wchlinkwdm.inf")
+                && !status["present"].as_bool().unwrap_or(false)
+            {
+                emit(app, "wchlink", "done", 100, "WCH 驱动已注册");
+                return Ok(
+                    "WCH 官方驱动已安装；当前没有检测到设备。接上或重新插拔 WCH-Link 后再扫描。"
+                        .into(),
+                );
+            }
+        }
+    }
+    let status = crate::usb::wch_link_status();
+    if status["present"].as_bool().unwrap_or(false) {
+        Err(format!(
+            "WCH 驱动安装器已启动，但 MI_00 仍未就绪（{}）。请先拔插 WCH-Link 再扫描；如果仍失败，检查是否在安装器里点了允许。",
+            status["detail"].as_str().unwrap_or("状态未知")
+        ))
+    } else {
+        Err(
+            "WCH 驱动安装器没有在 120 秒内完成注册。安装窗口可能仍在等待操作；完成或取消后重新扫描。"
+                .into(),
+        )
+    }
+}
+
 /// 安装 / 更新。dry = 只打印将要做什么（下载照做，但不执行安装器）——测试用
 #[tauri::command]
 pub async fn env_install(
@@ -1850,6 +2117,21 @@ pub async fn env_install(
     });
     set_env_dir(&target);          // 后面的检测规则（%ENVDIR%）按这个目录找
     emit(&app, it.id, "start", 0, &format!("准备安装 {}", it.name));
+
+    if it.id == "wchlink" {
+        let result = install_wchlink(&app, &target, dry, force.unwrap_or(false));
+        if let Ok(mut g) = SCAN_CACHE.lock() {
+            *g = None;
+        }
+        emit(
+            &app,
+            it.id,
+            if result.is_ok() { "done" } else { "error" },
+            100,
+            if result.is_ok() { "完成" } else { "失败" },
+        );
+        return result;
+    }
 
     // USBPcap 的官方安装器在检测到已经安装后会重新弹安装器，甚至停在
     // “already installed”等待用户点击。先走和扫描相同的检测；已安装就只
@@ -1930,6 +2212,9 @@ pub async fn env_install(
     }
 
     let log = match it.plan {
+        Plan::WchLink => {
+            return Err("WCH-Link 安装应走专用流程".into());
+        }
         Plan::Manual => {
             return Ok(format!("「{}」没有直接的自动下载地址（要登录/授权），请到官网下载安装：{}", it.name, it.url));
         }
@@ -2328,19 +2613,66 @@ mod tests {
     }
 
     #[test]
-    fn winusb_inf_binds_each_probe_interface() {
+    fn winusb_inf_binds_only_composite_interfaces() {
         let t = winusb_inf_text(
-            "wchlink",
-            "WCH CMSIS-DAP",
-            &["USB\\VID_1A86&PID_8012&MI_00", "USB\\VID_1A86&PID_8010&MI_00"],
+            "stlink",
+            "ST-Link Debug",
+            &["USB\\VID_0483&PID_374B&MI_00", "USB\\VID_0483&PID_374E&MI_00"],
         );
-        assert!(t.contains("CatalogFile=kdock_wchlink.cat"));
-        assert!(t.contains("%DeviceDesc%=WinUSB_Install, USB\\VID_1A86&PID_8012&MI_00"));
-        assert!(t.contains("%DeviceDesc%=WinUSB_Install, USB\\VID_1A86&PID_8010&MI_00"));
+        assert!(t.contains("CatalogFile=kdock_stlink.cat"));
+        assert!(t.contains("%DeviceDesc%=WinUSB_Install, USB\\VID_0483&PID_374B&MI_00"));
+        assert!(t.contains("%DeviceDesc%=WinUSB_Install, USB\\VID_0483&PID_374E&MI_00"));
         assert!(t.contains("Include=winusb.inf"));
         assert!(t.contains("Needs=WINUSB.NT.Services"));
         // 复合设备的父节点不能绑：绑了会把同设备的串口一起吞掉
-        assert!(!t.contains("%DeviceDesc%=WinUSB_Install, USB\\VID_1A86&PID_8012\r\n"));
+        assert!(!t.contains("%DeviceDesc%=WinUSB_Install, USB\\VID_0483&PID_374B\r\n"));
+    }
+
+    #[test]
+    fn driver_inf_matching_is_exact_not_substring() {
+        let infs = r#"
+Published Name:     oem81.inf
+Original Name:      kdock_wchlink.inf
+Published Name:     oem105.inf
+Original Name:      wchlinkwdm.inf
+"#;
+        assert!(has_original_inf(infs, "wchlinkwdm.inf"));
+        assert!(!has_original_inf(infs, "wchlink.inf"));
+        assert!(!has_original_inf(infs, "wchlinke.inf"));
+    }
+
+    #[test]
+    fn wchlink_package_finds_only_the_vendor_driver() {
+        let root = std::env::temp_dir().join(format!("kdock-wch-{}", std::process::id()));
+        let nested = root.join("Drv_Link");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("CH372DRV_S.exe"), b"unrelated").unwrap();
+        std::fs::write(nested.join(WCH_LINK_DRIVER), b"driver").unwrap();
+        let got = find_named_file(&root, WCH_LINK_DRIVER, 4).expect("vendor driver");
+        assert_eq!(got.file_name().unwrap().to_string_lossy(), WCH_LINK_DRIVER);
+        assert!(find_named_file(&root, "CH372DRV_S.exe", 4).is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn wchlink_uses_the_vendor_driver_flow() {
+        let it = ITEMS.iter().find(|x| x.id == "wchlink").expect("wchlink item");
+        assert!(matches!(it.plan, Plan::WchLink));
+        assert!(it.rules.iter().any(|r| r.kind == Kind::Inf && r.a == "wchlinkwdm.inf"));
+        assert!(it.rules.iter().any(|r| r.kind == Kind::Device && r.a == "WCH-LinkRV"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires a connected WCH-Link / WCH-LinkE probe"]
+    fn wchlink_live_status_reports_the_real_interface() {
+        let it = ITEMS.iter().find(|x| x.id == "wchlink").expect("wchlink item");
+        let got = scan_one(it, &pnputil_infs());
+        assert_eq!(got["detected"], json!(true));
+        assert_eq!(got["driverReady"], json!(true));
+        assert_eq!(got["installed"], json!(true));
+        assert_eq!(got["warning"], json!(""));
     }
 
     #[test]
@@ -2371,6 +2703,17 @@ mod tests {
     fn run_out_status_preserves_native_exit_code() {
         let (code, _) = run_out_status("cmd.exe", &["/C", "exit 7"]).expect("cmd should run");
         assert_eq!(code, 7);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn run_out_status_captures_stdout_and_stderr() {
+        let (code, out) =
+            run_out_status("cmd.exe", &["/C", "echo capture-ok & echo err-ok 1>&2"])
+                .expect("cmd should run");
+        assert_eq!(code, 0);
+        assert!(out.contains("capture-ok"), "stdout missing: {out}");
+        assert!(out.contains("err-ok"), "stderr missing: {out}");
     }
 
     #[test]

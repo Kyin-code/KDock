@@ -149,7 +149,10 @@ export function summarizeToolArgs(tool, args, limit = 96) {
     if (line) parts.push(line);
   };
 
-  if (typeof value.cmd === "string" && value.cmd.trim()) {
+  if (typeof value.script === "string" && value.script.trim()) {
+    const first = value.script.trim().split(/\r?\n/)[0];
+    parts.push(`${value.script.length} chars script · ${oneLine(first, 58)}`);
+  } else if (typeof value.cmd === "string" && value.cmd.trim()) {
     parts.push(`cmd · ${oneLine(value.cmd, 72)}`);
   } else if (Array.isArray(value.paths) && value.paths.length) {
     parts.push(`${value.paths.length} files`);
@@ -172,6 +175,15 @@ export function summarizeToolArgs(tool, args, limit = 96) {
   }
   if (typeof value.url === "string" && value.url.trim()) {
     add(oneLine(value.url, 72));
+  }
+  if (typeof value.selector === "string" && value.selector.trim()) {
+    add(`selector ${oneLine(value.selector, 48)}`);
+  }
+  if (tool === "desktop_action" && typeof value.action === "string") {
+    const target = value.name || value.automation_id || value.command_id || value.title;
+    add(`${value.action}${target ? ` · ${target}` : ""}`);
+  } else if (tool.startsWith("desktop_") && typeof value.title === "string" && value.title.trim()) {
+    add(value.title);
   }
   if (typeof value.query === "string" && value.query.trim()) {
     add(`"${oneLine(value.query, 42)}"`);
@@ -200,7 +212,7 @@ export function summarizeToolArgs(tool, args, limit = 96) {
     if (fields.length) parts.push(fields.join(" · "));
   }
 
-  const shown = new Set(["cmd", "paths", "files", "edits", "path", "pattern", "url", "query", "name", "id", "content", "text"]);
+  const shown = new Set(["cmd", "script", "shell", "paths", "files", "edits", "path", "pattern", "url", "selector", "query", "name", "id", "content", "text", "action", "automation_id", "command_id", "title", "value"]);
   const extra = keys.filter((key) => !shown.has(key)).length;
   if (extra && parts.length) parts.push(`+${extra}`);
   return oneLine(parts.join(" · "), limit);

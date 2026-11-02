@@ -119,6 +119,122 @@ fn list_devices() -> Vec<Value> {
     out
 }
 
+/// WCH-Link / WCH-LinkE 的实际调试接口状态。
+///
+/// WCH 复合设备的 MI_00 是调试口，MI_01 是串口。只看
+/// `pnputil /enum-drivers` 只能判断驱动包是否进过 DriverStore，
+/// 不能判断当前设备有没有成功绑定；板载 WCH-Link 会出现
+/// “INF 已注册但 MI_00 仍是 CM_PROB_FAILED_INSTALL”的情况。
+pub fn wch_link_status() -> Value {
+    wch_link_status_from_devices(&list_devices())
+}
+
+fn wch_link_status_from_devices(devices: &[Value]) -> Value {
+    let is_wch = |d: &Value| {
+        d["vid"].as_str().unwrap_or("") == "1A86"
+            && matches!(d["pid"].as_str().unwrap_or(""), "8010" | "8012")
+    };
+    let is_debug_interface = |d: &Value| {
+        let instance = d["instance"].as_str().unwrap_or("").to_ascii_uppercase();
+        let name = d["name"].as_str().unwrap_or("").to_ascii_lowercase();
+        is_wch(d) && (instance.contains("&MI_00") || name.contains("wch-link"))
+    };
+    let interface = devices
+        .iter()
+        .filter(|d| is_debug_interface(d))
+        .find(|d| d["problem"].as_u64().unwrap_or(1) == 0)
+        .or_else(|| devices.iter().find(|d| is_debug_interface(d)));
+    let Some(interface) = interface else {
+        if let Some(parent) = devices.iter().find(|d| {
+            is_wch(d)
+                && !d["instance"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_ascii_uppercase()
+                    .contains("&MI_")
+        }) {
+            return json!({
+                "present": true,
+                "ready": false,
+                "state": "interface-missing",
+                "problem": null,
+                "name": parent["name"].as_str().unwrap_or("WCH USB composite device"),
+                "instance": parent["instance"].as_str().unwrap_or(""),
+                "class": parent["class"].as_str().unwrap_or(""),
+                "service": parent["service"].as_str().unwrap_or(""),
+                "port": null,
+                "detail": "检测到 WCH 复合设备，但 MI_00 调试接口没有枚举出来",
+            });
+        }
+        return json!({
+            "present": false,
+            "ready": false,
+            "state": "not-detected",
+            "problem": null,
+            "name": "",
+            "instance": "",
+            "class": "",
+            "service": "",
+            "port": null,
+            "detail": "未检测到 WCH-Link / WCH-LinkE 调试接口",
+        });
+    };
+
+    let problem = interface["problem"].as_u64().unwrap_or(0) as u32;
+    let name = interface["name"].as_str().unwrap_or("WCH-Link").to_string();
+    let instance = interface["instance"].as_str().unwrap_or("").to_string();
+    let class = interface["class"].as_str().unwrap_or("").to_string();
+    let service = interface["service"].as_str().unwrap_or("").to_string();
+    let vid = interface["vid"].as_str().unwrap_or("?");
+    let pid = interface["pid"].as_str().unwrap_or("?");
+    let ready = problem == 0
+        && (class.eq_ignore_ascii_case("WCH")
+            || service.to_ascii_lowercase().starts_with("wchlink")
+            || name.to_ascii_lowercase().contains("wch-link"));
+    let state = if ready {
+        "ready"
+    } else if problem != 0 {
+        "driver-error"
+    } else {
+        "driver-unknown"
+    };
+    let port = crate::list_ports().ok().and_then(|ports| {
+        let want_vid = u16::from_str_radix(vid, 16).ok();
+        let want_pid = u16::from_str_radix(pid, 16).ok();
+        ports
+            .into_iter()
+            .find(|p| {
+                want_vid.is_some()
+                    && want_pid.is_some()
+                    && p.vid == want_vid
+                    && p.pid == want_pid
+            })
+            .map(|p| p.port_name)
+    });
+    let mut detail = format!("{name} · {vid}:{pid}");
+    if !service.is_empty() {
+        detail.push_str(&format!(" · {service}"));
+    }
+    if let Some(p) = port.as_ref() {
+        detail.push_str(&format!(" · {p}"));
+    }
+    if problem != 0 {
+        detail.push_str(&format!(" · Problem {problem}"));
+    }
+    json!({
+        "present": true,
+        "ready": ready,
+        "state": state,
+        "problem": problem,
+        "name": name,
+        "instance": instance,
+        "class": class,
+        "service": service,
+        "port": port,
+        "detail": detail,
+    })
+}
+
 /// 给环境配置用的轻量设备探测：只在设备已正常启动（problem == 0）时返回摘要。
 /// `marker` 可以匹配 Instance ID 或友好名，例如 "Infineon DAS JDS" 或
 /// "VID_058B&PID_0043"。找到板载 DAS 时，把对应的 COM 口也一起带出来。
@@ -317,7 +433,8 @@ pub fn cmsis_probe_detail() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::pyocd_probe_line;
+    use super::{pyocd_probe_line, wch_link_status_from_devices};
+    use serde_json::json;
 
     #[test]
     fn pyocd_probe_table_is_parsed_without_vendor_hardcoding() {
@@ -333,6 +450,72 @@ mod tests {
         );
         let jlink = "2   J-Link-OB-RA4M2-Full   1120000018   n/a";
         assert_eq!(pyocd_probe_line(jlink), None);
+    }
+
+    #[test]
+    fn wch_status_requires_a_healthy_debug_interface() {
+        let healthy = json!([{
+            "instance": "USB\\VID_1A86&PID_8010&MI_00\\7&1&0&0000",
+            "name": "WCH-LinkRV",
+            "vid": "1A86",
+            "pid": "8010",
+            "class": "WCH",
+            "service": "WCHLink_A64",
+            "problem": 0
+        }]);
+        let got = wch_link_status_from_devices(healthy.as_array().unwrap());
+        assert_eq!(got["present"], json!(true));
+        assert_eq!(got["ready"], json!(true));
+        assert_eq!(got["state"], json!("ready"));
+
+        let failed = json!([{
+            "instance": "USB\\VID_1A86&PID_8010&MI_00\\7&1&0&0000",
+            "name": "WCH-Link",
+            "vid": "1A86",
+            "pid": "8010",
+            "class": "",
+            "service": "",
+            "problem": 28
+        }]);
+        let got = wch_link_status_from_devices(failed.as_array().unwrap());
+        assert_eq!(got["present"], json!(true));
+        assert_eq!(got["ready"], json!(false));
+        assert_eq!(got["state"], json!("driver-error"));
+
+        let absent = wch_link_status_from_devices(&[]);
+        assert_eq!(absent["state"], json!("not-detected"));
+    }
+
+    #[test]
+    fn wch_status_ignores_the_companion_serial_interface() {
+        let serial_only = json!([{
+            "instance": "USB\\VID_1A86&PID_8010&MI_01\\7&1&0&0001",
+            "name": "USB 串行设备 (COM3)",
+            "vid": "1A86",
+            "pid": "8010",
+            "class": "Ports",
+            "service": "usbser",
+            "problem": 0
+        }]);
+        let got = wch_link_status_from_devices(serial_only.as_array().unwrap());
+        assert_eq!(got["state"], json!("not-detected"));
+    }
+
+    #[test]
+    fn wch_status_reports_a_composite_without_mi00() {
+        let parent_only = json!([{
+            "instance": "USB\\VID_1A86&PID_8010\\SERIAL",
+            "name": "USB Composite Device",
+            "vid": "1A86",
+            "pid": "8010",
+            "class": "USB",
+            "service": "usbccgp",
+            "problem": 0
+        }]);
+        let got = wch_link_status_from_devices(parent_only.as_array().unwrap());
+        assert_eq!(got["present"], json!(true));
+        assert_eq!(got["ready"], json!(false));
+        assert_eq!(got["state"], json!("interface-missing"));
     }
 }
 

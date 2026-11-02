@@ -50,6 +50,22 @@ assert.ok(!longCommand.includes("\n"));
 assert.ok(longCommand.includes("…"));
 assert.ok(longCommand.length <= 96);
 
+const inlineScript = summarizeToolArgs("workspace_run", {
+  script: "Get-PnpDevice | Where-Object { $_.Status -eq 'OK' }\nWrite-Output done",
+  shell: "powershell",
+});
+assert.ok(inlineScript.includes("chars script"));
+assert.ok(inlineScript.includes("Get-PnpDevice"));
+assert.ok(inlineScript.length <= 96);
+
+const desktopAction = summarizeToolArgs("desktop_action", {
+  action: "menu",
+  command_id: 32788,
+  hwnd: 4525530,
+});
+assert.ok(desktopAction.includes("menu"));
+assert.ok(desktopAction.includes("32788"));
+
 assert.equal(
   summarizeToolArgs("workspace_read", { paths: ["src/a.c", "src/b.c", "inc/c.h"] }),
   "3 files · a.c, b.c",

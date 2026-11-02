@@ -18,6 +18,17 @@
 ## [未发布]
 
 ### 新增
+- **WCH-Link / WCH-LinkE 驱动修复**：环境配置不再把 MI_00 绑定到通用 WinUSB，而是
+  下载 WCH 官方包并只执行 `WCHLinkDrv_WHQL_S.exe`；按实际 PnP 状态区分“驱动已注册”、
+  “检测到设备但驱动未加载”和“已就绪”。INF 改为精确匹配，避免残留的
+  `kdock_wchlink.inf` 误报；驱动正常时不再错误提示完整重启。同时修复环境扫描
+  未捕获子进程 stdout/stderr、导致 `pnputil`／`pip`／版本输出被丢弃的问题。
+- **Agent 降轮次工具**：`workspace_run` 新增 `script`，一次调用可跑完整 PowerShell；
+  新增 `web_fetch` / `web_download`、共享浏览器点击/填表，以及 Windows
+  `desktop_windows` / `desktop_ui` / `desktop_action`（含 WM_COMMAND 菜单 ID）。
+  Agent 操作未知 GUI 时先读 UIA 控件树，MFC 自绘控件再用确定性菜单命令。
+- **Agent 轮次保护**：硬上限从 100 调到 150，100 轮先给软提醒；连续 3 轮重复同一组
+  工具调用会提示换方法，连续 6 轮重复则停止无效循环。
 - **共享浏览器与 Agent 接通**：原「知识库」页改为一块纯浏览器工作区，Agent 右栏复用同一个
   WebView2；地址、登录态、Cookie、站内跳转和后退历史保持一致。新增 `browser_navigate`，
   `browser_open` / `browser_read` / `browser_find` 改为读取渲染后的真实 DOM，并在导航完成后

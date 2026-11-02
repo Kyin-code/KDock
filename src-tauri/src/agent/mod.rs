@@ -33,10 +33,13 @@ use tauri::{AppHandle, Emitter, Manager};
 use store::{Event, Provider};
 use tools::{Link, ToolCtx};
 
-/// 一次用户消息里最多连续跑多少轮工具。以前是 16 —— 太少：探板卡、查环境、读技能
-/// 这种"多看几眼"的活儿跑到一半就被掐断（用户抱怨过）。现在给到 100 轮，
-/// 真正的刹车交给：上下文预算（compact/trim）+ 用户按停止 + 模型自己收尾。
-const MAX_ROUNDS: usize = 100;
+/// 100 轮先提醒，150 轮才停。固定轮数只是安全网；真正的浪费要靠更高层
+/// 工具和无进展检测来减少。
+const SOFT_ROUND_CHECKPOINT: usize = 100;
+const MAX_ROUNDS: usize = 150;
+/// 连续做完全相同的工具调用时，先提醒，再在明显卡死时停下。
+const REPEAT_WARN: usize = 3;
+const REPEAT_STOP: usize = 6;
 /// 被 max_tokens 截断后自动续写的次数上限（续写是"接着说完"，不是重跑）
 const MAX_TRUNC_CONTINUE: usize = 3;
 
@@ -218,6 +221,14 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+fn tool_round_signature(calls: &[llm::ToolCall]) -> String {
+    calls
+        .iter()
+        .map(|c| format!("{}:{}", c.name, c.args()))
+        .collect::<Vec<_>>()
+        .join("|")
 }
 
 fn workspace_of(app: &AppHandle, session_id: &str) -> std::path::PathBuf {
@@ -2340,6 +2351,10 @@ fn run_turn(
         let tools_schema = tools_schema_frozen(&app, &session_id);
         // 截断续写的次数（跨轮累计，别每轮清零 —— 不然就变成"无限续写"了）
         let mut trunc_continues = 0usize;
+        let mut last_round_sig = String::new();
+        let mut repeated_rounds = 0usize;
+        let mut repeat_warned = false;
+        let mut soft_checkpoint_sent = false;
         for round in 0..MAX_ROUNDS {
             if stop.load(Ordering::Relaxed) {
                 store::session_append(
@@ -2563,6 +2578,62 @@ fn run_turn(
                     })?;
                 }
                 return Ok(());
+            }
+            let round_sig = tool_round_signature(&out.tool_calls);
+            if !round_sig.is_empty() && round_sig == last_round_sig {
+                repeated_rounds += 1;
+            } else {
+                repeated_rounds = 0;
+                repeat_warned = false;
+            }
+            last_round_sig = round_sig;
+            if repeated_rounds + 1 == REPEAT_WARN && !repeat_warned {
+                repeat_warned = true;
+                let text = format!(
+                    "检测到同一组工具调用连续重复 {} 次，可能没有推进。下一步请换方法、合并操作，或先说明阻塞点。",
+                    REPEAT_WARN
+                );
+                store::session_append(
+                    &app,
+                    &session_id,
+                    &Event::Note {
+                        text: text.clone(),
+                        ts: 0,
+                    },
+                )?;
+                emit(&app, "agent://note", json!({ "session": session_id, "text": text }));
+            } else if repeated_rounds + 1 >= REPEAT_STOP {
+                let text = format!(
+                    "同一组工具调用已连续重复 {} 次，为避免无效循环先停下。请换一条路径，或发送“继续”并说明新的做法。",
+                    REPEAT_STOP
+                );
+                store::session_append(
+                    &app,
+                    &session_id,
+                    &Event::Note {
+                        text: text.clone(),
+                        ts: 0,
+                    },
+                )?;
+                emit(&app, "agent://note", json!({ "session": session_id, "text": text }));
+                return Ok(());
+            }
+            if round + 1 == SOFT_ROUND_CHECKPOINT && !soft_checkpoint_sent {
+                soft_checkpoint_sent = true;
+                let text = format!(
+                    "已经跑了 {} 轮工具，任务仍在继续；还有 {} 轮安全余量。若一直重复同一步，请换方法或先汇报阻塞点。",
+                    SOFT_ROUND_CHECKPOINT,
+                    MAX_ROUNDS - SOFT_ROUND_CHECKPOINT
+                );
+                store::session_append(
+                    &app,
+                    &session_id,
+                    &Event::Note {
+                        text: text.clone(),
+                        ts: 0,
+                    },
+                )?;
+                emit(&app, "agent://note", json!({ "session": session_id, "text": text }));
             }
             // 执行工具（逐个，串行 —— 设备类操作没必要并行，还容易打架）
             for call in out.tool_calls.iter() {
@@ -3302,6 +3373,36 @@ mod tests {
         assert!(llm::estimate_tokens(&h) <= 50);
         assert!(llm::estimate_tokens(&t) <= 50);
         assert!(h.is_char_boundary(h.len()) && t.is_char_boundary(0));
+    }
+
+    #[test]
+    fn tool_round_signature_ignores_ids_but_keeps_arguments() {
+        let a = vec![
+            llm::ToolCall {
+                id: "call-a".into(),
+                name: "workspace_read".into(),
+                raw_args: r#"{"paths":["src/a.c"]}"#.into(),
+            },
+            llm::ToolCall {
+                id: "call-b".into(),
+                name: "workspace_list".into(),
+                raw_args: r#"{"path":"."}"#.into(),
+            },
+        ];
+        let b = vec![
+            llm::ToolCall {
+                id: "call-c".into(),
+                name: "workspace_read".into(),
+                raw_args: r#"{"paths":["src/a.c"]}"#.into(),
+            },
+            llm::ToolCall {
+                id: "call-d".into(),
+                name: "workspace_list".into(),
+                raw_args: r#"{"path":"."}"#.into(),
+            },
+        ];
+        assert_eq!(tool_round_signature(&a), tool_round_signature(&b));
+        assert_ne!(tool_round_signature(&a), "workspace_read");
     }
 
     #[test]

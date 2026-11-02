@@ -1472,8 +1472,20 @@ export const EN = {
     "Nightly sigrok-cli plus DSView's bundled decoders. Used only with DSLogic devices; the 24M unit keeps the existing sigrok path.",
   "ST-Link / V2-1 / V3 调试器的 WinUSB 驱动，OpenOCD、pyOCD、probe-rs 都靠它认探针。一键安装会弹一次 UAC。":
     "WinUSB driver for ST-Link / V2-1 / V3 probes, used by OpenOCD, pyOCD and probe-rs. One-click install raises one UAC prompt.",
-  "沁恒 WCH-Link / WCH-LinkE 的 CMSIS-DAP 调试接口。只绑定 MI_00，串口（MI_01）保持系统自带驱动可用。":
-    "CMSIS-DAP interface for WCH-Link / WCH-LinkE. Only MI_00 is bound; the serial interface (MI_01) keeps its system driver.",
+  "沁恒 WCH-Link / WCH-LinkE 调试接口，板载 LinkE 也覆盖。只处理 MI_00 的厂商 WCH 驱动；串口 MI_01 保持系统 usbser，不改成通用 WinUSB。":
+    "Debug interface for WCH-Link / WCH-LinkE, including onboard LinkE. Only MI_00 uses the vendor WCH driver; serial interface MI_01 keeps the system usbser driver and is not switched to generic WinUSB.",
+  "调试接口驱动未加载": "debug interface driver is not loaded",
+  "未检测到设备": "no device detected",
+  "检测到设备": "device detected",
+  "修复 / 重装": "Repair / reinstall",
+  "WCH-Link 状态需要确认": "Check the WCH-Link status",
+  "检测到 WCH-Link，但调试接口仍未就绪。请先拔插一次设备，再点「刷新同步」；不需要为此重启 Windows。":
+    "WCH-Link was detected, but its debug interface is not ready. Reconnect the device once, then click Refresh & sync. A Windows restart is not required for this.",
+  "WCH 官方驱动已注册，但当前没有检测到调试器。请接上或重新插拔 WCH-Link，再点「刷新同步」。":
+    "The official WCH driver is registered, but no debug probe is currently detected. Connect or reconnect WCH-Link, then click Refresh & sync.",
+  "WCH-Link 调试驱动尚未就绪。请检查 UAC 是否允许安装，完成后重新扫描；不需要为此重启 Windows。":
+    "The WCH-Link debug driver is not ready. Check that UAC allowed the installation, then rescan. A Windows restart is not required for this.",
+  "WCH-Link 驱动": "WCH-Link driver",
   "wlink（WCH-Link 命令行烧录）": "wlink (WCH-Link CLI flasher)",
   "沁恒 CH32V / CH57x / CH58x / CH59x 的命令行烧录器，支持 hex / elf / bin，比厂商 GUI 更适合自动化和批量烧录。":
     "Command-line flasher for WCH CH32V / CH57x / CH58x / CH59x with hex / elf / bin support; better suited to automation and batch flashing than the vendor GUI.",

@@ -7,6 +7,7 @@ mod agent;
 mod android;
 mod checksum;
 mod debug;
+mod desktop_ui;
 mod env_setup;
 mod kbview;
 use kbview as shared_browser;

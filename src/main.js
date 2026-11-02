@@ -6686,7 +6686,9 @@ function envRenderGrid() {
     const issue = it.installed && !!it.warning;
     top.appendChild(envEl("span", "kbadge" + (it.installed ? (it.outdated || issue ? " warn" : " ok") : ""),
       it.installed
-        ? (issue ? en("已装") + " · " + en(it.warning) : (it.outdated ? en("可更新") : (it.version ? "v" + it.version : en("已装"))))
+        ? (issue
+          ? (it.detected && !it.driverReady ? en("检测到设备") + " · " + en(it.warning) : en("已装") + " · " + en(it.warning))
+          : (it.outdated ? en("可更新") : (it.version ? "v" + it.version : en("已装"))))
         : en("未安装")));
     top.appendChild(envEl("span", "kbadge kind", en(it.kind)));
     card.appendChild(top);
@@ -6695,8 +6697,8 @@ function envRenderGrid() {
     const acts = envEl("div", "kacts");
     if (it.autoInstall) {
       const installedCheck = it.id === "usbpcap" && it.installed;
-      const b = envEl("button", "btn small" + (it.installed ? "" : " primary"),
-        en(installedCheck ? "检查状态" : (it.installed ? "更新 / 重装" : "一键安装")));
+      const b = envEl("button", "btn small" + (it.installed && !it.warning ? "" : " primary"),
+        en(installedCheck ? "检查状态" : (it.warning ? "修复 / 重装" : (it.installed ? "更新 / 重装" : "一键安装"))));
       b.onclick = () => envInstall(it.id);
       acts.appendChild(b);
     } else {
@@ -6770,7 +6772,23 @@ async function envInstall(id, opts) {
     const miss = (envData && envData.missingRequired) || [];
     const now = all.find((x) => x.id === id);
     const driverStillPending = !!it && /驱动/.test(String(it.kind || "")) && (!now || !now.installed);
-    if (rebootRequired || driverStillPending) {
+    const wchPending = id === "wchlink" && now && !now.driverReady;
+    if (rebootRequired) {
+      const msg = en("驱动安装已完成，但 Windows 需要完整重启后才能加载。") + "\n" +
+        en("请使用开始菜单的「重启」；不要关机后再开机，因为快速启动可能不会重新加载驱动。");
+      envLog(msg);
+      toast(en("驱动已安装，请完整重启 Windows"));
+      agDialog({ title: en("需要重启"), text: msg, okText: en("知道了") });
+    } else if (wchPending) {
+      const msg = now.detected
+        ? en("检测到 WCH-Link，但调试接口仍未就绪。请先拔插一次设备，再点「刷新同步」；不需要为此重启 Windows。")
+        : (now.warning === "未检测到设备"
+          ? en("WCH 官方驱动已注册，但当前没有检测到调试器。请接上或重新插拔 WCH-Link，再点「刷新同步」。")
+          : en("WCH-Link 调试驱动尚未就绪。请检查 UAC 是否允许安装，完成后重新扫描；不需要为此重启 Windows。"));
+      envLog(msg);
+      toast(en("WCH-Link 状态需要确认"));
+      agDialog({ title: en("WCH-Link 驱动"), text: msg, okText: en("知道了") });
+    } else if (driverStillPending) {
       const msg = en("驱动安装已完成，但 Windows 需要完整重启后才能加载。") + "\n" +
         en("请使用开始菜单的「重启」；不要关机后再开机，因为快速启动可能不会重新加载驱动。");
       envLog(msg);
@@ -11441,6 +11459,10 @@ const TOOL_DESC_EN = {
   browser_navigate: "Navigate the shared internal browser to a URL while keeping the current login state.",
   browser_read: "Read the rendered DOM text of the shared browser's current page (omit url to use the current page).",
   browser_find: "Find a snippet in the current page text and return the surrounding context.",
+  browser_click: "Click an element in the shared browser by CSS selector or visible text. This changes external page state and needs approval.",
+  browser_fill: "Fill an input / textarea / contenteditable element and dispatch input/change events. This changes external page state and needs approval.",
+  web_fetch: "GET a URL directly and return status, Content-Type and a bounded response body. Use browser_read for JS-rendered pages.",
+  web_download: "Stream a URL into the workspace, enforce a size limit, compute SHA-256 and optionally verify an expected hash.",
   history_search: "Search this session's raw log by keyword (including parts already compacted away).",
   ui_show_text: "Show a block of text in the Text pane on the right.",
   ui_goto: "Switch the UI to a page (transfer/upgrade/flash/files/runtime/chart/flow/capture/scope).",
@@ -11474,7 +11496,7 @@ const TOOL_DESC_EN = {
   workspace_edit: "Structured file edit: replace old_text with new_text and return a unified diff. Supports an edits array for batch edits across positions/files; old_text must be unique (unless replace_all=true).",
   workspace_diff: "Review workspace changes: git status + unified diff inside a git repo (optional path to narrow it down); non-git folders return a clear error.",
   workspace_search: "Substring search in the workspace (skips .git/target/node_modules), returns path:line: text. Safer and faster than running grep through local_run.",
-  workspace_run: "Run a local command (cmd /C) inside the workspace, returning exit code and output. The command still has full local privileges; needs approval.",
+  workspace_run: "Run a local command inside the workspace and return exit code/output. For multi-step probing, pass a PowerShell script in script= so one round replaces write+run; cmd and script are exclusive. Needs approval.",
   workspace_test: "Run project tests: auto-detects Cargo.toml / package.json / pytest, or takes an explicit cmd; runs in the workspace and returns the exit code plus the tail of the output.",
   workspace_context: "One-shot context: directory listing + optional search hits + file contents. Use it to look around before editing instead of many workspace_list/search/read calls.",
   workspace_check: "One-shot verification: git status/diff + project tests (auto-detected or explicit cmd) returned as two sections. Prefer this after edits over separate diff + test calls.",
@@ -11493,7 +11515,10 @@ const TOOL_DESC_EN = {
   adb_push: "Local file → Android device.",
   adb_pull: "Android device file → local machine (by default into this session's workspace).",
   adb_install: "Install an APK on the Android device (reinstall=true overwrites).",
-  screen_open: "Open a screen session and get a session id. kind=vnc lets you send mouse/keyboard back (screen_pointer / screen_key / screen_type); kind=desktop/rtsp/rtmp/h264 is view-only (for rtsp/rtmp/h264 width/height is the decode canvas, not the source resolution). Sessions stay alive — close them with screen_close.",
+  desktop_windows: "List visible local top-level windows with hwnd, title, process, class and bounds.",
+  desktop_ui: "Read a window's Windows UI Automation tree (names, AutomationId, class, bounds and supported patterns) without writing ad-hoc PowerShell.",
+  desktop_action: "Invoke/focus/click/set_value a UIA control, or send a deterministic WM_COMMAND menu id to a window. Changes other apps and needs approval.",
+  screen_open: "Open a remote screen session and get a session id. VNC supports pointer/keyboard; RTSP/RTMP/H.264 are view-only. Use desktop_* for the local desktop.",
   screen_list: "List live screen sessions (id / kind / label).",
   screen_shot: "Save the current frame of a screen session as PNG (into the workspace by default); the reply includes a coarse ASCII preview: @ = bright/white, space = dark/black. The preview only shows layout (where windows are, whether the picture changed) — it cannot read text; use screen_ocr or a vision model for that.",
   screen_ocr: "Run Windows built-in OCR on the current screen capture and return the recognized text (needs the system OCR language pack). Adds text reading on top of screen_shot's ASCII preview; it does not replace a vision model.",
