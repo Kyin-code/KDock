@@ -59,8 +59,15 @@ try {
   } else {
     $getPip = Join-Path $stage "get-pip.py"
     Download "https://bootstrap.pypa.io/get-pip.py" $getPip
-    & $py $getPip --no-warn-script-location | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "pip bootstrap failed" }
+    & $py $getPip --no-warn-script-location --target $buildTools | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+      # Some build hosts already expose a user/site pip through import site.
+      # get-pip then refuses to replace it, but its suggested explicit
+      # force-reinstall still installs a private pip under this stage.
+      Write-Host "== get-pip found an existing pip; installing private copy =="
+      & $py -m pip install --upgrade --force-reinstall --no-warn-script-location --target $buildTools pip | Out-Host
+      if ($LASTEXITCODE -ne 0) { throw "pip bootstrap failed" }
+    }
     & $py -m pip install --target $buildTools --no-cache-dir @pinnedBuildTools | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "build tool installation failed" }
     & $py -m pip install --target $site --no-cache-dir --no-build-isolation "--only-binary=$native" -r $src | Out-Host
