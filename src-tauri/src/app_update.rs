@@ -2,13 +2,27 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::CREATE_BREAKAWAY_FROM_JOB;
 
 const UPDATE_MANIFEST_URL: &str =
     "https://github.com/Kyin-code/KDock/releases/download/test-latest/kdock-update.json";
 const DOWNLOAD_PREFIX: &str = "https://github.com/Kyin-code/KDock/releases/download/";
 const RELEASE_PREFIX: &str = "https://github.com/Kyin-code/KDock/releases/";
+const PROXY_ENV_KEYS: &[&str] = &[
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+];
 
 #[derive(Debug, Deserialize)]
 struct Manifest {
@@ -47,6 +61,8 @@ pub struct DownloadedUpdate {
     sha256: String,
     bytes: u64,
     verified: bool,
+    silent_update: bool,
+    install_dir: String,
 }
 
 fn valid_release_url(url: &str, download: bool) -> bool {
@@ -113,10 +129,117 @@ fn check_manifest(
     })
 }
 
+fn has_env_proxy() -> bool {
+    PROXY_ENV_KEYS.iter().any(|key| {
+        std::env::var_os(key)
+            .map(|value| !value.to_string_lossy().trim().is_empty())
+            .unwrap_or(false)
+    })
+}
+
+fn proxy_url_from_server(value: &str) -> Option<String> {
+    let raw = value.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let selected = if raw.contains('=') {
+        let mut http = None;
+        for part in raw.split(';') {
+            let Some((name, value)) = part.split_once('=') else {
+                continue;
+            };
+            let value = value.trim();
+            if value.is_empty() {
+                continue;
+            }
+            match name.trim().to_ascii_lowercase().as_str() {
+                "https" => return Some(with_http_scheme(value)),
+                "http" => http = Some(value),
+                _ => {}
+            }
+        }
+        http?
+    } else {
+        raw
+    };
+
+    let lower = selected.to_ascii_lowercase();
+    if lower.starts_with("socks") || lower.starts_with("ftp") {
+        return None;
+    }
+    Some(with_http_scheme(selected))
+}
+
+fn with_http_scheme(value: &str) -> String {
+    if value.contains("://") {
+        value.to_string()
+    } else {
+        format!("http://{value}")
+    }
+}
+
+#[cfg(windows)]
+fn windows_system_proxy() -> Option<String> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let key = hkcu
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+        .ok()?;
+    let enabled: u32 = key.get_value("ProxyEnable").ok()?;
+    if enabled == 0 {
+        return None;
+    }
+    let server: String = key.get_value("ProxyServer").ok()?;
+    proxy_url_from_server(&server)
+}
+
+#[cfg(not(windows))]
+fn windows_system_proxy() -> Option<String> {
+    None
+}
+
+fn is_loopback_url(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
+
+fn update_agent(url: &str) -> Result<ureq::Agent, String> {
+    let mut builder = ureq::AgentBuilder::new()
+        .user_agent(concat!("KDock/", env!("CARGO_PKG_VERSION")))
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(30))
+        .timeout_write(std::time::Duration::from_secs(30))
+        .redirects(10);
+
+    if is_loopback_url(url) {
+        builder = builder.try_proxy_from_env(false);
+    } else if !has_env_proxy() {
+        if let Some(proxy_url) = windows_system_proxy() {
+            let proxy = ureq::Proxy::new(&proxy_url)
+                .map_err(|e| format!("Windows 系统代理配置无效（{proxy_url}）：{e}"))?;
+            builder = builder.proxy(proxy);
+        }
+    }
+    Ok(builder.build())
+}
+
 fn fetch_manifest() -> Result<String, String> {
-    let response = ureq::get(UPDATE_MANIFEST_URL)
+    let agent = update_agent(UPDATE_MANIFEST_URL)?;
+    let response = agent
+        .get(UPDATE_MANIFEST_URL)
         .set("Accept", "application/json")
-        .set("User-Agent", concat!("KDock/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(8))
         .call()
         .map_err(|e| format!("检查更新失败：{e}"))?;
@@ -165,6 +288,19 @@ fn update_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .join("updates");
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建更新目录失败：{e}"))?;
     Ok(dir)
+}
+
+fn install_dir_from_exe(exe: &Path) -> Option<PathBuf> {
+    let dir = exe.parent()?;
+    dir.join("uninstall.exe").is_file().then(|| dir.to_path_buf())
+}
+
+fn installed_app_dir() -> Option<PathBuf> {
+    install_dir_from_exe(&std::env::current_exe().ok()?)
+}
+
+fn silent_installer_args() -> [&'static str; 4] {
+    ["/S", "/UPDATE", "/NS", "/R"]
 }
 
 fn estimate_percent(received: u64, total: u64) -> i64 {
@@ -218,9 +354,10 @@ where
     std::fs::remove_file(&part).ok();
     progress("download", 0, 0, 0);
 
-    let response = ureq::get(url)
+    let agent = update_agent(url)?;
+    let response = agent
+        .get(url)
         .set("Accept", "application/octet-stream")
-        .set("User-Agent", concat!("KDock/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(900))
         .call()
         .map_err(|e| format!("下载更新失败：{e}"))?;
@@ -301,6 +438,7 @@ pub async fn app_update_download(
     let name = installer_file_name(&url)?;
     let dir = update_dir(&app)?;
     let dst = dir.join(name);
+    let install_dir = installed_app_dir();
     let task_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let (bytes, actual) = download_to_path(&url, &dst, &expected, |phase, pct, got, total| {
@@ -328,6 +466,10 @@ pub async fn app_update_download(
             sha256: actual,
             bytes,
             verified: !expected.is_empty(),
+            silent_update: install_dir.is_some(),
+            install_dir: install_dir
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_default(),
         })
     })
     .await
@@ -335,7 +477,11 @@ pub async fn app_update_download(
 }
 
 #[tauri::command]
-pub fn app_update_launch(app: AppHandle, path: String) -> Result<(), String> {
+pub fn app_update_launch(
+    app: AppHandle,
+    path: String,
+    silent: Option<bool>,
+) -> Result<(), String> {
     let base = update_dir(&app)?
         .canonicalize()
         .map_err(|e| format!("解析更新目录失败：{e}"))?;
@@ -356,6 +502,14 @@ pub fn app_update_launch(app: AppHandle, path: String) -> Result<(), String> {
     if let Some(parent) = file.parent() {
         command.current_dir(parent);
     }
+    if silent.unwrap_or(false) {
+        if installed_app_dir().is_none() {
+            return Err("未检测到 KDock 安装版，请使用手动安装".into());
+        }
+        command.args(silent_installer_args());
+    }
+    #[cfg(windows)]
+    command.creation_flags(CREATE_BREAKAWAY_FROM_JOB);
     command
         .spawn()
         .map_err(|e| format!("启动安装程序失败：{e}"))?;
@@ -427,6 +581,68 @@ mod tests {
 
         value.as_object_mut().unwrap().remove("sha256");
         assert!(parse_manifest(&value.to_string()).is_ok());
+    }
+
+    #[test]
+    fn windows_proxy_server_prefers_https_then_http() {
+        assert_eq!(
+            proxy_url_from_server("http=127.0.0.1:7891;https=127.0.0.1:7890"),
+            Some("http://127.0.0.1:7890".into())
+        );
+        assert_eq!(
+            proxy_url_from_server("http=127.0.0.1:7891"),
+            Some("http://127.0.0.1:7891".into())
+        );
+        assert_eq!(
+            proxy_url_from_server("127.0.0.1:7890"),
+            Some("http://127.0.0.1:7890".into())
+        );
+        assert_eq!(proxy_url_from_server("socks=127.0.0.1:7890"), None);
+        assert_eq!(proxy_url_from_server(""), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_system_proxy_is_valid_when_enabled() {
+        if let Some(url) = windows_system_proxy() {
+            assert!(ureq::Proxy::new(&url).is_ok(), "invalid Windows proxy: {url}");
+        }
+    }
+
+    #[test]
+    fn loopback_downloads_never_use_system_proxy() {
+        assert!(is_loopback_url(
+            "http://127.0.0.1:9876/KDock_0.3.5_x64-setup.exe"
+        ));
+        assert!(is_loopback_url(
+            "http://localhost:9876/KDock_0.3.5_x64-setup.exe"
+        ));
+        assert!(!is_loopback_url(
+            "https://github.com/Kyin-code/KDock/releases/download/test-latest/KDock_0.3.5_x64-setup.exe"
+        ));
+    }
+
+    #[test]
+    fn silent_installer_reuses_previous_location_and_restarts() {
+        assert_eq!(silent_installer_args(), ["/S", "/UPDATE", "/NS", "/R"]);
+    }
+
+    #[test]
+    fn silent_update_is_only_enabled_for_an_installed_copy() {
+        let temp = std::env::temp_dir().join(format!(
+            "kdock-installed-copy-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+        let exe = temp.join("kdock.exe");
+        std::fs::write(&exe, b"exe").unwrap();
+        assert_eq!(install_dir_from_exe(&exe), None);
+        std::fs::write(temp.join("uninstall.exe"), b"uninstaller").unwrap();
+        assert_eq!(install_dir_from_exe(&exe).as_deref(), Some(temp.as_path()));
+        let _ = std::fs::remove_dir_all(temp);
     }
 
     #[test]

@@ -96,6 +96,7 @@ jobs:
       # actions/checkout's `git clean -ffdx` cannot wipe it.
       CARGO_TARGET_DIR: D:/CI/cargo-target/kdock
       KDOCK_BUILD_ID: ${{ github.sha }}
+      KDOCK_RELEASE_BUILD: ${{ github.event_name != 'pull_request' && '1' || '0' }}
     defaults:
       run:
         shell: pwsh

@@ -11831,6 +11831,7 @@ const KDOCK_AUTHOR = "https://github.com/Kyin-code";
 let appVersion = "0.1.0";
 let pendingAppUpdate = null;
 let pendingAppUpdateDownload = null;
+let pendingAppUpdateSilent = false;
 let appUpdateBusy = false;
 
 function openExternal(url) {
@@ -11843,6 +11844,7 @@ function hideAppUpdatePrompt() {
   if (box) box.hidden = true;
   pendingAppUpdate = null;
   pendingAppUpdateDownload = null;
+  pendingAppUpdateSilent = false;
   kbSyncSoon();
 }
 
@@ -11869,6 +11871,7 @@ function showAppUpdatePrompt(info) {
   if (!box || !text) return;
   pendingAppUpdate = info;
   pendingAppUpdateDownload = null;
+  pendingAppUpdateSilent = false;
   appUpdateBusy = false;
   const currentBuild = String(info.currentBuild || "").slice(0, 7);
   const latestBuild = String(info.latestBuild || "").slice(0, 7);
@@ -11881,8 +11884,10 @@ function showAppUpdatePrompt(info) {
   const progress = document.getElementById("app-update-progress");
   const status = document.getElementById("app-update-status");
   const download = document.getElementById("app-update-download");
+  const manual = document.getElementById("app-update-manual");
   if (progress) progress.hidden = true;
   if (status) { status.hidden = true; status.textContent = ""; }
+  if (manual) manual.hidden = true;
   if (download) {
     download.disabled = false;
     download.textContent = en("下载安装包");
@@ -11939,10 +11944,14 @@ function bindAppUpdatePrompt() {
     const info = pendingAppUpdate;
     if (!info || appUpdateBusy) return;
     if (pendingAppUpdateDownload) {
+      const silent = pendingAppUpdateSilent;
       try {
-        await invoke("app_update_launch", { path: pendingAppUpdateDownload });
+        await invoke("app_update_launch", {
+          path: pendingAppUpdateDownload,
+          silent,
+        });
         hideAppUpdatePrompt();
-        toast(en("正在启动安装程序…"));
+        toast(silent ? en("正在静默更新，KDock 将自动重启…") : en("正在启动安装程序…"));
       } catch (e) {
         appUpdateProgress("error", 100, en("无法启动安装程序：") + String(e));
       }
@@ -11950,7 +11959,9 @@ function bindAppUpdatePrompt() {
     }
     appUpdateBusy = true;
     const download = document.getElementById("app-update-download");
-    for (const id of ["app-update-skip", "app-update-later", "app-update-download"]) {
+    const manual = document.getElementById("app-update-manual");
+    if (manual) manual.hidden = true;
+    for (const id of ["app-update-skip", "app-update-later", "app-update-download", "app-update-manual"]) {
       const button = document.getElementById(id);
       if (button) button.disabled = true;
     }
@@ -11962,22 +11973,42 @@ function bindAppUpdatePrompt() {
         sha256: String(info.sha256 || ""),
       });
       pendingAppUpdateDownload = got.path;
+      pendingAppUpdateSilent = Boolean(got.silentUpdate);
+      const readyText = pendingAppUpdateSilent
+        ? en("安装包下载完成，点击“立即静默更新”将沿用上次安装目录并自动重启 KDock")
+        : en("安装包下载完成，请点击“启动安装程序”");
       if (got.verified) {
-        appUpdateProgress("done", 100, en("安装包已下载，SHA-256 校验通过"));
+        appUpdateProgress("done", 100, `${en("安装包已下载，SHA-256 校验通过")}。${readyText}`);
       } else {
-        appUpdateProgress("done", 100, en("安装包已下载；旧版更新清单未提供 SHA-256"));
+        appUpdateProgress("done", 100, `${en("安装包已下载；旧版更新清单未提供 SHA-256")}。${readyText}`);
       }
-      if (download) download.textContent = en("启动安装程序");
+      if (download) download.textContent = pendingAppUpdateSilent ? en("立即静默更新") : en("启动安装程序");
+      if (manual) manual.hidden = !pendingAppUpdateSilent;
+      toast(readyText);
+      setTimeout(() => download?.focus(), 30);
     } catch (e) {
       appUpdateProgress("error", 100, en("下载失败：") + String(e));
       toast(String(e));
     } finally {
       appUpdateBusy = false;
       if (download && !pendingAppUpdateDownload) download.textContent = en("下载安装包");
-      for (const id of ["app-update-skip", "app-update-later", "app-update-download"]) {
+      for (const id of ["app-update-skip", "app-update-later", "app-update-download", "app-update-manual"]) {
         const button = document.getElementById(id);
         if (button) button.disabled = false;
       }
+    }
+  });
+  bind("app-update-manual", async () => {
+    if (!pendingAppUpdateDownload || appUpdateBusy) return;
+    try {
+      await invoke("app_update_launch", {
+        path: pendingAppUpdateDownload,
+        silent: false,
+      });
+      hideAppUpdatePrompt();
+      toast(en("正在启动安装程序…"));
+    } catch (e) {
+      appUpdateProgress("error", 100, en("无法启动安装程序：") + String(e));
     }
   });
   box.onclick = (event) => {

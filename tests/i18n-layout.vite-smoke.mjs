@@ -297,7 +297,8 @@ try {
         const box = modal.querySelector(".dlgbox");
         const text = document.getElementById("app-update-text");
         const rect = box.getBoundingClientRect();
-        const buttons = [...box.querySelectorAll(".dlgacts .btn")];
+        const buttons = [...box.querySelectorAll(".dlgacts .btn")]
+          .filter((button) => button.getClientRects().length > 0);
         const outOfBox = buttons.filter((button) => {
           const buttonRect = button.getBoundingClientRect();
           return buttonRect.left < rect.left - 1
@@ -310,6 +311,7 @@ try {
           viewportOverflow: Math.max(0, -rect.top, rect.bottom - window.innerHeight),
           textScrollable: text.scrollHeight > text.clientHeight,
           buttonsOutside: outOfBox.map((button) => button.textContent.trim()),
+          manualHidden: document.getElementById("app-update-manual")?.hidden,
         };
       });
       await page.evaluate(() => {
@@ -327,6 +329,7 @@ try {
     || item.clipped?.length
     || item.collisions?.length
     || item.untranslated?.length
+    || (item.updatePrompt && item.manualHidden !== true)
     || item.viewportOverflow > 2
     || item.buttonsOutside?.length
     || (item.agentProblem && (item.agentProblem.chatHeight < 55 || item.agentProblem.overlap > 2)),

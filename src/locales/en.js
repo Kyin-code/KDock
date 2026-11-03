@@ -582,6 +582,13 @@ export const EN = {
   "启动安装程序": "Launch installer",
   "安装包已下载，SHA-256 校验通过": "Installer downloaded; SHA-256 verified",
   "安装包已下载；旧版更新清单未提供 SHA-256": "Installer downloaded; the legacy update manifest has no SHA-256 value",
+  "安装包下载完成，请点击“启动安装程序”":
+    "Download complete. Click “Launch installer” to continue.",
+  "安装包下载完成，点击“立即静默更新”将沿用上次安装目录并自动重启 KDock":
+    "Download complete. Click “Update silently” to reuse the previous install folder and restart KDock.",
+  "立即静默更新": "Update silently",
+  "手动安装": "Manual install",
+  "正在静默更新，KDock 将自动重启…": "Updating silently. KDock will restart automatically.",
   "下载失败：": "Download failed: ",
   "无法启动安装程序：": "Could not launch the installer: ",
   "正在启动安装程序…": "Launching installer…",

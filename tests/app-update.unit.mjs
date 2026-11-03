@@ -10,6 +10,8 @@ import {
   UPDATE_REMIND_MS,
 } from "../src/app-update.js";
 import { makeManifest } from "../scripts/release-manifest.mjs";
+import { needsReleaseVersion } from "../scripts/tauri-entry.mjs";
+import { verifyBuildEntry } from "../scripts/verify-tauri-build-entry.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -68,11 +70,10 @@ const [main, html] = await Promise.all([
   readFile(resolve(root, "src/main.js"), "utf8"),
   readFile(resolve(root, "index.html"), "utf8"),
 ]);
-const [pkg, tauriConf, tauriEntry, buildGuard, ciWorkflow] = await Promise.all([
+const [pkg, tauriConf, tauriEntry, ciWorkflow] = await Promise.all([
   readFile(resolve(root, "package.json"), "utf8").then(JSON.parse),
   readFile(resolve(root, "src-tauri/tauri.conf.json"), "utf8").then(JSON.parse),
   readFile(resolve(root, "scripts/tauri-entry.mjs"), "utf8"),
-  readFile(resolve(root, "scripts/verify-tauri-build-entry.mjs"), "utf8"),
   readFile(resolve(root, ".github/workflows/ci.yml"), "utf8"),
 ]);
 assert.match(main, /setTimeout\(checkAppUpdateOnStartup, 8000\)/);
@@ -81,18 +82,54 @@ assert.match(main, /shouldOfferUpdate\(info\)/);
 assert.match(main, /invoke\("app_update_download"/);
 assert.match(main, /invoke\("app_update_launch"/);
 assert.doesNotMatch(main, /openExternal\(info\.installerUrl\)/);
+assert.match(main, /安装包下载完成，请点击“启动安装程序”/);
+assert.match(main, /pendingAppUpdateSilent/);
+assert.match(main, /silent,\s*\}/);
+assert.match(main, /toast\(readyText\)/);
 assert.match(html, /id="app-update-skip"/);
 assert.match(html, /id="app-update-later"/);
+assert.match(html, /id="app-update-manual"/);
 assert.match(html, /id="app-update-download"/);
 assert.match(html, /id="app-update-progress"/);
 assert.equal(pkg.scripts.tauri, "node scripts/tauri-entry.mjs");
 assert.equal(pkg.scripts["build:tauri"], "node scripts/verify-tauri-build-entry.mjs && npm run build");
 assert.equal(tauriConf.build.beforeBuildCommand, "npm run build:tauri");
-assert.match(tauriEntry, /process\.env\.KDOCK_VERSION_PREPARED = "1"/);
-assert.match(buildGuard, /KDOCK_VERSION_PREPARED !== "1"/);
+assert.equal(tauriConf.bundle.windows.nsis.installMode, "currentUser");
+assert.equal(needsReleaseVersion(["build"], {}), false, "local builds must not bump the official version");
+assert.equal(
+  needsReleaseVersion(["build"], { KDOCK_RELEASE_BUILD: "1" }),
+  true,
+  "official CI builds must prepare a Semifold version",
+);
+assert.equal(
+  needsReleaseVersion(["build"], { KDOCK_RELEASE_BUILD: "1", KDOCK_VERSION_PREPARED: "1" }),
+  false,
+  "tag builds must use their already validated version",
+);
+assert.equal(needsReleaseVersion(["--version"], { KDOCK_RELEASE_BUILD: "1" }), false);
+assert.doesNotThrow(() => verifyBuildEntry({ KDOCK_TAURI_BUILD_ENTRY: "1" }));
+assert.throws(
+  () => verifyBuildEntry({}),
+  /must start with `npm run tauri build`/,
+  "direct Tauri builds must remain blocked",
+);
+assert.throws(
+  () => verifyBuildEntry({ KDOCK_TAURI_BUILD_ENTRY: "1", KDOCK_RELEASE_BUILD: "1" }),
+  /must prepare the Semifold version/,
+);
+assert.doesNotThrow(() => verifyBuildEntry({
+  KDOCK_TAURI_BUILD_ENTRY: "1",
+  KDOCK_RELEASE_BUILD: "1",
+  KDOCK_VERSION_PREPARED: "1",
+}));
+assert.match(tauriEntry, /process\.env\.KDOCK_TAURI_BUILD_ENTRY = "1"/);
 assert.ok(
   tauriEntry.indexOf("semfold-version.ps1") < tauriEntry.indexOf("@tauri-apps/cli/tauri.js"),
   "Semifold must finish before Tauri reads tauri.conf.json",
+);
+assert.ok(
+  ciWorkflow.includes("KDOCK_RELEASE_BUILD: ${{ github.event_name != 'pull_request' && '1' || '0' }}"),
+  "CI must reserve version bumps for non-PR release builds",
 );
 const cleanIndex = ciWorkflow.indexOf("Remove-Item -LiteralPath $nsis -Recurse -Force");
 const buildIndex = ciWorkflow.indexOf("npm run tauri build");
