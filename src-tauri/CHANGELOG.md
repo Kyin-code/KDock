@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.9 -->
+## v0.3.9
+
+### 修复
+
+- fix(update): use system proxy and silent in-place updates
+
+### Dependencies
+
+- Update kdock-core to 0.3.9.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.8 -->
 ## v0.3.8
 
