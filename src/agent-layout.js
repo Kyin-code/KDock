@@ -5,8 +5,8 @@ export const AGENT_INPUT_DEFAULT = 220;
 const AGENT_INPUT_KEY = "kdock_agent_input_h";
 const LEGACY_CHAT_KEY = "kdock_agent_chat_h";
 
-export function clampAgentInputHeight(inputHeight, chatHeight) {
-  const max = Math.max(AGENT_INPUT_MIN, inputHeight + chatHeight - AGENT_CHAT_MIN);
+export function clampAgentInputHeight(inputHeight, availableHeight) {
+  const max = Math.max(AGENT_INPUT_MIN, availableHeight - AGENT_CHAT_MIN);
   return Math.round(Math.max(AGENT_INPUT_MIN, Math.min(inputHeight, max)));
 }
 
@@ -54,9 +54,10 @@ export function bindAgentResize(doc = document, storage = localStorage) {
   });
   grip.addEventListener("pointermove", (event) => {
     if (!active) return;
-    const chatHeight = box.getBoundingClientRect().height;
+    const availableHeight = box.getBoundingClientRect().height
+      + inputPane.getBoundingClientRect().height;
     const wanted = startInput - (event.clientY - startY);
-    apply(clampAgentInputHeight(wanted, chatHeight));
+    apply(clampAgentInputHeight(wanted, availableHeight));
     event.preventDefault();
   });
   const stop = () => {
@@ -77,9 +78,11 @@ export function bindAgentResize(doc = document, storage = localStorage) {
 
   const clampSaved = () => {
     if (workpane.getBoundingClientRect().height <= 0) return;
+    const availableHeight = box.getBoundingClientRect().height
+      + inputPane.getBoundingClientRect().height;
     const next = clampAgentInputHeight(
       inputPane.getBoundingClientRect().height,
-      box.getBoundingClientRect().height,
+      availableHeight,
     );
     apply(next);
   };

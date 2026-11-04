@@ -7,10 +7,18 @@ import { readFile, writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { FLASH_ROM_TOOLS, flashToolUi, isFlashRomTool, isSerialRomTool } from "./flash-rom.js";
 import { ADVANCED_TABS, initAdvancedNav, openAdvancedNavFor } from "./nav-advanced.js";
 import { createShortcutManager, mountShortcutSettings } from "./shortcuts.js";
-import { agentDisplayName, assistantMetaText, countUserTurns, mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "./agent-session.js";
+import {
+  agentDisplayName,
+  assistantMetaText,
+  countUserTurns,
+  eventTimeText,
+  mergeSessionMeta,
+  sessionMetaDisplayChanged,
+  sessionSpeaker,
+} from "./agent-session.js";
 import {
   buildActivityItems,
-  partitionAgentEvents,
+  partitionAgentTurns,
   summarizeActivity,
   summarizeToolArgs,
 } from "./agent-activity.js";
@@ -8797,11 +8805,20 @@ function agScrollTail(force) {
 /** 每条回复下面那行小字：**当时**用的模型 + 回复完成时间。
  *  模型是后端往会话里记的（`Event::Assistant.model`），所以翻历史也准；
  *  老会话没这个字段就只显示时间（时间取事件落盘时的 ts）。 */
-function agMsgMetaText(ev) {
-  return assistantMetaText(ev, agRunning);
+function agMsgMetaText(ev, running = false) {
+  return assistantMetaText(ev, running);
 }
 
-function agMsgNode(kind, text, ev) {
+function agMetaNode(text, title) {
+  if (!text) return null;
+  const meta = document.createElement("div");
+  meta.className = "agmeta";
+  meta.textContent = text;
+  if (title) meta.title = title;
+  return meta;
+}
+
+function agMsgNode(kind, text, ev, opts = {}) {
   const wrap = document.createElement("div");
   wrap.className = "agmsg " + kind;
   const head = document.createElement("div");
@@ -8823,14 +8840,21 @@ function agMsgNode(kind, text, ev) {
   else body.textContent = text;
   if (head.childNodes.length) wrap.appendChild(head);
   wrap.appendChild(body);
-  if (kind === "assistant") {
-    const mt = agMsgMetaText(ev);
+  if (kind === "user") {
+    const mt = eventTimeText(ev && ev.ts);
     if (mt) {
-      const meta = document.createElement("div");
-      meta.className = "agmeta";
-      meta.textContent = mt;
-      meta.title = en("模型") + " · " + en("回复完成时间");
-      wrap.appendChild(meta);
+      const meta = agMetaNode(mt, en("发送时间"));
+      if (meta) wrap.appendChild(meta);
+    }
+  } else if (kind === "assistant") {
+    let mt = agMsgMetaText(ev, !!opts.running);
+    if (!opts.running && Number(opts.durationMs) > 0) {
+      const duration = agActivityDuration(Number(opts.durationMs));
+      if (duration) mt = [mt, `${en("本轮用时")} ${duration}`].filter(Boolean).join(" · ");
+    }
+    if (mt) {
+      const meta = agMetaNode(mt, en("模型") + " · " + en("回复完成时间"));
+      if (meta) wrap.appendChild(meta);
     }
   }
   return wrap;
@@ -9177,6 +9201,89 @@ function agActivityNode(events) {
   return wrap;
 }
 
+/** Completed turns keep the final answer visible and fold all intermediate
+ *  reasoning/tool/intermediate assistant text behind one compact header. */
+function agRenderableProcessParts(parts) {
+  return (parts || []).filter((part) => {
+    if (part.kind === "activity") return part.events && part.events.length;
+    return ["assistant", "tool_call", "tool_result", "note", "summary"]
+      .includes(part.event && part.event.type);
+  });
+}
+
+function agTurnProcessNode(turn) {
+  const processParts = agRenderableProcessParts(turn && turn.processParts);
+  if (!processParts.length) return null;
+  const items = buildActivityItems(turn.processEvents);
+  const stats = summarizeActivity(items);
+  const wrap = document.createElement("div");
+  wrap.className = "agtoolgroup agturnprocess";
+  if (stats.failures) wrap.classList.add("bad");
+
+  const head = document.createElement("div");
+  head.className = "ghead";
+  const name = document.createElement("span");
+  name.className = "gname";
+  name.textContent = en("本轮过程");
+  const list = document.createElement("span");
+  list.className = "glist";
+  const bits = [];
+  if (stats.tools) bits.push(`${stats.tools} ${en("次工具")}`);
+  if (stats.reasons) bits.push(`${en("思考")}×${stats.reasons}`);
+  list.textContent = bits.join(" · ");
+  const status = document.createElement("span");
+  status.className = "gst" + (stats.failures ? " bad" : "");
+  const duration = agActivityDuration(turn.durationMs);
+  status.textContent = [
+    stats.failures ? `${stats.failures} ${en("个失败")}` : "",
+    stats.pending ? `${en("进行中")} ${stats.pending}` : "",
+    duration,
+  ].filter(Boolean).join(" · ") || en("已折叠");
+  head.append(name, list, status);
+
+  const body = document.createElement("div");
+  body.className = "gbody";
+  for (const part of processParts) {
+    if (part.kind === "activity") {
+      const activity = agActivityNode(part.events);
+      if (activity) body.appendChild(activity);
+    } else {
+      agAppendEvent(part.event, false, { running: true, target: body });
+    }
+  }
+  head.onclick = () => wrap.classList.toggle("open");
+  wrap.append(head, body);
+  return wrap;
+}
+
+function agTurnNode(turn) {
+  const wrap = document.createElement("div");
+  wrap.className = "agturnblock";
+  wrap.appendChild(agMsgNode("user", turn.user.text, turn.user));
+  if (turn.complete) {
+    const processNode = agTurnProcessNode(turn);
+    if (processNode) wrap.appendChild(processNode);
+    if (turn.finalEvent) {
+      wrap.appendChild(agMsgNode(
+        "assistant",
+        turn.finalEvent.text,
+        turn.finalEvent,
+        { running: false, durationMs: turn.durationMs },
+      ));
+    }
+  } else {
+    for (const part of agRenderableProcessParts(turn.processParts)) {
+      if (part.kind === "activity") {
+        const activity = agActivityNode(part.events);
+        if (activity) wrap.appendChild(activity);
+      } else {
+        agAppendEvent(part.event, false, { running: true, target: wrap });
+      }
+    }
+  }
+  return wrap;
+}
+
 function agWelcomeNode() {
   const welcome = document.createElement("div");
   welcome.className = "agwelcome";
@@ -9224,10 +9331,11 @@ function agRender() {
   agChatEl = box;
   agToolCards = {};
   agToolArgs = {};
-  for (const part of partitionAgentEvents(agEvents)) {
-    if (part.kind === "activity") {
-      const node = agActivityNode(part.events);
-      if (node) box.appendChild(node);
+  for (const part of partitionAgentTurns(agEvents, agRunning)) {
+    if (part.kind === "turn") {
+      const node = agTurnNode(part);
+      if (part.user && part.user.queued) node.classList.add("queued");
+      box.appendChild(node);
     } else {
       agAppendEvent(part.event, false);
     }
@@ -9258,19 +9366,19 @@ function agRender() {
 let streamed = false;
 let agChatEl = null;
 
-function agAppendEvent(ev, scroll = true) {
-  const box = agEl("ag-chat") || agChatEl;
+function agAppendEvent(ev, scroll = true, opts = {}) {
+  const box = opts.target || agEl("ag-chat") || agChatEl;
   if (!box) return;
   agWelcomeHide();
   const t = ev.type || ev;
   if (t === "user") {
-    const node = agMsgNode("user", ev.text, ev);
+    const node = agMsgNode("user", ev.text, ev, opts);
     if (ev.queued) node.classList.add("queued");     // 跑着的时候补充的那条：标"排队中"
     box.appendChild(node);
   }
   else if (t === "assistant") {
     if (String(ev.reasoning || "").trim()) box.appendChild(agThinkNodeFrom(ev.reasoning));
-    if (String(ev.text || "").trim()) box.appendChild(agMsgNode("assistant", ev.text, ev));
+    if (String(ev.text || "").trim()) box.appendChild(agMsgNode("assistant", ev.text, ev, opts));
   } else if (t === "tool_call") {
     agToolArgs[ev.id] = ev.args || {};
     const node = agToolNode({ name: ev.name, args: ev.args });
@@ -9906,7 +10014,7 @@ function agBuildRail() {
   const box = agEl("ag-chat");
   if (!rail || !box) return;
   rail.innerHTML = "";
-  const users = [...box.children].filter((n) => n.classList.contains("agmsg") && n.classList.contains("user"));
+  const users = [...box.querySelectorAll(".agmsg.user")];
   const userEvs = agEvents.filter((e) => e.type === "user");
   // 消息多了就把间距压小，保证一条都不被裁掉（最多压到 1px）
   const TICK_H = 20;
@@ -9932,7 +10040,8 @@ function agBuildRail() {
       if (tip) tip.remove();
     };
     tick.onclick = () => {
-      box.scrollTo({ top: Math.max(0, dom.offsetTop - box.clientHeight / 3), behavior: "smooth" });
+      const top = dom.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+      box.scrollTo({ top: Math.max(0, top - box.clientHeight / 3), behavior: "smooth" });
       dom.classList.add("hl");
       setTimeout(() => dom.classList.remove("hl"), 1200);
     };
@@ -10186,8 +10295,9 @@ async function agPendingSendNow() {
     agPending.delete(sid);
     const sameView = !!(agMeta && agMeta.id === sid);
     if (sameView) {
-      agEvents.push({ type: "user", text, ts: Date.now() });
-      agAppendEvent({ type: "user", text });
+      const userEvent = { type: "user", text, ts: Date.now() };
+      agEvents.push(userEvent);
+      agAppendEvent(userEvent);
       agUpdateHeader();
       agRenderPending();
       optimistic = true;
@@ -10252,8 +10362,9 @@ async function agSend() {
     agPendingPush(agMeta.id, text);
     agRenderPending();
   } else {
-    agEvents.push({ type: "user", text, ts: Date.now() });
-    agAppendEvent({ type: "user", text });
+    const userEvent = { type: "user", text, ts: Date.now() };
+    agEvents.push(userEvent);
+    agAppendEvent(userEvent);
     agUpdateHeader();
   }
   try {
@@ -10274,8 +10385,9 @@ async function agSend() {
     if (runningNow) {
       // 竞态：发送前一轮刚好结束。消息没有排队，转为正常发送。
       agPendingTake(agMeta.id, text);
-      agEvents.push({ type: "user", text, ts: Date.now() });
-      agAppendEvent({ type: "user", text });
+      const userEvent = { type: "user", text, ts: Date.now() };
+      agEvents.push(userEvent);
+      agAppendEvent(userEvent);
       agUpdateHeader();
       agRenderPending();
     }
@@ -13031,22 +13143,24 @@ async function bindAgentEvents() {
     // 这只是本轮里一段中间正文，后面还有工具调用；模型名/时间属于整轮
     // 的完成信息，不能在这一轮仍在运行时提前显示。
     if (agStreamText.trim()) {
-      agEvents.push({ type: "assistant", text: agStreamText });
+      agEvents.push({ type: "assistant", text: agStreamText, ts: Date.now() });
     }
     agStreamText = "";
-    agEvents.push({ type: "tool_call", id: p.id, name: p.name, args: p.args });
+    agEvents.push({ type: "tool_call", id: p.id, name: p.name, args: p.args, ts: Date.now() });
     agRender();
   });
   await agOn("agent://tool_result", (ev) => {
     const p = ev.payload || {};
     if (agMeta && p.session !== agMeta.id) return;
-    agEvents.push({ type: "tool_result", id: p.id, name: p.name, ok: p.ok, text: p.text });
+    agEvents.push({
+      type: "tool_result", id: p.id, name: p.name, ok: p.ok, text: p.text, ts: Date.now(),
+    });
     agRender();
   });
   await agOn("agent://note", (ev) => {
     const p = ev.payload || {};
     if (agMeta && p.session !== agMeta.id) return;
-    agAppendEvent({ type: "note", text: p.text });
+    agAppendEvent({ type: "note", text: p.text, ts: Date.now() });
   });
   await agOn("agent://error", (ev) => {
     const p = ev.payload || {};
@@ -13086,7 +13200,7 @@ async function bindAgentEvents() {
     if (agMeta && p.session !== agMeta.id) return;
     agPendingTake(p.session, p.text);
     agRenderPending();
-    agEvents.push({ type: "user", text: p.text });
+    agEvents.push({ type: "user", text: p.text, ts: Date.now(), queued: !!p.queued });
     agRender();
   });
   await agOn("agent://session", async (ev) => {

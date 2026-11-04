@@ -15,7 +15,15 @@
     </div>
   </section>
   <script type="module">
-    import { agentDisplayName, assistantMetaText, countUserTurns, mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "/src/agent-session.js";
+    import {
+      agentDisplayName,
+      assistantMetaText,
+      countUserTurns,
+      eventTimeText,
+      mergeSessionMeta,
+      sessionMetaDisplayChanged,
+      sessionSpeaker,
+    } from "/src/agent-session.js";
 
     const before = { id: "session-live", title: "新会话", user_name: "", agent_name: "" };
     const incoming = {
@@ -47,6 +55,7 @@
       countedUserTurns: countUserTurns(eventTurns),
       userLabelsRendered: document.querySelectorAll("#ag-chat .agmsg.user .who").length,
       userSpeaker: sessionSpeaker(after, "user"),
+      userTime: eventTimeText(Date.now()),
     };
     document.documentElement.dataset.agentSessionReady = "1";
   </script>

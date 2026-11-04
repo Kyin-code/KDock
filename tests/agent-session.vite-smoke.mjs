@@ -62,6 +62,9 @@ try {
   if (result.meta.userSpeaker !== "任工") {
     throw new Error(`User speaker derivation changed unexpectedly: ${JSON.stringify(result.meta)}`);
   }
+  if (!/^\d{2}:\d{2}:\d{2}$/.test(result.meta.userTime)) {
+    throw new Error(`User messages should have a compact timestamp: ${JSON.stringify(result.meta)}`);
+  }
   if (result.overflow > 2) throw new Error(`Agent session test overflows horizontally by ${result.overflow}px`);
 
   console.log(JSON.stringify({ ok: true, result }, null, 2));

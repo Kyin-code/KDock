@@ -40,6 +40,97 @@ export function partitionAgentEvents(events) {
   return parts;
 }
 
+function hasAssistantText(event) {
+  return event?.type === "assistant" && String(event.text || "").trim();
+}
+
+function eventTs(event) {
+  const value = Number(event?.ts || 0);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * Group the event stream into user-authored turns.
+ *
+ * A completed turn keeps only its last assistant text as the final answer.
+ * Everything before that (reasoning, tools, intermediate assistant text) is
+ * returned as `processEvents`, so the UI can fold the whole turn into one
+ * compact "process" block without losing the evidence.
+ */
+export function partitionAgentTurns(events, runningLast = false) {
+  const input = Array.isArray(events) ? events : [];
+  const parts = [];
+  let turn = null;
+
+  const finish = (complete) => {
+    if (!turn) return;
+    const turnEvents = turn.events;
+    if (!complete) {
+      parts.push({
+        kind: "turn",
+        user: turn.user,
+        complete: false,
+        finalEvent: null,
+        processEvents: turnEvents.slice(),
+        processParts: partitionAgentEvents(turnEvents),
+        durationMs: 0,
+      });
+      turn = null;
+      return;
+    }
+    let finalIndex = -1;
+    for (let i = turnEvents.length - 1; i >= 0; i -= 1) {
+      if (hasAssistantText(turnEvents[i])) {
+        finalIndex = i;
+        break;
+      }
+    }
+    const finalEvent = finalIndex >= 0 ? turnEvents[finalIndex] : null;
+    const processEvents = finalIndex >= 0
+      ? turnEvents.filter((_, i) => i !== finalIndex)
+      : turnEvents.slice();
+    if (finalEvent && String(finalEvent.reasoning || "").trim()) {
+      processEvents.splice(
+        Math.min(finalIndex, processEvents.length),
+        0,
+        { ...finalEvent, text: "" },
+      );
+    }
+    const stamps = [
+      eventTs(turn.user),
+      ...turnEvents.map(eventTs),
+    ].filter((ts) => ts > 0);
+    const durationMs = complete && stamps.length > 1
+      ? Math.max(0, Math.max(...stamps) - Math.min(...stamps))
+      : 0;
+    parts.push({
+      kind: "turn",
+      user: turn.user,
+      complete,
+      finalEvent: finalEvent ? { ...finalEvent, reasoning: "" } : null,
+      processEvents,
+      processParts: partitionAgentEvents(processEvents),
+      durationMs,
+    });
+    turn = null;
+  };
+
+  for (const event of input) {
+    if (event?.type === "user") {
+      finish(true);
+      turn = { kind: "turn", user: event, events: [] };
+      continue;
+    }
+    if (turn) {
+      turn.events.push(event);
+    } else {
+      parts.push({ kind: "event", event });
+    }
+  }
+  finish(!runningLast);
+  return parts;
+}
+
 export function buildActivityItems(events) {
   const items = [];
   const tools = new Map();

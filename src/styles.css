@@ -2555,10 +2555,52 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   margin-left: auto;
   margin-right: auto;
 }
-.agentchat > .agmsg.user { padding-right: 0; }
-.agentchat > .agmsg.user > .bubble,
-.agentchat > .agmsg.assistant > .bubble {
+.agentchat .agmsg.user {
+  align-items: flex-end;
+  padding-right: 0;
+}
+.agentchat .agmsg.assistant { align-items: flex-start; }
+.agentchat .agmsg.note { align-items: center; }
+.agentchat .agmsg.note > .bubble { max-width: 100%; text-align: center; }
+.agentchat .agmsg.user > .head { justify-content: flex-end; }
+.agentchat .agmsg.user > .bubble,
+.agentchat .agmsg.assistant > .bubble {
   max-width: 86%;
+}
+.agentchat .agmsg.user > .agmeta {
+  align-self: flex-end;
+  padding-right: 2px;
+}
+.agentchat .agmsg > .agmeta { user-select: none; }
+.agturnblock {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.agturnblock > .agmsg { width: 100%; }
+.agturnblock.queued > .agmsg.user > .bubble { opacity: .8; border-style: dashed; }
+.agturnblock > .agturnprocess {
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+}
+.agturnblock > .agturnprocess.open {
+  width: min(100%, 860px);
+}
+.agturnblock > .agturnprocess .agactivity {
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+}
+.agentchat > .agtoolgroup,
+.agentchat > .agtool,
+.agentchat > .agthink {
+  width: fit-content;
+  max-width: min(100%, 860px);
+}
+.agtoolgroup > .ghead .glist {
+  max-width: min(28rem, 42vw);
 }
 
 /* ==========================================================================

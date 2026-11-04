@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   buildActivityItems,
   partitionAgentEvents,
+  partitionAgentTurns,
   summarizeActivity,
   summarizeToolArgs,
 } from "../src/agent-activity.js";
@@ -43,6 +44,25 @@ assert.deepEqual(summary.names, [
   ["workspace_list", 1],
   ["workspace_read", 1],
 ]);
+
+const turns = partitionAgentTurns(events, true);
+assert.deepEqual(turns.map((part) => part.kind), ["turn", "turn"]);
+assert.equal(turns[0].complete, true);
+assert.equal(turns[0].finalEvent.text, "发现一个问题");
+assert.equal(turns[0].finalEvent.reasoning, "");
+assert.equal(turns[0].durationMs, 7);
+assert.ok(turns[0].processEvents.some((event) => event.reasoning === "整理结论"));
+assert.ok(turns[0].processEvents.some((event) => event.type === "tool_call"));
+assert.equal(turns[1].complete, false);
+assert.equal(turns[1].finalEvent, null);
+
+const singleAnswer = partitionAgentTurns([
+  { type: "user", text: "只回答", ts: 10 },
+  { type: "assistant", text: "最终答案", ts: 20 },
+], false);
+assert.equal(singleAnswer[0].processEvents.length, 0);
+assert.equal(singleAnswer[0].finalEvent.text, "最终答案");
+assert.equal(singleAnswer[0].durationMs, 10);
 
 const longCommand = summarizeToolArgs("workspace_run", {
   cmd: "arm-none-eabi-gcc -c src/main.c -o build/main.o\r\narm-none-eabi-gcc -c src/next.c -o build/next.o",

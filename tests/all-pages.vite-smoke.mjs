@@ -238,6 +238,52 @@ try {
   if (agentVisual.paramsVisible || Math.abs(agentVisual.narrowWorkHeight - agentVisual.narrowSplitHeight) > 1) {
     throw new Error(`Narrow Agent layout did not reclaim the right panel space: ${JSON.stringify(agentVisual)}`);
   }
+  const turnVisual = await page.evaluate(() => {
+    const chat = document.getElementById("ag-chat");
+    chat.innerHTML = `
+      <div class="agturnblock">
+        <div class="agmsg user">
+          <div class="bubble">检查这一轮</div>
+          <div class="agmeta">18:00:00</div>
+        </div>
+        <div class="agtoolgroup agturnprocess">
+          <div class="ghead">
+            <span class="gname">本轮过程</span>
+            <span class="glist">3 次工具 · 思考×2</span>
+            <span class="gst">12s</span>
+          </div>
+          <div class="gbody">folded details</div>
+        </div>
+        <div class="agmsg assistant">
+          <div class="bubble">最终结果</div>
+          <div class="agmeta">deepseek-flash · 18:00:12 · 本轮用时 12s</div>
+        </div>
+      </div>`;
+    const turn = chat.querySelector(".agturnblock").getBoundingClientRect();
+    const process = chat.querySelector(".agturnprocess").getBoundingClientRect();
+    const body = chat.querySelector(".agturnprocess > .gbody");
+    const userMeta = chat.querySelector(".agmsg.user .agmeta").getBoundingClientRect();
+    const userBubble = chat.querySelector(".agmsg.user .bubble").getBoundingClientRect();
+    const finalMeta = chat.querySelector(".agmsg.assistant .agmeta").textContent;
+    const result = {
+      processRatio: process.width / turn.width,
+      processBodyDisplay: getComputedStyle(body).display,
+      userMetaRightDelta: Math.round(Math.abs(userMeta.right - userBubble.right)),
+      userMetaInside: userMeta.top >= userBubble.bottom - 1,
+      finalMeta,
+    };
+    chat.innerHTML = "";
+    return result;
+  });
+  if (turnVisual.processRatio > 0.72 || turnVisual.processBodyDisplay !== "none") {
+    throw new Error(`Collapsed turn process is not compact: ${JSON.stringify(turnVisual)}`);
+  }
+  if (turnVisual.userMetaRightDelta > 2 || !turnVisual.userMetaInside) {
+    throw new Error(`User timestamp is not aligned under its bubble: ${JSON.stringify(turnVisual)}`);
+  }
+  if (!turnVisual.finalMeta.includes("本轮用时")) {
+    throw new Error(`Final turn metadata lacks elapsed time: ${JSON.stringify(turnVisual)}`);
+  }
   await page.evaluate(() => {
     document.documentElement.classList.remove("noparam");
     window.dispatchEvent(new Event("resize"));
@@ -321,6 +367,7 @@ try {
     agentAfterWindowShrink,
     navStability,
     agentVisual,
+    turnVisual,
     responsiveMatrix: {
       profiles: matrix.length,
       pageChecks: matrixResults.length,
