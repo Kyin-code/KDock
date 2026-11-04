@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.10 -->
+## v0.3.10
+
+### 新增
+
+- feat(agent): refine identity and conversation layout
+
+### Dependencies
+
+- Update kdock-core to 0.3.10.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.9 -->
 ## v0.3.9
 
