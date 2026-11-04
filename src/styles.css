@@ -2381,7 +2381,6 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agentchat > .agmsg.user > .bubble { max-width: 74%; }
 /* 运行中"补充"的那条：虚线 + 标注，并入对话后变成正常气泡 */
 .agentchat > .agmsg.user.queued > .bubble { opacity: .8; border-style: dashed; }
-.agentchat > .agmsg.user.queued > .head .who::after { content: "（排队中·下一步并入）"; opacity: .75; }
 
 /* 消息导航竖条（像 codex 右边那条） */
 .agentbox { position: relative; }

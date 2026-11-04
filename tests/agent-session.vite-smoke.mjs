@@ -35,10 +35,10 @@ try {
     overflow: document.documentElement.scrollWidth - window.innerWidth,
   }));
 
-  if (result.title !== "修复首轮会话标题" || result.turns !== "1 轮") {
+  if (result.title !== "修复首轮会话标题" || result.turns !== "2 轮") {
     throw new Error(`Session title/turn did not update immediately: ${JSON.stringify(result)}`);
   }
-  if (result.speakers[0] !== "任工" || result.speakers[1] !== "KDock") {
+  if (result.speakers.length !== 1 || result.speakers[0] !== "KDock") {
     throw new Error(`Session speaker names did not update immediately: ${JSON.stringify(result)}`);
   }
   if (!result.meta.changed || result.meta.unchanged) {
@@ -55,6 +55,12 @@ try {
   }
   if (result.meta.agentDisplayName !== "KDock" || result.meta.defaultAgentDisplayName !== "") {
     throw new Error(`Composer agent identity is wrong: ${JSON.stringify(result.meta)}`);
+  }
+  if (result.meta.countedUserTurns !== 2 || result.meta.userLabelsRendered !== 0) {
+    throw new Error(`User turns or user labels are wrong: ${JSON.stringify(result.meta)}`);
+  }
+  if (result.meta.userSpeaker !== "任工") {
+    throw new Error(`User speaker derivation changed unexpectedly: ${JSON.stringify(result.meta)}`);
   }
   if (result.overflow > 2) throw new Error(`Agent session test overflows horizontally by ${result.overflow}px`);
 

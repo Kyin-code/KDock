@@ -2160,6 +2160,11 @@ fn drain_pending(
             json!({ "session": session_id, "text": text, "queued": true }),
         );
     }
+    if !items.is_empty() {
+        if let Some(meta) = store::session_touch(app, session_id) {
+            emit(app, "agent://session", json!(meta));
+        }
+    }
     Ok(items.len())
 }
 

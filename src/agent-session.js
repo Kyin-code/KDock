@@ -23,6 +23,13 @@ export function agentDisplayName(meta) {
   return name && name !== "Agent" ? name : "";
 }
 
+export function countUserTurns(events) {
+  return (Array.isArray(events) ? events : []).reduce(
+    (count, event) => count + (event && event.type === "user" ? 1 : 0),
+    0,
+  );
+}
+
 /** Model/time is turn-finish metadata. Intermediate assistant segments emitted
  *  before tools run must not show it while the turn is still in progress. */
 export function assistantMetaText(ev, running = false) {

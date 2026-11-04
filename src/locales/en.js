@@ -668,6 +668,7 @@ export const EN = {
   "把目标说出来，KDock 会和你一起推进。": "Tell KDock what you want to get done.",
   "给 Agent": "To Agent",
   "给": "To",
+  "排队中 · 下一步并入": "Queued · merged at the next step",
   "运行概览": "Runtime overview",
   "先在设置里选择一个模型。": "Choose a model in Settings first.",
   "说明目标、现象或贴一段日志；Enter 发送，Shift+Enter 换行": "Describe the goal, symptom or paste a log; Enter sends, Shift+Enter adds a line",

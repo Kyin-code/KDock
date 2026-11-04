@@ -808,7 +808,12 @@ pub fn session_meta_of(app: &AppHandle, id: &str) -> Option<SessionMeta> {
 pub fn session_touch(app: &AppHandle, id: &str) -> Option<SessionMeta> {
     let mut meta = session_meta_of(app, id)?;
     meta.updated = now_ms();
-    meta.turns += 1;
+    // A "turn" follows user messages, not model/tool round-trips. Counting the
+    // event stream also keeps queued supplements and legacy sessions correct.
+    meta.turns = session_read(app, id)
+        .iter()
+        .filter(|event| matches!(event, Event::User { .. }))
+        .count() as u32;
     let _ = session_update_meta(app, &meta);
     Some(meta)
 }

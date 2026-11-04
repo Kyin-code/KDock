@@ -7,7 +7,7 @@ import { readFile, writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { FLASH_ROM_TOOLS, flashToolUi, isFlashRomTool, isSerialRomTool } from "./flash-rom.js";
 import { ADVANCED_TABS, initAdvancedNav, openAdvancedNavFor } from "./nav-advanced.js";
 import { createShortcutManager, mountShortcutSettings } from "./shortcuts.js";
-import { agentDisplayName, assistantMetaText, mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "./agent-session.js";
+import { agentDisplayName, assistantMetaText, countUserTurns, mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "./agent-session.js";
 import {
   buildActivityItems,
   partitionAgentEvents,
@@ -8808,13 +8808,20 @@ function agMsgNode(kind, text, ev) {
   head.className = "head";
   const who = document.createElement("span");
   who.className = "who";
-  who.textContent = sessionSpeaker(agMeta, kind);
-  head.appendChild(who);
+  if (kind === "user") {
+    if (ev && ev.queued) {
+      who.textContent = en("排队中 · 下一步并入");
+      head.appendChild(who);
+    }
+  } else {
+    who.textContent = sessionSpeaker(agMeta, kind);
+    head.appendChild(who);
+  }
   const body = document.createElement("div");
   body.className = "bubble";
   if (kind === "assistant") body.innerHTML = agMd(text);
   else body.textContent = text;
-  wrap.appendChild(head);
+  if (head.childNodes.length) wrap.appendChild(head);
   wrap.appendChild(body);
   if (kind === "assistant") {
     const mt = agMsgMetaText(ev);
@@ -9257,7 +9264,7 @@ function agAppendEvent(ev, scroll = true) {
   agWelcomeHide();
   const t = ev.type || ev;
   if (t === "user") {
-    const node = agMsgNode("user", ev.text);
+    const node = agMsgNode("user", ev.text, ev);
     if (ev.queued) node.classList.add("queued");     // 跑着的时候补充的那条：标"排队中"
     box.appendChild(node);
   }
@@ -9511,7 +9518,7 @@ function agUpdateHeader() {
       ? `${en("给")} ${agentName}`
       : en("给 Agent");
   }
-  const n = agEvents.filter((e) => e.type === "assistant" && String(e.text || "").trim()).length;
+  const n = countUserTurns(agEvents);
   const g = agEl("ag-turns");
   if (g) g.textContent = agMeta ? n + en(" 轮") : "";
   // /goal 设的长期目标：钉在头上，随时能看见（也能看出它还生效着）
