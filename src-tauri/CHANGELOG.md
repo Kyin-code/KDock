@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.12 -->
+## v0.3.12
+
+### 修复
+
+- fix(agent): compact completed turns and stabilize composer
+
+### Dependencies
+
+- Update kdock-core to 0.3.12.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.11 -->
 ## v0.3.11
 
