@@ -1,6 +1,13 @@
 // English UI dictionary. Chinese source copy is the migration-period key.
 export const EN = {
   "调试": "Debug", "设备": "Device", "工具": "Tools",
+  "输出与日志": "Output and logs",
+  "留空 = 默认目录（下载 / 临时目录）": "Blank = default folders (Downloads / temp)",
+  "用于保存日志、Agent 工具输出、分析器日志、逻辑分析采集和下载文件。目录不存在时会自动创建。":
+    "Stores logs, Agent tool output, analyzer logs, logic captures and downloads. The directory is created automatically if needed.",
+  "选择输出与日志目录": "Choose output and log directory",
+  "先选择输出与日志目录": "Choose an output and log directory first",
+  "选择目录": "Choose folder",
   "（空目录）": "(empty folder)", "项": "item(s)", "已就绪": "Ready", "未准备": "Not prepared",
   "未找到便携分析器：去环境配置 → 固件运行结构分析器 准备。": "Portable analyzer not found; prepare it in Environment setup → Firmware runtime analyzer.",
   "准备中…": "Preparing…", "准备中…（首次需下载 ~500 MB）": "Preparing… (first run downloads about 500 MB)",
@@ -660,6 +667,7 @@ export const EN = {
   "（还没选对话）": "(no session selected)", " 轮": " turns",
   "把目标说出来，KDock 会和你一起推进。": "Tell KDock what you want to get done.",
   "给 Agent": "To Agent",
+  "给": "To",
   "运行概览": "Runtime overview",
   "先在设置里选择一个模型。": "Choose a model in Settings first.",
   "说明目标、现象或贴一段日志；Enter 发送，Shift+Enter 换行": "Describe the goal, symptom or paste a log; Enter sends, Shift+Enter adds a line",

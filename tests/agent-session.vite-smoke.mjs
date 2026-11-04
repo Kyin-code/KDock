@@ -47,6 +47,15 @@ try {
   if (result.meta.other.title !== "修复首轮会话标题") {
     throw new Error(`A late event from another session overwrote the current meta: ${JSON.stringify(result.meta.other)}`);
   }
+  if (result.meta.runningMeta !== "") {
+    throw new Error(`Model metadata leaked before the turn finished: ${JSON.stringify(result.meta)}`);
+  }
+  if (!result.meta.finishedMeta.includes("deepseek-flash")) {
+    throw new Error(`Finished turns should still show the model: ${JSON.stringify(result.meta)}`);
+  }
+  if (result.meta.agentDisplayName !== "KDock" || result.meta.defaultAgentDisplayName !== "") {
+    throw new Error(`Composer agent identity is wrong: ${JSON.stringify(result.meta)}`);
+  }
   if (result.overflow > 2) throw new Error(`Agent session test overflows horizontally by ${result.overflow}px`);
 
   console.log(JSON.stringify({ ok: true, result }, null, 2));

@@ -2185,15 +2185,7 @@ fn maybe_auto_title(app: &AppHandle, session_id: &str, provider: &Provider, key:
     // 一次调用顺便把"会话内怎么称呼用户 / 怎么自称"也定下来（多要两行，几乎不加钱）。
     // 依据只有用户自称与技能里的身份；明确要求**不要编造或使用真实姓名**。
     let skills = store::skills_index(app);
-    let sys = format!(
-        "下面是一段对话的第一句。请输出**三行**，每行都不带引号、句号或序号：\n\
-         第一行：给这段对话起的标题，不超过 12 个字。\n\
-         第二行：在这个会话里怎么称呼「用户」，不超过 16 个字 —— 只根据用户自己的自称、或下面列出的\
-         技能里的身份信息来定；没有依据就写「用户」；**不要猜测、编造或使用真实姓名**。\n\
-         第三行：在这个会话里「你自己」叫什么，不超过 16 个字 —— 同样只根据用户的自称或技能里的身份\
-         （比如某个身份/人格技能规定了名字就用它）；没有依据就写「Agent」；**不要编造真实姓名**。\n\
-         只输出这三行，不要解释。\n\n已安装技能（仅供判断身份线索）：\n{skills}"
-    );
+    let sys = identity_prompt(&skills);
     let msgs = vec![
         json!({"role":"system","content": sys}),
         json!({"role":"user","content": first.chars().take(600).collect::<String>()}),
@@ -2226,7 +2218,7 @@ fn maybe_auto_title(app: &AppHandle, session_id: &str, provider: &Provider, key:
     }
     let mut meta = meta;
     meta.title = title.clone();
-    if !user_name.trim().is_empty() {
+    if user_name_supported_by_message(&user_name, &first) {
         meta.user_name = user_name.trim().to_string();
     }
     if !agent_name.trim().is_empty() {
@@ -2241,6 +2233,27 @@ fn maybe_auto_title(app: &AppHandle, session_id: &str, provider: &Provider, key:
             append_state_note(app, session_id);
         }
     }
+}
+
+fn identity_prompt(skills: &str) -> String {
+    format!(
+        "下面是一段对话的第一句。请输出**三行**，每行都不带引号、句号或序号：\n\
+         第一行：给这段对话起的标题，不超过 12 个字。\n\
+         第二行：在这个会话里怎么称呼「用户」，不超过 16 个字。**只能**使用用户在当前第一句里\
+         明确写出的自称（例如「我是…」「叫我…」）；不得从技能名、技能说明、工作区名、文件名、\
+         代码、设备名或对话内容推测。没有明确自称就写「用户」；**不要猜测、编造或使用真实姓名**。\n\
+         第三行：在这个会话里「你自己」叫什么，不超过 16 个字 —— 只根据下面技能里的身份/人格设定\
+         （例如某个身份或人格技能规定了名字就用它）；没有依据就写「Agent」；**不要编造真实姓名**。\n\
+         只输出这三行，不要解释。\n\n已安装技能（仅用于判断 Agent 自己的身份，不得用于推断用户）：\n{skills}"
+    )
+}
+
+fn user_name_supported_by_message(candidate: &str, first_user_message: &str) -> bool {
+    let name = candidate.trim();
+    if name.is_empty() || matches!(name, "用户" | "你") {
+        return false;
+    }
+    first_user_message.to_lowercase().contains(&name.to_lowercase())
 }
 
 /// 标题/称呼行去引号、句号和首尾空白
@@ -3403,6 +3416,24 @@ mod tests {
         assert_eq!(got.0, "正常标题");
         assert!(got.1.is_empty());
         assert_eq!(got.2, "Agent");
+    }
+
+    #[test]
+    fn user_identity_requires_an_explicit_self_reference() {
+        assert!(user_name_supported_by_message("任工", "我是任工，帮我检查串口"));
+        assert!(user_name_supported_by_message("小卡", "叫我小卡就行"));
+        assert!(!user_name_supported_by_message("任工", "用 kyin-identity 技能检查一下设备"));
+        assert!(!user_name_supported_by_message("小卡", "帮我调试 MainLoop"));
+        assert!(!user_name_supported_by_message("用户", "我是任工"));
+        assert!(!user_name_supported_by_message("你", "我是任工"));
+    }
+
+    #[test]
+    fn identity_prompt_uses_skills_only_for_agent_name() {
+        let prompt = identity_prompt("kyin-identity — 小卡的人格设定");
+        assert!(prompt.contains("只能**使用用户在当前第一句里明确写出的自称"));
+        assert!(prompt.contains("不得从技能名"));
+        assert!(prompt.contains("仅用于判断 Agent 自己的身份"));
     }
 
     #[test]

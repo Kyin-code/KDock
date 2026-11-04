@@ -1355,7 +1355,10 @@ pub fn global_guidance_path(app: &AppHandle) -> Result<PathBuf, String> {
 pub const TOOL_OUTPUT_KEEP_DAYS: u64 = 7;
 
 pub fn tool_output_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let d = agent_dir(app)?.join("tool-output");
+    let d = match crate::configured_output_subdir(app, "agent-tool-output") {
+        Some(dir) => dir,
+        None => agent_dir(app)?.join("tool-output"),
+    };
     std::fs::create_dir_all(&d).map_err(|e| format!("建 {} 失败: {e}", d.display()))?;
     Ok(d)
 }

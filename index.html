@@ -204,6 +204,13 @@
                 <button id="set-lang-zh" class="btn small">中文</button>
                 <button id="set-lang-en" class="btn small">English</button>
               </div></div>
+              <div class="cardtitle">输出与日志</div>
+              <div class="trow">
+                <input id="set-output-dir" class="dirinput grow" placeholder="留空 = 默认目录（下载 / 临时目录）" />
+                <button id="set-output-dir-pick" class="btn small">选择目录</button>
+                <button id="set-output-dir-open" class="btn small">打开</button>
+              </div>
+              <p class="hint">用于保存日志、Agent 工具输出、分析器日志、逻辑分析采集和下载文件。目录不存在时会自动创建。</p>
               <div class="cardtitle">行为</div>
               <div class="trow"><label class="chk"><input type="checkbox" id="opt-tray" /> 关闭到托盘</label></div>
               <div class="trow"><label class="chk"><input type="checkbox" id="opt-autostart" /> 开机自启</label></div>
@@ -964,7 +971,7 @@
               <code>/timer 10m 任务</code> 倒计时 · <code>/at 09:30 任务</code> 定时 · <code>/help</code>
             </div>
             <div class="trow agcomposer">
-              <button id="ag-attach" class="btn small" title="附上本机文件：复制进会话工作区，agent 就能读它">📎 文件</button>
+              <button id="ag-attach" class="btn small agattach" title="附上本机文件：复制进会话工作区，agent 就能读它">📎 文件</button>
               <label class="agctl">
                 <span class="agctl-label">权限</span>
                 <select id="ag-perm" class="tight" title="agent 的权限：只读 / 危险动作先问 / 全自动">

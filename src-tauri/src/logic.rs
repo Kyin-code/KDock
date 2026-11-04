@@ -216,7 +216,13 @@ fn devices_blocking() -> Result<Value, String> {
     }))
 }
 
-fn capture_blocking(device: &str, rate: u64, samples: u64, channels: &[String]) -> Result<Value, String> {
+fn capture_blocking(
+    app: &tauri::AppHandle,
+    device: &str,
+    rate: u64,
+    samples: u64,
+    channels: &[String],
+) -> Result<Value, String> {
     let cli = cli_for(device).ok_or_else(|| {
         "没找到 sigrok-cli.exe —— 去「环境配置」页装 sigrok-cli，或者把它的目录加进 PATH。".to_string()
     })?;
@@ -240,7 +246,8 @@ fn capture_blocking(device: &str, rate: u64, samples: u64, channels: &[String]) 
     let total = total_channels(&cli, device);
     let mut bps: usize = if total > 8 { 2 } else { 1 };
 
-    let dir = std::env::temp_dir().join("kdock-la");
+    let dir = crate::configured_output_subdir(app, "logic")
+        .unwrap_or_else(|| std::env::temp_dir().join("kdock-la"));
     std::fs::create_dir_all(&dir).map_err(|e| format!("建临时目录失败：{e}"))?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -347,12 +354,15 @@ pub async fn logic_devices() -> Result<Value, String> {
 /// 采一次：`-O binary` 的原始采样按通道位打包（1 字节 = 8 通道），base64 回前端
 #[tauri::command]
 pub async fn logic_capture(
+    app: tauri::AppHandle,
     device: String,
     rate: u64,
     samples: u64,
     channels: Vec<String>,
 ) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || capture_blocking(&device, rate, samples, &channels))
+    tauri::async_runtime::spawn_blocking(move || {
+        capture_blocking(&app, &device, rate, samples, &channels)
+    })
         .await
         .map_err(|e| format!("后台任务失败：{e}"))?
 }

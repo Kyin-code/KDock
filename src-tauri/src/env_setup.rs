@@ -1698,7 +1698,11 @@ pub fn scan_one(it: &Item, infs: &str) -> Value {
 static SCAN_CACHE: std::sync::Mutex<Option<(std::time::Instant, Value)>> = std::sync::Mutex::new(None);
 
 #[tauri::command]
-pub async fn env_scan(force: Option<bool>, dir: Option<String>) -> Result<Value, String> {
+pub async fn env_scan(
+    app: tauri::AppHandle,
+    force: Option<bool>,
+    dir: Option<String>,
+) -> Result<Value, String> {
     // 前端把"安装目录"传进来：清单里那些 %ENVDIR% 规则要用它去找
     if let Some(d) = dir.filter(|d| !d.trim().is_empty()) {
         set_env_dir(&d);
@@ -1714,7 +1718,7 @@ pub async fn env_scan(force: Option<bool>, dir: Option<String>) -> Result<Value,
                 }
             }
         }
-        let v = env_scan_now()?;
+        let v = env_scan_now(&app)?;
         if let Ok(mut g) = SCAN_CACHE.lock() {
             *g = Some((std::time::Instant::now(), v.clone()));
         }
@@ -1724,7 +1728,7 @@ pub async fn env_scan(force: Option<bool>, dir: Option<String>) -> Result<Value,
     .map_err(|e| format!("后台扫描失败：{e}"))?
 }
 
-fn env_scan_now() -> Result<Value, String> {
+fn env_scan_now(app: &tauri::AppHandle) -> Result<Value, String> {
     let infs = pnputil_infs();
     // pip 包清单先一次性取好：清单里有 5 个 pip 组件，逐个 `pip show` 会重复启动进程
     // （每次 100~300ms），这里是唯一会用到它的地方，提前预热后 scan_one 里全是内存查找。
@@ -1738,14 +1742,17 @@ fn env_scan_now() -> Result<Value, String> {
         "items": list,
         "missingRequired": missing,
         "outdated": outdated,
-        "downloadDir": download_dir(),
+        "downloadDir": download_dir(app),
         "envDir": if env_dir().is_empty() { default_env_dir() } else { env_dir() },
     }))
 }
 
 /* ───────────────────────── 安装 ───────────────────────── */
 
-fn download_dir() -> String {
+fn download_dir(app: &tauri::AppHandle) -> String {
+    if let Some(dir) = crate::configured_output_subdir(app, "downloads") {
+        return dir.to_string_lossy().to_string();
+    }
     let up = std::env::var("USERPROFILE").unwrap_or_default();
     let d = Path::new(&up).join("Downloads");
     if d.is_dir() { d.to_string_lossy().to_string() } else { std::env::temp_dir().to_string_lossy().to_string() }
@@ -1757,7 +1764,7 @@ fn emit(app: &tauri::AppHandle, id: &str, phase: &str, pct: i32, text: &str) {
 }
 
 fn download(app: &tauri::AppHandle, id: &str, url: &str, file: &str) -> Result<PathBuf, String> {
-    let dir = PathBuf::from(download_dir());
+    let dir = PathBuf::from(download_dir(app));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let dst = dir.join(file);
     if dst.is_file() && dst.metadata().map(|m| m.len()).unwrap_or(0) > 1024 {
@@ -1769,7 +1776,7 @@ fn download(app: &tauri::AppHandle, id: &str, url: &str, file: &str) -> Result<P
     let part = dir.join(format!("{file}.part"));
     std::fs::remove_file(&part).ok();
     emit(app, id, "download", 5, &format!("开始下载 {}", file));
-    let resp = ureq::get(url).timeout(std::time::Duration::from_secs(900)).call().map_err(|e| format!("下载失败: {e}（网络不通/太慢？也可以把包手动丢进 {}）", download_dir()))?;
+    let resp = ureq::get(url).timeout(std::time::Duration::from_secs(900)).call().map_err(|e| format!("下载失败: {e}（网络不通/太慢？也可以把包手动丢进 {}）", download_dir(app)))?;
     let total: u64 = resp.header("Content-Length").and_then(|s| s.parse().ok()).unwrap_or(0);
     let mut reader = resp.into_reader();
     let mut out = std::fs::File::create(&part).map_err(|e| e.to_string())?;

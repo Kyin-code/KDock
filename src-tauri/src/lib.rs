@@ -1724,7 +1724,7 @@ fn show_main_window(app: AppHandle) {
 // dev 模式跑的是 http://localhost:1420，打包后是 http://tauri.localhost，
 // 两边各存一份，于是"开发时挑的主题配色，换成 exe 就没了"。
 // 这里往 app_data 目录落一份 JSON，前端两个 origin 共用同一个文件。
-fn ui_prefs_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+pub(crate) fn ui_prefs_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
@@ -1752,6 +1752,31 @@ fn ui_prefs_set(app: AppHandle, prefs: serde_json::Value) -> Result<(), String> 
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, text).map_err(|e| format!("写 {} 失败: {e}", tmp.display()))?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("改名到 {} 失败: {e}", path.display()))
+}
+
+/// 用户指定的输出/日志根目录。其余模块的 tool-output、分析日志、采集日志
+/// 都通过这里落盘；留空或路径不可用时沿用各自的默认位置。
+pub(crate) fn configured_output_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
+    let prefs = std::fs::read_to_string(ui_prefs_path(app).ok()?).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&prefs).ok()?;
+    let raw = value.get("outputDir")?.as_str()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let dir = std::path::PathBuf::from(raw);
+    if !dir.is_absolute() || std::fs::create_dir_all(&dir).is_err() {
+        return None;
+    }
+    Some(dir)
+}
+
+pub(crate) fn configured_output_subdir(
+    app: &AppHandle,
+    child: &str,
+) -> Option<std::path::PathBuf> {
+    let dir = configured_output_dir(app)?.join(child);
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
 }
 
 /// 工作区（任意目录）的 git 快照："Agent 信息"面板显示当前工作区 git 信息用。
@@ -2790,7 +2815,10 @@ async fn device_upload(
 
 /// 默认保存目录：有「下载」文件夹就用它，否则用用户主目录
 #[tauri::command]
-fn default_save_dir() -> String {
+fn default_save_dir(app: AppHandle) -> String {
+    if let Some(dir) = configured_output_dir(&app) {
+        return dir.to_string_lossy().to_string();
+    }
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_else(|_| ".".to_string());

@@ -41,8 +41,10 @@ fn native_path_string(path: &Path) -> String {
     }
 }
 
-fn analyzer_log_path() -> PathBuf {
-    std::env::temp_dir().join("kdock-bingraph.log")
+fn analyzer_log_path(app: &tauri::AppHandle) -> PathBuf {
+    crate::configured_output_subdir(app, "logs")
+        .map(|dir| dir.join("kdock-bingraph.log"))
+        .unwrap_or_else(|| std::env::temp_dir().join("kdock-bingraph.log"))
 }
 
 fn cache_path_is_usable(path: &Path) -> bool {
@@ -246,7 +248,7 @@ fn ensure(
     let logfile = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(analyzer_log_path())
+        .open(analyzer_log_path(app))
         .map_err(|e| format!("创建分析器日志失败：{e}"))?;
     let rtdb = rtdb_cache_dir(app)?;
     let mut cmd = Command::new(&py);
@@ -273,7 +275,7 @@ fn ensure(
     Ok(port)
 }
 
-fn get_json(port: u16, path: &str) -> Result<Value, String> {
+fn get_json(port: u16, path: &str, log_path: &Path) -> Result<Value, String> {
     let addr = format!("127.0.0.1:{port}");
     let mut s = TcpStream::connect_timeout(
         &addr.parse().map_err(|_| "分析器端口无效".to_string())?,
@@ -320,7 +322,7 @@ fn get_json(port: u16, path: &str) -> Result<Value, String> {
             "分析器返回 {}：{}（日志：{}）",
             head.lines().next().unwrap_or("HTTP error"),
             detail,
-            analyzer_log_path().display()
+            log_path.display()
         ));
     }
     serde_json::from_slice(&body).map_err(|e| format!("分析结果不是有效 JSON：{e}"))
@@ -376,12 +378,13 @@ pub(crate) fn analyze_sync(
     // that process and retry once with a fresh analyzer instead of making
     // every later click fail against the same broken instance.
     let mut port = ensure(app, root, &blob_spec, vector)?;
-    let mut data = match get_json(port, &path) {
+    let log_path = analyzer_log_path(app);
+    let mut data = match get_json(port, &path, &log_path) {
         Ok(v) => v,
         Err(first) => {
             stop_locked();
             let retry_port = ensure(app, root, &blob_spec, vector)?;
-            let value = get_json(retry_port, &path).map_err(|second| {
+            let value = get_json(retry_port, &path, &log_path).map_err(|second| {
                 format!("{first}\n已重启分析器重试一次，仍失败：{second}")
             })?;
             port = retry_port;

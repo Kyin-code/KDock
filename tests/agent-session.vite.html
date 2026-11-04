@@ -15,7 +15,7 @@
     </div>
   </section>
   <script type="module">
-    import { mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "/src/agent-session.js";
+    import { agentDisplayName, assistantMetaText, mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "/src/agent-session.js";
 
     const before = { id: "session-live", title: "新会话", user_name: "", agent_name: "" };
     const incoming = {
@@ -30,6 +30,7 @@
     speakers[1].textContent = sessionSpeaker(after, "assistant");
 
     const other = mergeSessionMeta(after, { id: "another-session", title: "不应覆盖" });
+    const metaEvent = { model: "deepseek-flash", ts: Date.now() };
     window.__agentSessionMeta = {
       before,
       incoming,
@@ -37,6 +38,10 @@
       other,
       changed: sessionMetaDisplayChanged(before, after),
       unchanged: sessionMetaDisplayChanged(after, { ...after }),
+      runningMeta: assistantMetaText(metaEvent, true),
+      finishedMeta: assistantMetaText(metaEvent, false),
+      agentDisplayName: agentDisplayName(after),
+      defaultAgentDisplayName: agentDisplayName({ agent_name: "Agent" }),
     };
     document.documentElement.dataset.agentSessionReady = "1";
   </script>

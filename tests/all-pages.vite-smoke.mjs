@@ -137,6 +137,111 @@ try {
       throw new Error(`Agent composer is pushed outside the work area (${name}): ${JSON.stringify(value)}`);
     }
   }
+  await page.setViewportSize({ width: 980, height: 800 });
+  await page.evaluate(() => window.__showAllPagesPage("agent"));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const navStability = await page.evaluate(() => {
+    const root = document.documentElement;
+    const title = document.getElementById("ag-title");
+    const composer = document.querySelector('[data-work="agent"] .agcomposer');
+    const oldTitle = title.textContent;
+    title.textContent = "长会话标题用于验证左侧导航宽度变化时不会把 Agent 页面上下推动 ".repeat(3);
+    const measure = () => {
+      const header = document.querySelector('[data-work="agent"] > .trow:first-child').getBoundingClientRect();
+      const box = document.getElementById("ag-box").getBoundingClientRect();
+      const input = document.querySelector('[data-work="agent"] .inpane').getBoundingClientRect();
+      return {
+        headerTop: Math.round(header.top),
+        headerHeight: Math.round(header.height),
+        boxTop: Math.round(box.top),
+        boxHeight: Math.round(box.height),
+        inputTop: Math.round(input.top),
+        inputHeight: Math.round(input.height),
+      };
+    };
+    root.style.setProperty("--nav-w", "260px");
+    const wideNav = measure();
+    root.style.setProperty("--nav-w", "96px");
+    const narrowNav = measure();
+    const wraps = {
+      header: getComputedStyle(document.querySelector('[data-work="agent"] > .trow:first-child')).flexWrap,
+      composer: getComputedStyle(composer).flexWrap,
+    };
+    root.style.removeProperty("--nav-w");
+    title.textContent = oldTitle;
+    return { wideNav, narrowNav, wraps };
+  });
+  for (const key of ["headerTop", "headerHeight", "boxTop", "boxHeight", "inputTop", "inputHeight"]) {
+    if (Math.abs(navStability.wideNav[key] - navStability.narrowNav[key]) > 1) {
+      throw new Error(`Agent layout shifts when the nav width changes (${key}): ${JSON.stringify(navStability)}`);
+    }
+  }
+  if (navStability.wraps.header !== "nowrap" || navStability.wraps.composer !== "nowrap") {
+    throw new Error(`Agent critical rows must not wrap: ${JSON.stringify(navStability.wraps)}`);
+  }
+  await page.evaluate(() => {
+    document.documentElement.classList.add("noparam");
+    window.dispatchEvent(new Event("resize"));
+  });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const agentVisual = await page.evaluate(() => {
+    const chat = document.getElementById("ag-chat");
+    const user = document.createElement("div");
+    user.className = "agmsg user";
+    user.innerHTML = '<div class="head"><span class="who">你</span></div><div class="bubble">user sample</div>';
+    const assistant = document.createElement("div");
+    assistant.className = "agmsg assistant";
+    assistant.innerHTML = '<div class="head"><span class="who">Agent</span></div><div class="bubble">assistant sample</div>';
+    chat.append(user, assistant);
+    const attach = document.getElementById("ag-attach").getBoundingClientRect();
+    const permission = document.querySelector('[data-work="agent"] .agctl').getBoundingClientRect();
+    const style = getComputedStyle(chat);
+    const chatRect = chat.getBoundingClientRect();
+    const userRect = user.getBoundingClientRect();
+    const assistantRect = assistant.getBoundingClientRect();
+    const split = document.querySelector(".split").getBoundingClientRect();
+    const work = document.querySelector('[data-work="agent"]').getBoundingClientRect();
+    const paramsVisible = !document.querySelector(".params").hidden &&
+      getComputedStyle(document.querySelector(".params")).display !== "none";
+    const splitStyle = getComputedStyle(document.querySelector(".split"));
+    const result = {
+      padLeft: parseFloat(style.paddingLeft),
+      padRight: parseFloat(style.paddingRight),
+      attachHeight: Math.round(attach.height),
+      permissionHeight: Math.round(permission.height),
+      contentCenterOffset: Math.round(
+        ((userRect.left + userRect.right) / 2) - ((chatRect.left + chatRect.right) / 2)
+      ),
+      messageColumnWidthDelta: Math.round(Math.abs(userRect.width - assistantRect.width)),
+      messageColumnLeftDelta: Math.round(Math.abs(userRect.left - assistantRect.left)),
+      narrowWorkHeight: Math.round(work.height),
+      narrowSplitHeight: Math.round(split.height),
+      paramsVisible,
+      gridRows: splitStyle.gridTemplateRows,
+      splitHeight: Math.round(split.height),
+    };
+    user.remove();
+    assistant.remove();
+    return result;
+  });
+  if (Math.abs(agentVisual.padLeft - agentVisual.padRight) > 1) {
+    throw new Error(`Agent conversation column is not horizontally symmetric: ${JSON.stringify(agentVisual)}`);
+  }
+  if (Math.abs(agentVisual.attachHeight - agentVisual.permissionHeight) > 1) {
+    throw new Error(`Agent attachment and permission controls have different heights: ${JSON.stringify(agentVisual)}`);
+  }
+  if (Math.abs(agentVisual.contentCenterOffset) > 1 ||
+      agentVisual.messageColumnWidthDelta > 1 ||
+      agentVisual.messageColumnLeftDelta > 1) {
+    throw new Error(`Agent message column is not centered: ${JSON.stringify(agentVisual)}`);
+  }
+  if (agentVisual.paramsVisible || Math.abs(agentVisual.narrowWorkHeight - agentVisual.narrowSplitHeight) > 1) {
+    throw new Error(`Narrow Agent layout did not reclaim the right panel space: ${JSON.stringify(agentVisual)}`);
+  }
+  await page.evaluate(() => {
+    document.documentElement.classList.remove("noparam");
+    window.dispatchEvent(new Event("resize"));
+  });
   await page.setViewportSize({ width: 1500, height: 950 });
 
   // Resolution / UI zoom matrix. Representative pages cover the densest
@@ -214,6 +319,8 @@ try {
     pages: results,
     agentLayout,
     agentAfterWindowShrink,
+    navStability,
+    agentVisual,
     responsiveMatrix: {
       profiles: matrix.length,
       pageChecks: matrixResults.length,

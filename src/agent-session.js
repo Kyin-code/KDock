@@ -17,3 +17,25 @@ export function sessionSpeaker(meta, kind) {
   if (kind === "err") return "出错";
   return "系统";
 }
+
+export function agentDisplayName(meta) {
+  const name = String((meta && meta.agent_name) || "").trim();
+  return name && name !== "Agent" ? name : "";
+}
+
+/** Model/time is turn-finish metadata. Intermediate assistant segments emitted
+ *  before tools run must not show it while the turn is still in progress. */
+export function assistantMetaText(ev, running = false) {
+  if (running) return "";
+  const parts = [];
+  if (ev && ev.model) parts.push(String(ev.model));
+  const ts = Number((ev && ev.ts) || 0);
+  if (ts > 0) {
+    const d = new Date(ts);
+    const p2 = (n) => String(n).padStart(2, "0");
+    const hm = `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    const sameDay = d.toDateString() === new Date().toDateString();
+    parts.push(sameDay ? `${hm}:${p2(d.getSeconds())}` : `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${hm}`);
+  }
+  return parts.join(" · ");
+}

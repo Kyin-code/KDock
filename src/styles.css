@@ -751,6 +751,9 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
     grid-template-columns: var(--nav-w, 300px) 6px minmax(0, 1fr);
     grid-template-rows: minmax(45cqh, 1fr) auto;   /* 工作区（工具主体）至少留 calc(var(--app-vh) * 45)，别被下面那条挤没 */
   }
+  /* 参数区被手动或 Agent 窄窗自动折叠时，第二行也要彻底消失，
+     否则显式 grid 行仍会保留一条空白，Agent 看起来像整体上移了。 */
+  html.noparam .split { grid-template-rows: minmax(0, 1fr); }
   .split > #gutter-r { display: none; }
   /* 参数区这一行的高度：原来给到 calc(var(--app-vh) * 42)（600px 高的窗口就是 252px），把工作区挤到只剩 276px ——
      传输卡自己就要 255px 打底（头 32 + 工具行 81 + 输入 132 + 收口 10），输出区直接没地方，
@@ -834,6 +837,9 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
   [data-work="agent"] #ag-input {
     min-height: 78px;
   }
+}
+html.noparam[data-tab="agent"] .split {
+  grid-template-rows: minmax(0, 1fr);
 }
 /* 只有真的切到"参数区在下面"（<=980）时才用 3 列；
    以前写的是 1000 —— 于是 980~1000 这段里 .split 只有 3 列，而 split 有 5 个子项，
@@ -1458,6 +1464,21 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .workpane[data-work="agent"] > .inpane {
   flex: 0 1 220px; min-height: 180px; overflow: auto;
+}
+/* 左栏变宽/变窄时，Agent 顶栏和底栏不能改变行数：
+   一旦 flex-wrap 重新折行，整个对话区会跟着上下跳。窄了就横向滚动。 */
+.workpane[data-work="agent"] > .trow:first-child {
+  flex-wrap: nowrap; min-width: 0; overflow: hidden;
+}
+.workpane[data-work="agent"] > .trow:first-child > * { flex-shrink: 0; }
+.workpane[data-work="agent"] > .trow:first-child > #ag-title {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.workpane[data-work="agent"] > .inpane > .agcomposer {
+  flex-wrap: nowrap; min-width: 0; overflow-x: auto; overflow-y: hidden;
+}
+.workpane[data-work="agent"] > .inpane > .agcomposer > .grow {
+  flex: 1 1 8px; min-width: 8px;
 }
 
 /* ==========================================================================
@@ -2190,8 +2211,16 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agcomposer { gap: 8px; padding-top: 2px; }
 .agctl {
   display: inline-flex; align-items: center; gap: 6px; min-width: 0;
-  padding: 2px 3px 2px 9px; border: 1px solid var(--surface-line); border-radius: 9px;
+  min-height: 32px; padding: 0 4px 0 9px; border: 1px solid var(--surface-line); border-radius: 9px;
   background: var(--surface-2); color: hsl(var(--muted-foreground));
+}
+.agcomposer .agattach {
+  height: 32px; min-height: 32px; padding: 0 10px;
+  border: 1px solid var(--surface-line); border-radius: 9px;
+  background: var(--surface-2); color: hsl(var(--muted-foreground));
+}
+.agcomposer .agattach:hover {
+  border-color: hsl(var(--primary) / .36); background: var(--surface-3);
 }
 .agctl:focus-within { border-color: hsl(var(--primary) / .58); background: var(--surface-1); }
 .agctl:hover { border-color: hsl(var(--primary) / .36); background: var(--surface-3); }
@@ -2514,6 +2543,24 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agrail .tip { right: 46px; }
 /* 正文给更宽的导航条留位置 */
 .agentchat { padding-right: 54px; }
+
+/* Codex 式对话列：消息列整体居中；左右给消息导航留同样宽的 gutter，
+   这样右侧 rail 不再把整列视觉重心往左推。 */
+.agentbox { --ag-rail-gutter: 54px; }
+.agentchat {
+  padding-left: var(--ag-rail-gutter);
+  padding-right: var(--ag-rail-gutter);
+}
+.agentchat > :not(.agwelcome) {
+  width: min(100%, 860px);
+  margin-left: auto;
+  margin-right: auto;
+}
+.agentchat > .agmsg.user { padding-right: 0; }
+.agentchat > .agmsg.user > .bubble,
+.agentchat > .agmsg.assistant > .bubble {
+  max-width: 86%;
+}
 
 /* ==========================================================================
    第七轮：批量文本 / 计算器 + 模型下拉的状态转圈 + 深色底跟配色走

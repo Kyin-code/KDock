@@ -7,7 +7,7 @@ import { readFile, writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { FLASH_ROM_TOOLS, flashToolUi, isFlashRomTool, isSerialRomTool } from "./flash-rom.js";
 import { ADVANCED_TABS, initAdvancedNav, openAdvancedNavFor } from "./nav-advanced.js";
 import { createShortcutManager, mountShortcutSettings } from "./shortcuts.js";
-import { mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "./agent-session.js";
+import { agentDisplayName, assistantMetaText, mergeSessionMeta, sessionMetaDisplayChanged, sessionSpeaker } from "./agent-session.js";
 import {
   buildActivityItems,
   partitionAgentEvents,
@@ -1619,6 +1619,48 @@ function syncParamStrip() {
 }
 
 /** 切页：左导航高亮 + 中间换操作区 + 右边换参数区 */
+let agAutoParamsCollapsed = false;
+let agParamsManualOpen = false;
+
+function appLayoutWidth() {
+  return document.getElementById("ui-root")?.clientWidth || window.innerWidth;
+}
+
+function paintParamToggle() {
+  const btn = document.getElementById("tb-params");
+  if (!btn) return;
+  const off = document.documentElement.classList.contains("noparam");
+  btn.classList.toggle("on", off);
+  btn.title = off ? en("显示参数区") : en("收起参数区");
+}
+
+function setNoParam(off, persist = false) {
+  document.documentElement.classList.toggle("noparam", off);
+  if (persist) localStorage.setItem("kdock_noparam", off ? "1" : "0");
+  paintParamToggle();
+  syncParamStrip();
+}
+
+/** 窄窗口的 Agent 页优先保住对话与输入区；右栏自动折叠，
+ *  用户仍可用顶部「参数区」按钮临时展开。 */
+function syncAgentParamsAuto(tab) {
+  const narrow = appLayoutWidth() <= 980;
+  const root = document.documentElement;
+  if (tab !== "agent" || !narrow) {
+    if (agAutoParamsCollapsed) {
+      setNoParam(false, false);
+      agAutoParamsCollapsed = false;
+    }
+    agParamsManualOpen = false;
+    return;
+  }
+  if (agParamsManualOpen) return;
+  if (!root.classList.contains("noparam")) {
+    setNoParam(true, false);
+    agAutoParamsCollapsed = true;
+  }
+}
+
 function showPane(tab) {
   const btn = document.querySelector(`.navitem[data-tab="${tab}"]`);
   if (btn) document.querySelectorAll(".navitem").forEach((b) => b.classList.toggle("active", b === btn));
@@ -1630,6 +1672,7 @@ function showPane(tab) {
   if (work === "agent") agUnreadClear();      // 切过来就算看过了，清掉未读角标
   document.querySelectorAll("[data-param]").forEach((p) => { p.hidden = p.dataset.param !== tab; });
   document.documentElement.dataset.tab = tab;      // 窄窗样式要按"当前这一页"决定收不收那条参数带（如计算器）
+  syncAgentParamsAuto(tab);
   if (tab === "runtime") void initRuntimePage();
   if (window.kdockSyncDataLang) window.kdockSyncDataLang();
   syncParamStrip();
@@ -7194,13 +7237,14 @@ function uiPrefsSnapshot() {
     fontScale: localStorage.getItem("kdock_font_scale") || "normal",
     zoom: localStorage.getItem("kdock_ui_zoom") || "1",
     font: localStorage.getItem("kdock_ui_font") || "system",
+    outputDir: localStorage.getItem("kdock_output_dir") || "",
     shortcuts,
   };
 }
 function uiPrefsSave() {
   if (!uiPrefsReady) return;
   const p = uiPrefsSnapshot();
-  const key = [p.theme, p.scheme, p.lang, p.fontScale, p.zoom, p.font, JSON.stringify(p.shortcuts)].join("|");
+  const key = [p.theme, p.scheme, p.lang, p.fontScale, p.zoom, p.font, p.outputDir, JSON.stringify(p.shortcuts)].join("|");
   if (key === uiPrefsLast) return;      // 没变就不写盘
   uiPrefsLast = key;
   invoke("ui_prefs_set", { prefs: p }).catch(() => {});
@@ -7208,7 +7252,7 @@ function uiPrefsSave() {
 async function uiPrefsLoad() {
   let p = null;
   try { p = await invoke("ui_prefs_get"); } catch (_) { uiPrefsReady = true; return; }
-  if (!p || (typeof p !== "object") || (!p.theme && !p.scheme && !p.lang)) {
+  if (!p || (typeof p !== "object") || (!p.theme && !p.scheme && !p.lang && !p.outputDir)) {
     // 第一次跑这个版本：把已有的选择（localStorage 里那份）迁上去
     uiPrefsReady = true;
     uiPrefsSave();
@@ -7220,6 +7264,7 @@ async function uiPrefsLoad() {
   if (p.fontScale) localStorage.setItem("kdock_font_scale", p.fontScale);
   if (p.zoom) localStorage.setItem("kdock_ui_zoom", p.zoom);
   if (p.font) localStorage.setItem("kdock_ui_font", p.font);
+  if (typeof p.outputDir === "string") localStorage.setItem("kdock_output_dir", p.outputDir);
   if (p.shortcuts && typeof p.shortcuts === "object" && !Array.isArray(p.shortcuts)) {
     localStorage.setItem("kdock_shortcuts", JSON.stringify(p.shortcuts));
   }
@@ -7230,7 +7275,7 @@ async function uiPrefsLoad() {
   applyUiScale();
   syncUiScaleControls();
   const s2 = uiPrefsSnapshot();
-  uiPrefsLast = [s2.theme, s2.scheme, s2.lang, s2.fontScale, s2.zoom, s2.font, JSON.stringify(s2.shortcuts)].join("|");
+  uiPrefsLast = [s2.theme, s2.scheme, s2.lang, s2.fontScale, s2.zoom, s2.font, s2.outputDir, JSON.stringify(s2.shortcuts)].join("|");
 }
 
 // ---------------- 内嵌调试（GDB/MI + GDB Server） ----------------
@@ -7978,6 +8023,39 @@ function bindSettings() {
   });
   const close = document.getElementById("settings-close");
   if (close) close.onclick = closeSettings;
+  const outputDir = document.getElementById("set-output-dir");
+  if (outputDir) {
+    outputDir.value = localStorage.getItem("kdock_output_dir") || "";
+    const saveOutputDir = () => {
+      const value = outputDir.value.trim();
+      if (value) localStorage.setItem("kdock_output_dir", value);
+      else localStorage.removeItem("kdock_output_dir");
+      uiPrefsSave();
+    };
+    outputDir.onchange = saveOutputDir;
+    const pick = document.getElementById("set-output-dir-pick");
+    if (pick) {
+      pick.onclick = async () => {
+        const picked = await dlgOpen({
+          directory: true,
+          multiple: false,
+          title: en("选择输出与日志目录"),
+        });
+        const path = typeof picked === "string" ? picked : (picked && picked.path);
+        if (!path) return;
+        outputDir.value = path;
+        saveOutputDir();
+      };
+    }
+    const open = document.getElementById("set-output-dir-open");
+    if (open) {
+      open.onclick = () => {
+        const path = outputDir.value.trim();
+        if (!path) return toast(en("先选择输出与日志目录"));
+        invoke("open_folder", { path }).catch((e) => toast(String(e)));
+      };
+    }
+  }
   // 关于本软件那几个按钮：GitHub 仓库 / 作者主页 / 更新日志 / 跳到完整关于页
   if (document.getElementById("set-open-github")) {
     document.getElementById("set-open-github").onclick = () => openExternal(KDOCK_REPO);
@@ -8720,17 +8798,7 @@ function agScrollTail(force) {
  *  模型是后端往会话里记的（`Event::Assistant.model`），所以翻历史也准；
  *  老会话没这个字段就只显示时间（时间取事件落盘时的 ts）。 */
 function agMsgMetaText(ev) {
-  const parts = [];
-  if (ev && ev.model) parts.push(String(ev.model));
-  const ts = Number((ev && ev.ts) || 0);
-  if (ts > 0) {
-    const d = new Date(ts);
-    const p2 = (n) => String(n).padStart(2, "0");
-    const hm = `${p2(d.getHours())}:${p2(d.getMinutes())}`;
-    const sameDay = d.toDateString() === new Date().toDateString();
-    parts.push(sameDay ? `${hm}:${p2(d.getSeconds())}` : `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${hm}`);
-  }
-  return parts.join(" · ");
+  return assistantMetaText(ev, agRunning);
 }
 
 function agMsgNode(kind, text, ev) {
@@ -9436,6 +9504,13 @@ async function agNewWorkspace() {
 function agUpdateHeader() {
   const t = agEl("ag-title");
   if (t) t.textContent = agMeta ? en(agMeta.title || "（无标题）") : "Work with KDock";
+  const composerTitle = document.querySelector('[data-work="agent"] .agcomposer-title');
+  if (composerTitle) {
+    const agentName = agentDisplayName(agMeta);
+    composerTitle.textContent = agentName
+      ? `${en("给")} ${agentName}`
+      : en("给 Agent");
+  }
   const n = agEvents.filter((e) => e.type === "assistant" && String(e.text || "").trim()).length;
   const g = agEl("ag-turns");
   if (g) g.textContent = agMeta ? n + en(" 轮") : "";
@@ -12946,9 +13021,10 @@ async function bindAgentEvents() {
     agThinkSettle();                          // 这一段结束了：思考块收起来
     // 有工具调用说明这一轮的正文结束了
     if (agStreamNode) { agStreamNode.classList.remove("streaming"); agStreamNode = null; }
-    // 这一轮的正文结束了（后面还有工具调用）：本地这条也带上模型和时间，别等 done 才显示
+    // 这只是本轮里一段中间正文，后面还有工具调用；模型名/时间属于整轮
+    // 的完成信息，不能在这一轮仍在运行时提前显示。
     if (agStreamText.trim()) {
-      agEvents.push({ type: "assistant", text: agStreamText, model: (agMeta && agMeta.model) || "", ts: Date.now() });
+      agEvents.push({ type: "assistant", text: agStreamText });
     }
     agStreamText = "";
     agEvents.push({ type: "tool_call", id: p.id, name: p.name, args: p.args });
@@ -13432,21 +13508,21 @@ function bindTitleBar() {
   // 参数区折叠（窄窗口下特别有用：整行挪到下面那条能直接收掉）
   const tbParams = $("tb-params");
   if (tbParams) {
-    const paint = () => {
-      const off = document.documentElement.classList.contains("noparam");
-      tbParams.classList.toggle("on", off);
-      tbParams.title = off ? en("显示参数区") : en("收起参数区");
-    };
     if (localStorage.getItem("kdock_noparam") === "1") document.documentElement.classList.add("noparam");
-    paint();
+    paintParamToggle();
     tbParams.onclick = () => {
-      const off = document.documentElement.classList.toggle("noparam");
-      localStorage.setItem("kdock_noparam", off ? "1" : "0");
-      paint();
-      syncParamStrip();
+      const opening = document.documentElement.classList.contains("noparam");
+      setNoParam(!opening, true);
+      if (document.documentElement.dataset.tab === "agent") {
+        agParamsManualOpen = opening;
+        agAutoParamsCollapsed = !opening;
+      }
       window.dispatchEvent(new Event("resize"));     // 中栏变宽了：让图表 / 画布跟着重排
     };
   }
+  window.addEventListener("resize", () => {
+    syncAgentParamsAuto(document.documentElement.dataset.tab || "link");
+  });
   // 图标条里文字都收起来了，悬停提示得有（没有的就用它的功能名补一个）
   document.querySelectorAll(".navitem").forEach((b) => {
     if (!b.title) { const sp = b.querySelector("span"); if (sp) b.title = sp.textContent.trim(); }
@@ -13595,7 +13671,13 @@ async function main() {
 
 
   // 会话：保存/加载/导出 —— 都用系统原生对话框选路径（目录输入框只当"默认目录"）
-  const sessFile = (name) => joinFile($("sess-dir").value.trim() || $("fl-save-dir").value.trim(), name);
+  const sessFile = (name) => joinFile(
+    $("sess-dir").value.trim()
+      || $("fl-save-dir").value.trim()
+      || localStorage.getItem("kdock_output_dir")?.trim()
+      || "",
+    name,
+  );
   const rememberDir = (p) => {
     const d0 = String(p).replace(/[\\/][^\\/]*$/, "");
     if (d0) localStorage.setItem("kdock_sess_dir", d0);
@@ -13836,7 +13918,7 @@ async function main() {
   });
 
   // 默认保存目录：优先记住上次用的，否则问后端要（一般是"下载"文件夹）
-  let defDir = localStorage.getItem("kdock_save_dir") || "";
+  let defDir = localStorage.getItem("kdock_save_dir") || localStorage.getItem("kdock_output_dir") || "";
   if (!defDir) {
     try { defDir = await invoke("default_save_dir"); } catch (_) { defDir = ""; }
   }

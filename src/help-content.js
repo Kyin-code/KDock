@@ -28,6 +28,12 @@ export const HELP_GROUPS = [
         zh: "发现新版本后，KDock 会在应用内下载安装包并显示进度。更新清单提供 SHA-256 时，下载完成会先校验；通过后按钮变为「启动安装程序」，仍需用户再次点击，不会静默安装。安装包目前未做 Authenticode 签名，Windows 仍可能提示未知发布者或 SmartScreen。",
         en: "When a new version is available, KDock downloads the installer in-app and shows progress. If the update manifest provides SHA-256, KDock verifies it before enabling Launch installer; the user must click again and nothing installs silently. The installer is not Authenticode-signed yet, so Windows may still show Unknown publisher or SmartScreen warnings."
       },
+      {
+        id: "help-output-dir",
+        title: "输出与日志目录",
+        zh: "在「设置 → 通用 → 输出与日志」指定统一目录。留空时沿用默认位置。该目录用于保存会话日志、Agent 工具的大输出、运行结构分析器日志、逻辑分析采集以及环境组件下载文件；子目录会自动创建。",
+        en: "Set a shared folder in Settings → General → Output and logs. Leave it blank to keep the default locations. The folder stores session logs, large Agent tool output, runtime analyzer logs, logic captures, and environment component downloads; subfolders are created automatically."
+      },
     ],
   },
   {
@@ -77,8 +83,8 @@ export const HELP_GROUPS = [
       {
         id: "help-agent-chat",
         title: "对话",
-        zh: "### 用途\n用自然语言描述目标，Agent 会读取工作区、调用工具、执行验证并汇报。\n### 操作\n- 输入后 Enter 发送，Shift+Enter 换行。\n- 可在输入框下方切换权限：只读 / 需批准 / 自动。\n- 「沙箱」选择命令边界：工作区 AppContainer（默认断网）、工作区+网络、宿主权限。\n- 供应商声明多个思考档位后，底栏会出现「思考」下拉；选择按当前会话保存。\n- 模型下拉切换 profile；对话内补发消息会在当前回合的下一个边界并入。\n- 待发送区可选择「全部立即发送」：停止当前轮并马上提交这些补充内容。\n### 联动\n- 「上下文成分」「运行概览」展示成本、上下文来源和建议思考档位。\n- 修改设备、运行命令、写文件等动作同时受权限和沙箱控制。",
-        en: "### Purpose\nDescribe a goal; the Agent reads the workspace, calls tools, verifies work and reports.\n### Usage\n- Enter sends, Shift+Enter inserts a newline.\n- Switch permission below the composer: read-only / ask / auto.\n- Sandbox selects the command boundary: Workspace AppContainer (no network by default), Workspace + network, or Host access.\n- When a provider declares several reasoning efforts, a Thinking selector appears and is stored per session.\n- The model selector switches profiles; extra messages are merged at the next turn boundary.\n- Pending messages also offer Send all now, which stops the current turn and submits them immediately.\n### Relationships\n- Context breakdown and Runtime overview show cost, context sources and the selected effort.\n- Device changes, commands and file writes are governed by both permission and sandbox mode."
+        zh: "### 用途\n用自然语言描述目标，Agent 会读取工作区、调用工具、执行验证并汇报。\n### 操作\n- 输入后 Enter 发送，Shift+Enter 换行。\n- 可在输入框下方切换权限：只读 / 需批准 / 自动。\n- 「沙箱」选择命令边界：工作区 AppContainer（默认断网）、工作区+网络、宿主权限。\n- 供应商声明多个思考档位后，底栏会出现「思考」下拉；选择按当前会话保存。\n- 模型下拉切换 profile；对话内补发消息会在当前回合的下一个边界并入。\n- 待发送区可选择「全部立即发送」：停止当前轮并马上提交这些补充内容。\n### 身份与布局\n- 首轮只会从用户明确自称中确定用户称呼；人格/身份技能只用于确定 Agent 自己的名字。\n- Agent 有独立名字后，输入框标题会从「给 Agent」同步改为「给 <名字>」。\n- 消息列按 Codex 式居中；窗口较窄时右栏 Agent 信息会自动折叠，可用标题栏的参数区按钮临时展开。\n### 联动\n- 「上下文成分」「运行概览」展示成本、上下文来源和建议思考档位。\n- 修改设备、运行命令、写文件等动作同时受权限和沙箱控制。",
+        en: "### Purpose\nDescribe a goal; the Agent reads the workspace, calls tools, verifies work and reports.\n### Usage\n- Enter sends, Shift+Enter inserts a newline.\n- Switch permission below the composer: read-only / ask / auto.\n- Sandbox selects the command boundary: Workspace AppContainer (no network by default), Workspace + network, or Host access.\n- When a provider declares several reasoning efforts, a Thinking selector appears and is stored per session.\n- The model selector switches profiles; extra messages are merged at the next turn boundary.\n- Pending messages also offer Send all now, which stops the current turn and submits them immediately.\n### Identity and layout\n- User naming comes only from an explicit self-reference in the first message; persona/identity skills are used only to determine the Agent's own name.\n- Once the Agent has a distinct name, the composer title changes from “To Agent” to “To <name>”.\n- Messages use a centered Codex-style column. At narrow widths, the Agent inspector auto-collapses and can be reopened from the title-bar panel toggle.\n### Relationships\n- Context breakdown and Runtime overview show cost, context sources and the selected effort.\n- Device changes, commands and file writes are governed by both permission and sandbox mode."
       },
       {
         id: "help-agent-workspace",
@@ -755,6 +761,7 @@ export const HELP_TITLE_EN = {
   "快捷键与通用操作": "Shortcuts and common actions",
   "快捷键": "Shortcuts",
   "应用更新": "App updates",
+  "输出与日志目录": "Output and log folder",
   "命令沙箱": "Command sandbox",
   "工具发现与加载": "Tool discovery and loading",
   "长期任务与 Windows 调度": "Long-running tasks and Windows scheduling",
