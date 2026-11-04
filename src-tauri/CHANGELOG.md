@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.11 -->
+## v0.3.11
+
+### 修复
+
+- fix(agent): count turns from user messages
+
+### Dependencies
+
+- Update kdock-core to 0.3.11.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.10 -->
 ## v0.3.10
 
