@@ -196,15 +196,18 @@ try {
             const work = document.querySelector('[data-work="agent"]');
             const chat = document.querySelector("#ag-chat");
             const params = document.querySelector(".params");
+            const input = document.querySelector('[data-work="agent"] .inpane');
             const workRect = work.getBoundingClientRect();
             const paramsRect = params.getBoundingClientRect();
-            const overlapX = Math.min(workRect.right, paramsRect.right) - Math.max(workRect.left, paramsRect.left);
-            const overlapY = Math.min(workRect.bottom, paramsRect.bottom) - Math.max(workRect.top, paramsRect.top);
+            const inputRect = input.getBoundingClientRect();
+            const inputOverlapX = Math.min(inputRect.right, paramsRect.right) - Math.max(inputRect.left, paramsRect.left);
+            const inputOverlapY = Math.min(inputRect.bottom, paramsRect.bottom) - Math.max(inputRect.top, paramsRect.top);
             return {
               chatHeight: chat.clientHeight,
               workBottom: Math.round(workRect.bottom),
               paramsTop: Math.round(paramsRect.top),
-              overlap: overlapX > 2 && overlapY > 2 ? Math.round(overlapY) : 0,
+              inputTop: Math.round(inputRect.top),
+              inputOverlap: inputOverlapX > 2 && inputOverlapY > 2 ? Math.round(inputOverlapY) : 0,
             };
           })();
           return {
@@ -332,7 +335,7 @@ try {
     || (item.updatePrompt && item.manualHidden !== true)
     || item.viewportOverflow > 2
     || item.buttonsOutside?.length
-    || (item.agentProblem && (item.agentProblem.chatHeight < 55 || item.agentProblem.overlap > 2)),
+    || (item.agentProblem && (item.agentProblem.chatHeight < 55 || item.agentProblem.inputOverlap > 2)),
   );
   assert.deepEqual(
     failures,
