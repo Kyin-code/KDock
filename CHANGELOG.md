@@ -1,5 +1,15 @@
 # Changelog
 
+<!-- semifold:release version=0.3.13 -->
+## v0.3.13
+
+### 修复
+
+- test(i18n): allow agent inspector overlay above composer
+<!-- semifold:release:end -->
+
+
+
 <!-- semifold:release version=0.3.12 -->
 ## v0.3.12
 
