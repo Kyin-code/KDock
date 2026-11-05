@@ -179,6 +179,39 @@ try {
   if (navStability.wraps.header !== "nowrap" || navStability.wraps.composer !== "nowrap") {
     throw new Error(`Agent critical rows must not wrap: ${JSON.stringify(navStability.wraps)}`);
   }
+  const paramToggleStability = await page.evaluate(() => {
+    const root = document.documentElement;
+    const measure = () => {
+      const split = document.querySelector(".split");
+      const work = document.querySelector('[data-work="agent"]').getBoundingClientRect();
+      const input = document.querySelector('[data-work="agent"] .inpane').getBoundingClientRect();
+      const params = document.querySelector(".params").getBoundingClientRect();
+      return {
+        navWidth: getComputedStyle(split).gridTemplateColumns.split(/\s+/)[0],
+        workHeight: Math.round(work.height),
+        inputTop: Math.round(input.top),
+        inputHeight: Math.round(input.height),
+        inputBottom: Math.round(input.bottom),
+        paramsHeight: Math.round(params.height),
+      };
+    };
+    root.classList.remove("noparam");
+    const shown = measure();
+    root.classList.add("noparam");
+    const hidden = measure();
+    root.classList.remove("noparam");
+    const shownAgain = measure();
+    return { shown, hidden, shownAgain };
+  });
+  for (const key of ["navWidth", "workHeight", "inputTop", "inputHeight", "inputBottom"]) {
+    if (paramToggleStability.shown[key] !== paramToggleStability.hidden[key]
+      || paramToggleStability.shown[key] !== paramToggleStability.shownAgain[key]) {
+      throw new Error(`Parameter toggle shifts Agent layout (${key}): ${JSON.stringify(paramToggleStability)}`);
+    }
+  }
+  if (paramToggleStability.shown.paramsHeight < 100 || paramToggleStability.hidden.paramsHeight !== 0) {
+    throw new Error(`Agent parameter overlay did not open/close correctly: ${JSON.stringify(paramToggleStability)}`);
+  }
   await page.evaluate(() => {
     document.documentElement.classList.add("noparam");
     window.dispatchEvent(new Event("resize"));
@@ -366,6 +399,7 @@ try {
     agentLayout,
     agentAfterWindowShrink,
     navStability,
+    paramToggleStability,
     agentVisual,
     turnVisual,
     responsiveMatrix: {

@@ -20,6 +20,7 @@ export function bindAgentResize(doc = document, storage = localStorage) {
     ? grip.nextElementSibling
     : null;
   const workpane = box?.closest('.workpane[data-work="agent"]');
+  const split = workpane?.closest(".split");
   if (!grip || !box || !inputPane || !workpane) return;
 
   // The old implementation persisted an unbounded conversation height. It can
@@ -27,7 +28,9 @@ export function bindAgentResize(doc = document, storage = localStorage) {
   storage.removeItem(LEGACY_CHAT_KEY);
 
   const apply = (height) => {
-    inputPane.style.flex = `0 1 ${Math.round(height)}px`;
+    const rounded = Math.round(height);
+    inputPane.style.flex = `0 1 ${rounded}px`;
+    split?.style.setProperty("--agent-input-height", `${rounded}px`);
   };
   const saved = Number(storage.getItem(AGENT_INPUT_KEY) || 0);
   if (Number.isFinite(saved) && saved >= AGENT_INPUT_MIN) {
@@ -74,6 +77,8 @@ export function bindAgentResize(doc = document, storage = localStorage) {
   grip.addEventListener("dblclick", () => {
     storage.removeItem(AGENT_INPUT_KEY);
     inputPane.style.removeProperty("flex");
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(clampSaved);
+    else clampSaved();
   });
 
   const clampSaved = () => {
@@ -90,4 +95,6 @@ export function bindAgentResize(doc = document, storage = localStorage) {
   if (typeof ResizeObserver === "function") {
     new ResizeObserver(clampSaved).observe(workpane);
   }
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(clampSaved);
+  else clampSaved();
 }
