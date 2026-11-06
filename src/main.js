@@ -26,7 +26,7 @@ import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
 import { bindAgentResize } from "./agent-layout.js";
 import { pendingBatchText } from "./agent-pending.js";
 import { logNumberColumnWidth } from "./log-gutter.js";
-import { remindUpdateLater, shouldOfferUpdate, skipUpdate } from "./app-update.js";
+import { remindUpdateLater, skipUpdate } from "./app-update.js";
 import { createAsciiHistory, loadAsciiHistory, saveAsciiHistory } from "./ascii-history.js";
 import { bindPopoverDismissal } from "./popover.js";
 import { termFeed, termModes, termNew, termText } from "./terminal.js";
@@ -8273,7 +8273,13 @@ function bindSettings() {
       };
     }
   }
-  // 关于本软件那几个按钮：GitHub 仓库 / 作者主页 / 更新日志 / 跳到完整关于页
+  // 关于本软件那几个按钮：GitHub 仓库 / 作者主页 / 检查更新 / 更新日志
+  if (document.getElementById("set-update-status")) {
+    appUpdateController().then((controller) => controller.paintSaved()).catch(() => {});
+  }
+  if (document.getElementById("set-check-update")) {
+    document.getElementById("set-check-update").onclick = () => checkAppUpdateOnStartup(true);
+  }
   if (document.getElementById("set-open-github")) {
     document.getElementById("set-open-github").onclick = () => openExternal(KDOCK_REPO);
   }
@@ -12237,6 +12243,7 @@ let pendingAppUpdate = null;
 let pendingAppUpdateDownload = null;
 let pendingAppUpdateSilent = false;
 let appUpdateBusy = false;
+let appUpdateControllerPromise = null;
 
 function openExternal(url) {
   invoke("browser_open_external", { path: url }).catch((e) => toast(String(e)));
@@ -12305,12 +12312,26 @@ function showAppUpdatePrompt(info) {
   setTimeout(() => document.getElementById("app-update-download")?.focus(), 30);
 }
 
-async function checkAppUpdateOnStartup() {
+async function appUpdateController() {
+  if (!appUpdateControllerPromise) {
+    appUpdateControllerPromise = import("./app-update-controller.js").then(
+      ({ createAppUpdateController }) => createAppUpdateController({
+        invoke,
+        showPrompt: showAppUpdatePrompt,
+        toast,
+        translate: en,
+      }),
+    );
+  }
+  return appUpdateControllerPromise;
+}
+
+async function checkAppUpdateOnStartup(manual = false) {
   try {
-    const info = await invoke("app_update_check");
-    if (shouldOfferUpdate(info)) showAppUpdatePrompt(info);
-  } catch (_) {
-    // Update checks are best-effort and must never block or disturb startup.
+    return (await appUpdateController()).check(manual);
+  } catch (error) {
+    console.warn("[update] controller failed:", error);
+    return false;
   }
 }
 
@@ -13907,7 +13928,7 @@ async function main() {
   bindUsb();                    // USB 诊断
   bindAppUpdatePrompt();
   setTimeout(envFirstRunCheck, 900);       // 首次运行检查：缺必需驱动才提示一次（不挡启动）
-  setTimeout(checkAppUpdateOnStartup, 8000); // 应用更新只在启动后检查一次，运行中不轮询
+  setTimeout(checkAppUpdateOnStartup, 8000); // 启动后检查；在线/恢复窗口/每 6 小时再补查
   listen("debug://gdb", (ev) => { if (window.__dbgOnGdb) window.__dbgOnGdb(String(ev.payload || "")); });
   listen("debug://server", (ev) => { dbgPrint("[server] " + String(ev.payload || "") + "\n"); });
   bindScrollFollow();

@@ -478,6 +478,7 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 .params .parampane[data-param="files"] .trow:has(#fl-tftp-write) { flex: 1 1 100%; }
 .parampane .field { max-width: 100%; }
 .lb { color: hsl(var(--muted-foreground)); font-size: 12.5px; white-space: nowrap; }
+.updatestatus { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 
 .adv { margin: 2px 0 8px; }
 .adv > summary, .more > summary {

@@ -70,15 +70,24 @@ const [main, html] = await Promise.all([
   readFile(resolve(root, "src/main.js"), "utf8"),
   readFile(resolve(root, "index.html"), "utf8"),
 ]);
-const [pkg, tauriConf, tauriEntry, ciWorkflow] = await Promise.all([
+const [pkg, tauriConf, tauriEntry, ciWorkflow, appUpdateRust, appUpdateController] = await Promise.all([
   readFile(resolve(root, "package.json"), "utf8").then(JSON.parse),
   readFile(resolve(root, "src-tauri/tauri.conf.json"), "utf8").then(JSON.parse),
   readFile(resolve(root, "scripts/tauri-entry.mjs"), "utf8"),
   readFile(resolve(root, ".github/workflows/ci.yml"), "utf8"),
+  readFile(resolve(root, "src-tauri/src/app_update.rs"), "utf8"),
+  readFile(resolve(root, "src/app-update-controller.js"), "utf8"),
 ]);
 assert.match(main, /setTimeout\(checkAppUpdateOnStartup, 8000\)/);
-assert.doesNotMatch(main, /setInterval\([^)]*checkAppUpdateOnStartup/);
-assert.match(main, /shouldOfferUpdate\(info\)/);
+assert.match(main, /checkAppUpdateOnStartup\(true\)/);
+assert.match(main, /import\("\.\/app-update-controller\.js"\)/);
+assert.match(appUpdateController, /shouldOfferUpdate\(info/);
+assert.match(appUpdateController, /kdock_update_last_error/);
+assert.match(appUpdateController, /setInterval\(/);
+assert.match(appUpdateController, /addEventListener\("online"/);
+assert.match(main, /set-check-update/);
+assert.match(appUpdateRust, /AutoConfigURL/);
+assert.match(appUpdateRust, /WinHttpGetProxyForUrl/);
 assert.match(main, /invoke\("app_update_download"/);
 assert.match(main, /invoke\("app_update_launch"/);
 assert.doesNotMatch(main, /openExternal\(info\.installerUrl\)/);
@@ -91,6 +100,8 @@ assert.match(html, /id="app-update-later"/);
 assert.match(html, /id="app-update-manual"/);
 assert.match(html, /id="app-update-download"/);
 assert.match(html, /id="app-update-progress"/);
+assert.match(html, /id="set-check-update"/);
+assert.match(html, /id="set-update-status"/);
 assert.equal(pkg.scripts.tauri, "node scripts/tauri-entry.mjs");
 assert.equal(pkg.scripts["build:tauri"], "node scripts/verify-tauri-build-entry.mjs && npm run build");
 assert.equal(tauriConf.build.beforeBuildCommand, "npm run build:tauri");

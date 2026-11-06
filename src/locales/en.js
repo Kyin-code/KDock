@@ -576,6 +576,13 @@ export const EN = {
   "启动安装程序": "Launch installer",
   "安装包已下载，SHA-256 校验通过": "Installer downloaded; SHA-256 verified",
   "安装包已下载；旧版更新清单未提供 SHA-256": "Installer downloaded; the legacy update manifest has no SHA-256 value",
+  "检查更新": "Check for updates",
+  "正在检查更新…": "Checking",
+  "发现新版本": "Update ready",
+  "已是最新版本": "Current",
+  "更新检查失败：": "Failed: ",
+  "上次检查：": "Last: ",
+  "启动后自动检查，也可手动检查": "Auto + manual check",
   "安装包下载完成，请点击“启动安装程序”":
     "Download complete. Click “Launch installer” to continue.",
   "安装包下载完成，点击“立即静默更新”将沿用上次安装目录并自动重启 KDock":

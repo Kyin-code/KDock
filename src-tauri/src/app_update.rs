@@ -201,6 +201,84 @@ fn windows_system_proxy() -> Option<String> {
     None
 }
 
+#[cfg(windows)]
+fn windows_pac_proxy(url: &str) -> Option<String> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let key = hkcu
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+        .ok()?;
+    let pac_url: String = key.get_value("AutoConfigURL").ok()?;
+    if pac_url.trim().is_empty() {
+        return None;
+    }
+
+    use windows_sys::Win32::Foundation::GlobalFree;
+    use windows_sys::Win32::Networking::WinHttp::{
+        WinHttpCloseHandle, WinHttpGetProxyForUrl, WinHttpOpen, WINHTTP_AUTOPROXY_CONFIG_URL,
+        WINHTTP_AUTOPROXY_OPTIONS, WINHTTP_ACCESS_TYPE_NAMED_PROXY,
+        WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_PROXY_INFO,
+    };
+
+    fn wide(value: &str) -> Vec<u16> {
+        value.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+    fn pwstr(value: windows_sys::core::PWSTR) -> String {
+        if value.is_null() {
+            return String::new();
+        }
+        let mut len = 0usize;
+        unsafe {
+            while *value.add(len) != 0 {
+                len += 1;
+            }
+            String::from_utf16_lossy(std::slice::from_raw_parts(value, len))
+        }
+    }
+
+    let agent = wide("KDock-update");
+    let pac = wide(&pac_url);
+    let target = wide(url);
+    unsafe {
+        let session = WinHttpOpen(
+            agent.as_ptr(),
+            WINHTTP_ACCESS_TYPE_NO_PROXY,
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+        );
+        if session.is_null() {
+            return None;
+        }
+        let mut options = WINHTTP_AUTOPROXY_OPTIONS::default();
+        options.dwFlags = WINHTTP_AUTOPROXY_CONFIG_URL;
+        options.lpszAutoConfigUrl = pac.as_ptr();
+        options.fAutoLogonIfChallenged = 1;
+        let mut info = WINHTTP_PROXY_INFO::default();
+        let ok = WinHttpGetProxyForUrl(session, target.as_ptr(), &mut options, &mut info);
+        let proxy = if ok != 0 && info.dwAccessType == WINHTTP_ACCESS_TYPE_NAMED_PROXY {
+            proxy_url_from_server(&pwstr(info.lpszProxy))
+        } else {
+            None
+        };
+        if !info.lpszProxy.is_null() {
+            GlobalFree(info.lpszProxy.cast());
+        }
+        if !info.lpszProxyBypass.is_null() {
+            GlobalFree(info.lpszProxyBypass.cast());
+        }
+        WinHttpCloseHandle(session);
+        proxy
+    }
+}
+
+#[cfg(not(windows))]
+fn windows_pac_proxy(_url: &str) -> Option<String> {
+    None
+}
+
 fn is_loopback_url(url: &str) -> bool {
     let Ok(parsed) = url::Url::parse(url) else {
         return false;
@@ -226,7 +304,7 @@ fn update_agent(url: &str) -> Result<ureq::Agent, String> {
     if is_loopback_url(url) {
         builder = builder.try_proxy_from_env(false);
     } else if !has_env_proxy() {
-        if let Some(proxy_url) = windows_system_proxy() {
+        if let Some(proxy_url) = windows_system_proxy().or_else(|| windows_pac_proxy(url)) {
             let proxy = ureq::Proxy::new(&proxy_url)
                 .map_err(|e| format!("Windows 系统代理配置无效（{proxy_url}）：{e}"))?;
             builder = builder.proxy(proxy);
@@ -581,6 +659,16 @@ mod tests {
 
         value.as_object_mut().unwrap().remove("sha256");
         assert!(parse_manifest(&value.to_string()).is_ok());
+    }
+
+    #[test]
+    #[ignore = "requires access to the public GitHub release"]
+    fn live_rolling_update_manifest_is_readable() {
+        let raw = fetch_manifest().expect("fetch live update manifest");
+        let info = check_manifest("0.3.12", "historical-build", &raw).expect("parse live manifest");
+        assert!(info.available, "0.3.12 should see the newer rolling build");
+        assert!(info.installer_url.starts_with(DOWNLOAD_PREFIX));
+        assert!(valid_sha256(&info.sha256));
     }
 
     #[test]

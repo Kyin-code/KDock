@@ -25,8 +25,8 @@ export const HELP_GROUPS = [
       {
         id: "help-app-update",
         title: "应用更新",
-        zh: "发现新版本后，KDock 会在应用内下载安装包并显示进度。更新清单提供 SHA-256 时，下载完成会先校验；通过后按钮变为「启动安装程序」，仍需用户再次点击，不会静默安装。安装包目前未做 Authenticode 签名，Windows 仍可能提示未知发布者或 SmartScreen。",
-        en: "When a new version is available, KDock downloads the installer in-app and shows progress. If the update manifest provides SHA-256, KDock verifies it before enabling Launch installer; the user must click again and nothing installs silently. The installer is not Authenticode-signed yet, so Windows may still show Unknown publisher or SmartScreen warnings."
+        zh: "### 检查时机\n- 启动 8 秒后检查一次；网络恢复、窗口重新可见或应用连续运行满 6 小时时会再次检查。\n- 设置 → 关于里可以手动「检查更新」，并显示成功、已是最新或具体错误。\n- 更新检查会使用环境变量、Windows 静态代理和 PAC 自动代理；公司网络仍拦截 GitHub 时，关于页会显示失败原因。\n### 下载与安装\n- 发现新版本后，KDock 会在应用内下载安装包并显示进度。\n- 更新清单提供 SHA-256 时，下载完成会先校验；通过后按钮变为「启动安装程序」，仍需用户再次点击，不会静默安装。\n- 安装包目前未做 Authenticode 签名，Windows 仍可能提示未知发布者或 SmartScreen。",
+        en: "### Check timing\n- KDock checks 8 seconds after startup, then again when the network returns, the window becomes visible, or the app has been running for 6 hours.\n- Settings → About offers Check for updates and shows success, up-to-date, or the exact error.\n- Update checks use environment proxies, the Windows static proxy, and PAC auto-proxy. If a corporate network still blocks GitHub, About shows the failure reason.\n### Download and install\n- When a new version is available, KDock downloads the installer in-app and shows progress.\n- If the update manifest provides SHA-256, KDock verifies it before enabling Launch installer; the user must click again and nothing installs silently.\n- The installer is not Authenticode-signed yet, so Windows may still show Unknown publisher or SmartScreen warnings."
       },
       {
         id: "help-output-dir",
