@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.16 -->
+## v0.3.16
+
+### 修复
+
+- fix(update): retry checks and support PAC proxies
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.15 -->
 ## v0.3.15
 
