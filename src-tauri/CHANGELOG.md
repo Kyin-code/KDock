@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.17 -->
+## v0.3.17
+
+### 修复
+
+- ui(transfer): simplify the primary toolbar
+
+### Dependencies
+
+- Update kdock-core to 0.3.17.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.16 -->
 ## v0.3.16
 

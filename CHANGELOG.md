@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.17 -->
+## v0.3.17
+
+### 修复
+
+- ui(transfer): simplify the primary toolbar
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.16 -->
 ## v0.3.16
 
