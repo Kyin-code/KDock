@@ -1,5 +1,19 @@
 # Changelog
 
+<!-- semifold:release version=0.3.14 -->
+## v0.3.14
+
+### 修复
+
+- test(ci): require ephemeral release builds
+
+### Dependencies
+
+- Update kdock-core to 0.3.14.
+<!-- semifold:release:end -->
+
+
+
 <!-- semifold:release version=0.3.13 -->
 ## v0.3.13
 

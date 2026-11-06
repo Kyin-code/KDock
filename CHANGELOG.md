@@ -1,5 +1,15 @@
 # Changelog
 
+<!-- semifold:release version=0.3.14 -->
+## v0.3.14
+
+### 修复
+
+- test(ci): require ephemeral release builds
+<!-- semifold:release:end -->
+
+
+
 <!-- semifold:release version=0.3.13 -->
 ## v0.3.13
 
