@@ -136,11 +136,14 @@ assert.ok(buildJobStart >= 0, "CI has no release build job");
 const buildJob = ciWorkflow.slice(buildJobStart);
 assert.match(
   buildJob,
-  /runs-on: windows-latest/,
-  "release builds must use an ephemeral runner instead of the Application Control host",
+  /runs-on: \[ self-hosted, windows, kdock \]/,
+  "release builds must use the dedicated self-hosted runner",
 );
-assert.doesNotMatch(buildJob, /CARGO_TARGET_DIR|self-hosted, windows, kdock/);
-assert.match(buildJob, /target\\release\\kdock\.exe/);
+assert.match(buildJob, /CARGO_TARGET_DIR: D:\/CI\/cargo-target\/kdock/);
+assert.match(buildJob, /VerifiedAndReputablePolicyState/);
+const cleanIndex = buildJob.indexOf("Remove-Item -LiteralPath $nsis -Recurse -Force");
+const buildIndex = buildJob.indexOf("npm run tauri build");
+assert.ok(cleanIndex >= 0 && cleanIndex < buildIndex, "CI must clear stale NSIS output before building");
 assert.match(
   ciWorkflow,
   /Get-ChildItem -LiteralPath \$nsis -Filter \$name -File/,
