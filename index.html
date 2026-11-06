@@ -786,14 +786,9 @@
               <div class="seg">
                 <label><input type="radio" name="rx-mode" value="text" checked /> 文本</label>
                 <label><input type="radio" name="rx-mode" value="hex" /> HEX</label>
-                <label><input type="radio" name="rx-mode" value="mixed" /> 文本 + HEX</label>
               </div>
-              <label class="chk" title="只显示 RX"><input type="checkbox" id="rx-only" /> 仅 RX</label>
               <span class="sep"></span>
-              <label class="lb">行尾</label><select id="line-ending" class="tight"></select>
               <select id="history" class="tight"><option value="">历史…</option></select>
-              <label class="chk"><input type="checkbox" id="loop" /> 循环</label>
-              <input id="loop-ms" type="number" min="10" value="1000" class="num" /> ms
               <button id="clear" class="btn small">清屏</button>
               <span class="grow"></span>
               <label class="chk" title="显示时间戳"><input type="checkbox" id="show-ts" checked /> 时间戳</label>
@@ -814,6 +809,15 @@
                     <div class="mline">
                       <label class="chk" title="新数据自动滚到底部"><input type="checkbox" id="autoscroll" checked /> 自动滚动</label>
                       <label class="chk" title="暂停刷新，后台继续接收"><input type="checkbox" id="pause" /> 暂停接收</label>
+                      <label class="chk" title="只显示 RX"><input type="checkbox" id="rx-only" /> 仅 RX</label>
+                    </div>
+                  </section>
+                  <section class="msec">
+                    <div class="msec-h">发送</div>
+                    <div class="mline">
+                      <label class="lb">行尾</label><select id="line-ending" class="tight"></select>
+                      <label class="chk"><input type="checkbox" id="loop" /> 循环</label>
+                      <input id="loop-ms" type="number" min="10" value="1000" class="num" /> ms
                     </div>
                   </section>
                   <section class="msec">

@@ -32,9 +32,12 @@ try {
     const summary = more?.querySelector("summary");
     const mixed = document.querySelector('input[name="rx-mode"][value="mixed"]');
     const rxOnly = document.getElementById("rx-only");
+    const lineEnding = document.getElementById("line-ending");
+    const loop = document.getElementById("loop");
+    const loopMs = document.getElementById("loop-ms");
     const resend = document.getElementById("ascii-resend");
     const localEcho = document.getElementById("local-echo");
-    if (!more || !summary || !mixed || !rxOnly || !resend || !localEcho) {
+    if (!more || !summary || !rxOnly || !lineEnding || !loop || !loopMs || !resend || !localEcho) {
       return { missing: true };
     }
     more.open = true;
@@ -46,8 +49,9 @@ try {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     const escapedClosed = !more.open;
     return {
-      mixed: mixed.value,
+      mixedRemoved: !mixed,
       rxOnlyLabel: rxOnly.closest("label")?.textContent.trim(),
+      movedToMore: [rxOnly, lineEnding, loop, loopMs].every((el) => more.contains(el)),
       resend: resend.textContent.trim(),
       localEchoDefault: !localEcho.checked,
       insideStayedOpen,
@@ -55,7 +59,7 @@ try {
       escapedClosed,
     };
   });
-  if (transferUi.missing || transferUi.mixed !== "mixed"
+  if (transferUi.missing || !transferUi.mixedRemoved || !transferUi.movedToMore
       || transferUi.rxOnlyLabel !== "仅 RX" || transferUi.resend !== "重发上一条"
       || !transferUi.localEchoDefault
       || !transferUi.insideStayedOpen || !transferUi.outsideClosed || !transferUi.escapedClosed) {

@@ -755,7 +755,7 @@ export const EN = {
   "是另一套：": " is a separate scheme: ",
   // ============ 传输页「更多」面板 ============
   "更多 ⋯": "More ⋯", "显示": "Display", "编码": "Encoding",
-  "文本 + HEX": "Text + HEX", "仅 RX": "RX only",
+  "仅 RX": "RX only",
   "打开输出目录": "Open output folder",
   "退出 ASCII 交互": "Exit ASCII mode",
   "跳到最新": "Jump to latest",

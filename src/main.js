@@ -519,13 +519,6 @@ function entryLines(e) {
   const t = decodeEntry(e);
   const textParts = ansiBackspaceText(t).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
   if (textParts.length > 1 && textParts[textParts.length - 1] === "") textParts.pop();  // 结尾换行不留空行
-  if (rxMode === "mixed") {
-    return [
-      ...textParts.map(ansiToHtml),
-      ...formatHexDump(e.hex, { text: t }).map((line) =>
-        `<span class="hexdump">${escapeHtml(line)}</span>`),
-    ];
-  }
   return textParts.map(ansiToHtml);
 }
 
@@ -7848,6 +7841,7 @@ const HELP_HEADING_MAP = {
     "统计": "help-transfer-stats",
     "快捷发送": "help-transfer-quick",
     "显示": "help-transfer-receive",
+    "发送": "help-transfer-receive",
     "交互": "help-transfer-ascii",
     "会话日志": "help-transfer-session",
     "回放": "help-transfer-session",
