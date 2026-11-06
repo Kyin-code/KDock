@@ -90,7 +90,38 @@ impl SessionLog {
     }
 
     pub fn push(&mut self, ts_ms: i64, dir: Direction, data: Vec<u8>) {
+        // A live session is a single timeline. Independent reader/writer threads
+        // can finish logging out of order, but visible timestamps must never move
+        // backwards. Loaded JSONL keeps its recorded timestamps (from_jsonl does
+        // not pass through this method), so replaying an old log stays faithful.
+        let ts_ms = self
+            .lines
+            .last()
+            .map(|line| ts_ms.max(line.ts_ms))
+            .unwrap_or(ts_ms);
         self.lines.push(LogLine::new(ts_ms, dir, data));
+    }
+
+    /// Coalesce raw interactive keystrokes into one readable TX record until a
+    /// command boundary (CR/LF or Ctrl+C). RX/SYS records interrupt the run, so
+    /// this never reorders traffic across directions.
+    pub fn push_tx_coalesced(&mut self, ts_ms: i64, data: Vec<u8>) {
+        let ts_ms = self
+            .lines
+            .last()
+            .map(|line| ts_ms.max(line.ts_ms))
+            .unwrap_or(ts_ms);
+        if let Some(last) = self.lines.last_mut() {
+            let boundary = last.data.last().is_some_and(|b| {
+                matches!(*b, b'\r' | b'\n' | 0x03)
+            });
+            if last.dir == Direction::Tx && !boundary {
+                last.data.extend(data);
+                last.ts_ms = ts_ms;
+                return;
+            }
+        }
+        self.lines.push(LogLine::new(ts_ms, Direction::Tx, data));
     }
 
     pub fn lines(&self) -> &[LogLine] {
@@ -292,5 +323,39 @@ mod tests {
         let log = sample();
         assert_eq!(hex_to_bytes(&log.lines()[1].hex()).unwrap(), b"AT\r\n");
         assert_eq!(log.lines()[2].ascii(), "OK..");
+    }
+
+    #[test]
+    fn push_is_monotonic_for_concurrent_readers_and_writers() {
+        let mut log = SessionLog::new();
+        log.push(2_000, Direction::Tx, b"ifconfig\r".to_vec());
+        log.push(1_900, Direction::Rx, b"root@device:/# ".to_vec());
+        assert_eq!(log.lines()[1].ts_ms, 2_000);
+    }
+
+    #[test]
+    fn raw_interactive_tx_coalesces_until_a_command_boundary() {
+        let mut log = SessionLog::new();
+        for (ts, byte) in [(1_000, b"i"), (1_001, b"p"), (1_002, b"\r")] {
+            log.push_tx_coalesced(ts, byte.to_vec());
+        }
+        assert_eq!(log.len(), 1);
+        assert_eq!(log.lines()[0].data, b"ip\r");
+        assert_eq!(log.lines()[0].ts_ms, 1_002);
+
+        log.push_tx_coalesced(1_003, b"x".to_vec());
+        assert_eq!(log.len(), 2);
+        assert_eq!(log.lines()[1].data, b"x");
+    }
+
+    #[test]
+    fn rx_breaks_interactive_tx_coalescing() {
+        let mut log = SessionLog::new();
+        log.push_tx_coalesced(1_000, b"i".to_vec());
+        log.push(1_001, Direction::Rx, b"i".to_vec());
+        log.push_tx_coalesced(1_002, b"p".to_vec());
+        assert_eq!(log.len(), 3);
+        assert_eq!(log.lines()[0].data, b"i");
+        assert_eq!(log.lines()[2].data, b"p");
     }
 }

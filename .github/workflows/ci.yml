@@ -76,6 +76,9 @@ jobs:
       - name: Test agent activity grouping
         run: npm run test:activity
 
+      - name: Test terminal and transfer log behavior
+        run: npm run test:transfer
+
       - name: Test update manifest contract
         run: npm run test:update
 

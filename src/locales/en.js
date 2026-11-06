@@ -191,9 +191,6 @@ export const EN = {
   "例如 250000": "e.g. 250000", "名字": "name",
   "搜型号，如 stm32f4 / nrf52 / rp2040": "Search a model, e.g. stm32f4 / nrf52 / rp2040",
   "搜索命令 / 说明": "Search command / description",
-  "文本直接输入；HEX 形如 41 54 0D 0A（Enter 发送 / Shift+Enter 换行）": "Plain text, or HEX like 41 54 0D 0A (Enter to send / Shift+Enter for newline)",
-  "文本直接输入（Enter 发送 / Shift+Enter 换行）": "Plain text (Enter to send / Shift+Enter for newline)",
-  "HEX 模式：41 54 0D 0A（Enter 发送 / Shift+Enter 换行）": "HEX mode: 41 54 0D 0A (Enter to send / Shift+Enter for newline)",
   "本机目录": "Local folder", "没找到就手动选 openocd.exe": "Pick openocd.exe manually if not found",
   "目录或 .fw 地址": "Directory or .fw path", "要发送的内容": "Payload",
   "选文件后自动填": "Filled after picking a file", "默认目录": "Default folder",
@@ -254,18 +251,12 @@ export const EN = {
   "改这一条": "Edit this one",
   "点某一行=直接发出去；✎ 改、✕ 删（改的时候上面那行变成编辑框，改完点「保存」）。":
     "Click a row to send it; ✎ edit, ✕ delete (the row above turns into an edit box — press Save when done).",
-  "回到最新（上翻时自动停住跟随）": "Jump to latest (auto-follow stops when you scroll up)",
   "填进输入框": "Fill into the input", "怎么用": "How to use",
-  "打开后可以直接在右边输出区敲键盘跟设备交互": "Type in the output area to talk to the device",
   "拖动调整参数区宽度（双击复位）": "Drag to resize the params column (double-click to reset)",
   "拖动调整左栏宽度（双击复位）": "Drag to resize the nav (double-click to reset)",
   "按流程分层自动排版（线就不乱了）": "Auto-layout by flow level (keeps wires tidy)",
-  "更多：编码 / 滚动 / 暂停 / ASCII 交互 / 快捷命令 / 会话": "More: encoding / scroll / pause / ASCII / quick cmds / session",
-  "每行前面显示时间戳": "Show a timestamp per line",
-  "点这里；打开「ASCII 交互」后可以直接敲键盘跟设备对话": "Click here; with ASCII mode you can type to the device",
   "直接发送": "Send now", "缩放到合适大小": "Zoom to fit",
   "设备不回显时打开": "Turn on when the device does not echo",
-  "设备打印非 UTF-8（比如 GB2312）时切到 GBK": "Switch to GBK when the device prints non-UTF-8 (e.g. GB2312)",
   "读取可用版本，明细打到中间输出": "Read available versions; details go to the output",
   "载入 ping + TCP + 串口 的示例编排": "Load the ping + TCP + serial example flow",
   "选 JLink.exe": "Pick JLink.exe", "选 STM32_Programmer_CLI.exe": "Pick STM32_Programmer_CLI.exe",
@@ -276,10 +267,7 @@ export const EN = {
   "琥珀橙": "Amber", "石墨": "Graphite", "薄荷青": "Mint",
   "拖动调整日志高度": "Drag to resize the log",
   // 传输页顶部那行
-  "点一下在资源管理器里打开这个目录": "Click to open this folder in Explorer",
   "当前时间": "Current time", "会话开始": "session started", "已运行": "elapsed",
-  "直接在输出区敲键盘，会按原始字节发给设备（Enter 发 CR、Backspace 发 0x08、Ctrl+C 发 0x03）；点这里关掉":
-    "Type right in the output area; bytes go to the device as-is (Enter = CR, Backspace = 0x08, Ctrl+C = 0x03). Click to turn off",
   "未设置": "not set",
   // 编排：节点配置面板
   "HEX（内容按十六进制解析）": "HEX (parse content as hex)",
@@ -303,7 +291,6 @@ export const EN = {
   "正常结束。": "Normal end.", "失败结束（流程以失败收尾）。": "Fail end (the flow ends as failed).",
   "删除这个节点": "Delete this node", "删除这条线": "Delete this wire",
   "起点": "From", "终点": "To", "点一下选中并居中": "Click to select and center",
-  "拖动调整输入区高度（双击复位）": "Drag to resize the input area (double-click to reset)",
   "出口：成功 / 失败。": "Exits: ok / fail.",
   "出口：成功 / 失败(发送错) / 超时(等不到)。": "Exits: ok / fail(send error) / timeout(no data).",
   // 编排：期待匹配
@@ -761,29 +748,42 @@ export const EN = {
   "是另一套：": " is a separate scheme: ",
   // ============ 传输页「更多」面板 ============
   "更多 ⋯": "More ⋯", "显示": "Display", "编码": "Encoding",
-  "设备打印的不是 UTF-8（例如 GB2312/GBK）时切过去，原始字节不会丢":
-    "Switch when the device prints non-UTF-8 text (e.g. GB2312/GBK); raw bytes are kept either way",
-  "中文乱码就切 GBK；编码只影响显示，日志里存的还是原始字节。":
-    "Garbled CJK? switch to GBK. Encoding only affects the view — logs keep raw bytes.",
-  "自动滚动": "Auto scroll", "新数据到达时自动滚到底部": "Scroll to the bottom as new data arrives",
-  "暂停接收": "Pause RX", "先冻住界面看历史，设备数据照收（不丢）": "Freeze the view to read history; data keeps arriving",
-  "「暂停」只是不刷新界面，串口照样在收；取消暂停会把攒下的数据补上。":
-    "Pause only stops repainting — the port keeps receiving, and resuming shows everything buffered.",
+  "文本 + HEX": "Text + HEX", "仅 RX": "RX only",
+  "打开输出目录": "Open output folder",
+  "退出 ASCII 交互": "Exit ASCII mode",
+  "跳到最新": "Jump to latest",
+  "拖动调整输入区高度": "Drag to resize the input area",
+  "只显示 RX": "Show RX only",
+  "显示时间戳": "Show timestamps",
+  "显示行号": "Show line numbers",
+  "显示 RX/TX 方向": "Show RX/TX direction",
+  "传输设置": "Transfer settings",
+  "显示编码": "Display encoding",
+  "新数据自动滚到底部": "Auto-scroll on new data",
+  "暂停刷新，后台继续接收": "Pause display while receiving in the background",
+  "在输出区直接输入": "Type directly in the output area",
+  "设备不回显时开启": "Enable when the device does not echo",
+  "默认目录（可选）": "Default folder (optional)",
+  "输入文本；HEX 示例：41 54 0D 0A": "Enter text; HEX example: 41 54 0D 0A",
+  "HEX 输入：41 54 0D 0A": "HEX input: 41 54 0D 0A",
+  "输入文本": "Enter text",
+  "ASCII 交互已开启": "ASCII mode enabled",
+  "只显示设备接收内容，隐藏本地发送和系统事件":
+    "Show RX only; hide TX and system events",
+  "自动滚动": "Auto scroll",
+  "暂停接收": "Pause RX",
   "交互": "Interaction", "ASCII 交互": "ASCII mode",
-  "打开后可以直接在输出区敲键盘跟设备对话": "Type directly in the output area to talk to the device",
-  "设备不回显时打开，自己敲的字会先显示出来": "Enable when the device does not echo; your keystrokes are shown",
   "本地回显": "Local echo",
-  "打开「ASCII 交互」后点输出区就能直接打字（Enter 发送、Ctrl+C 发送 0x03）；适合对着 shell 交互。":
-    "With ASCII mode on, click the output area and type (Enter sends, Ctrl+C sends 0x03) — handy for shell sessions.",
+  "重发上一条": "Resend last",
+  "还没有可重发的命令": "No command to resend yet",
+  "ASCII 交互已打开：本地回显保持关闭；只有设备不回显时才手动打开，避免字符重复":
+    "ASCII mode on. Local echo stays off; enable only if the device does not echo.",
+  "上一条命令已填入发送框": "The previous command was placed in the send box.",
   "快捷发送": "Quick send", "按钮名": "Button label",
   "要发送的内容（HEX 形如 41 54 0D 0A）": "Payload (HEX looks like 41 54 0D 0A)",
-  "勾上后按 HEX 发送": "Send as HEX", "加进去的按钮常驻在输出区上方，点一下就发；右键按钮可以删除。":
-    "Added buttons stay above the output area and send with one click; right-click a button to delete it.",
-  "会话日志": "Session log", "默认目录（留空=文档目录）": "Default folder (empty = Documents)",
-  "保存的是完整会话（含时间戳/方向/原始字节），加载后可以回放。":
-    "The saved file contains the whole session (timestamps, direction, raw bytes) and can be replayed.",
-  "回放": "Replay", "先「加载日志」再回放；1x 按原始时间轴，2x 就是两倍速。":
-    "Load a log first, then replay: 1x follows the original timeline, 2x is twice as fast.",
+  "勾上后按 HEX 发送": "Send as HEX",
+  "会话日志": "Session log",
+  "回放": "Replay",
   "0x": "0x (hex input)",
 
   // ============ 指令表：编辑 ============
@@ -983,7 +983,6 @@ export const EN = {
     "Temperature = how \"random\" the answer is: 0 is the steadiest (almost identical every time; 0–0.3 is right for debugging and tool calls); higher is more exploratory (0.7–1.0 for writing). This assistant calls tools and needs accuracy, so 0.2 is recommended.",
   "个文件": "file(s)",
   "上次更新 ": "updated ",
-  "显示 / 交互 / 快捷发送 / 会话日志 / 回放": "Display / interaction / quick send / session log / replay",
 
   // ============ 示波器页 ============
   "机器状态": "Instrument", "测一次": "Measure once", "连续": "continuous",
@@ -1202,7 +1201,6 @@ export const EN = {
 
   // 传输页：序号列
   "序号": "Line no.",
-  "每行前面显示行号（从 1 开始；清屏后重新数，上翻看历史时也对得上）": "Show a line number on each line (starts at 1, restarts after clearing, and stays stable when you scroll back)",
 
   // 批量文本：比对箭头
   "跟随输入": "Follow input",
@@ -1348,16 +1346,17 @@ export const EN = {
   "清空输出": "Clear output",
   "行号（序号）": "Line numbers",
   "显示 / 发送用 HEX": "Display / send as HEX",
+  "连接方式": "Link mode",
+  "启用自定义波特率": "Enable custom baud rate",
+  "自定义波特率": "Custom baud rate",
+  "密码（可留空）": "Password (optional)",
   "没有可发送的内容": "Nothing to send", "已发送": "Sent",
   "设置…": "Settings…",
   "✎ 编辑": "✎ Edit",
   "打开快捷发送编辑器：新增 / 改 / 删": "Open the quick-send editor: add / edit / delete",
   "点某一行 = 直接发出去；行尾 ✎ 改、✕ 删；新增 / 批量整理点上面的「✎ 编辑」。": "Click a row = send it right away; ✎ edit / ✕ delete at the row end; add or bulk-edit via ✎ Edit above.",
-  "连接方式：串口 / TCP 客户端 / TCP 服务端 / UDP": "Link mode: serial / TCP client / TCP server / UDP",
   "串口（窄窗口下这一排的标签会收起来）": "Serial port (labels collapse in narrow windows)",
   "波特率": "Baud",
-  "用右边这个自定义波特率（窄窗口下「自定义」三个字会收起来）": "Use the custom baud rate on the right (the label collapses in narrow windows)",
-  "自定义波特率（左边那个勾打开才生效）": "Custom baud rate (tick the checkbox on the left first)",
   "忽略大小写；空格还能匹配换行 / 多个空格": "Case-insensitive; a space also matches newlines / runs of spaces",
   "把右边结果搬回左边输入，接着往下处理": "Move the right-hand result back into the left input and keep editing",
   "只清没标记的（★ 的留下）": "Clear unstarred only (★ entries stay)",
@@ -1449,7 +1448,6 @@ export const EN = {
   "文件…": "File…",
   "失败: 还没有连接：先连上设备": "Error: not connected yet — connect to the device first",
   "[文件] 列目录失败: 还没有连接：先连上设备": "[Files] list failed: not connected yet — connect to the device first",
-  "每行前面标出 RX/TX/SYS 方向；开着时间戳时会并进同一个方括号里（SSCOM 那种一个前缀）": "Tag each line with RX/TX/SYS; when timestamps are on they share one bracket (a single prefix like SSCOM)",
   "{a} × {b}（消隐 {c} × {d}）": "{a} × {b} (blanking {c} × {d})",
   "显示器 ": "Monitor ",
   "一条 .md 一条指令：frontmatter 里写 name / description，正文就是提示词模板（里面的 {{args}} 会换成命令后面跟的参数）。把文件丢进下面的目录就行 —— 技能作者也能随技能一起分发。": "One .md = one command: frontmatter holds name / description, the body is the prompt template ({{args}} becomes whatever follows the command). Drop files into the folder below — skill authors can ship them with a skill.",
@@ -1968,7 +1966,6 @@ export const EN = {
   "把本机变成 SSH 服务器（别人/别的设备 scp、ssh 进来取日志、传固件）。装完自动配好密钥、设成开机自启并启动；不想要就在服务里停掉 sshd。": "Turns this PC into an SSH server (so other machines can ssh/scp in to grab logs or firmware). It generates host keys, sets the service to automatic and starts it; stop the sshd service if you don't want it.",
   "SSH（远程 shell）": "SSH (remote shell)",
   "主机": "Host", "用户名": "User", "密码": "Password", "缩放": "Scale", "原始": "Original",
-  "留空 = 用密钥 / 自己在这儿敲": "empty = key auth",
   // 带 <code> 的整句会被拆成碎片：langWalk 查表前会 trim + 把内部空白压成一个空格，
   // 所以这些键必须是"去首尾空白、内部空白压成一个空格"的样子，否则永远查不中（踩过）。
   "密钥登录：密码留空 + 这里填": "Key auth: leave the password empty and put",

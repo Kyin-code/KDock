@@ -4,6 +4,7 @@ import {
   AGENT_INPUT_MIN,
   clampAgentInputHeight,
 } from "../src/agent-layout.js";
+import { logNumberColumnWidth } from "../src/log-gutter.js";
 
 assert.equal(
   clampAgentInputHeight(999, 500),
@@ -25,5 +26,8 @@ assert.equal(
   AGENT_INPUT_MIN,
   "very short layouts should still return a bounded composer height",
 );
+assert.equal(logNumberColumnWidth(9), "calc(3ch + 1.6rem)");
+assert.equal(logNumberColumnWidth(1500), "calc(4ch + 1.6rem)");
+assert.equal(logNumberColumnWidth(1234567), "calc(7ch + 1.6rem)");
 
 console.log(JSON.stringify({ ok: true, suite: "agent-layout" }));

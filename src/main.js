@@ -25,7 +25,17 @@ import {
 import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
 import { bindAgentResize } from "./agent-layout.js";
 import { pendingBatchText } from "./agent-pending.js";
+import { logNumberColumnWidth } from "./log-gutter.js";
 import { remindUpdateLater, shouldOfferUpdate, skipUpdate } from "./app-update.js";
+import { createAsciiHistory, loadAsciiHistory, saveAsciiHistory } from "./ascii-history.js";
+import { bindPopoverDismissal } from "./popover.js";
+import { termFeed, termModes, termNew, termText } from "./terminal.js";
+import { terminalKeySequence, terminalPastePayload } from "./terminal-keys.js";
+import {
+  appendAsciiTxEntry,
+  createLiveTimestampGuard,
+  formatHexDump,
+} from "./transfer-log.js";
 import { EN } from "./locales/en.js";
 import {
   loadHelpPage,
@@ -173,8 +183,11 @@ let loopTimer = null;
 let history = [];
 let rxBuffer = [];
 let rxMode = "text";
+let rxOnly = localStorage.getItem("kdock_rx_only") === "1";
 let tailEntry = null;      // "正在长的半行"（设备还没发换行），渲染在最后一行、就地更新
 let rxEntryNo = 0;
+const liveTs = createLiveTimestampGuard(() => Date.now());
+let currentTermModes = { applicationCursor: false, bracketedPaste: false };
 let flLogNo = 0;            // 烧录日志的行号
 let sqLogNo = 0;            // 编排运行日志的行号
 
@@ -184,6 +197,10 @@ const logNoOn = () => localStorage.getItem("kdock_show_no") !== "0";
 function logRowHtml(no, inner, cls) {
   return `<div class="rxline"><span class="nox" aria-hidden="true">${no == null ? "" : no}</span>` +
     `<span class="rxtx${cls ? " " + cls : ""}">${inner}</span></div>`;
+}
+
+function applyLogNoWidth(box, maxNo) {
+  if (box) box.style.setProperty("--rx-no-w", logNumberColumnWidth(maxNo));
 }
 /** 纯文本：从「一行一行」的结构里取正文（复制 / 统计用，不含行号） */
 function logPlainText(boxId) {
@@ -496,63 +513,67 @@ function ansiToHtml(text) {
 /** 一条记录里可能含好几行（设备一次吐一批），按行拆开显示，时间戳沿用这条记录的时间 */
 function entryLines(e) {
   if (rxMode === "hex") {
-    const hex = (e.hex || "").padEnd(48);
-    return [escapeHtml(`${hex} |${e.ascii || ""}|`)];
+    return formatHexDump(e.hex, { text: decodeEntry(e) })
+      .map((line) => `<span class="hexdump">${escapeHtml(line)}</span>`);
   }
-  const t = decodeEntry(e).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const parts = t.split("\n");
-  if (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();  // 结尾换行不留空行
-  return parts.map(ansiToHtml);
+  const t = decodeEntry(e);
+  const textParts = ansiBackspaceText(t).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  if (textParts.length > 1 && textParts[textParts.length - 1] === "") textParts.pop();  // 结尾换行不留空行
+  if (rxMode === "mixed") {
+    return [
+      ...textParts.map(ansiToHtml),
+      ...formatHexDump(e.hex, { text: t }).map((line) =>
+        `<span class="hexdump">${escapeHtml(line)}</span>`),
+    ];
+  }
+  return textParts.map(ansiToHtml);
 }
 
-/* ── ASCII(终端)模式：极简终端模型 ─────────────────────────────
- * 直接把字节铺出来是不行的：cshell 退格/重绘发的是 ANSI（\r、\b、ESC[D、ESC[K），
- * 铺出来会看到"删掉的字还在"。所以这里维护一个极简屏幕模型，只支持
- * \r \n \b \t、ESC[D/C/A/B/H/J/K，够 cshell 用，也不需要引入 xterm.js。
- */
-function termNew() { return { lines: [""], row: 0, col: 0 }; }
-
-function termPut(st, ch) {
-  const line = st.lines[st.row] ?? "";
-  if (ch === "\n") { st.row += 1; st.col = 0; if (st.lines.length <= st.row) st.lines.push(""); return; }
-  if (ch === "\r") { st.col = 0; return; }
-  if (ch === "\b") { if (st.col > 0) st.col -= 1; return; }
-  if (ch === "\t") { const n = 4 - (st.col % 4); for (let i = 0; i < n; i++) termPut(st, " "); return; }
-  if (ch < " ") return;                                  // 其它控制字符直接丢
-  st.lines[st.row] = st.col < line.length
-    ? line.slice(0, st.col) + ch + line.slice(st.col + 1)
-    : line + " ".repeat(st.col - line.length) + ch;
-  st.col += 1;
-}
-
-function termFeed(st, text) {
-  let i = 0;
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === "\u001b") {
-      const rest = text.slice(i);
-      // OSC（ESC ] … BEL / ESC \）：整段吞掉。SSH 的提示符每行都带一条（设窗口标题）
-      const osc = /^\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/.exec(rest);
-      if (osc) { i += osc[0].length; continue; }
-      // CSI：参数里可能有 ? > ! 这类中间字节（如 ESC[?2004h 括号粘贴），都要整条吞掉，
-      // 不能只丢 ESC 再把 "?2004h" 当正文铺出来
-      const m = /^\u001b\[([0-9;?><!]*)[ -/]*([@-~])/.exec(rest);
-      if (!m) { i += 1; continue; }                      // 裸 ESC：丢掉
-      const n = m[1] === "" ? 1 : (parseInt(m[1], 10) || 1);
-      const priv = /[?><!]/.test(m[1]);                  // 私有模式：只当"要忽略"，别照着光标动
-      if (!priv && m[2] === "D") st.col = Math.max(0, st.col - n);
-      else if (!priv && m[2] === "C") st.col += n;
-      else if (!priv && m[2] === "A") st.row = Math.max(0, st.row - n);
-      else if (!priv && m[2] === "B") { st.row += n; while (st.lines.length <= st.row) st.lines.push(""); }
-      else if (!priv && m[2] === "K") st.lines[st.row] = (st.lines[st.row] ?? "").slice(0, st.col);
-      else if (!priv && m[2] === "J") { st.lines = [""]; st.row = 0; st.col = 0; }
-      else if (!priv && m[2] === "H") { st.row = 0; st.col = 0; }
-      i += m[0].length;
+/** Backspace is an editing command in a log too; showing literal \b helps nobody. */
+function ansiBackspaceText(text) {
+  const out = [];
+  for (const ch of String(text || "")) {
+    if (ch === "\b") {
+      if (out.length && out[out.length - 1] !== "\n") out.pop();
       continue;
     }
-    termPut(st, ch);
-    i += 1;
+    out.push(ch);
   }
+  return out.join("");
+}
+
+function visibleEntries(entries = rxBuffer) {
+  return rxOnly ? entries.filter((entry) => entry.dir === "RX") : entries;
+}
+
+function pushAsciiTx(text, ack) {
+  const entry = {
+    dir: "TX",
+    ts_ms: liveTs(Date.now()),
+    text,
+    hex: ack?.hex || "",
+    ascii: ack?.ascii || "",
+    interactive: true,
+  };
+  const openAsciiTx = (entries) => {
+    const last = entries[entries.length - 1];
+    return !!last
+      && last.dir === "TX"
+      && last.interactive
+      && !/[\r\n\u0003]$/.test(last.text || "");
+  };
+  const pendingTail = rxPending[rxPending.length - 1];
+  if (pendingTail && openAsciiTx(rxPending)) {
+    appendAsciiTxEntry(rxPending, entry);
+    redrawRx();
+    return;
+  }
+  if (!pendingTail && rxBuffer.length && openAsciiTx(rxBuffer)) {
+    appendAsciiTxEntry(rxBuffer, entry);
+    redrawRx();
+    return;
+  }
+  pushEntry(entry);
 }
 
 /* 本地回显 / 设备回显会**互相打架**：设备有时候先回显、有时候后回显(慢的时候好几秒)。
@@ -600,10 +621,11 @@ function termRender() {
   const st = termNew();
   const mine = [];          // 本地回显里"设备还没回显"的字符
   const devSeen = [];       // 设备回显里"可能是我们自己敲的"字符
-  for (const e of rxBuffer) {
+  for (const e of visibleEntries(rxBuffer)) {
     const t = e.dir === "RX" || e.dir === "TX" ? decodeEntry(e) : String(e.text);
     const ts = e.ts_ms || 0;
     if (e.dir === "TX") {
+      if (!$("local-echo")?.checked) continue;   // Remote echo is authoritative.
       const kept = filterLocalEcho(t, ts, devSeen);
       termFeed(st, kept);
       for (const ch of kept) mine.push({ ch, ts });
@@ -617,7 +639,8 @@ function termRender() {
     if (!t.endsWith("\n")) termFeed(st, "\r\n");
   }
   if (tailEntry) termFeed(st, decodeEntry(tailEntry));   // 半行接在最后，就地长出来
-  return st.lines.slice(-1000).join("\n");              // 只渲染最后 1000 行
+  currentTermModes = termModes(st);
+  return termText(st, 1000);                            // 只渲染最后 1000 行
 }
 
 /** 一行日志的 HTML：左边一格是行号栏（不可选），右边是正文 —— 折行只缩进正文那一列 */
@@ -649,10 +672,17 @@ function redrawRx() {
   // 重画会重建整段内容：先记住用户现在看的位置，画完再放回去（跟随最新时才跳到底部）
   const keepTop = box.scrollTop;
   const wasBottom = stickBottom || keepTop + box.clientHeight >= box.scrollHeight - 8;
-  const tail = tailEntry ? lineRows(tailEntry) : "";
+  const shown = visibleEntries(rxBuffer);
+  const tail = tailEntry && (!rxOnly || tailEntry.dir === "RX") ? lineRows(tailEntry) : "";
   box.classList.toggle("with-no", logNoOn());            // 只管左边那一列显不显示
+  const maxNo = Math.max(
+    rxEntryNo,
+    ...shown.map((e) => Number(e.no) || 0),
+    Number(tailEntry && tailEntry.no) || 0,
+  );
+  applyLogNoWidth(box, maxNo);
   if (asciiMode) box.textContent = termRender();          // 终端就是纯文本，不走 HTML
-  else box.innerHTML = rxBuffer.map(lineRows).join("") + tail;
+  else box.innerHTML = shown.map(lineRows).join("") + tail;
   if (wasBottom && $("autoscroll").checked) {
     box.scrollTop = box.scrollHeight;
   } else {
@@ -667,7 +697,7 @@ function pushSys(text) {
   for (const line of String(text).split(/\r?\n/)) {
     if (!line.trim()) continue;
     const shown = window.kdockTranslateText ? window.kdockTranslateText(line) : line;
-    pushEntry({ dir: "SYS", ts_ms: Date.now(), text: shown, hex: "", ascii: "" });
+    pushEntry({ dir: "SYS", ts_ms: liveTs(Date.now()), text: shown, hex: "", ascii: "" });
   }
 }
 
@@ -930,7 +960,7 @@ async function doSend() {
     // 后端返回真正写到线上的字节，TX 行直接用它渲染
     const ack = await invoke("write_data", { payload, mode: txm, lineEnding: le });
     if (!rxPaused) {
-      pushEntry({ dir: "TX", ts_ms: Date.now(), text: ack.text, hex: ack.hex, ascii: ack.ascii });
+      pushEntry({ dir: "TX", ts_ms: liveTs(Date.now()), text: ack.text, hex: ack.hex, ascii: ack.ascii });
     }
 
     if (payload && history[0] !== payload) {
@@ -2544,6 +2574,7 @@ function flashLog(text) {
   while (lines.length && lines[0] === "" && !el.childElementCount) lines.shift();   // 开头那个换行不留空行
   let html = "";
   for (const line of lines) html += line.trim() === "" ? logRowHtml(null, "") : logRowHtml(++flLogNo, escapeHtml(line));   // 空行不占号（跟传输页的多行日志一致）
+  applyLogNoWidth(el, flLogNo);
   el.insertAdjacentHTML("beforeend", html);
   el.scrollTop = el.scrollHeight;
 }
@@ -4135,7 +4166,7 @@ function outHeadRefresh() {
     });
   }
   const btn = $("out-dir");
-  if (btn) btn.title = (p ? p + "\n" : "") + en("点一下在资源管理器里打开这个目录");
+  if (btn) btn.title = (p ? p + "\n" : "") + en("打开输出目录");
 }
 function outPathSet(p) { if (p) outLogPath = String(p); outHeadRefresh(); }
 function outClockTick() {
@@ -4273,6 +4304,7 @@ function sqEdgesInto(id) { return sqGraph.edges.filter((e) => e.to === id); }
 function sqLog(text, cls) {
   const box = $("sq-log");
   box.classList.toggle("with-no", logNoOn());
+  applyLogNoWidth(box, sqLogNo + 1);
   box.insertAdjacentHTML("beforeend", logRowHtml(++sqLogNo, escapeHtml(text), "l" + (cls ? " " + cls : "")));
   box.scrollTop = box.scrollHeight;
   while (box.childElementCount > 400) box.removeChild(box.firstChild);
@@ -5803,7 +5835,7 @@ async function sendPayload(payload, hex) {
   try {
     const le = $("line-ending").value;
     const ack = await invoke("write_data", { payload, mode: hex ? "hex" : "text", lineEnding: le });
-    if (!rxPaused) pushEntry({ dir: "TX", ts_ms: Date.now(), text: ack.text, hex: ack.hex, ascii: ack.ascii });
+    if (!rxPaused) pushEntry({ dir: "TX", ts_ms: liveTs(Date.now()), text: ack.text, hex: ack.hex, ascii: ack.ascii });
     if ($("history") && !hex && history[0] !== payload) {
       history.unshift(payload);
       history = history.slice(0, 30);
@@ -7481,30 +7513,97 @@ async function sendRawText(text) {
     const ack = await invoke("write_data", {
       payload: text, mode: "text", lineEnding: "none", raw: true,
     });
-    if ($("local-echo").checked && !rxPaused) {
-      pushEntry({ dir: "TX", ts_ms: Date.now(), text, hex: ack.hex, ascii: ack.ascii });
-    }
+    if (!rxPaused) pushAsciiTx(text, ack);
   } catch (e) {
     toast(String(e));
   }
 }
 
 function bindAsciiMode() {
+  const historyStore = loadAsciiHistory(localStorage);
+  const commandHistory = createAsciiHistory(historyStore);
+  let asciiLine = "";
+  let asciiCursor = 0;
+  let asciiLineKnown = true;
+  let writeChain = Promise.resolve();
+
+  const lineEnding = () => {
+    const le = $("line-ending").value;
+    return le === "crlf" ? "\r\n" : le === "lf" ? "\n" : "\r";
+  };
+  const queueRaw = (text) => {
+    writeChain = writeChain.then(() => sendRawText(text));
+    return writeChain;
+  };
+  const paintResend = () => {
+    const button = $("ascii-resend");
+    if (!button) return;
+    button.disabled = commandHistory.size === 0;
+    const last = commandHistory.entries[commandHistory.size - 1] || "";
+    button.title = last ? `重发上一条：${last}` : "还没有可重发的命令";
+  };
+  const persistHistory = () => {
+    saveAsciiHistory(localStorage, commandHistory.entries);
+    paintResend();
+  };
+  const resetAsciiLine = () => {
+    asciiLine = "";
+    asciiCursor = 0;
+    asciiLineKnown = true;
+    commandHistory.reset();
+  };
+  const replaceAsciiLine = (next) => {
+    const end = terminalKeySequence({ key: "End" }, currentTermModes);
+    const erase = end + "\b".repeat([...asciiLine].length);
+    asciiLine = next;
+    asciiCursor = [...next].length;
+    asciiLineKnown = true;
+    if (erase || next) queueRaw(erase + next);
+  };
+  const submitAsciiLine = () => {
+    const submitted = asciiLineKnown ? asciiLine : "";
+    queueRaw(lineEnding());
+    if (submitted.trim()) {
+      commandHistory.commit(submitted);
+      persistHistory();
+    }
+    asciiLine = "";
+    asciiCursor = 0;
+    asciiLineKnown = true;
+  };
+
+  paintResend();
   $("ascii-mode").onchange = (e) => {
     asciiMode = e.target.checked;
     $("rx").classList.toggle("typing", asciiMode);
     $("rx-hint").hidden = !asciiMode;         // 顶栏那个小标只在真开着的时候亮
     if (asciiMode) {
       $("rx").focus();
-      if (!$("local-echo").checked) {
-        // 设备有时候要好几秒才回显，先本地把敲的字打出来，不然像"没反应"
-        $("local-echo").checked = true;
-        pushSys("已自动打开「本地回显」：设备回显有时会慢几秒，先看你敲的字，设备回显到了会跟在后面");
-      }
-      pushSys("ASCII 交互已打开：点住上面这块直接敲键盘 → 设备；Enter 发送回车，Backspace 发送 0x08");
+      pushSys("ASCII 交互已开启");
     } else {
       pushSys("ASCII 交互已关闭");
+      resetAsciiLine();
     }
+  };
+  if ($("local-echo")) $("local-echo").onchange = () => redrawRx();
+  if ($("ascii-resend")) $("ascii-resend").onclick = () => {
+    const last = commandHistory.entries[commandHistory.size - 1];
+    if (!last) return;
+    if (!asciiMode) {
+      $("tx").value = last;
+      $("tx").focus();
+      toast("上一条命令已填入发送框");
+      return;
+    }
+    const erase = terminalKeySequence({ key: "End" }, currentTermModes)
+      + "\b".repeat([...asciiLine].length);
+    queueRaw(erase + last + lineEnding());
+    asciiLine = "";
+    asciiCursor = 0;
+    asciiLineKnown = true;
+    commandHistory.commit(last);
+    commandHistory.reset();
+    persistHistory();
   };
   // 输出区顶栏那个小标：点一下就退出 ASCII 交互（不用再翻「更多」面板找开关）
   $("rx-hint").onclick = () => {
@@ -7519,27 +7618,128 @@ function bindAsciiMode() {
     if (ev.target.closest("input, textarea, button, select")) return;
     $("rx").focus();
   });
-  $("rx").addEventListener("keydown", async (ev) => {
+  $("rx").addEventListener("keydown", (ev) => {
+    if (!asciiMode || ev.isComposing) return;
+    const key = ev.key;
+
+    // Ctrl+Shift+C is copy, matching mainstream terminal clients.
+    if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && key.toLowerCase() === "c") {
+      const selected = window.getSelection()?.toString() || "";
+      if (selected) {
+        ev.preventDefault();
+        navigator.clipboard?.writeText(selected).then(
+          () => toast(`已复制 ${selected.length} 字符`),
+          () => toast("复制失败"),
+        );
+      }
+      return;
+    }
+    // Leave paste to the browser so the paste event can apply bracketed mode.
+    if ((ev.ctrlKey || ev.metaKey) && key.toLowerCase() === "v") return;
+
+    // Local history is explicit; plain Up/Down go to the remote terminal.
+    if (ev.ctrlKey && !ev.altKey && (key === "ArrowUp" || key === "ArrowDown")) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const value = key === "ArrowUp"
+        ? commandHistory.previous(asciiLineKnown ? asciiLine : "")
+        : commandHistory.next();
+      if (value != null) replaceAsciiLine(value);
+      return;
+    }
+    if (key === "Enter") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      submitAsciiLine();
+      return;
+    }
+
+    const sequence = terminalKeySequence(ev, currentTermModes);
+    if (!sequence) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+
+    if (key === "c" && ev.ctrlKey && !ev.altKey) {
+      queueRaw(sequence);
+      resetAsciiLine();
+      return;
+    }
+    if (key === "Backspace") {
+      if (asciiLineKnown && asciiCursor > 0) {
+        const chars = [...asciiLine];
+        chars.splice(asciiCursor - 1, 1);
+        asciiLine = chars.join("");
+        asciiCursor -= 1;
+      }
+      queueRaw(sequence);
+      return;
+    }
+    if (key === "Delete") {
+      if (asciiLineKnown && asciiCursor < [...asciiLine].length) {
+        const chars = [...asciiLine];
+        chars.splice(asciiCursor, 1);
+        asciiLine = chars.join("");
+      }
+      queueRaw(sequence);
+      return;
+    }
+    if (key === "ArrowLeft") {
+      if (asciiLineKnown) asciiCursor = Math.max(0, asciiCursor - 1);
+      queueRaw(sequence);
+      return;
+    }
+    if (key === "ArrowRight") {
+      if (asciiLineKnown) asciiCursor = Math.min([...asciiLine].length, asciiCursor + 1);
+      queueRaw(sequence);
+      return;
+    }
+    if (key === "ArrowUp" || key === "ArrowDown") {
+      // The remote shell owns history navigation; local echo no longer knows
+      // which command line was recalled, so don't record a guessed value.
+      asciiLineKnown = false;
+      queueRaw(sequence);
+      return;
+    }
+    if (key === "Home" || key === "End") {
+      if (asciiLineKnown) asciiCursor = key === "Home" ? 0 : [...asciiLine].length;
+      queueRaw(sequence);
+      return;
+    }
+    if (ev.ctrlKey || ev.altKey || ev.key === "Tab" || ev.key === "Escape"
+        || ev.key.startsWith("Page") || /^F\d+$/.test(ev.key)) {
+      asciiLineKnown = false;
+      queueRaw(sequence);
+      return;
+    }
+    if (key.length === 1) {
+      if (asciiLineKnown) {
+        const chars = [...asciiLine];
+        chars.splice(asciiCursor, 0, key);
+        asciiLine = chars.join("");
+        asciiCursor += 1;
+      }
+      queueRaw(sequence);
+    }
+  });
+  $("rx").addEventListener("paste", (ev) => {
     if (!asciiMode) return;
-    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;   // 组合键留给系统
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      // cshell 认 CR；"行尾=无"在终端模式下也按 CR 走，否则回车发不出任何东西
-      const le = $("line-ending").value;
-      const end = le === "crlf" ? "\r\n" : le === "lf" ? "\n" : "\r";
-      await sendRawText(end);
-      return;
+    const raw = ev.clipboardData?.getData("text") || "";
+    if (!raw) return;
+    ev.preventDefault();
+    const text = raw.replace(/\r\n/g, "\r").replace(/\n/g, "\r");
+    queueRaw(terminalPastePayload(text, currentTermModes));
+    if (!asciiLineKnown) return;
+    const chars = [...asciiLine];
+    const before = chars.slice(0, asciiCursor).join("");
+    const after = chars.slice(asciiCursor).join("");
+    const lines = `${before}${text}${after}`.split("\r");
+    asciiLine = lines.pop() || "";
+    for (const line of lines) commandHistory.commit(line);
+    asciiCursor = [...asciiLine].length;
+    if (lines.length) {
+      commandHistory.reset();
+      persistHistory();
     }
-    if (ev.key === "Backspace") {
-      ev.preventDefault();
-      await sendRawText("\b");
-      return;
-    }
-    if (ev.key.length === 1) {          // 可打印字符
-      ev.preventDefault();
-      await sendRawText(ev.key);
-    }
-    // 其它键(方向键/PageUp…)保持默认，方便翻页看日志
   });
 }
 
@@ -7643,7 +7843,15 @@ async function ensureHelpContent() {
 }
 
 const HELP_HEADING_MAP = {
-  link: { "从这里开始": "help-transfer-start", "统计": "help-transfer-stats", "快捷发送": "help-transfer-quick" },
+  link: {
+    "从这里开始": "help-transfer-start",
+    "统计": "help-transfer-stats",
+    "快捷发送": "help-transfer-quick",
+    "显示": "help-transfer-receive",
+    "交互": "help-transfer-ascii",
+    "会话日志": "help-transfer-session",
+    "回放": "help-transfer-session",
+  },
   agent: { "Agent 信息": "help-agent-info", "上下文成分": "help-agent-context", "技能": "help-agent-skills", "MCP 服务": "help-agent-mcp" },
   kb: { "共享浏览器": "help-kb-shared" },
   upgrade: { "从这里开始": "help-upgrade-start", "固件": "help-upgrade-firmware" },
@@ -7678,7 +7886,8 @@ function helpPageOf(el) {
   const pane = el.closest("[data-param]");
   if (pane) return pane.dataset.param;
   const work = el.closest("[data-work]");
-  return work ? work.dataset.work : "";
+  const page = work ? work.dataset.work : "";
+  return page === "shell" ? "link" : page;
 }
 
 function helpHeadingText(el) {
@@ -7696,7 +7905,7 @@ function helpAnchorFor(page, label, map) {
 }
 
 function decorateHelpHeadings() {
-  for (const el of document.querySelectorAll(".cardtitle, .adv > summary")) {
+  for (const el of document.querySelectorAll(".cardtitle, .adv > summary, .msec-h")) {
     if (el.querySelector(":scope > .help-f1")) continue;
     const page = helpPageOf(el);
     const label = helpHeadingText(el);
@@ -9146,7 +9355,7 @@ function agActivityDuration(ms) {
 }
 
 /** One Codex-style activity block for a complete assistant turn. */
-function agActivityNode(events) {
+function agActivityNode(events, title = "") {
   const items = buildActivityItems(events);
   if (!items.length) return null;
   const stats = summarizeActivity(items);
@@ -9158,9 +9367,10 @@ function agActivityNode(events) {
   head.className = "ghead";
   const name = document.createElement("span");
   name.className = "gname";
+  const label = title || en("本轮活动");
   name.textContent = stats.tools
-    ? `${en("本轮活动")} · ${stats.tools} ${en("次工具")}`
-    : en("本轮活动");
+    ? `${label} · ${stats.tools} ${en("次工具")}`
+    : label;
   const list = document.createElement("span");
   list.className = "glist";
   const names = stats.names.slice(0, 3).map(([tool, count]) => `${tool}×${count}`).join(" · ");
@@ -9245,7 +9455,7 @@ function agTurnProcessNode(turn) {
   body.className = "gbody";
   for (const part of processParts) {
     if (part.kind === "activity") {
-      const activity = agActivityNode(part.events);
+      const activity = agActivityNode(part.events, en("步骤"));
       if (activity) body.appendChild(activity);
     } else {
       agAppendEvent(part.event, false, { running: true, target: body });
@@ -13658,6 +13868,7 @@ async function main() {
   invoke("splash_show").catch(() => {});
   initControls();
   bindTooltips();               // 悬停提示改自绘（原生 title 的气泡又慢又丑）
+  bindPopoverDismissal(document, "details[data-popover][open]");
   decorateHelpHeadings();       // 先把中文标题与帮助锚点对上，再切语言
   switchMode("serial");
 
@@ -13785,10 +13996,18 @@ async function main() {
       redrawRx();
       // 显示模式也是发送模式：这里同步输入提示，避免用户以为还要再切一次。
       if ($("tx")) $("tx").placeholder = rxMode === "hex"
-        ? en("HEX 模式：41 54 0D 0A（Enter 发送 / Shift+Enter 换行）")
-        : en("文本直接输入（Enter 发送 / Shift+Enter 换行）");
+        ? en("HEX 输入：41 54 0D 0A")
+        : en("输入文本");
     })
   );
+  if ($("rx-only")) {
+    $("rx-only").checked = rxOnly;
+    $("rx-only").onchange = () => {
+      rxOnly = $("rx-only").checked;
+      localStorage.setItem("kdock_rx_only", rxOnly ? "1" : "0");
+      redrawRx();
+    };
+  }
 
 
   // 会话：保存/加载/导出 —— 都用系统原生对话框选路径（目录输入框只当"默认目录"）
@@ -13989,7 +14208,7 @@ async function main() {
     chartFeed(p.text);                                    // 数值行顺便喂给图表
     tailEntry = null;                                     // 整行已经来了，半行作废
     if (!rxPaused) {
-      pushEntry({ dir: "RX", ts_ms: p.ts_ms, text: p.text, hex: p.hex, ascii: p.ascii });
+      pushEntry({ dir: "RX", ts_ms: liveTs(p.ts_ms), text: p.text, hex: p.hex, ascii: p.ascii });
     } else {
       redrawRx();
     }
@@ -14005,14 +14224,14 @@ async function main() {
   await listen("log://tx", (ev) => {
     const p = ev.payload || {};
     if (rxPaused) return;
-    pushEntry({ dir: "TX", ts_ms: p.ts_ms || Date.now(), text: p.text || "", hex: p.hex || "", ascii: p.ascii || "" });
+    pushEntry({ dir: "TX", ts_ms: liveTs(p.ts_ms || Date.now()), text: p.text || "", hex: p.hex || "", ascii: p.ascii || "" });
   });
   await listen("link://tail", (ev) => {
     let p = ev.payload;
     if (!p) { tailEntry = null; }
     else {
       if (typeof p === "string") { try { p = JSON.parse(p); } catch (_) { p = null; } }
-      tailEntry = p ? { dir: "RX", ts_ms: p.ts_ms, text: p.text, hex: p.hex, ascii: p.ascii } : null;
+      tailEntry = p ? { dir: "RX", ts_ms: liveTs(p.ts_ms), text: p.text, hex: p.hex, ascii: p.ascii } : null;
     }
     if (!rxPaused) redrawRx();
   });

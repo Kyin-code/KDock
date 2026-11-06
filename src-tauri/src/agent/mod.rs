@@ -115,7 +115,7 @@ fn finish_run_slot(
     st: &AgentState,
     session: &str,
     handle: &Arc<RunHandle>,
-) -> Option<(Arc<RunHandle>, String)> {
+) -> Option<(Arc<RunHandle>, Vec<String>)> {
     let mut runs = st.runs.lock().ok()?;
     let mine = runs
         .get(session)
@@ -125,9 +125,6 @@ fn finish_run_slot(
         return None;
     }
     if handle.stop.load(Ordering::Relaxed) {
-        if let Ok(mut pending) = handle.pending.lock() {
-            pending.clear();
-        }
         runs.remove(session);
         return None;
     }
@@ -142,7 +139,7 @@ fn finish_run_slot(
     }
     let next = Arc::new(RunHandle::new());
     runs.insert(session.to_string(), next.clone());
-    Some((next, pending.join("\n\n")))
+    Some((next, pending))
 }
 
 /// Mark every matching run while holding the same lock used by agent_send and
@@ -158,9 +155,6 @@ fn mark_runs_stopped(
     for (sid, handle) in runs.iter() {
         if wanted.map(|set| set.contains(sid)).unwrap_or(true) {
             handle.stop.store(true, Ordering::Relaxed);
-            if let Ok(mut pending) = handle.pending.lock() {
-                pending.clear();
-            }
             stopped.push(sid.clone());
         }
     }
@@ -2157,7 +2151,7 @@ fn drain_pending(
         emit(
             app,
             "agent://user",
-            json!({ "session": session_id, "text": text, "queued": true }),
+            json!({ "session": session_id, "text": text }),
         );
     }
     if !items.is_empty() {
@@ -2378,7 +2372,8 @@ fn run_turn(
     session_id: String,
     provider: Provider,
     key: String,
-    text: String,
+    messages: Vec<String>,
+    announce_users: bool,
     handle: Arc<RunHandle>,
 ) {
     let st = app.state::<Arc<AgentState>>().inner().clone();
@@ -2398,14 +2393,23 @@ fn run_turn(
     // goal / 称呼这类"会话状态"走注记（见 Event::State），不再进系统提示
     let _ = append_state_note(&app, &session_id);
     let result: Result<(), String> = (|| {
-        store::session_append(
-            &app,
-            &session_id,
-            &Event::User {
-                text: text.clone(),
-                ts: 0,
-            },
-        )?;
+        for text in &messages {
+            store::session_append(
+                &app,
+                &session_id,
+                &Event::User {
+                    text: text.clone(),
+                    ts: 0,
+                },
+            )?;
+            if announce_users {
+                emit(
+                    &app,
+                    "agent://user",
+                    json!({ "session": session_id, "text": text }),
+                );
+            }
+        }
         if let Some(meta) = store::session_touch(&app, &session_id) {
             emit(&app, "agent://session", json!(meta));
         }
@@ -2827,13 +2831,18 @@ fn run_turn(
         let k = key.clone();
         std::thread::spawn(move || maybe_auto_title(&app2, &sid, &prov, &k));
     }
-    if let Some((next_handle, pending_text)) = finish_run_slot(&st, &session_id, &handle) {
+    if stop.load(Ordering::Relaxed) {
+        // Stop must not erase text the user already queued. Persist those
+        // messages as ordinary user turns, but do not auto-start another run.
+        let _ = drain_pending(&app, &handle.pending, &session_id);
+    }
+    if let Some((next_handle, pending_messages)) = finish_run_slot(&st, &session_id, &handle) {
         let app2 = app.clone();
         let sid = session_id.clone();
         let prov = provider.clone();
         let k = key.clone();
         std::thread::spawn(move || {
-            run_turn(app2, sid, prov, k, pending_text, next_handle)
+            run_turn(app2, sid, prov, k, pending_messages, true, next_handle)
         });
         return;
     }
@@ -2898,7 +2907,9 @@ pub fn agent_send(
         g.insert(session_id.clone(), handle.clone());
     }
     let app2 = app.clone();
-    std::thread::spawn(move || run_turn(app2, session_id, provider, key, text, handle));
+    std::thread::spawn(move || {
+        run_turn(app2, session_id, provider, key, vec![text], false, handle)
+    });
     Ok(json!({ "ok": true }))
 }
 
@@ -3523,8 +3534,8 @@ mod tests {
         old.pending.lock().unwrap().push("补充一".into());
         old.pending.lock().unwrap().push("补充二".into());
 
-        let (next, text) = finish_run_slot(&st, "session-a", &old).expect("next run");
-        assert_eq!(text, "补充一\n\n补充二");
+        let (next, messages) = finish_run_slot(&st, "session-a", &old).expect("next run");
+        assert_eq!(messages, vec!["补充一".to_string(), "补充二".to_string()]);
         let current = st.runs.lock().unwrap().get("session-a").cloned().unwrap();
         assert!(Arc::ptr_eq(&current, &next), "运行槽必须原子切换到下一轮");
         assert!(next.pending.lock().unwrap().is_empty());
@@ -3573,6 +3584,26 @@ mod tests {
     }
 
     #[test]
+    fn stopping_keeps_queued_supplements_for_user_event_flush() {
+        let st = AgentState::default();
+        let handle = Arc::new(RunHandle::new());
+        handle.pending.lock().unwrap().push("补充不能丢".into());
+        st.runs
+            .lock()
+            .unwrap()
+            .insert("session".into(), handle.clone());
+
+        let wanted = std::collections::HashSet::from(["session".to_string()]);
+        mark_runs_stopped(&st, Some(&wanted)).unwrap();
+        assert_eq!(
+            handle.pending.lock().unwrap().clone(),
+            vec!["补充不能丢".to_string()],
+            "stop must leave queued text available for persistence",
+        );
+        assert!(finish_run_slot(&st, "session", &handle).is_none());
+    }
+
+    #[test]
     fn finishing_and_supplemental_send_never_lose_the_message() {
         use std::sync::Barrier;
 
@@ -3607,13 +3638,17 @@ mod tests {
                 }
             });
             barrier.wait();
-            let carried = finish.join().unwrap().map(|(_, text)| text);
+            let carried = finish.join().unwrap().map(|(_, messages)| messages);
             send.join().unwrap();
 
             let current = st.runs.lock().unwrap().get("race").cloned().unwrap();
             let pending = current.pending.lock().unwrap().clone();
             assert!(
-                carried.as_deref() == Some(message.as_str()) || pending.contains(&message),
+                carried
+                    .as_ref()
+                    .map(|messages| messages.contains(&message))
+                    .unwrap_or(false)
+                    || pending.contains(&message),
                 "iteration {i}: supplemental message was lost"
             );
         }

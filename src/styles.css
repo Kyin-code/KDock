@@ -564,10 +564,20 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 .lognum .nox {
   align-self: stretch;    /* 行号栏底色要盖住整行（正文折行时也是） */
   user-select: none; text-align: right; padding: 0 8px 0 10px;
+  white-space: nowrap; word-break: normal; overflow: hidden;
+  font-variant-numeric: tabular-nums;
   color: hsl(var(--muted-foreground) / 0.68);
   background: var(--surface-2); border-right: 1px solid var(--surface-line-soft);
 }
 .lognum .rxtx { padding: 0 14px 0 12px; white-space: pre-wrap; word-break: break-all; }
+.hexdump {
+  display: inline-block;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 0.96em;
+  white-space: pre;
+  word-break: normal;
+  color: hsl(var(--muted-foreground));
+}
 /* 关掉序号时整列收干净（连内边距都不留），正文回到原来的左边距 */
 .lognum:not(.with-no) .nox { padding: 0; border-right: 0; background: none; }
 .lognum:not(.with-no) .rxtx { padding-left: 14px; }
@@ -1523,6 +1533,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .morebox .msec { padding: 8px 0; border-top: 1px solid var(--surface-line-soft); }
 .morebox .msec:first-child { border-top: none; padding-top: 2px; }
 .morebox .msec-h {
+  display: flex; align-items: center; gap: 6px;
   font-size: 11.5px; letter-spacing: .6px; text-transform: uppercase;
   color: hsl(var(--primary)); margin-bottom: 6px;
 }
@@ -1628,6 +1639,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agentchat {
   flex: 1 1 auto; min-height: 0; overflow: auto;
   display: flex; flex-direction: column; gap: 12px; padding: 10px 12px;
+  scrollbar-gutter: stable both-edges;
 }
 /* 关键：聊天区是 flex 纵向容器，内容超高时 flex 项默认**会被压缩**；而 .agtool 带 overflow:hidden，
    它的自动最小尺寸就成了 0 —— 整张工具卡会被压成一条 2px 高、100 多像素宽的横线
@@ -2610,6 +2622,9 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agentchat > .agthink {
   width: fit-content;
   max-width: min(100%, 860px);
+  margin-left: max(0px, calc((100% - 860px) / 2));
+  margin-right: 0;
+  align-self: flex-start;
 }
 .agtoolgroup > .ghead .glist {
   max-width: min(28rem, 42vw);

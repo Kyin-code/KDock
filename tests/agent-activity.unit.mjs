@@ -24,13 +24,20 @@ const events = [
 ];
 
 const parts = partitionAgentEvents(events);
-assert.deepEqual(parts.map((part) => part.kind), ["event", "activity", "event", "event"]);
+assert.deepEqual(parts.map((part) => part.kind), [
+  "event", "activity", "activity", "activity", "event", "event",
+]);
 assert.equal(parts[0].event.type, "user");
-assert.equal(parts[2].event.text, "发现一个问题");
-assert.equal(parts[2].event.reasoning, "");
-assert.equal(parts[3].event.text, "继续");
+assert.equal(parts[4].event.text, "发现一个问题");
+assert.equal(parts[4].event.reasoning, "");
+assert.equal(parts[5].event.text, "继续");
 
-const activity = buildActivityItems(parts[1].events);
+const activityParts = parts.filter((part) => part.kind === "activity");
+assert.deepEqual(
+  activityParts.map((part) => buildActivityItems(part.events).map((item) => item.kind)),
+  [["reasoning", "tool"], ["reasoning", "tool"], ["reasoning"]],
+);
+const activity = activityParts.flatMap((part) => buildActivityItems(part.events));
 assert.deepEqual(activity.map((item) => item.kind), ["reasoning", "tool", "reasoning", "tool", "reasoning"]);
 assert.equal(activity[3].result.ok, false);
 
@@ -53,6 +60,10 @@ assert.equal(turns[0].finalEvent.reasoning, "");
 assert.equal(turns[0].durationMs, 7);
 assert.ok(turns[0].processEvents.some((event) => event.reasoning === "整理结论"));
 assert.ok(turns[0].processEvents.some((event) => event.type === "tool_call"));
+assert.equal(
+  turns[0].processParts.filter((part) => part.kind === "activity").length,
+  3,
+);
 assert.equal(turns[1].complete, false);
 assert.equal(turns[1].finalEvent, null);
 
@@ -63,6 +74,18 @@ const singleAnswer = partitionAgentTurns([
 assert.equal(singleAnswer[0].processEvents.length, 0);
 assert.equal(singleAnswer[0].finalEvent.text, "最终答案");
 assert.equal(singleAnswer[0].durationMs, 10);
+
+const interruptedTurn = partitionAgentTurns([
+  { type: "user", text: "先看一下", ts: 10 },
+  { type: "assistant", text: "我先看一下项目结构", ts: 20 },
+  { type: "tool_call", id: "x", name: "workspace_read", args: {}, ts: 30 },
+  { type: "tool_result", id: "x", name: "workspace_read", ok: true, text: "ok", ts: 40 },
+  { type: "state", text: "下一轮状态", ts: 100 },
+], false);
+assert.equal(interruptedTurn[0].finalEvent, null);
+assert.equal(interruptedTurn[0].durationMs, 30);
+assert.ok(interruptedTurn[0].processParts.some((part) =>
+  part.kind === "event" && part.event.text === "我先看一下项目结构"));
 
 const longCommand = summarizeToolArgs("workspace_run", {
   cmd: "arm-none-eabi-gcc -c src/main.c -o build/main.o\r\narm-none-eabi-gcc -c src/next.c -o build/next.o",

@@ -27,6 +27,41 @@ try {
   await page.goto(`http://127.0.0.1:${port}/tests/all-pages.vite.html`);
   await page.waitForFunction(() => document.documentElement.dataset.allPagesReady === "1");
 
+  const transferUi = await page.evaluate(() => {
+    const more = document.getElementById("more-panel");
+    const summary = more?.querySelector("summary");
+    const mixed = document.querySelector('input[name="rx-mode"][value="mixed"]');
+    const rxOnly = document.getElementById("rx-only");
+    const resend = document.getElementById("ascii-resend");
+    const localEcho = document.getElementById("local-echo");
+    if (!more || !summary || !mixed || !rxOnly || !resend || !localEcho) {
+      return { missing: true };
+    }
+    more.open = true;
+    summary.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    const insideStayedOpen = more.open;
+    document.querySelector(".work").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    const outsideClosed = !more.open;
+    more.open = true;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    const escapedClosed = !more.open;
+    return {
+      mixed: mixed.value,
+      rxOnlyLabel: rxOnly.closest("label")?.textContent.trim(),
+      resend: resend.textContent.trim(),
+      localEchoDefault: !localEcho.checked,
+      insideStayedOpen,
+      outsideClosed,
+      escapedClosed,
+    };
+  });
+  if (transferUi.missing || transferUi.mixed !== "mixed"
+      || transferUi.rxOnlyLabel !== "仅 RX" || transferUi.resend !== "重发上一条"
+      || !transferUi.localEchoDefault
+      || !transferUi.insideStayedOpen || !transferUi.outsideClosed || !transferUi.escapedClosed) {
+    throw new Error(`Transfer controls/popover regression: ${JSON.stringify(transferUi)}`);
+  }
+
   const pages = await page.evaluate(() => window.__allPages);
   if (pages.length < 20) throw new Error(`Expected at least 20 pages, got ${pages.length}: ${pages.join(", ")}`);
 
@@ -65,6 +100,30 @@ try {
     results.push(state);
   }
 
+  await page.evaluate(() => window.__showAllPagesPage("agent"));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const logGutter = await page.evaluate(() => {
+    window.__showAllPagesPage("link");
+    const rx = document.getElementById("rx");
+    rx.classList.add("with-no");
+    rx.innerHTML = '<div class="rxline"><span class="nox">1500</span><span class="rxtx">sample</span></div>';
+    rx.style.setProperty("--rx-no-w", window.__logNumberColumnWidth(1500));
+    const row = rx.querySelector(".rxline").getBoundingClientRect();
+    const nox = rx.querySelector(".nox");
+    const noxRect = nox.getBoundingClientRect();
+    return {
+      text: nox.textContent,
+      width: Math.round(noxRect.width),
+      rowHeight: Math.round(row.height),
+      noxHeight: Math.round(noxRect.height),
+      whiteSpace: getComputedStyle(nox).whiteSpace,
+      wordBreak: getComputedStyle(nox).wordBreak,
+    };
+  });
+  if (logGutter.text !== "1500" || logGutter.rowHeight > 24 || logGutter.noxHeight > 24
+      || logGutter.whiteSpace !== "nowrap" || logGutter.wordBreak !== "normal") {
+    throw new Error(`Log line numbers wrap digit-by-digit: ${JSON.stringify(logGutter)}`);
+  }
   await page.evaluate(() => window.__showAllPagesPage("agent"));
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const agentLayout = await page.evaluate(() => {
@@ -273,7 +332,7 @@ try {
   }
   const turnVisual = await page.evaluate(() => {
     const chat = document.getElementById("ag-chat");
-    chat.innerHTML = `
+    const turnMarkup = `
       <div class="agturnblock">
         <div class="agmsg user">
           <div class="bubble">检查这一轮</div>
@@ -292,15 +351,28 @@ try {
           <div class="agmeta">deepseek-flash · 18:00:12 · 本轮用时 12s</div>
         </div>
       </div>`;
+    chat.innerHTML = turnMarkup.repeat(16);
+    const think = document.createElement("div");
+    think.className = "agthink";
+    think.innerHTML =
+      '<div class="th"><span class="lb">思考中…</span><span class="grow"></span><span class="chev">▾</span></div><div class="bd">thinking</div>';
+    chat.appendChild(think);
     const turn = chat.querySelector(".agturnblock").getBoundingClientRect();
+    const chatRect = chat.getBoundingClientRect();
     const process = chat.querySelector(".agturnprocess").getBoundingClientRect();
     const body = chat.querySelector(".agturnprocess > .gbody");
     const userMeta = chat.querySelector(".agmsg.user .agmeta").getBoundingClientRect();
     const userBubble = chat.querySelector(".agmsg.user .bubble").getBoundingClientRect();
     const finalMeta = chat.querySelector(".agmsg.assistant .agmeta").textContent;
+    const thinkRect = chat.querySelector(".agthink").getBoundingClientRect();
     const result = {
       processRatio: process.width / turn.width,
       processBodyDisplay: getComputedStyle(body).display,
+      centerOffset: Math.round(Math.abs(
+        (turn.left + turn.right) / 2 - (chatRect.left + chatRect.right) / 2,
+      )),
+      hasScroll: chat.scrollHeight > chat.clientHeight,
+      thinkLeftDelta: Math.round(Math.abs(thinkRect.left - turn.left)),
       userMetaRightDelta: Math.round(Math.abs(userMeta.right - userBubble.right)),
       userMetaInside: userMeta.top >= userBubble.bottom - 1,
       finalMeta,
@@ -310,6 +382,12 @@ try {
   });
   if (turnVisual.processRatio > 0.72 || turnVisual.processBodyDisplay !== "none") {
     throw new Error(`Collapsed turn process is not compact: ${JSON.stringify(turnVisual)}`);
+  }
+  if (!turnVisual.hasScroll || turnVisual.centerOffset > 1) {
+    throw new Error(`Agent conversation is not centered with a scrollbar: ${JSON.stringify(turnVisual)}`);
+  }
+  if (turnVisual.thinkLeftDelta > 1) {
+    throw new Error(`Live thinking block is not aligned with the message column: ${JSON.stringify(turnVisual)}`);
   }
   if (turnVisual.userMetaRightDelta > 2 || !turnVisual.userMetaInside) {
     throw new Error(`User timestamp is not aligned under its bubble: ${JSON.stringify(turnVisual)}`);
@@ -396,6 +474,7 @@ try {
     ok: true,
     pageCount: pages.length,
     pages: results,
+    logGutter,
     agentLayout,
     agentAfterWindowShrink,
     navStability,

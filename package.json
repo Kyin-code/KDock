@@ -21,6 +21,7 @@
     "test:vite:shortcuts": "node tests/shortcuts.vite-smoke.mjs",
     "test:vite:session": "node tests/agent-session.vite-smoke.mjs",
     "test:activity": "node tests/agent-activity.unit.mjs && node tests/agent-layout.unit.mjs",
+    "test:transfer": "node tests/transfer-terminal.unit.mjs",
     "test:update": "node tests/app-update.unit.mjs",
     "test:browser": "node tests/shared-browser.unit.mjs",
     "test:bundle": "node tests/bundle-budget.unit.mjs",

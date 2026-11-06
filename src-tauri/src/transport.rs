@@ -822,4 +822,66 @@ mod tests {
         let n2 = a.read(&mut buf).expect("b -> a 应当收得到");
         assert_eq!(&buf[..n2], b"pong from b");
     }
+
+    fn read_until(conn: &SshConn, needle: &str, timeout: Duration) -> String {
+        let deadline = std::time::Instant::now() + timeout;
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        while std::time::Instant::now() < deadline {
+            if String::from_utf8_lossy(&out).contains(needle) {
+                return String::from_utf8_lossy(&out).to_string();
+            }
+            match conn.read(&mut buf) {
+                Ok(0) => panic!("SSH closed while waiting for {needle:?}"),
+                Ok(n) => out.extend_from_slice(&buf[..n]),
+                Err(e) if is_idle_read_error(&e) => {
+                    std::thread::sleep(Duration::from_millis(12));
+                }
+                Err(e) => panic!("SSH read failed while waiting for {needle:?}: {e}"),
+            }
+        }
+        panic!(
+            "timed out waiting for {needle:?}; output tail: {:?}",
+            String::from_utf8_lossy(&out[out.len().saturating_sub(1200)..])
+        );
+    }
+
+    /// Opt-in end-to-end check against a real SSH host:
+    ///
+    /// `KDOCK_TEST_SSH_HOST=... KDOCK_TEST_SSH_USER=... KDOCK_TEST_SSH_KEY=...`
+    /// `cargo test -p kdock --lib transport::tests::real_ssh_terminal_arrow_sequences -- --ignored`
+    ///
+    /// This exercises the same `SshConn` stdin/stdout path used by KDock and
+    /// verifies remote command-history recall plus left-arrow line editing.
+    #[test]
+    #[ignore = "requires KDOCK_TEST_SSH_HOST/USER/KEY and a real interactive SSH host"]
+    fn real_ssh_terminal_arrow_sequences() {
+        let host = std::env::var("KDOCK_TEST_SSH_HOST").expect("KDOCK_TEST_SSH_HOST");
+        let user = std::env::var("KDOCK_TEST_SSH_USER").expect("KDOCK_TEST_SSH_USER");
+        let key = std::env::var("KDOCK_TEST_SSH_KEY").unwrap_or_default();
+        let port = std::env::var("KDOCK_TEST_SSH_PORT")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(22);
+        let extra = if key.is_empty() {
+            String::new()
+        } else {
+            format!("-i {key}")
+        };
+        let conn = SshConn::spawn(&host, port, &user, "", &extra).expect("start SSH");
+
+        conn.write(b"echo KDOCK_UP_BASE\r").expect("send base command");
+        read_until(&conn, "KDOCK_UP_BASE", Duration::from_secs(8));
+
+        // Up must be a real terminal sequence so the remote shell recalls its
+        // previous command; Enter then runs the recalled command again.
+        conn.write(b"\x1b[A\r").expect("send Up + Enter");
+        read_until(&conn, "KDOCK_UP_BASE", Duration::from_secs(8));
+
+        conn.write(b"echo KDOCK_EDIT_AB").expect("send edit prefix");
+        conn.write(b"\x1b[DX\r").expect("send Left + X + Enter");
+        read_until(&conn, "KDOCK_EDIT_AXB", Duration::from_secs(8));
+
+        conn.kill();
+    }
 }

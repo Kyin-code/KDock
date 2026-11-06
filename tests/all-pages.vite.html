@@ -16,6 +16,8 @@
   <script type="module">
     import { initAdvancedNav, openAdvancedNavFor } from "/src/nav-advanced.js";
     import { bindAgentResize } from "/src/agent-layout.js";
+    import { logNumberColumnWidth } from "/src/log-gutter.js";
+    import { bindPopoverDismissal } from "/src/popover.js";
 
     const source = await fetch("/index.html").then((r) => r.text());
     const parsed = new DOMParser().parseFromString(source, "text/html");
@@ -24,6 +26,7 @@
     const root = document.getElementById("ui-root");
     root.appendChild(split);
     bindAgentResize();
+    bindPopoverDismissal(document, "details[data-popover][open]");
 
     const advanced = initAdvancedNav();
     const debugBtn = document.querySelector('.navitem[data-tab="debug"]');
@@ -55,6 +58,7 @@
       return { tab, work };
     };
 
+    window.__logNumberColumnWidth = logNumberColumnWidth;
     window.__allPages = pages;
     document.documentElement.dataset.allPagesReady = "1";
   </script>

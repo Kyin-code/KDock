@@ -1,14 +1,7 @@
-function isActivityEvent(event) {
-  if (event?.type === "tool_call" || event?.type === "tool_result") return true;
-  return event?.type === "assistant"
-    && !String(event.text || "").trim()
-    && !!String(event.reasoning || "").trim();
-}
-
 /**
- * Split a persisted conversation into normal messages and one activity block
- * per assistant turn. Reasoning-only events belong to the activity, so they no
- * longer cut a 100-tool run into 100 separate cards.
+ * Split a persisted conversation into normal messages and folded activity
+ * blocks. A reasoning round owns the tools that follow it, so a long turn can
+ * still be opened one thought/tool step at a time.
  */
 export function partitionAgentEvents(events) {
   const parts = [];
@@ -20,15 +13,26 @@ export function partitionAgentEvents(events) {
   };
 
   for (const event of events) {
-    if (isActivityEvent(event)) {
+    if (event?.type === "assistant" && !String(event.text || "").trim()
+      && String(event.reasoning || "").trim()) {
+      // Start a new folded step for every reasoning round. Tool calls that
+      // follow it belong to the same step; the next reasoning starts another.
+      flush();
+      activity.push(event);
+      continue;
+    }
+    if (event?.type === "tool_call" || event?.type === "tool_result") {
       activity.push(event);
       continue;
     }
     if (event?.type === "assistant" && String(event.text || "").trim()) {
       if (String(event.reasoning || "").trim()) {
+        flush();
         activity.push({ ...event, text: "" });
+        flush();
+      } else {
+        flush();
       }
-      flush();
       parts.push({ kind: "event", event: { ...event, reasoning: "" } });
       continue;
     }
@@ -47,6 +51,17 @@ function hasAssistantText(event) {
 function eventTs(event) {
   const value = Number(event?.ts || 0);
   return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function isFinalAnswerIndex(events, index) {
+  if (!hasAssistantText(events[index])) return false;
+  for (let i = index + 1; i < events.length; i += 1) {
+    const type = events[i]?.type;
+    if (type === "tool_call" || type === "tool_result" || type === "assistant") {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -80,7 +95,7 @@ export function partitionAgentTurns(events, runningLast = false) {
     }
     let finalIndex = -1;
     for (let i = turnEvents.length - 1; i >= 0; i -= 1) {
-      if (hasAssistantText(turnEvents[i])) {
+      if (isFinalAnswerIndex(turnEvents, i)) {
         finalIndex = i;
         break;
       }
@@ -96,12 +111,18 @@ export function partitionAgentTurns(events, runningLast = false) {
         { ...finalEvent, text: "" },
       );
     }
-    const stamps = [
-      eventTs(turn.user),
-      ...turnEvents.map(eventTs),
-    ].filter((ts) => ts > 0);
-    const durationMs = complete && stamps.length > 1
-      ? Math.max(0, Math.max(...stamps) - Math.min(...stamps))
+    const startTs = eventTs(turn.user)
+      || turnEvents.map(eventTs).find((ts) => ts > 0)
+      || 0;
+    const endTs = eventTs(finalEvent)
+      || turnEvents
+        .filter((event) => event?.type !== "state")
+        .map(eventTs)
+        .filter((ts) => ts > 0)
+        .pop()
+      || 0;
+    const durationMs = complete && startTs > 0 && endTs > startTs
+      ? endTs - startTs
       : 0;
     parts.push({
       kind: "turn",

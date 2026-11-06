@@ -759,7 +759,7 @@
         <div class="workpane shell" data-work="shell">
           <div class="shellcard">
           <div class="outhead">
-            <button id="out-dir" class="outdir" title="点一下在资源管理器里打开这个目录">
+            <button id="out-dir" class="outdir" title="打开输出目录">
               <span class="ofi">📁</span>
               <span class="crumbs" id="out-crumbs"></span>
             </button>
@@ -767,15 +767,15 @@
             <!-- ASCII 交互开着时才亮的小标：以前是给整块输出区挂个 title，
                  没开也提示"可以打字"，看着就像"这里现在是 ASCII 模式"，容易误解 -->
             <button type="button" id="rx-hint" class="outchip" hidden
-                    title="直接在输出区敲键盘，会按原始字节发给设备（Enter 发 CR、Backspace 发 0x08、Ctrl+C 发 0x03）；点这里关掉">ASCII 交互</button>
+                    title="退出 ASCII 交互">ASCII 交互</button>
             <span class="outclock" id="out-clock" title="当前时间">--:--:--</span>
           </div>
           <div class="outpane">
             <pre id="rx" class="rx lognum" tabindex="0" spellcheck="false"></pre>
-            <button id="rx-jump" class="jump" hidden title="回到最新（上翻时自动停住跟随）">↓ 最新</button>
+            <button id="rx-jump" class="jump" hidden title="跳到最新">↓ 最新</button>
             <!-- 拖这个小角手手改下面输入区的高度（放在**输出框**的右下角，
                  不要放输入框里，否则跟文本框自带的 resize 一样误导） -->
-            <div id="rx-grip" class="rxgrip" title="拖动调整输入区高度（双击复位）"></div>
+            <div id="rx-grip" class="rxgrip" title="拖动调整输入区高度"></div>
           </div>
 
           <div class="toolbar">
@@ -784,7 +784,9 @@
               <div class="seg">
                 <label><input type="radio" name="rx-mode" value="text" checked /> 文本</label>
                 <label><input type="radio" name="rx-mode" value="hex" /> HEX</label>
+                <label><input type="radio" name="rx-mode" value="mixed" /> 文本 + HEX</label>
               </div>
+              <label class="chk" title="只显示 RX"><input type="checkbox" id="rx-only" /> 仅 RX</label>
               <span class="sep"></span>
               <label class="lb">行尾</label><select id="line-ending" class="tight"></select>
               <select id="history" class="tight"><option value="">历史…</option></select>
@@ -792,47 +794,44 @@
               <input id="loop-ms" type="number" min="10" value="1000" class="num" /> ms
               <button id="clear" class="btn small">清屏</button>
               <span class="grow"></span>
-              <label class="chk" title="每行前面显示时间戳"><input type="checkbox" id="show-ts" checked /> 时间戳</label>
-              <label class="chk" title="每行前面显示行号（从 1 开始；清屏后重新数，上翻看历史时也对得上）"><input type="checkbox" id="show-no" /> 序号</label>
-              <label class="chk" title="每行前面标出 RX/TX/SYS 方向；开着时间戳时会并进同一个方括号里（SSCOM 那种一个前缀）"><input type="checkbox" id="show-dir" /> 方向标记</label>
-              <details class="more" id="more-panel">
-                <summary class="btn small" title="显示 / 交互 / 快捷发送 / 会话日志 / 回放">更多 ⋯</summary>
+              <label class="chk" title="显示时间戳"><input type="checkbox" id="show-ts" checked /> 时间戳</label>
+              <label class="chk" title="显示行号"><input type="checkbox" id="show-no" /> 序号</label>
+              <label class="chk" title="显示 RX/TX 方向"><input type="checkbox" id="show-dir" /> 方向标记</label>
+              <details class="more" id="more-panel" data-popover>
+                <summary class="btn small" title="传输设置">更多 ⋯</summary>
                 <div class="morebox panelbox">
                   <section class="msec">
                     <div class="msec-h">显示</div>
                     <div class="mline">
                       <label class="lb" for="encoding">编码</label>
-                      <select id="encoding" class="tight" title="设备打印的不是 UTF-8（例如 GB2312/GBK）时切过去，原始字节不会丢">
+                      <select id="encoding" class="tight" title="显示编码">
                         <option value="utf-8">UTF-8</option>
                         <option value="gbk">GBK</option>
                       </select>
-                      <span class="mhint">中文乱码就切 GBK；编码只影响显示，日志里存的还是原始字节。</span>
                     </div>
                     <div class="mline">
-                      <label class="chk" title="新数据到达时自动滚到底部"><input type="checkbox" id="autoscroll" checked /> 自动滚动</label>
-                      <label class="chk" title="先冻住界面看历史，设备数据照收（不丢）"><input type="checkbox" id="pause" /> 暂停接收</label>
-                      <span class="mhint">「暂停」只是不刷新界面，串口照样在收；取消暂停会把攒下的数据补上。</span>
+                      <label class="chk" title="新数据自动滚到底部"><input type="checkbox" id="autoscroll" checked /> 自动滚动</label>
+                      <label class="chk" title="暂停刷新，后台继续接收"><input type="checkbox" id="pause" /> 暂停接收</label>
                     </div>
                   </section>
                   <section class="msec">
                     <div class="msec-h">交互</div>
                     <div class="mline">
-                      <label class="chk" title="打开后可以直接在输出区敲键盘跟设备对话"><input type="checkbox" id="ascii-mode" /> ASCII 交互</label>
-                      <label class="chk" title="设备不回显时打开，自己敲的字会先显示出来"><input type="checkbox" id="local-echo" /> 本地回显</label>
-                      <span class="mhint">打开「ASCII 交互」后点输出区就能直接打字（Enter 发送、Ctrl+C 发送 0x03）；适合对着 shell 交互。</span>
+                      <label class="chk" title="在输出区直接输入"><input type="checkbox" id="ascii-mode" /> ASCII 交互</label>
+                      <label class="chk" title="设备不回显时开启"><input type="checkbox" id="local-echo" /> 本地回显</label>
+                      <button id="ascii-resend" class="btn small" disabled>重发上一条</button>
                     </div>
                   </section>
                   <section class="msec">
                     <div class="msec-h">会话日志</div>
                     <div class="mline">
                       <label class="lb" for="sess-dir">目录</label>
-                      <input id="sess-dir" class="dirinput" placeholder="默认目录（留空=文档目录）" />
+                      <input id="sess-dir" class="dirinput" placeholder="默认目录（可选）" />
                     </div>
                     <div class="trow">
                       <button id="save" class="btn small">保存日志</button>
                       <button id="load" class="btn small">加载日志</button>
                       <button id="export" class="btn small">导出 CSV</button>
-                      <span class="mhint">保存的是完整会话（含时间戳/方向/原始字节），加载后可以回放。</span>
                     </div>
                   </section>
                   <section class="msec">
@@ -841,7 +840,6 @@
                       <label class="lb" for="speed">速度</label>
                       <input id="speed" type="number" min="0.1" step="0.1" value="1" class="num" /> x
                       <button id="replay" class="btn small">开始回放</button>
-                      <span class="mhint">先「加载日志」再回放；1x 按原始时间轴，2x 就是两倍速。</span>
                     </div>
                   </section>
                 </div>
@@ -850,7 +848,7 @@
           </div>
 
           <div class="inpane txpane">
-            <textarea id="tx" rows="3" placeholder="文本直接输入；HEX 形如 41 54 0D 0A（Enter 发送 / Shift+Enter 换行）"></textarea>
+            <textarea id="tx" rows="3" placeholder="输入文本；HEX 示例：41 54 0D 0A"></textarea>
             <button id="send" class="btn primary send-inline" title="发送输入框内容">发送</button>
           </div>
           <div class="outfoot"></div>
@@ -1959,7 +1957,7 @@
           <div class="cardtitle">从这里开始</div>
           <div class="field">
             <label for="mode">方式</label>
-            <select id="mode" title="连接方式：串口 / TCP 客户端 / TCP 服务端 / UDP">
+            <select id="mode" title="连接方式">
               <option value="serial">串口</option>
               <option value="tcp_client">TCP Client</option>
               <option value="tcp_server">TCP Server</option>
@@ -1971,7 +1969,7 @@
             <div class="field">
               <label for="ports">串口</label>
               <div class="inline">
-                <select id="ports" title="串口（窄窗口下这一排的标签会收起来）"></select>
+                <select id="ports" title="串口"></select>
                 <button id="refresh" class="btn icon" title="重新扫描串口">↻</button>
               </div>
             </div>
@@ -1979,8 +1977,8 @@
             <div class="field">
               <label for="baud-custom-chk">自定义</label>
               <div class="inline">
-                <input type="checkbox" id="baud-custom-chk" class="chk" title="用右边这个自定义波特率（窄窗口下「自定义」三个字会收起来）" />
-                <input id="baud-custom" type="number" min="1" max="4000000" placeholder="例如 250000" title="自定义波特率（左边那个勾打开才生效）" disabled />
+                <input type="checkbox" id="baud-custom-chk" class="chk" title="启用自定义波特率" />
+                <input id="baud-custom" type="number" min="1" max="4000000" placeholder="例如 250000" title="自定义波特率" disabled />
               </div>
             </div>
             <details class="adv">
@@ -2011,15 +2009,11 @@
             <div class="field"><label for="ssh-host">主机</label><input id="ssh-host" data-hist="ssh-host" value="192.168.1.10" /></div>
             <div class="field"><label for="ssh-port">端口</label><input id="ssh-port" type="number" value="22" /></div>
             <div class="field"><label for="ssh-user">用户名</label><input id="ssh-user" data-hist="ssh-user" placeholder="root / pi / ubuntu" /></div>
-            <div class="field"><label for="ssh-pass">密码</label><input id="ssh-pass" type="password" placeholder="留空 = 用密钥 / 自己在这儿敲" /></div>
+            <div class="field"><label for="ssh-pass">密码</label><input id="ssh-pass" type="password" placeholder="密码（可留空）" /></div>
             <details class="adv">
               <summary>高级</summary>
               <div class="field"><label for="ssh-extra">附加参数</label><input id="ssh-extra" placeholder="-i C:\Users\me\.ssh\id_ed25519" /></div>
-              <p class="hint">密钥登录：密码留空 + 这里填 <code>-i &lt;私钥路径&gt;</code>；端口转发在右边照原样写（如 <code>-L 8080:127.0.0.1:80</code>）。</p>
             </details>
-            <p class="hint">填了密码 → 用 PuTTY 的 <code>plink</code>（Windows 自带的 <code>ssh.exe</code> 只在控制台里读密码，管道喂不进去，
-              所以密码登录必须靠它；首次连接会把主机指纹记下来，之后就对不上了会拒绝）。密码留空 → 走 <code>ssh.exe</code> + 密钥。
-              连上之后，下面输入框里敲的就是远端 shell，输出直接显示在输出区；「命令表」的指令、「中控编排」里选 SSH 的步骤也用这条连接。</p>
           </div>
           <div class="btnrow">
             <button id="open" class="btn primary">连接</button>
@@ -2043,7 +2037,6 @@
           </div>
           <!-- 增 / 改 / 删都放到「✎ 编辑」那个弹窗里（跟指令表一个路子）：
                以前在下面塞了个内联表单，右栏一窄就折成 5 行、还跟表格不对齐。 -->
-          <span class="mhint">点某一行 = 直接发出去；行尾 ✎ 改、✕ 删；新增 / 批量整理点上面的「✎ 编辑」。</span>
         </div>
 
         <!-- 升级参数 -->

@@ -1946,6 +1946,9 @@ pub struct AppState {
     listener: Mutex<Option<kdock_core::net::TcpServer>>,
     reader_stop: Mutex<Option<Arc<AtomicBool>>>,
     log: Mutex<SessionLog>,
+    /// Serialize TX logging with reader RX logging so an echo cannot be
+    /// recorded before the write that caused it.
+    log_order: Mutex<()>,
     endpoint: Mutex<Option<Endpoint>>,
     opened_at: Mutex<Option<Instant>>,
     counters: Mutex<(u64, u64)>,
@@ -1990,6 +1993,7 @@ fn start_reader(app: AppHandle, st: Arc<AppState>, conn: Conn) -> Result<(), Str
                 return;
             }
             if let Some(state) = app.try_state::<Arc<AppState>>() {
+                let _order = state.log_order.lock().expect("log order mutex");
                 state
                     .log
                     .lock()
@@ -2021,7 +2025,7 @@ fn start_reader(app: AppHandle, st: Arc<AppState>, conn: Conn) -> Result<(), Str
 
         let mut buf = vec![0u8; READ_CHUNK];
         let mut pending: Vec<u8> = Vec::new();
-        let mut pending_ts = 0i64;
+        let mut last_rx_ts = now_ms();
         let mut last_rx = std::time::Instant::now();
         loop {
             if stop.load(Ordering::Relaxed) {
@@ -2044,9 +2048,10 @@ fn start_reader(app: AppHandle, st: Arc<AppState>, conn: Conn) -> Result<(), Str
                     }
                 }
                 Ok(n) => {
-                    if pending.is_empty() {
-                        pending_ts = now_ms();
-                    }
+                    // The timestamp belongs to the read that completed the line,
+                    // not an older byte still waiting in `pending`. Otherwise a
+                    // fresh response can inherit a timestamp from minutes ago.
+                    last_rx_ts = now_ms();
                     // 统计按"实际收到的字节"算，跟后面怎么分行无关
                     if let Some(state) = app.try_state::<Arc<AppState>>() {
                         state.counters.lock().expect("counters mutex").1 += n as u64;
@@ -2057,14 +2062,12 @@ fn start_reader(app: AppHandle, st: Arc<AppState>, conn: Conn) -> Result<(), Str
                     last_rx = std::time::Instant::now();
                     if let Some(pos) = pending.iter().rposition(|&b| b == b'\n') {
                         let block: Vec<u8> = pending.drain(..=pos).collect();
-                        log_lines(&app, &block, pending_ts);
-                        pending_ts = now_ms();
+                        log_lines(&app, &block, last_rx_ts);
                         let _ = app.emit("link://tail", "");   // 整行已落库，尾巴清空
                     }
                     while pending.len() >= MAX_PENDING {
                         let block: Vec<u8> = pending.drain(..MAX_PENDING).collect();
-                        log_lines(&app, &block, pending_ts);
-                        pending_ts = now_ms();
+                        log_lines(&app, &block, last_rx_ts);
                         let _ = app.emit("link://tail", "");
                     }
                 }
@@ -2073,7 +2076,7 @@ fn start_reader(app: AppHandle, st: Arc<AppState>, conn: Conn) -> Result<(), Str
                 Err(ref e) if transport::is_idle_read_error(e) => {
                     if !pending.is_empty() && last_rx.elapsed() >= FLUSH_IDLE {
                         let tail = Chunk {
-                            ts_ms: pending_ts,
+                            ts_ms: last_rx_ts,
                             hex: hex::bytes_to_hex(&pending),
                             text: String::from_utf8_lossy(&pending).to_string(),
                             ascii: hex::ascii_column(&pending),
@@ -2098,7 +2101,7 @@ fn start_reader(app: AppHandle, st: Arc<AppState>, conn: Conn) -> Result<(), Str
             }
         }
         if !pending.is_empty() {
-            log_lines(&app, &pending, pending_ts);
+            log_lines(&app, &pending, last_rx_ts);
         }
     });
     Ok(())
@@ -2311,6 +2314,7 @@ pub(crate) fn write_main(
         return Err("没有可发送的内容".into());
     }
 
+    let _order = state.log_order.lock().expect("log order mutex");
     {
         let mut guard = state.link.lock().expect("link mutex");
         let conn = guard
@@ -2320,11 +2324,14 @@ pub(crate) fn write_main(
             .map_err(|e| format!("发送失败: {e}"))?;
     }
 
-    state
-        .log
-        .lock()
-        .expect("log mutex")
-        .push(now_ms(), Direction::Tx, bytes.clone());
+    {
+        let mut log = state.log.lock().expect("log mutex");
+        if raw {
+            log.push_tx_coalesced(now_ms(), bytes.clone());
+        } else {
+            log.push(now_ms(), Direction::Tx, bytes.clone());
+        }
+    }
     state.counters.lock().expect("counters mutex").0 += bytes.len() as u64;
     state.char_counts.lock().expect("chars mutex").0 +=
         String::from_utf8_lossy(&bytes).chars().count() as u64;
