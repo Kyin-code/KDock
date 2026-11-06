@@ -131,9 +131,16 @@ assert.ok(
   ciWorkflow.includes("KDOCK_RELEASE_BUILD: ${{ github.event_name != 'pull_request' && '1' || '0' }}"),
   "CI must reserve version bumps for non-PR release builds",
 );
-const cleanIndex = ciWorkflow.indexOf("Remove-Item -LiteralPath $nsis -Recurse -Force");
-const buildIndex = ciWorkflow.indexOf("npm run tauri build");
-assert.ok(cleanIndex >= 0 && cleanIndex < buildIndex, "CI must clear stale NSIS output before building");
+const buildJobStart = ciWorkflow.indexOf("\n  build:");
+assert.ok(buildJobStart >= 0, "CI has no release build job");
+const buildJob = ciWorkflow.slice(buildJobStart);
+assert.match(
+  buildJob,
+  /runs-on: windows-latest/,
+  "release builds must use an ephemeral runner instead of the Application Control host",
+);
+assert.doesNotMatch(buildJob, /CARGO_TARGET_DIR|self-hosted, windows, kdock/);
+assert.match(buildJob, /target\\release\\kdock\.exe/);
 assert.match(
   ciWorkflow,
   /Get-ChildItem -LiteralPath \$nsis -Filter \$name -File/,
