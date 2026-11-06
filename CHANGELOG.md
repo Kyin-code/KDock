@@ -1,5 +1,15 @@
 # Changelog
 
+<!-- semifold:release version=0.3.15 -->
+## v0.3.15
+
+### 修复
+
+- ci: restore self-hosted builds with SAC guard
+<!-- semifold:release:end -->
+
+
+
 <!-- semifold:release version=0.3.14 -->
 ## v0.3.14
 

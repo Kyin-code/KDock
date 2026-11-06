@@ -1,5 +1,12 @@
 # Changelog
 
+<!-- semifold:release version=0.3.15 -->
+## v0.3.15
+
+<!-- semifold:release:end -->
+
+
+
 <!-- semifold:release version=0.3.14 -->
 ## v0.3.14
 
