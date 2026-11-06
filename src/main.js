@@ -30,7 +30,6 @@ import { remindUpdateLater, skipUpdate } from "./app-update.js";
 import { createAsciiHistory, loadAsciiHistory, saveAsciiHistory } from "./ascii-history.js";
 import { bindPopoverDismissal } from "./popover.js";
 import { termFeed, termModes, termNew, termText } from "./terminal.js";
-import { terminalKeySequence, terminalPastePayload } from "./terminal-keys.js";
 import {
   appendAsciiTxEntry,
   createLiveTimestampGuard,
@@ -188,6 +187,9 @@ let tailEntry = null;      // "正在长的半行"（设备还没发换行），
 let rxEntryNo = 0;
 const liveTs = createLiveTimestampGuard(() => Date.now());
 let currentTermModes = { applicationCursor: false, bracketedPaste: false };
+let sshHistoryControllerPromise = null;
+let terminalKeysPromise = null;
+let terminalKeys = null;
 let flLogNo = 0;            // 烧录日志的行号
 let sqLogNo = 0;            // 编排运行日志的行号
 
@@ -400,11 +402,33 @@ function num(v) {
   return n;
 }
 
+function sshHistoryController() {
+  if (!sshHistoryControllerPromise) {
+    sshHistoryControllerPromise = import("./ssh-history.js").then(
+      ({ createSshHistoryController }) => createSshHistoryController({
+        doOpen,
+        toast,
+        translate: en,
+      }),
+    );
+  }
+  return sshHistoryControllerPromise;
+}
+
+async function ensureTerminalKeys() {
+  if (!terminalKeysPromise) terminalKeysPromise = import("./terminal-keys.js");
+  terminalKeys = await terminalKeysPromise;
+  return terminalKeys;
+}
+
 function switchMode(next) {
   mode = next;
   document.querySelectorAll("[data-mode]").forEach((el) => {
     el.hidden = el.dataset.mode !== next;
   });
+  if (next === "ssh") {
+    sshHistoryController().then((controller) => controller.bind()).catch(() => {});
+  }
   // 收发消息框不重置：切换模式后输入内容与显示历史都保留
   refreshStats();
 }
@@ -925,8 +949,15 @@ async function doOpen() {
     const msg = await invoke("open_transport", { endpoint });
     toast(msg);
     pushSys(msg);
+    if (endpoint.mode === "ssh") {
+      try {
+        await (await sshHistoryController()).record(endpoint);
+      } catch (_) { /* history is best-effort; connection stays usable */ }
+    }
+    return true;
   } catch (e) {
     toast(String(e));
+    return false;
   }
 }
 
@@ -7546,7 +7577,7 @@ function bindAsciiMode() {
     commandHistory.reset();
   };
   const replaceAsciiLine = (next) => {
-    const end = terminalKeySequence({ key: "End" }, currentTermModes);
+    const end = terminalKeys?.terminalKeySequence({ key: "End" }, currentTermModes) || "\u001b[F";
     const erase = end + "\b".repeat([...asciiLine].length);
     asciiLine = next;
     asciiCursor = [...next].length;
@@ -7566,11 +7597,21 @@ function bindAsciiMode() {
   };
 
   paintResend();
-  $("ascii-mode").onchange = (e) => {
+  $("ascii-mode").onchange = async (e) => {
     asciiMode = e.target.checked;
     $("rx").classList.toggle("typing", asciiMode);
     $("rx-hint").hidden = !asciiMode;         // 顶栏那个小标只在真开着的时候亮
     if (asciiMode) {
+      try {
+        await ensureTerminalKeys();
+      } catch (error) {
+        e.target.checked = false;
+        asciiMode = false;
+        $("rx").classList.remove("typing");
+        $("rx-hint").hidden = true;
+        toast(String(error));
+        return;
+      }
       $("rx").focus();
       pushSys("ASCII 交互已开启");
     } else {
@@ -7579,7 +7620,7 @@ function bindAsciiMode() {
     }
   };
   if ($("local-echo")) $("local-echo").onchange = () => redrawRx();
-  if ($("ascii-resend")) $("ascii-resend").onclick = () => {
+  if ($("ascii-resend")) $("ascii-resend").onclick = async () => {
     const last = commandHistory.entries[commandHistory.size - 1];
     if (!last) return;
     if (!asciiMode) {
@@ -7588,7 +7629,8 @@ function bindAsciiMode() {
       toast("上一条命令已填入发送框");
       return;
     }
-    const erase = terminalKeySequence({ key: "End" }, currentTermModes)
+    await ensureTerminalKeys();
+    const erase = terminalKeys.terminalKeySequence({ key: "End" }, currentTermModes)
       + "\b".repeat([...asciiLine].length);
     queueRaw(erase + last + lineEnding());
     asciiLine = "";
@@ -7611,8 +7653,9 @@ function bindAsciiMode() {
     if (ev.target.closest("input, textarea, button, select")) return;
     $("rx").focus();
   });
-  $("rx").addEventListener("keydown", (ev) => {
+  $("rx").addEventListener("keydown", async (ev) => {
     if (!asciiMode || ev.isComposing) return;
+    if (!terminalKeys) await ensureTerminalKeys();
     const key = ev.key;
 
     // Ctrl+Shift+C is copy, matching mainstream terminal clients.
@@ -7647,7 +7690,7 @@ function bindAsciiMode() {
       return;
     }
 
-    const sequence = terminalKeySequence(ev, currentTermModes);
+    const sequence = terminalKeys.terminalKeySequence(ev, currentTermModes);
     if (!sequence) return;
     ev.preventDefault();
     ev.stopPropagation();
@@ -7714,13 +7757,14 @@ function bindAsciiMode() {
       queueRaw(sequence);
     }
   });
-  $("rx").addEventListener("paste", (ev) => {
+  $("rx").addEventListener("paste", async (ev) => {
     if (!asciiMode) return;
     const raw = ev.clipboardData?.getData("text") || "";
     if (!raw) return;
     ev.preventDefault();
     const text = raw.replace(/\r\n/g, "\r").replace(/\n/g, "\r");
-    queueRaw(terminalPastePayload(text, currentTermModes));
+    await ensureTerminalKeys();
+    queueRaw(terminalKeys.terminalPastePayload(text, currentTermModes));
     if (!asciiLineKnown) return;
     const chars = [...asciiLine];
     const before = chars.slice(0, asciiCursor).join("");

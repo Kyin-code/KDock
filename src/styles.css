@@ -537,6 +537,54 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 }
 .parampane .btnrow > .btn { width: 100%; min-width: 0; justify-content: center; }   /* 格子多宽按钮多宽 */
 .parampane > label.chk { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+.ssh-fields {
+  display: grid; grid-template-columns: minmax(0, 1fr) 82px;
+  gap: 8px; margin: 8px 0 6px;
+}
+.ssh-fields .field {
+  display: grid; grid-template-columns: minmax(0, 1fr);
+  gap: 3px; margin: 0;
+}
+.ssh-fields .field > label { font-size: 11.5px; }
+.ssh-host-field, .ssh-pass-field { grid-column: 1 / -1; }
+.ssh-user-field { grid-column: 1; grid-row: 2; }
+.ssh-port-field { grid-column: 2; grid-row: 2; }
+.ssh-remember { margin: 2px 0 8px !important; }
+.ssh-recent {
+  margin: 2px 0 10px; border: 1px solid hsl(var(--border) / .55);
+  border-radius: 10px; background: var(--surface-2); overflow: hidden;
+}
+.ssh-recent-head {
+  display: flex; align-items: center; gap: 6px; padding: 7px 9px;
+  color: hsl(var(--muted-foreground)); font-size: 11.5px;
+}
+.ssh-recent-list { max-height: 142px; overflow-y: auto; }
+.ssh-recent-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 26px;
+  align-items: stretch; border-top: 1px solid hsl(var(--border) / .45);
+}
+.ssh-recent-connect, .ssh-recent-remove {
+  border: 0; background: transparent; color: inherit; cursor: pointer;
+}
+.ssh-recent-connect {
+  min-width: 0; display: flex; flex-direction: column; align-items: flex-start;
+  gap: 2px; padding: 6px 8px; text-align: left;
+}
+.ssh-recent-connect:hover, .ssh-recent-remove:hover { background: hsl(var(--primary) / .09); }
+.ssh-recent-main {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 600 12px/1.3 var(--mono, "Cascadia Mono", Consolas, monospace);
+}
+.ssh-recent-meta {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: hsl(var(--muted-foreground)); font-size: 10.5px;
+}
+.ssh-recent-remove { color: hsl(var(--muted-foreground)); font-size: 15px; }
+.ssh-recent-remove:hover { color: hsl(var(--destructive)); }
+.ssh-recent-empty {
+  padding: 8px 9px; border-top: 1px solid hsl(var(--border) / .45);
+  color: hsl(var(--muted-foreground)); font-size: 11px;
+}
 .stats { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; white-space: pre-line; }
 
 .state { display: flex; align-items: center; gap: 6px; margin: 2px 0 4px; font-size: 12.5px; color: hsl(var(--muted-foreground)); }

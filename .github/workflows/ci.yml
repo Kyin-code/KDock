@@ -79,6 +79,9 @@ jobs:
       - name: Test terminal and transfer log behavior
         run: npm run test:transfer
 
+      - name: Test SSH connection history
+        run: npm run test:ssh
+
       - name: Test update manifest contract
         run: npm run test:update
 

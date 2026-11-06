@@ -37,7 +37,10 @@ try {
     const loopMs = document.getElementById("loop-ms");
     const resend = document.getElementById("ascii-resend");
     const localEcho = document.getElementById("local-echo");
-    if (!more || !summary || !rxOnly || !lineEnding || !loop || !loopMs || !resend || !localEcho) {
+    const sshRecent = document.getElementById("ssh-recent-list");
+    const sshRemember = document.getElementById("ssh-remember");
+    if (!more || !summary || !rxOnly || !lineEnding || !loop || !loopMs || !resend || !localEcho
+        || !sshRecent || !sshRemember) {
       return { missing: true };
     }
     more.open = true;
@@ -52,6 +55,7 @@ try {
       mixedRemoved: !mixed,
       rxOnlyLabel: rxOnly.closest("label")?.textContent.trim(),
       movedToMore: [rxOnly, lineEnding, loop, loopMs].every((el) => more.contains(el)),
+      sshHistoryUi: !!(sshRecent.closest('[data-mode="ssh"]') && sshRemember.closest('[data-mode="ssh"]')),
       resend: resend.textContent.trim(),
       localEchoDefault: !localEcho.checked,
       insideStayedOpen,
@@ -59,7 +63,7 @@ try {
       escapedClosed,
     };
   });
-  if (transferUi.missing || !transferUi.mixedRemoved || !transferUi.movedToMore
+  if (transferUi.missing || !transferUi.mixedRemoved || !transferUi.movedToMore || !transferUi.sshHistoryUi
       || transferUi.rxOnlyLabel !== "仅 RX" || transferUi.resend !== "重发上一条"
       || !transferUi.localEchoDefault
       || !transferUi.insideStayedOpen || !transferUi.outsideClosed || !transferUi.escapedClosed) {

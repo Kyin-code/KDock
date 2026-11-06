@@ -2012,10 +2012,22 @@
             <div class="field"><label for="udp-remote-port">远端端口</label><input id="udp-remote-port" type="number" value="9001" /></div>
           </div>
           <div data-mode="ssh" hidden>
-            <div class="field"><label for="ssh-host">主机</label><input id="ssh-host" data-hist="ssh-host" value="192.168.1.10" /></div>
-            <div class="field"><label for="ssh-port">端口</label><input id="ssh-port" type="number" value="22" /></div>
-            <div class="field"><label for="ssh-user">用户名</label><input id="ssh-user" data-hist="ssh-user" placeholder="root / pi / ubuntu" /></div>
-            <div class="field"><label for="ssh-pass">密码</label><input id="ssh-pass" type="password" placeholder="密码（可留空）" /></div>
+            <div class="ssh-recent">
+              <div class="ssh-recent-head">
+                <span>最近连接</span>
+                <span class="grow"></span>
+                <span id="ssh-recent-count" class="lb"></span>
+              </div>
+              <div id="ssh-recent-list" class="ssh-recent-list"></div>
+              <div id="ssh-recent-empty" class="ssh-recent-empty">连接成功后可在这里一键重连</div>
+            </div>
+            <div class="ssh-fields">
+              <div class="field ssh-host-field"><label for="ssh-host">主机</label><input id="ssh-host" data-hist="ssh-host" value="192.168.1.10" autocomplete="off" /></div>
+              <div class="field ssh-port-field"><label for="ssh-port">端口</label><input id="ssh-port" type="number" value="22" /></div>
+              <div class="field ssh-user-field"><label for="ssh-user">用户名</label><input id="ssh-user" data-hist="ssh-user" placeholder="root / pi / ubuntu" autocomplete="username" /></div>
+              <div class="field ssh-pass-field"><label for="ssh-pass">密码</label><input id="ssh-pass" type="password" placeholder="密码（可留空）" autocomplete="current-password" /></div>
+            </div>
+            <label class="chk ssh-remember"><input type="checkbox" id="ssh-remember" /> 记住密码（Windows DPAPI）</label>
             <details class="adv">
               <summary>高级</summary>
               <div class="field"><label for="ssh-extra">附加参数</label><input id="ssh-extra" placeholder="-i C:\Users\me\.ssh\id_ed25519" /></div>

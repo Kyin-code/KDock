@@ -22,6 +22,7 @@ mod runtime_graph;
 mod remote_screen;
 mod scope;
 mod shell;
+mod ssh_auth;
 mod storage;
 mod transport;
 pub mod usb;
@@ -3847,6 +3848,9 @@ pub fn run() {
             app_update::app_update_check,
             app_update::app_update_download,
             app_update::app_update_launch,
+            ssh_auth::ssh_secret_set,
+            ssh_auth::ssh_secret_get,
+            ssh_auth::ssh_secret_delete,
             workspace_git,
             ui_ready,
             splash_show,
