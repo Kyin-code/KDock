@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.18 -->
+## v0.3.18
+
+### 新增
+
+- feat(ssh): add recent connections and compact layout
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.17 -->
 ## v0.3.17
 

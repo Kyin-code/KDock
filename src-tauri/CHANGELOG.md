@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.18 -->
+## v0.3.18
+
+### 新增
+
+- feat(ssh): add recent connections and compact layout
+
+### Dependencies
+
+- Update kdock-core to 0.3.18.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.17 -->
 ## v0.3.17
 
