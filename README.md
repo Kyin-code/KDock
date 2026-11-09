@@ -16,8 +16,6 @@
 
 **中文** ｜ [English](README.en.md)
 
-<img src="docs/images/readme-agent.png" width="100%" alt="KDock Agent 空状态首页" />
-
 </div>
 
 ## 为什么是 KDock

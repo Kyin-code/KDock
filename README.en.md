@@ -16,8 +16,6 @@ Go from connecting a device to finding the problem, flashing a fix and automatin
 
 [中文](README.md) ｜ **English**
 
-<img src="docs/images/readme-agent.png" width="100%" alt="KDock Agent empty-state home screen" />
-
 </div>
 
 ## Why KDock
