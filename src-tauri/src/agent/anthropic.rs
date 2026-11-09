@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::llm::{ChatOut, ChatSink, ToolCall, Usage};
+use super::llm::{ChatOut, ChatSink, StreamClock, ToolCall, Usage};
 use super::store::Provider;
 
 /// 把用户的 base_url 拼成 Messages 端点。
@@ -453,6 +453,7 @@ fn read_sse(
     sink: &mut dyn ChatSink,
 ) -> Result<ChatOut, String> {
     let mut out = ChatOut::default();
+    let mut clock = StreamClock::new();
     // block index -> tool_calls 下标
     let mut tool_slot: HashMap<usize, usize> = HashMap::new();
     let mut br = BufReader::new(reader);
@@ -521,6 +522,8 @@ fn read_sse(
                             .unwrap_or("")
                             .to_string();
                         let start_args = cb.get("input").cloned().unwrap_or_else(|| json!({}));
+                        let has_start_args =
+                            !start_args.as_object().map(|o| o.is_empty()).unwrap_or(true);
                         tool_slot.insert(idx, out.tool_calls.len());
                         out.tool_calls.push(ToolCall {
                             id: if id.is_empty() {
@@ -540,10 +543,16 @@ fn read_sse(
                                 start_args.to_string()
                             },
                         });
+                        if has_start_args {
+                            clock.mark();
+                        }
                     }
                     "thinking" => {
                         if let Some(t) = cb.get("thinking").and_then(|x| x.as_str()) {
-                            out.reasoning.push_str(t);
+                            if !t.is_empty() {
+                                out.reasoning.push_str(t);
+                                clock.mark();
+                            }
                         }
                     }
                     _ => {}
@@ -557,6 +566,7 @@ fn read_sse(
                         if let Some(t) = d.get("text").and_then(|x| x.as_str()) {
                             if !t.is_empty() {
                                 out.content.push_str(t);
+                                clock.mark();
                                 sink.delta(t);
                             }
                         }
@@ -565,6 +575,7 @@ fn read_sse(
                         if let Some(t) = d.get("thinking").and_then(|x| x.as_str()) {
                             if !t.is_empty() {
                                 out.reasoning.push_str(t);
+                                clock.mark();
                                 sink.reasoning(t);
                             }
                         }
@@ -576,6 +587,9 @@ fn read_sse(
                         ) {
                             if let Some(tc) = out.tool_calls.get_mut(slot) {
                                 tc.raw_args.push_str(p);
+                                if !p.is_empty() {
+                                    clock.mark();
+                                }
                             }
                         }
                     }
@@ -613,5 +627,6 @@ fn read_sse(
             tc.raw_args = "{}".into();
         }
     }
+    clock.finish(&mut out);
     Ok(out)
 }

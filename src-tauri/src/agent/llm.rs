@@ -85,6 +85,40 @@ pub struct ChatOut {
     pub system_fingerprint: String,
 }
 
+/// Tracks visible stream output only. Both providers must mark every content,
+/// reasoning and tool-argument delta so token count and elapsed time cover the
+/// same output.
+pub(super) struct StreamClock {
+    started: Instant,
+    first: Option<Instant>,
+    last: Option<Instant>,
+}
+
+impl StreamClock {
+    pub(super) fn new() -> Self {
+        Self {
+            started: Instant::now(),
+            first: None,
+            last: None,
+        }
+    }
+
+    pub(super) fn mark(&mut self) {
+        let now = Instant::now();
+        if self.first.is_none() {
+            self.first = Some(now);
+        }
+        self.last = Some(now);
+    }
+
+    pub(super) fn finish(&self, out: &mut ChatOut) {
+        if let (Some(first), Some(last)) = (self.first, self.last) {
+            out.gen_ms = last.duration_since(first).as_millis() as u64;
+            out.first_ms = first.duration_since(self.started).as_millis() as u64;
+        }
+    }
+}
+
 /// 流式回调：正文增量 / 思考增量
 pub trait ChatSink {
     fn delta(&mut self, _text: &str) {}
@@ -389,19 +423,7 @@ fn read_sse(
     sink: &mut dyn ChatSink,
 ) -> Result<ChatOut, String> {
     let mut out = ChatOut::default();
-    // 出字速度的两个时间点：第一个增量 / 最后一个增量。
-    // 只在这两个点之间算速度 —— 工具调用、排队、空闲都不计入（用户要的就是这个口径）。
-    let started = Instant::now();
-    let mut first_at: Option<Instant> = None;
-    let mut last_at: Option<Instant> = None;
-    /// 收到一个增量：第一次记"首字"，每次刷新"末字"
-    fn bump(first: &mut Option<Instant>, last: &mut Option<Instant>) {
-        let now = Instant::now();
-        if first.is_none() {
-            *first = Some(now);
-        }
-        *last = Some(now);
-    }
+    let mut clock = StreamClock::new();
     // OpenAI 流式里 tool_calls 是**按 index 分片**过来的：id/name 只在第一片，arguments 要拼
     let mut slots: Vec<(String, String, String)> = Vec::new(); // (id, name, args)
     let mut br = BufReader::new(reader);
@@ -471,18 +493,21 @@ fn read_sse(
         if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
             if !text.is_empty() {
                 out.content.push_str(text);
-                bump(&mut first_at, &mut last_at);
+                clock.mark();
                 sink.delta(text);
             }
         }
         if let Some(text) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
             if !text.is_empty() {
                 out.reasoning.push_str(text);
-                bump(&mut first_at, &mut last_at);
+                clock.mark();
                 sink.reasoning(text);
             }
         }
         if let Some(calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+            if !calls.is_empty() {
+                clock.mark();
+            }
             for call in calls {
                 let idx = call
                     .get("index")
@@ -528,11 +553,7 @@ fn read_sse(
             },
         });
     }
-    // 记下出字耗时：首字→末字（不含工具调用/等待），以及首字延迟
-    if let (Some(f), Some(l)) = (first_at, last_at) {
-        out.gen_ms = l.duration_since(f).as_millis() as u64;
-        out.first_ms = f.duration_since(started).as_millis() as u64;
-    }
+    clock.finish(&mut out);
     Ok(out)
 }
 
@@ -637,6 +658,26 @@ fn parse_plain(text: &str) -> Result<ChatOut, String> {
 mod tests {
     use super::*;
 
+    struct SlowChunks {
+        chunks: Vec<Vec<u8>>,
+        index: usize,
+        delay: Duration,
+    }
+
+    impl Read for SlowChunks {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.index >= self.chunks.len() {
+                return Ok(0);
+            }
+            std::thread::sleep(self.delay);
+            let chunk = &self.chunks[self.index];
+            self.index += 1;
+            let n = chunk.len().min(buf.len());
+            buf[..n].copy_from_slice(&chunk[..n]);
+            Ok(n)
+        }
+    }
+
     #[test]
     fn deepseek_usage_keeps_reported_hit_and_miss() {
         let u = usage_from(&json!({
@@ -700,5 +741,34 @@ mod tests {
         provider.reasoning_effort = "high".into();
         let body = openai_body(&provider, &msgs, &[]);
         assert_eq!(body["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn tool_call_deltas_extend_the_visible_generation_window() {
+        let chunks = vec![
+            br#"data: {"choices":[{"delta":{"content":"ok"}}]}
+
+"#
+            .to_vec(),
+            br#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"run","arguments":"{\"path\":\"a\"}"}}]}}]}
+
+"#
+            .to_vec(),
+            b"data: [DONE]\n\n".to_vec(),
+        ];
+        let mut sink = NullSink;
+        let out = read_sse(
+            Box::new(SlowChunks {
+                chunks,
+                index: 0,
+                delay: Duration::from_millis(100),
+            }),
+            &AtomicBool::new(false),
+            &mut sink,
+        )
+        .unwrap();
+        assert_eq!(out.content, "ok");
+        assert_eq!(out.tool_calls.len(), 1);
+        assert!(out.gen_ms >= 80, "tool-call stream time was not counted");
     }
 }

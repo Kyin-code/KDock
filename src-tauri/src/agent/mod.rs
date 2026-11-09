@@ -288,16 +288,24 @@ fn resolve_provider(app: &AppHandle, want: Option<&str>) -> Result<(Provider, St
 // ── 出字速度统计（只统计"模型正在出字"的那段） ──────────────────────
 // 存 agent/speed.json：每个 profile 记最近一次 + 累计平均。
 // 平均是**加权**的：总 token / 总毫秒，不是"每次速度求平均"（那样短回答会污染结果）。
+const SPEED_ALGO: u64 = 2;
+
 fn speed_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(store::agent_dir(app)?.join("speed.json"))
 }
 
 pub fn load_speed(app: &AppHandle) -> Value {
-    std::fs::read_to_string(speed_path(app).unwrap_or_default())
+    let value = std::fs::read_to_string(speed_path(app).unwrap_or_default())
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
         .filter(|v| v.is_object())
-        .unwrap_or_else(|| json!({}))
+        .unwrap_or_else(|| json!({}));
+    // Older samples mixed billed completion tokens with a visible-output time
+    // window. They cannot be repaired after the fact, so start a clean series.
+    if value.get("__algo").and_then(|v| v.as_u64()) != Some(SPEED_ALGO) {
+        return json!({ "__algo": SPEED_ALGO });
+    }
+    value
 }
 
 /// 删 profile 时把它的速度记录也删掉，免得列表里留一堆用不上的条目
@@ -315,9 +323,9 @@ pub fn forget_speed(app: &AppHandle, provider_id: &str) {
     }
 }
 
-/// 记一次出字速度。tokens 用厂商给的 completion_tokens，没有就按字数估。
+/// 记一次出字速度。tokens 只数实际流出来的正文、思考和工具参数。
 pub fn record_speed(app: &AppHandle, provider_id: &str, tokens: u64, gen_ms: u64) {
-    if provider_id.trim().is_empty() || tokens == 0 || gen_ms < 80 {
+    if provider_id.trim().is_empty() || tokens < 4 || gen_ms < 120 {
         return; // 太短的一段（几乎瞬间返回）算出来没意义
     }
     let mut all = load_speed(app);
@@ -344,6 +352,7 @@ pub fn record_speed(app: &AppHandle, provider_id: &str, tokens: u64, gen_ms: u64
         "tokens": tot_tokens, "ms": tot_ms, "samples": samples, "at": now_ms(),
     });
     if let Some(m) = all.as_object_mut() {
+        m.insert("__algo".into(), json!(SPEED_ALGO));
         m.insert(provider_id.to_string(), val.clone());
     }
     if let Ok(p) = speed_path(app) {
@@ -359,6 +368,14 @@ pub fn record_speed(app: &AppHandle, provider_id: &str, tokens: u64, gen_ms: u64
 #[tauri::command]
 pub fn agent_speed_get(app: AppHandle) -> Value {
     load_speed(&app)
+}
+
+fn streamed_speed_tokens(out: &llm::ChatOut) -> u64 {
+    let mut tokens = llm::estimate_tokens(&out.content) + llm::estimate_tokens(&out.reasoning);
+    for call in &out.tool_calls {
+        tokens += llm::estimate_tokens(&call.name) + llm::estimate_tokens(&call.raw_args);
+    }
+    tokens as u64
 }
 
 #[tauri::command]
@@ -2614,15 +2631,10 @@ fn run_turn(
                 "total": out.usage.total_tokens,
                 "cacheHit": out.usage.cache_hit_tokens, "cacheMiss": out.usage.cache_miss_tokens }),
             );
-            // 出字速度：只在"真的在出字"的那段算（gen_ms 是首字→末字，工具调用/空闲不计）。
-            // token 数优先用厂商报的 completion_tokens，没有就按字数估（中英混排也能看）。
+            // 出字速度只统计实际流出来的正文、思考和工具参数。厂商 usage 可能包含
+            // 未暴露的思考 token，和可见流的计时段不是同一个口径，不能直接相除。
             if out.gen_ms > 0 {
-                let toks = if out.usage.completion_tokens > 0 {
-                    out.usage.completion_tokens
-                } else {
-                    (llm::estimate_tokens(&out.content) + llm::estimate_tokens(&out.reasoning))
-                        as u64
-                };
+                let toks = streamed_speed_tokens(&out);
                 record_speed(&app, &provider.id, toks, out.gen_ms);
             }
 
@@ -3486,6 +3498,20 @@ mod tests {
         assert!(llm::estimate_tokens(&h) <= 50);
         assert!(llm::estimate_tokens(&t) <= 50);
         assert!(h.is_char_boundary(h.len()) && t.is_char_boundary(0));
+    }
+
+    #[test]
+    fn speed_tokens_use_visible_stream_not_billed_completion_tokens() {
+        let mut out = llm::ChatOut::default();
+        out.content = "abcd".into();
+        out.reasoning = "中文".into();
+        out.tool_calls.push(llm::ToolCall {
+            id: "call".into(),
+            name: "run".into(),
+            raw_args: "{}".into(),
+        });
+        out.usage.completion_tokens = 5_000;
+        assert_eq!(streamed_speed_tokens(&out), 5);
     }
 
     #[test]
