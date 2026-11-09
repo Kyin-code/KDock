@@ -16,7 +16,7 @@
 
 **中文** ｜ [English](README.en.md)
 
-<img src="docs/images/readme-agent.png" width="100%" alt="KDock Agent 与消息导航预览" />
+<img src="docs/images/readme-agent.png" width="100%" alt="KDock Agent 空状态首页" />
 
 </div>
 
