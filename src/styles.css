@@ -2576,11 +2576,12 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   flex-direction: column;
   align-items: flex-end;
   justify-content: flex-start;
-  gap: 4px;
+  gap: 2.67px;
   padding: 6px 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-behavior: smooth;
   scrollbar-width: none;
   z-index: 30;
   pointer-events: auto;
@@ -2589,8 +2590,8 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agrail .tick {
   position: static;             /* 不再绝对定位：就是列表里的一项 */
   flex: 0 0 auto;
-  width: 40px;                  /* 感应区 40×20（原来是 24×12） */
-  height: 20px;
+  width: 40px;                  /* 感应区 40×10（高度缩到原来一半） */
+  height: 10px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -2602,19 +2603,19 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agrail .tick::after {
   content: "";
   display: block;
-  width: 12px;                  /* 视觉 12×6（原来是 6×3，整 2 倍） */
-  height: 6px;
+  width: 12px;                  /* 视觉 12×3（高度缩到原来一半） */
+  height: 3px;
   border-radius: 3px;
   background: hsl(var(--muted-foreground) / 0.45);
   transition: width .12s ease, height .12s ease, background .12s ease;
 }
 .agrail .tick:hover::after, .agrail .tick.hot::after {
-  width: 30px;                  /* 悬停同比放大（20×8 -> 30×12） */
-  height: 12px;
+  width: 30px;                  /* 悬停同比放大 */
+  height: 6px;
   background: hsl(var(--primary));
 }
 .agrail .tick:hover, .agrail .tick.hot {
-  width: 40px; height: 20px; right: auto; background: none;
+  width: 40px; height: 10px; right: auto; background: none;
 }
 .agrail .tick.active { background: none; }
 .agrail .tick.active::after { background: hsl(var(--primary) / 0.9); }

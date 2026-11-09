@@ -419,18 +419,26 @@ try {
       clientHeight: rail.clientHeight,
       scrollHeight: rail.scrollHeight,
       direction: getComputedStyle(rail).flexDirection,
+      scrollBehavior: getComputedStyle(rail).scrollBehavior,
+      gap: parseFloat(getComputedStyle(rail).gap),
+      tickHeight: parseFloat(getComputedStyle(rail.firstElementChild).height),
+      markerHeight: parseFloat(getComputedStyle(rail.firstElementChild, "::after").height),
       activeBackground: getComputedStyle(active).backgroundColor,
       markerBackground: getComputedStyle(active, "::after").backgroundColor,
+      activeMarkerHeight: parseFloat(getComputedStyle(active, "::after").height),
     };
-    rail.scrollTop = rail.scrollHeight;
+    rail.scrollTo({ top: rail.scrollHeight, behavior: "instant" });
     const reachedBottom = rail.scrollTop > 0
       && Math.abs(rail.scrollTop + rail.clientHeight - rail.scrollHeight) <= 1;
     rail.innerHTML = "";
     return { ...before, reachedBottom };
   });
   if (railScroll.scrollHeight <= railScroll.clientHeight || !railScroll.reachedBottom
-      || railScroll.direction !== "column" || railScroll.activeBackground !== "rgba(0, 0, 0, 0)"
-      || railScroll.markerBackground === "rgba(0, 0, 0, 0)") {
+      || railScroll.direction !== "column" || railScroll.scrollBehavior !== "smooth"
+      || railScroll.activeBackground !== "rgba(0, 0, 0, 0)"
+      || railScroll.markerBackground === "rgba(0, 0, 0, 0)"
+      || railScroll.gap > 2.7 || railScroll.tickHeight !== 10
+      || railScroll.markerHeight !== 3 || railScroll.activeMarkerHeight !== 3) {
     throw new Error(`Agent message rail cannot scroll through long histories: ${JSON.stringify(railScroll)}`);
   }
   await page.evaluate(() => {

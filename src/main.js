@@ -10312,9 +10312,14 @@ function agBuildRail() {
     });
     ticks.forEach((tick, index) => tick.classList.toggle("active", index === active));
     const tick = ticks[active];
-    if (tick.offsetTop < rail.scrollTop) rail.scrollTop = tick.offsetTop;
+    if (tick.offsetTop < rail.scrollTop) {
+      rail.scrollTo({ top: tick.offsetTop, behavior: "smooth" });
+    }
     else if (tick.offsetTop + tick.offsetHeight > rail.scrollTop + rail.clientHeight) {
-      rail.scrollTop = tick.offsetTop + tick.offsetHeight - rail.clientHeight;
+      rail.scrollTo({
+        top: tick.offsetTop + tick.offsetHeight - rail.clientHeight,
+        behavior: "smooth",
+      });
     }
   };
   box.onscroll = updateActive;
