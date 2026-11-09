@@ -710,7 +710,7 @@ export const EN = {
   "粘贴 Key（已保存的会留空）": "paste the key (empty keeps the saved one)",
   "多行文本批量处理 / 逐行发到串口": "Batch-process multi-line text / send line by line",
   "表达式计算：进制、位运算、常用换算": "Expression calculator: radix, bitwise, conversions",
-  "用户消息：悬停看前几个字，点一下跳过去": "User messages: hover to preview, click to jump",
+  "用户消息：悬停预览，点击跳转": "User messages: hover to preview, click to jump",
   "https:// 或直接输域名": "https:// or a bare domain",
   "（agent 打开网页后这里会同步显示；也可以自己填网址打开）":
     "(pages the agent opens show up here; you can also type a URL yourself)",

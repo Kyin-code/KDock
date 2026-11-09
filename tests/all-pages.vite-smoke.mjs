@@ -437,9 +437,102 @@ try {
       || railScroll.direction !== "column" || railScroll.scrollBehavior !== "smooth"
       || railScroll.activeBackground !== "rgba(0, 0, 0, 0)"
       || railScroll.markerBackground === "rgba(0, 0, 0, 0)"
-      || railScroll.gap > 2.7 || railScroll.tickHeight !== 10
+      || railScroll.gap !== 3 || railScroll.tickHeight !== 10
       || railScroll.markerHeight !== 3 || railScroll.activeMarkerHeight !== 3) {
     throw new Error(`Agent message rail cannot scroll through long histories: ${JSON.stringify(railScroll)}`);
+  }
+  const railHoverPoint = await page.evaluate(() => {
+    const rail = document.getElementById("ag-rail");
+    rail.innerHTML = "";
+    for (let i = 0; i < 9; i++) {
+      const tick = document.createElement("button");
+      tick.className = "tick";
+      rail.appendChild(tick);
+    }
+    const rect = rail.children[3].getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.move(railHoverPoint.x, railHoverPoint.y);
+  await page.waitForTimeout(180);
+  const railHover = await page.evaluate(() => {
+    const rail = document.getElementById("ag-rail");
+    const shapes = [...rail.children].map((tick) => {
+      const style = getComputedStyle(tick, "::after");
+      return [parseFloat(style.width), parseFloat(style.height)];
+    });
+    rail.innerHTML = "";
+    return shapes;
+  });
+  const expectedHoverWidths = [15, 18, 24, 30, 24, 18, 15, 12, 12];
+  if (railHover.some(([width], index) => width !== expectedHoverWidths[index])) {
+    throw new Error(`Agent rail hover is not a neighbouring ripple: ${JSON.stringify(railHover)}`);
+  }
+  await page.evaluate(async () => {
+    window.__showAllPagesPage("agent");
+    const { buildAgentRail } = await import("/src/agent-rail.js");
+    const box = document.getElementById("ag-chat");
+    const rail = document.getElementById("ag-rail");
+    box.innerHTML = "";
+    const users = [];
+    const events = [];
+    for (let i = 0; i < 24; i++) {
+      const message = document.createElement("div");
+      message.className = "agmsg user";
+      message.innerHTML = `<div class="bubble">第 ${i + 1} 条用户消息，这是一段用于检查超长文本省略和滚动行为的消息内容</div>`;
+      box.appendChild(message);
+      users.push(message);
+      events.push({ type: "user", text: `第 ${i + 1} 条用户消息，这是一段用于检查超长文本省略和滚动行为的消息内容` });
+    }
+    buildAgentRail({ rail, box, users, userEvents: events });
+  });
+  const previewTick = await page.evaluate(() => {
+    const rect = document.getElementById("ag-rail").children[2].getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.move(previewTick.x, previewTick.y);
+  await page.waitForTimeout(340);
+  const previewState = await page.evaluate(() => {
+    const panel = document.querySelector("#ag-box .agrailpreview");
+    const list = panel?.querySelector(".agrailpreview-list");
+    if (!panel || !list) return { missing: true };
+    const selected = panel.querySelector(".agrailpreview-item.active");
+    const first = panel.querySelector(".agrailpreview-item");
+    return {
+      hidden: panel.hidden,
+      count: panel.querySelectorAll(".agrailpreview-item").length,
+      selected: selected?.textContent,
+      listScrollable: list.scrollHeight > list.clientHeight,
+      whiteSpace: getComputedStyle(first).whiteSpace,
+      overflow: getComputedStyle(first).overflow,
+    };
+  });
+  if (previewState.missing || previewState.hidden || previewState.count !== 24
+      || !previewState.selected?.startsWith("第 3 条")
+      || !previewState.listScrollable || previewState.whiteSpace !== "nowrap"
+      || previewState.overflow !== "hidden") {
+    throw new Error(`Agent rail hover preview is broken: ${JSON.stringify(previewState)}`);
+  }
+  const previewPanelPoint = await page.evaluate(() => {
+    const rect = document.querySelector("#ag-box .agrailpreview").getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.move(previewPanelPoint.x, previewPanelPoint.y);
+  await page.waitForTimeout(260);
+  const previewStayedOpen = await page.evaluate(
+    () => !document.querySelector("#ag-box .agrailpreview")?.hidden,
+  );
+  await page.mouse.move(1, 1);
+  await page.waitForTimeout(240);
+  const previewClosed = await page.evaluate(
+    () => document.querySelector("#ag-box .agrailpreview")?.hidden,
+  );
+  await page.evaluate(() => {
+    document.getElementById("ag-chat").innerHTML = "";
+    document.getElementById("ag-rail").innerHTML = "";
+    document.querySelector("#ag-box .agrailpreview")?.remove();
+  });
+  if (!previewStayedOpen || !previewClosed) {
+    throw new Error(`Agent rail preview cannot be entered or closed: ${previewStayedOpen}/${previewClosed}`);
   }
   await page.evaluate(() => {
     document.documentElement.classList.remove("noparam");
@@ -528,6 +621,8 @@ try {
     agentVisual,
     turnVisual,
     railScroll,
+    railHover,
+    railPreview: { ...previewState, stayedOpen: previewStayedOpen, closed: previewClosed },
     responsiveMatrix: {
       profiles: matrix.length,
       pageChecks: matrixResults.length,

@@ -10280,50 +10280,21 @@ async function agNewSession(wsId) {
  * 重建右侧刻度：等间距列出用户消息，整列在右侧上下居中。
  * 历史很长时导航条自身滚动，并让当前阅读位置对应的刻度保持在可见区域。
  */
-function agBuildRail() {
+let agRailImport = null;
+let agRailSequence = 0;
+async function agBuildRail() {
   const rail = agEl("ag-rail");
   const box = agEl("ag-chat");
   if (!rail || !box) return;
-  rail.innerHTML = "";
+  const sequence = ++agRailSequence;
   const users = [...box.querySelectorAll(".agmsg.user")];
   const userEvs = agEvents.filter((e) => e.type === "user");
-  users.forEach((dom, k) => {
-    const tick = document.createElement("button");
-    tick.type = "button";
-    tick.className = "tick";
-    const preview = String(userEvs[k]?.text || "").replace(/\s+/g, " ").slice(0, 30);
-    tick.title = preview;
-    tick.setAttribute("aria-label", preview || "用户消息");
-    tick.onclick = () => {
-      const top = dom.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
-      box.scrollTo({ top: Math.max(0, top - box.clientHeight / 3), behavior: "smooth" });
-      dom.classList.add("hl");
-      setTimeout(() => dom.classList.remove("hl"), 1200);
-    };
-    rail.appendChild(tick);
-  });
-  const ticks = [...rail.children];
-  const updateActive = () => {
-    if (!ticks.length) return;
-    const cutoff = box.getBoundingClientRect().top + box.clientHeight * 0.36;
-    let active = 0;
-    users.forEach((dom, index) => {
-      if (dom.getBoundingClientRect().top <= cutoff) active = index;
-    });
-    ticks.forEach((tick, index) => tick.classList.toggle("active", index === active));
-    const tick = ticks[active];
-    if (tick.offsetTop < rail.scrollTop) {
-      rail.scrollTo({ top: tick.offsetTop, behavior: "smooth" });
-    }
-    else if (tick.offsetTop + tick.offsetHeight > rail.scrollTop + rail.clientHeight) {
-      rail.scrollTo({
-        top: tick.offsetTop + tick.offsetHeight - rail.clientHeight,
-        behavior: "smooth",
-      });
-    }
-  };
-  box.onscroll = updateActive;
-  requestAnimationFrame(updateActive);
+  agRailImport ||= import("./agent-rail.js");
+  try {
+    const { buildAgentRail } = await agRailImport;
+    if (sequence !== agRailSequence || !rail.isConnected || !box.isConnected) return;
+    buildAgentRail({ rail, box, users, userEvents: userEvs });
+  } catch (_) {}
 }
 
 /* ── 斜杠命令（参考 codex）：/goal 等直接在本地处理，不走模型 ── */

@@ -2576,7 +2576,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   flex-direction: column;
   align-items: flex-end;
   justify-content: flex-start;
-  gap: 2.67px;
+  gap: 3px;
   padding: 6px 0;
   overflow-x: hidden;
   overflow-y: auto;
@@ -2619,6 +2619,72 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .agrail .tick.active { background: none; }
 .agrail .tick.active::after { background: hsl(var(--primary) / 0.9); }
+/* Hover ripples across three neighbours on each side instead of enlarging
+   one isolated tick. */
+.agrail .tick:has(+ .tick:hover)::after,
+.agrail .tick:hover + .tick::after {
+  width: 24px;
+  height: 5px;
+  background: hsl(var(--primary) / 0.78);
+}
+.agrail .tick:has(+ .tick + .tick:hover)::after,
+.agrail .tick:hover + .tick + .tick::after {
+  width: 18px;
+  height: 4px;
+  background: hsl(var(--primary) / 0.62);
+}
+.agrail .tick:has(+ .tick + .tick + .tick:hover)::after,
+.agrail .tick:hover + .tick + .tick + .tick::after {
+  width: 15px;
+  height: 3px;
+  background: hsl(var(--primary) / 0.5);
+}
+.agrailpreview {
+  position: absolute;
+  right: 52px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: min(320px, calc(100% - 90px));
+  max-height: min(68%, 480px);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--surface-line);
+  border-radius: 14px;
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-2);
+  z-index: 40;
+}
+.agrailpreview[hidden] { display: none; }
+.agrailpreview-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.agrailpreview-item {
+  width: 100%;
+  min-height: 28px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: hsl(var(--muted-foreground));
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.agrailpreview-item:hover,
+.agrailpreview-item.active {
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.08);
+}
 .agrail .tip { right: 46px; }
 /* 正文给更宽的导航条留位置 */
 .agentchat { padding-right: 54px; }
