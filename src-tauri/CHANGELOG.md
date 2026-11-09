@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.19 -->
+## v0.3.19
+
+### 修复
+
+- fix(ci): keep initial bundle within budget
+
+### Dependencies
+
+- Update kdock-core to 0.3.19.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.18 -->
 ## v0.3.18
 

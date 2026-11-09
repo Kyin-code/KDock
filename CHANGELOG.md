@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.19 -->
+## v0.3.19
+
+### 修复
+
+- fix(ci): keep initial bundle within budget
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.18 -->
 ## v0.3.18
 
