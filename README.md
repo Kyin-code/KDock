@@ -4,60 +4,51 @@
 
 # KDock
 
-**嵌入式调试工作台 + 可调用全部工具的 Agent**
+**把串口调试、烧录、固件分析和 AI Agent 放进同一个 Windows 工作台。**
 
-串口、网络、烧录、设备、固件分析、仪器与流程编排，集中在一个桌面窗口。
+从连接设备到定位问题，再到烧录和自动化，不用在多个软件之间反复复制粘贴。
 
+[![CI](https://github.com/Kyin-code/KDock/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kyin-code/KDock/actions/workflows/ci.yml)
+[![Pre-release](https://img.shields.io/badge/release-test--latest-orange)](https://github.com/Kyin-code/KDock/releases/tag/test-latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
-![Rust](https://img.shields.io/badge/Rust-1.80%2B-orange)
 
 **中文** ｜ [English](README.en.md)
 
+<img src="docs/images/readme-agent.png" width="100%" alt="KDock Agent 与消息导航预览" />
+
 </div>
 
----
+## 为什么是 KDock
 
-## 目录
+- **一条链路贯穿调试流程**：串口、网络、SSH、设备文件、烧录、固件分析和仪器共享同一套上下文。
+- **Agent 不只写建议**：它能调用 KDock 的真实工具，读写工程、操作设备、执行命令，并按权限等待确认。
+- **面向嵌入式现场**：从 ELF/BIN 调用链到寄存器、逻辑波形和固件升级，重点解决桌面上真实发生的调试工作。
 
-- [下载与运行](#下载与运行)
-- [能做什么](#能做什么)
-- [如何协作](#如何协作)
-- [从源码编译](#从源码编译)
-- [界面展示](#界面展示)
-- [项目目录](#项目目录)
-- [开源依赖与许可](#开源依赖与许可)
-- [文档](#文档)
+## 2 分钟上手
 
-## 下载与运行
+1. 打开 [test-latest](https://github.com/Kyin-code/KDock/releases/tag/test-latest)。
+2. 下载 `KDock-*-win-x64.zip`，解压后运行 `KDock.exe`。
+3. 在“传输”页连接串口或网络；其他页面按 `F1` 查看当前功能说明。
 
-目前只有跟随 `main` 自动构建的 **Pre-release 测试版**：
+也提供 `KDock_*_x64-setup.exe` 安装包。需要 Windows x64 和 WebView2 Runtime。
 
-**[下载最新测试版](https://github.com/Kyin-code/KDock/releases/tag/test-latest)**
-
-- `KDock-*-win-x64.zip`：免安装，解压后运行 `KDock.exe`
-- `KDock_*_x64-setup.exe`：NSIS 安装包
-- `kdock.exe`：裸可执行文件
-
-需要 Windows x64 和 WebView2 Runtime。程序未签名，首次运行可能触发 SmartScreen；
-测试版可能改配置或崩溃，请先备份。
-应用发现新版本后会在程序内下载并校验 SHA-256，校验通过后仍需手动确认启动安装程序。
+> 当前是自动构建的 Pre-release，程序未签名，首次运行可能出现 SmartScreen。
+> 更新由应用内下载并校验 SHA-256，安装前仍需手动确认。
 
 ## 能做什么
 
-- **连接**：串口、TCP/UDP、SSH、USBPcap、tshark。
-- **设备**：`.fw` 升级、OpenOCD/J-Link、设备文件、FTP/FTPS/TFTP、ADB。
-- **分析**：ELF/BIN 运行结构、调用链、CFG、逻辑分析仪。
-- **工具**：示波器、命令表、实时图表、批量文本、计算器、中控编排。
-- **Agent**：对话、技能、MCP、工作区、权限审批、设备分析、共享浏览器、结构化页面断言、
-  Windows 本机 UI 自动化、AppContainer 命令沙箱、子 Agent 和可跨进程唤醒的定时任务。
+| 场景 | 能力 |
+| --- | --- |
+| 连接与传输 | 串口、TCP/UDP、SSH、USBPcap、tshark、FTP/FTPS/TFTP |
+| 设备与烧录 | `.fw` 升级、厂商 Bootloader、OpenOCD/J-Link/pyOCD/WCH-Link、ADB |
+| 固件分析 | ELF/BIN 运行结构、函数调用链、上下游高亮、CFG、中断与 RTOS 识别 |
+| 仪器与数据 | 示波器、逻辑分析仪、实时图表、批量文本、计算器、中控编排 |
+| Agent 与自动化 | 工作区、技能、MCP、共享浏览器、Windows UI 自动化、子 Agent、命令沙箱、定时任务 |
 
-## 如何协作
-
-- **Agent**：描述目标，由 Agent 调用工具并按权限请求确认。
-- **自动化**：用工作流、`AGENTS.md`、技能和 MCP 固化操作与项目规范。
-- **开发**：提交 Issue / PR；合并前通过 `cargo test --workspace --locked` 和 `npm run build`。
+Agent 支持 OpenAI-compatible 与 Anthropic 接口，可接入自己的模型供应商。
+常用调试步骤可以固化成工作流、技能或 `AGENTS.md`，下次直接复用。
 
 ## 从源码编译
 
@@ -74,34 +65,32 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File tools/bingraph/build-portable.ps1 
 # 开发
 npm run tauri dev
 
-# 测试与正式出包
-npm run test:vite
+# 测试
+npm run test:vite:pages
 cargo test --workspace --locked
-# 自动调用 Semifold 递增版本；首次会通过 cargo 安装 semifold 0.3.4
+
+# 正式出包（自动递增版本）
 npm run tauri build
 ```
 
-产物：
+产物位于：
 
-- `target/release/kdock.exe`
-- `target/release/bundle/nsis/KDock_<Semifold 生成的版本>_x64-setup.exe`
+```text
+target/release/kdock.exe
+target/release/bundle/nsis/KDock_<version>_x64-setup.exe
+```
 
-不要直接用 `cargo build --release` 代替 Tauri 打包，否则前端资源和 `devUrl` 配置不会完整。
-版本由 `.changes/config.toml` 和 `scripts/semfold-version.ps1` 统一管理，不要手工改三份清单。
+不要直接用 `cargo build --release` 代替 Tauri 打包；前端资源不会完整进入安装包。
 
 ## 界面展示
 
-> 仅作界面展示，详细操作请按 F1 查看上下文帮助。
+> 截图仅展示界面；实际操作以应用内 `F1` 帮助为准。
 
-| 主工作台 | 运行结构 |
+| 运行结构分析 | 逻辑分析仪 |
 | --- | --- |
-| ![主工作台](docs/images/readme-overview.png) | ![运行结构](docs/images/readme-runtime.png) |
+| ![运行结构](docs/images/readme-runtime.png) | ![逻辑分析仪](docs/images/readme-logic.png) |
 
-| 逻辑分析仪 | Agent |
-| --- | --- |
-| ![逻辑分析仪](docs/images/readme-logic.png) | ![Agent](docs/images/readme-agent.png) |
-
-## 项目目录
+## 项目结构
 
 ```text
 src/                    Vite 前端
@@ -112,11 +101,15 @@ resources/bingraph/     构建产物，不进入 Git
 docs/                   协议、算法与功能文档
 ```
 
+## 参与贡献
+
+- 遇到问题请提交 Issue，带上 KDock 版本、系统版本和相关日志。
+- 提交 PR 前请运行 `npm run test:vite:pages`、`npm run build` 和 `cargo test --workspace --locked`。
+- 新功能请尽量同时补充帮助文档、测试和必要的第三方许可说明。
+
 ## 开源依赖与许可
 
-KDock 自身采用 [Apache-2.0](LICENSE)。
-
-核心开源项目：
+KDock 自身采用 [Apache-2.0](LICENSE)。主要开源依赖：
 
 | 项目 | 用途 | 许可 |
 | --- | --- | --- |
@@ -127,12 +120,12 @@ KDock 自身采用 [Apache-2.0](LICENSE)。
 | [Python](https://www.python.org/) | 便携分析器运行时 | PSF-2.0 |
 | [Cytoscape.js](https://js.cytoscape.org/) | 分析器离线页面图形 | MIT |
 
-固件分析器在**独立 Python 子进程**中运行；发行包保留 78 个 Python distributions
-的许可证与第三方声明。`pyvex` 内含 LibVEX（`GPL-2.0-or-later`），KDock 不修改，
-仅在独立进程中使用。完整边界见 [NOTICE](NOTICE) 与
+固件分析器运行在独立 Python 子进程中。发行包保留 78 个 Python distributions
+的许可证与第三方声明；`pyvex` 内含的 LibVEX（`GPL-2.0-or-later`）未被修改，
+仅在该独立进程中使用。完整边界见 [NOTICE](NOTICE) 与
 [第三方清单](tools/bingraph/THIRD_PARTY_NOTICES.md)。
 
-USBPcap、tshark、sigrok、ADB/scrcpy、DSView、J-Link、OpenOCD 等为可选外部工具，
+USBPcap、tshark、sigrok、ADB/scrcpy、DSView、J-Link、OpenOCD 等为可选外部工具。
 KDock 只调用用户安装的程序，不打包或再许可其代码。
 
 ## 文档

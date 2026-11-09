@@ -4,59 +4,51 @@
 
 # KDock
 
-**An embedded debugging workbench with an Agent that can use every built-in tool**
+**Serial debugging, flashing, firmware analysis and an AI Agent in one Windows workbench.**
 
-Serial, network, flashing, devices, firmware analysis, instruments and workflows—in one window.
+Go from connecting a device to finding the problem, flashing a fix and automating the workflow without juggling separate tools.
 
+[![CI](https://github.com/Kyin-code/KDock/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kyin-code/KDock/actions/workflows/ci.yml)
+[![Pre-release](https://img.shields.io/badge/release-test--latest-orange)](https://github.com/Kyin-code/KDock/releases/tag/test-latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
-![Rust](https://img.shields.io/badge/Rust-1.80%2B-orange)
 
 [中文](README.md) ｜ **English**
 
+<img src="docs/images/readme-agent.png" width="100%" alt="KDock Agent and message navigation preview" />
+
 </div>
 
----
+## Why KDock
 
-## Contents
+- **One link through the whole debug loop**: serial, networking, SSH, device files, flashing, firmware analysis and instruments share context.
+- **An Agent that can do the work**: it calls real KDock tools, edits workspaces, operates devices and runs commands, subject to permission checks.
+- **Built for embedded work**: call graphs, registers, logic captures and firmware updates are part of the same desktop workflow.
 
-- [Download and run](#download-and-run)
-- [What it does](#what-it-does)
-- [Working together](#working-together)
-- [Build from source](#build-from-source)
-- [Screenshots](#screenshots)
-- [Project layout](#project-layout)
-- [Open source and licensing](#open-source-and-licensing)
-- [Documentation](#documentation)
+## Two-minute start
 
-## Download and run
+1. Open [test-latest](https://github.com/Kyin-code/KDock/releases/tag/test-latest).
+2. Download `KDock-*-win-x64.zip`, extract it and run `KDock.exe`.
+3. Connect a serial or network link on the Transfer page; press `F1` elsewhere for contextual help.
 
-Only automatically built **Pre-release** test builds are available:
+An NSIS installer (`KDock_*_x64-setup.exe`) is also available. Windows x64 and WebView2 Runtime are required.
 
-**[Download the latest test build](https://github.com/Kyin-code/KDock/releases/tag/test-latest)**
-
-- `KDock-*-win-x64.zip`: portable, unzip and run `KDock.exe`
-- `KDock_*_x64-setup.exe`: NSIS installer
-- `kdock.exe`: bare executable
-
-Requires Windows x64 and the WebView2 Runtime. Builds are unsigned and may trigger SmartScreen.
-Test builds can change local settings or crash; back up first.
+> Test builds are unsigned Pre-releases and may trigger SmartScreen.
+> In-app updates are downloaded and SHA-256 verified; installation still requires explicit confirmation.
 
 ## What it does
 
-- **Links**: serial, TCP/UDP, SSH, USBPcap and tshark.
-- **Devices**: `.fw` upgrade, OpenOCD/J-Link, device files, FTP/FTPS/TFTP and ADB.
-- **Analysis**: ELF/BIN runtime graph, call chains, CFG and logic analyzer.
-- **Tools**: scope, commands, live charts, batch text, calculator and workflow.
-- **Agent**: chat, skills, MCP, workspaces, approvals, device analysis, a shared browser with structured UI assertions,
-  local Windows UI automation, AppContainer command sandboxing, subagents and schedules that can wake KDock while closed.
+| Area | Capabilities |
+| --- | --- |
+| Links and transfer | Serial, TCP/UDP, SSH, USBPcap, tshark, FTP/FTPS/TFTP |
+| Devices and flashing | `.fw` upgrade, vendor bootloaders, OpenOCD/J-Link/pyOCD/WCH-Link, ADB |
+| Firmware analysis | ELF/BIN runtime graph, call chains, upstream/downstream highlighting, CFG, interrupts and RTOS detection |
+| Instruments and data | Oscilloscope, logic analyzer, live charts, batch text, calculator and workflow |
+| Agent and automation | Workspaces, skills, MCP, shared browser, Windows UI automation, subagents, command sandbox and schedules |
 
-## Working together
-
-- **Agent**: describe a goal; it uses tools with permission checks.
-- **Automation**: capture operations and project rules in workflows, `AGENTS.md`, skills and MCP.
-- **Development**: open issues or PRs; pass `cargo test --workspace --locked` and `npm run build`.
+The Agent supports OpenAI-compatible and Anthropic providers, so you can bring your own model service.
+Repeatable debug steps can be stored as workflows, skills or `AGENTS.md`.
 
 ## Build from source
 
@@ -67,38 +59,36 @@ git clone https://github.com/Kyin-code/KDock.git
 cd KDock
 npm ci
 
-# First runtime-analyzer build, about 500 MB
+# Build the portable runtime analyzer on first setup, about 500 MB
 pwsh -NoProfile -ExecutionPolicy Bypass -File tools/bingraph/build-portable.ps1 -NoGraphviz
 
 # Development
 npm run tauri dev
 
-# Tests and release package
-npm run test:vite
+# Tests
+npm run test:vite:pages
 cargo test --workspace --locked
-# Semifold bumps the version automatically; the first run installs semifold 0.3.4
+
+# Release package with automatic version bump
 npm run tauri build
 ```
 
 Outputs:
 
-- `target/release/kdock.exe`
-- `target/release/bundle/nsis/KDock_<version generated by Semifold>_x64-setup.exe`
+```text
+target/release/kdock.exe
+target/release/bundle/nsis/KDock_<version>_x64-setup.exe
+```
 
-Use `npm run tauri build`; `cargo build --release` alone does not package the frontend correctly.
-Versions are managed by `.changes/config.toml` and `scripts/semfold-version.ps1`; do not edit the three manifests by hand.
+Do not replace `npm run tauri build` with `cargo build --release`; frontend assets will not be packaged correctly.
 
 ## Screenshots
 
-> UI preview only. Press F1 for contextual help.
+> UI preview only. Use the in-app `F1` help for actual workflows.
 
-| Workbench | Runtime graph |
+| Runtime graph | Logic analyzer |
 | --- | --- |
-| ![Workbench](docs/images/readme-overview.png) | ![Runtime graph](docs/images/readme-runtime.png) |
-
-| Logic analyzer | Agent |
-| --- | --- |
-| ![Logic analyzer](docs/images/readme-logic.png) | ![Agent](docs/images/readme-agent.png) |
+| ![Runtime graph](docs/images/readme-runtime.png) | ![Logic analyzer](docs/images/readme-logic.png) |
 
 ## Project layout
 
@@ -106,16 +96,20 @@ Versions are managed by `.changes/config.toml` and `scripts/semfold-version.ps1`
 src/                    Vite frontend
 src-tauri/              Tauri 2 / Rust backend and Agent
 crates/kdock-core/      Serial, HEX, line endings and session core
-tools/bingraph/         Portable firmware analyzer source and build script
+tools/bingraph/         Portable firmware analyzer source and build scripts
 resources/bingraph/     Generated bundle, not tracked by Git
-docs/                   Protocol, algorithm and feature docs
+docs/                   Protocol, algorithm and feature documentation
 ```
+
+## Contributing
+
+- Open an Issue with the KDock version, Windows version and relevant logs.
+- Before a PR, run `npm run test:vite:pages`, `npm run build` and `cargo test --workspace --locked`.
+- Include help text, tests and third-party license updates where applicable.
 
 ## Open source and licensing
 
-KDock itself is [Apache-2.0](LICENSE).
-
-Core open-source projects:
+KDock itself is [Apache-2.0](LICENSE). Core dependencies:
 
 | Project | Purpose | License |
 | --- | --- | --- |
@@ -126,8 +120,8 @@ Core open-source projects:
 | [Python](https://www.python.org/) | Portable analyzer runtime | PSF-2.0 |
 | [Cytoscape.js](https://js.cytoscape.org/) | Analyzer offline graph UI | MIT |
 
-The firmware analyzer runs as an **independent Python child process**. Release artifacts retain
-licenses and notices for **78 Python distributions**. `pyvex` contains LibVEX
+The firmware analyzer runs as an independent Python child process. Release artifacts retain
+licenses and notices for 78 Python distributions. `pyvex` contains LibVEX
 (`GPL-2.0-or-later`); KDock does not modify it and uses it only in that separate process.
 See [NOTICE](NOTICE) and the
 [third-party inventory](tools/bingraph/THIRD_PARTY_NOTICES.md).
