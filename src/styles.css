@@ -2575,12 +2575,17 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  justify-content: center;      /* 整列上下居中 */
-  gap: 5px;                     /* 一条挨一条，固定间距 */
-  overflow: hidden;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 6px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
   z-index: 30;
   pointer-events: auto;
 }
+.agrail::-webkit-scrollbar { display: none; }
 .agrail .tick {
   position: static;             /* 不再绝对定位：就是列表里的一项 */
   flex: 0 0 auto;
@@ -2611,6 +2616,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agrail .tick:hover, .agrail .tick.hot {
   width: 40px; height: 20px; right: auto; background: none;
 }
+.agrail .tick.active { background: none; }
 .agrail .tick.active::after { background: hsl(var(--primary) / 0.9); }
 .agrail .tip { right: 46px; }
 /* 正文给更宽的导航条留位置 */

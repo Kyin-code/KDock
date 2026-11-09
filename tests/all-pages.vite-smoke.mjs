@@ -403,6 +403,36 @@ try {
   if (!turnVisual.finalMeta.includes("本轮用时")) {
     throw new Error(`Final turn metadata lacks elapsed time: ${JSON.stringify(turnVisual)}`);
   }
+  const railScroll = await page.evaluate(() => {
+    window.__showAllPagesPage("agent");
+    const rail = document.getElementById("ag-rail");
+    rail.innerHTML = "";
+    for (let i = 0; i < 60; i++) {
+      const tick = document.createElement("button");
+      tick.type = "button";
+      tick.className = "tick";
+      if (i === 59) tick.classList.add("active");
+      rail.appendChild(tick);
+    }
+    const active = rail.lastElementChild;
+    const before = {
+      clientHeight: rail.clientHeight,
+      scrollHeight: rail.scrollHeight,
+      direction: getComputedStyle(rail).flexDirection,
+      activeBackground: getComputedStyle(active).backgroundColor,
+      markerBackground: getComputedStyle(active, "::after").backgroundColor,
+    };
+    rail.scrollTop = rail.scrollHeight;
+    const reachedBottom = rail.scrollTop > 0
+      && Math.abs(rail.scrollTop + rail.clientHeight - rail.scrollHeight) <= 1;
+    rail.innerHTML = "";
+    return { ...before, reachedBottom };
+  });
+  if (railScroll.scrollHeight <= railScroll.clientHeight || !railScroll.reachedBottom
+      || railScroll.direction !== "column" || railScroll.activeBackground !== "rgba(0, 0, 0, 0)"
+      || railScroll.markerBackground === "rgba(0, 0, 0, 0)") {
+    throw new Error(`Agent message rail cannot scroll through long histories: ${JSON.stringify(railScroll)}`);
+  }
   await page.evaluate(() => {
     document.documentElement.classList.remove("noparam");
     window.dispatchEvent(new Event("resize"));
@@ -489,6 +519,7 @@ try {
     paramToggleStability,
     agentVisual,
     turnVisual,
+    railScroll,
     responsiveMatrix: {
       profiles: matrix.length,
       pageChecks: matrixResults.length,

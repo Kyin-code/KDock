@@ -9704,13 +9704,10 @@ function agRenderTree() {
       await agNewSession(w.id);
     };
     const del = document.createElement("button");
-    del.className = "del"; del.textContent = "✕"; del.title = "删除工作区（对话不会删）";
+    del.className = "del"; del.textContent = "✕"; del.title = en("删除工作区（对话会移到默认工作区）");
     del.onclick = async (e) => {
       e.stopPropagation();
-      if (w.id === "default") return toast("默认工作区不能删");
-      if (!(await agConfirm(`从列表里移除工作区「${w.name}」？（里面的对话还在）`, "移除工作区"))) return;
-      await invoke("agent_workspace_delete", { id: w.id }).catch((err) => toast(String(err)));
-      await agLoadTree();
+      await agDeleteWorkspace(w);
     };
     t.onclick = () => { agOpenWs[w.id] = !open; agRenderTree(); };
     caret.onclick = () => { agOpenWs[w.id] = !open; agRenderTree(); };
@@ -9803,6 +9800,25 @@ function agRenderTree() {
   }
 }
 
+async function agDeleteWorkspace(workspace) {
+  if (!workspace || workspace.id === "default") return toast(en("默认工作区不能删"));
+  if (!(await agConfirm(
+    `删除工作区「${workspace.name}」？其中的对话会保留，并移到默认工作区。`,
+    "删除工作区",
+    true,
+  ))) return;
+  try {
+    await invoke("agent_workspace_delete", { id: workspace.id });
+    delete agOpenWs[workspace.id];
+    const currentMoved = !!agMeta && (agMeta.ws || "default") === workspace.id;
+    await agLoadTree();
+    if (currentMoved) await agOpenSession(agMeta.id);
+    toast(en("工作区已删除，其中的对话已移到默认工作区"));
+  } catch (error) {
+    toast(String(error));
+  }
+}
+
 function agWorkspaceMenu(workspace, x, y) {
   document.querySelectorAll(".wsctxmenu").forEach((node) => node.remove());
   const menu = document.createElement("div");
@@ -9838,6 +9854,11 @@ function agWorkspaceMenu(workspace, x, y) {
     agFocus();
     await agNewSession(workspace.id);
   });
+  if (workspace.id !== "default") {
+    add("删除工作区", async () => {
+      await agDeleteWorkspace(workspace);
+    }, true);
+  }
   document.body.appendChild(menu);
   const close = () => {
     menu.remove();
@@ -10260,8 +10281,8 @@ async function agNewSession(wsId) {
 
 // ---------- 消息导航竖条 ----------
 /**
- * 重建右侧刻度：**等间距一条挨一条**列出（不按内容真实位置——那样消息多了会散得很开），
- * 整列在右侧上下居中；悬停放大、点击跳过去。
+ * 重建右侧刻度：等间距列出用户消息，整列在右侧上下居中。
+ * 历史很长时导航条自身滚动，并让当前阅读位置对应的刻度保持在可见区域。
  */
 function agBuildRail() {
   const rail = agEl("ag-rail");
@@ -10270,29 +10291,14 @@ function agBuildRail() {
   rail.innerHTML = "";
   const users = [...box.querySelectorAll(".agmsg.user")];
   const userEvs = agEvents.filter((e) => e.type === "user");
-  // 消息多了就把间距压小，保证一条都不被裁掉（最多压到 1px）
-  const TICK_H = 20;
-  const avail = Math.max(120, box.clientHeight * 0.84) - 8;
-  const gap = users.length > 1
-    ? Math.max(1, Math.min(5, Math.floor((avail - users.length * TICK_H) / (users.length - 1))))
-    : 5;
-  rail.style.gap = gap + "px";
+  const ticks = [];
   users.forEach((dom, k) => {
-    const tick = document.createElement("div");
+    const tick = document.createElement("button");
+    tick.type = "button";
     tick.className = "tick";
     const preview = String((userEvs[k] && userEvs[k].text) || "").replace(/\s+/g, " ").slice(0, 30);
     tick.title = preview;
-    tick.onmouseenter = () => {
-      const tip = document.createElement("div");
-      tip.className = "tip";
-      tip.textContent = preview || "（空消息）";
-      tip.style.top = (tick.offsetTop + tick.offsetHeight / 2) + "px";
-      rail.appendChild(tip);
-    };
-    tick.onmouseleave = () => {
-      const tip = rail.querySelector(".tip");
-      if (tip) tip.remove();
-    };
+    tick.setAttribute("aria-label", preview || "用户消息");
     tick.onclick = () => {
       const top = dom.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
       box.scrollTo({ top: Math.max(0, top - box.clientHeight / 3), behavior: "smooth" });
@@ -10300,7 +10306,24 @@ function agBuildRail() {
       setTimeout(() => dom.classList.remove("hl"), 1200);
     };
     rail.appendChild(tick);
+    ticks.push(tick);
   });
+  const updateActive = () => {
+    if (!ticks.length) return;
+    const cutoff = box.getBoundingClientRect().top + box.clientHeight * 0.36;
+    let active = 0;
+    users.forEach((dom, index) => {
+      if (dom.getBoundingClientRect().top <= cutoff) active = index;
+    });
+    ticks.forEach((tick, index) => tick.classList.toggle("active", index === active));
+    const tick = ticks[active];
+    if (tick.offsetTop < rail.scrollTop) rail.scrollTop = tick.offsetTop;
+    else if (tick.offsetTop + tick.offsetHeight > rail.scrollTop + rail.clientHeight) {
+      rail.scrollTop = tick.offsetTop + tick.offsetHeight - rail.clientHeight;
+    }
+  };
+  box.onscroll = updateActive;
+  requestAnimationFrame(updateActive);
 }
 
 /* ── 斜杠命令（参考 codex）：/goal 等直接在本地处理，不走模型 ── */

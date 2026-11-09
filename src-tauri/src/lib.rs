@@ -1849,7 +1849,10 @@ fn refresh_friendly() {
         Ok(o) => o,
         Err(_) => return,
     };
-    let text = String::from_utf8_lossy(&out.stdout);
+    // Windows PowerShell 5.1 writes redirected output using the active OEM/ANSI
+    // code page on Chinese systems. Decoding those bytes as UTF-8 turns device
+    // names such as "USB 串行设备 (COM3)" into replacement characters.
+    let text = crate::shell::decode(&out.stdout);
     let mut map = FRIENDLY.lock().expect("friendly mutex");
     map.clear();
     for line in text.lines() {

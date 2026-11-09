@@ -454,6 +454,11 @@ export const EN = {
   "新建工作区（选一个目录）": "New workspace (pick a folder)",
   "在这个工作区里新开一个对话": "Start a new session in this workspace",
   "右键可以删除": "Right-click to delete", "默认工作区": "Default workspace",
+  "删除工作区（对话会移到默认工作区）": "Delete workspace (chats move to Default)",
+  "默认工作区不能删": "The Default workspace cannot be deleted",
+  "删除工作区": "Delete workspace",
+  "工作区已删除，其中的对话已移到默认工作区":
+    "Workspace deleted; its chats were moved to the Default workspace",
   "3.14 或 0x4048F5C3 ": "3.14 or 0x4048F5C3 ",
   "上一轮的 token 用量": "token usage of the last round",
   "例：看一下设备根目录里有什么，再把 /config/config.bin 取回来":

@@ -1130,9 +1130,28 @@ pub fn agent_workspace_delete(app: AppHandle, id: String) -> Result<Value, Strin
         return Err("默认工作区不能删".into());
     }
     let mut list = store::ensure_workspaces(&app);
+    let fallback = match list.iter().find(|w| w.id == "default").cloned() {
+        Some(workspace) => workspace,
+        None => {
+            let workspace = store::default_workspace_entry(&app);
+            list.push(workspace.clone());
+            workspace
+        }
+    };
+    let mut moved_sessions = 0usize;
+    for session in store::sessions_list(&app) {
+        if session.ws != id {
+            continue;
+        }
+        let mut moved = session;
+        moved.ws = "default".into();
+        moved.workspace = fallback.path.clone();
+        store::session_update_meta(&app, &moved)?;
+        moved_sessions += 1;
+    }
     list.retain(|w| w.id != id);
     store::save_workspaces(&app, &list)?;
-    Ok(json!({ "ok": true }))
+    Ok(json!({ "ok": true, "moved_sessions": moved_sessions }))
 }
 
 /// 只改名字（路径不动，免得把会话里的相对路径搞乱）
