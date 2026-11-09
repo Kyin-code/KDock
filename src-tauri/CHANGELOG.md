@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.21 -->
+## v0.3.21
+
+### 修复
+
+- docs: remove README hero image
+
+### Dependencies
+
+- Update kdock-core to 0.3.21.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.20 -->
 ## v0.3.20
 
