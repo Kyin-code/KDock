@@ -9704,7 +9704,7 @@ function agRenderTree() {
       await agNewSession(w.id);
     };
     const del = document.createElement("button");
-    del.className = "del"; del.textContent = "✕"; del.title = en("删除工作区（对话会移到默认工作区）");
+    del.className = "del"; del.textContent = "✕"; del.title = en("删除工作区");
     del.onclick = async (e) => {
       e.stopPropagation();
       await agDeleteWorkspace(w);
@@ -9801,19 +9801,15 @@ function agRenderTree() {
 }
 
 async function agDeleteWorkspace(workspace) {
-  if (!workspace || workspace.id === "default") return toast(en("默认工作区不能删"));
   if (!(await agConfirm(
-    `删除工作区「${workspace.name}」？其中的对话会保留，并移到默认工作区。`,
+    `删除「${workspace.name}」？对话会移到默认工作区`,
     "删除工作区",
     true,
   ))) return;
   try {
     await invoke("agent_workspace_delete", { id: workspace.id });
-    delete agOpenWs[workspace.id];
-    const currentMoved = !!agMeta && (agMeta.ws || "default") === workspace.id;
     await agLoadTree();
-    if (currentMoved) await agOpenSession(agMeta.id);
-    toast(en("工作区已删除，其中的对话已移到默认工作区"));
+    if (agMeta) await agOpenSession(agMeta.id);
   } catch (error) {
     toast(String(error));
   }
@@ -10291,12 +10287,11 @@ function agBuildRail() {
   rail.innerHTML = "";
   const users = [...box.querySelectorAll(".agmsg.user")];
   const userEvs = agEvents.filter((e) => e.type === "user");
-  const ticks = [];
   users.forEach((dom, k) => {
     const tick = document.createElement("button");
     tick.type = "button";
     tick.className = "tick";
-    const preview = String((userEvs[k] && userEvs[k].text) || "").replace(/\s+/g, " ").slice(0, 30);
+    const preview = String(userEvs[k]?.text || "").replace(/\s+/g, " ").slice(0, 30);
     tick.title = preview;
     tick.setAttribute("aria-label", preview || "用户消息");
     tick.onclick = () => {
@@ -10306,8 +10301,8 @@ function agBuildRail() {
       setTimeout(() => dom.classList.remove("hl"), 1200);
     };
     rail.appendChild(tick);
-    ticks.push(tick);
   });
+  const ticks = [...rail.children];
   const updateActive = () => {
     if (!ticks.length) return;
     const cutoff = box.getBoundingClientRect().top + box.clientHeight * 0.36;

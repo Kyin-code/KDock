@@ -454,11 +454,7 @@ export const EN = {
   "新建工作区（选一个目录）": "New workspace (pick a folder)",
   "在这个工作区里新开一个对话": "Start a new session in this workspace",
   "右键可以删除": "Right-click to delete", "默认工作区": "Default workspace",
-  "删除工作区（对话会移到默认工作区）": "Delete workspace (chats move to Default)",
-  "默认工作区不能删": "The Default workspace cannot be deleted",
-  "删除工作区": "Delete workspace",
-  "工作区已删除，其中的对话已移到默认工作区":
-    "Workspace deleted; its chats were moved to the Default workspace",
+  "删除工作区": "Delete",
   "3.14 或 0x4048F5C3 ": "3.14 or 0x4048F5C3 ",
   "上一轮的 token 用量": "token usage of the last round",
   "例：看一下设备根目录里有什么，再把 /config/config.bin 取回来":
@@ -679,7 +675,6 @@ export const EN = {
   "openocd 适配器": "openocd adapter",
   "openocd：芯片": "openocd: chips", "开发板": "boards", "适配器": "adapters",
   "J-Link 器件库：没找到 JLinkDevices.xml": "J-Link device DB: JLinkDevices.xml not found",
-  "还没有器件库，点右上角「↻ 刷新」。": "No device DB yet — click ↻ Refresh.",
   " 行": " lines", " 字": " chars", " 通道 / ": " channels / ", " 点": " points",
   "接收": "Receive", "发送": "Transmit", "字符": "chars", "日志": "log",
   "（还没有技能）": "(no skills)",
@@ -2063,7 +2058,6 @@ export const EN = {
     "This workspace has no project skills yet (imports land in global skills; use \"Move to workspace\" to push one down)",
   "（没有归档：把全局技能转为工作区专属、或删掉工作区技能时，会自动在这儿留一份备份）":
     "(no archive entries: moving a global skill into a workspace, or deleting a workspace skill, leaves a backup here)",
-  "（还没有技能：点「导入…」选一个 SKILL.md，或「新建」）": "(no skills yet: use Import… to pick a SKILL.md, or New)",
   "先在下面的「编辑技能」里点一个技能（或填名字），再转": "Click a skill in the editor below (or type a name) first",
   "没有可选的工作区（先在左边栏建一个）": "No workspace to choose (create one in the left sidebar first)",
   "转为工作区专属": "Move to workspace", "打开 .kdock_skill 目录": "Open .kdock_skill folder",
@@ -2165,7 +2159,6 @@ export const EN = {
   "DSLogic 的采样率是所有已启用通道共享的": "The DSLogic sample rate is shared by all enabled channels",
   "在浏览器页查看共享页面": "View the shared page in Browser",
   "查看当前页 HTML 源码": "View the current page HTML source",
-  "可留空；例：-ex \"target extended-remote :3333\"": "Optional; e.g. -ex \"target extended-remote :3333\"",
   "0x08000101（可留空）": "0x08000101 (optional)",
   "自动发现，可覆盖": "Auto-detected; can override",
   "大图建议只突出选中节点的上下游链路": "For large graphs, highlight only the selected node's upstream/downstream chain",
