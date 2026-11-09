@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.20 -->
+## v0.3.20
+
+### 修复
+
+- ui(agent): compact message navigation rail
+
+### Dependencies
+
+- Update kdock-core to 0.3.20.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.19 -->
 ## v0.3.19
 
