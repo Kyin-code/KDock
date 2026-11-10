@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.22 -->
+## v0.3.22
+
+### 修复
+
+- ui(agent): refine rail preview and tick scale
+
+### Dependencies
+
+- Update kdock-core to 0.3.22.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.21 -->
 ## v0.3.21
 

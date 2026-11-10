@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.22 -->
+## v0.3.22
+
+### 修复
+
+- ui(agent): refine rail preview and tick scale
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.21 -->
 ## v0.3.21
 
