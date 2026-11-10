@@ -37,29 +37,17 @@ export function bindAgentComposer(deps) {
   let active = 0;
 
   const syncPolicy = () => {
-    const hint = el("ag-policy-hint");
-    if (!hint) return;
     const meta = getMeta();
     const perm = (meta && meta.perm) || "ask";
     const mode = (meta && meta.sandbox_mode) || "workspace";
     const workspaceNet = !!(meta && meta.sandbox_network);
     const trusted = mode === "trusted";
-    const network = trusted || workspaceNet;
-    const permText = perm === "read" ? en("只读") : perm === "auto" ? en("自动") : en("需要批准");
-    const sandboxText = trusted ? en("宿主权限") : workspaceNet ? en("工作区+网络") : en("工作区");
-    const level = trusted || perm === "auto" ? "danger" : perm === "ask" || workspaceNet ? "ask" : "safe";
-    hint.hidden = !meta;
-    hint.dataset.level = level;
-    hint.textContent = `${level === "danger" ? "⚠ " : ""}${en("权限")}：${permText} · ${en("沙箱")}：${sandboxText} · ${en("网络")}：${network ? en("允许") : en("禁止")}`;
-    hint.title = level === "danger"
-      ? l("高风险：危险动作可能自动执行或直接访问宿主环境", "High risk: risky tools may run automatically or access the host directly")
-      : level === "ask"
-        ? l("危险动作执行前会请求批准", "Risky tools ask for approval before running")
-        : l("当前为低风险只读或断网工作区", "Current policy is low-risk read-only or an offline workspace");
     const permWrap = el("ag-perm-wrap");
     const sandboxWrap = el("ag-sandbox-wrap");
-    if (permWrap) permWrap.dataset.level = perm === "auto" ? "danger" : perm === "ask" ? "ask" : "safe";
-    if (sandboxWrap) sandboxWrap.dataset.level = trusted ? "danger" : workspaceNet ? "ask" : "safe";
+    if (permWrap) permWrap.dataset.level = perm === "auto" ? "caution" : perm === "ask" ? "warn" : "default";
+    if (sandboxWrap) {
+      sandboxWrap.dataset.level = trusted ? "caution" : workspaceNet ? "warn" : "default";
+    }
     const permSelect = el("ag-perm");
     const sandboxSelect = el("ag-sandbox");
     if (permSelect) permSelect.value = perm;
@@ -207,49 +195,30 @@ export function bindAgentComposer(deps) {
   const renderPending = (rows, busy) => {
     const box = el("ag-pending");
     if (!box) return;
-    const wasOpen = !!box.querySelector(".agpending-wrap")?.open;
     box.innerHTML = "";
     box.hidden = rows.length === 0;
     if (!rows.length) return;
-    const wrap = document.createElement("details");
-    wrap.className = "agpending-wrap";
-    wrap.open = wasOpen;
-    const summary = document.createElement("summary");
-    summary.className = "agpending-summary";
-    const preview = String(rows[rows.length - 1] || "").replace(/\s+/g, " ").trim();
+    const row = document.createElement("div");
+    row.className = "agpending-row";
+    const preview = rows
+      .map((text) => String(text || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .join(" · ");
     const label = document.createElement("span");
-    label.className = "agpending-summary-text";
+    label.className = "agpending-preview";
     label.textContent = `${en("待发送")}：${preview}`;
+    label.title = rows.join("\n\n");
     const count = document.createElement("span");
     count.className = "agpending-count";
     count.textContent = String(rows.length);
-    summary.append(label, count);
-    wrap.appendChild(summary);
-    const body = document.createElement("div");
-    body.className = "agpending-body";
-    for (const text of rows) {
-      const row = document.createElement("div");
-      row.className = "agpending-item";
-      const textEl = document.createElement("span");
-      textEl.className = "agpending-text";
-      textEl.textContent = text;
-      row.appendChild(textEl);
-      body.appendChild(row);
-    }
-    const guide = document.createElement("div");
-    guide.className = "agpending-guide";
-    const hint = document.createElement("span");
-    hint.textContent = en("下一步自动并入；也可以现在发送");
     const sendNow = document.createElement("button");
     sendNow.className = "btn small primary";
     sendNow.textContent = en(busy ? "正在中断…" : "全部立即发送");
     sendNow.title = en("停止当前轮，立即发送待发送区的全部内容");
     sendNow.disabled = busy;
     sendNow.onclick = () => sendPendingNow();
-    guide.append(hint, sendNow);
-    body.appendChild(guide);
-    wrap.appendChild(body);
-    box.appendChild(wrap);
+    row.append(label, count, sendNow);
+    box.appendChild(row);
   };
 
   const init = () => {

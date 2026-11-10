@@ -564,8 +564,6 @@ export const EN = {
   "最大输出 tokens": "Max output tokens",
   "单次回复最多多少 token；思考内容也计入这个额度": "Maximum tokens per reply; thinking tokens count toward this limit",
   "代码 Agent 建议 32K~64K": "32K–64K recommended for coding agents",
-  "待发送 · 下一步并入": "Pending · merged at next step",
-  "下一步自动并入；也可以现在发送": "Merged automatically at the next step, or send now",
   "全部立即发送": "Send all now",
   "正在中断…": "Interrupting…",
   "停止当前轮，立即发送待发送区的全部内容": "Stop the current turn and send everything pending now",

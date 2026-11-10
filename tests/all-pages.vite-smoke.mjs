@@ -557,8 +557,52 @@ try {
     });
     api.init();
     api.syncGoal(true);
+    const permWrap = document.getElementById("ag-perm-wrap");
+    const sandboxWrap = document.getElementById("ag-sandbox-wrap");
+    const permSelect = document.getElementById("ag-perm");
+    const sandboxSelect = document.getElementById("ag-sandbox");
+    meta.perm = "read";
+    meta.sandbox_mode = "workspace";
+    meta.sandbox_network = false;
     api.syncPolicy();
-    api.renderPending(["第一条待发送", "第二条待发送"], false);
+    const defaultPolicy = {
+      permLevel: permWrap.dataset.level,
+      sandboxLevel: sandboxWrap.dataset.level,
+      background: getComputedStyle(permWrap).backgroundColor,
+      border: getComputedStyle(permWrap).borderColor,
+      permColor: getComputedStyle(permSelect).color,
+      sandboxColor: getComputedStyle(sandboxSelect).color,
+    };
+    meta.perm = "ask";
+    meta.sandbox_mode = "workspace";
+    meta.sandbox_network = true;
+    api.syncPolicy();
+    const warnedPolicy = {
+      permLevel: permWrap.dataset.level,
+      sandboxLevel: sandboxWrap.dataset.level,
+      background: getComputedStyle(permWrap).backgroundColor,
+      border: getComputedStyle(permWrap).borderColor,
+      permColor: getComputedStyle(permSelect).color,
+      sandboxColor: getComputedStyle(sandboxSelect).color,
+    };
+    meta.perm = "auto";
+    meta.sandbox_mode = "trusted";
+    meta.sandbox_network = true;
+    api.syncPolicy();
+    const cautionPolicy = {
+      permLevel: permWrap.dataset.level,
+      sandboxLevel: sandboxWrap.dataset.level,
+      background: getComputedStyle(permWrap).backgroundColor,
+      border: getComputedStyle(permWrap).borderColor,
+      permColor: getComputedStyle(permSelect).color,
+      sandboxColor: getComputedStyle(sandboxSelect).color,
+    };
+    meta.perm = "ask";
+    meta.sandbox_mode = "workspace";
+    meta.sandbox_network = true;
+    api.syncPolicy();
+    const longPending = "这是一段很长的待发送文本，用于检查单行截断、右侧渐隐和按钮同排布局。".repeat(6);
+    api.renderPending(["第一条待发送", longPending], false);
     const input = document.getElementById("ag-input");
     input.value = "/go";
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -566,20 +610,34 @@ try {
     const menu = document.getElementById("ag-cmd-hint");
     const goal = document.getElementById("ag-goal-card");
     const pending = document.getElementById("ag-pending");
-    const policy = document.getElementById("ag-policy-hint");
     const composer = document.querySelector('[data-work="agent"] .agcomposer');
     const pane = document.querySelector('[data-work="agent"] > .inpane');
     const inputRect = input.getBoundingClientRect();
     const composerRect = composer.getBoundingClientRect();
     const paneRect = pane.getBoundingClientRect();
+    const pendingRow = pending.querySelector(".agpending-row");
+    const pendingPreview = pending.querySelector(".agpending-preview");
+    const pendingAction = pending.querySelector(".agpending-row > .btn");
     const result = {
       goalVisible: !goal.hidden,
       goalText: document.getElementById("ag-goal-text").value,
-      policy: policy.textContent,
-      policyLevel: policy.dataset.level,
-      pendingFolded: !pending.querySelector("details")?.open,
-      pendingSummary: pending.querySelector(".agpending-summary-text")?.textContent,
+      policyHintRemoved: !document.getElementById("ag-policy-hint"),
+      policyLevels: [defaultPolicy.permLevel, warnedPolicy.permLevel, cautionPolicy.permLevel],
+      sandboxLevels: [defaultPolicy.sandboxLevel, warnedPolicy.sandboxLevel, cautionPolicy.sandboxLevel],
+      policyTextColors: [defaultPolicy.permColor, warnedPolicy.permColor, cautionPolicy.permColor],
+      sandboxTextColors: [defaultPolicy.sandboxColor, warnedPolicy.sandboxColor, cautionPolicy.sandboxColor],
+      policyWrapperNeutral: defaultPolicy.background === warnedPolicy.background
+        && defaultPolicy.background === cautionPolicy.background
+        && defaultPolicy.border === warnedPolicy.border
+        && defaultPolicy.border === cautionPolicy.border,
+      pendingSingleLine: !!pendingRow && !pending.querySelector("details")
+        && !pending.querySelector(".agpending-body") && !pending.querySelector(".agpending-guide"),
+      pendingSummary: pendingPreview?.textContent,
       pendingCount: pending.querySelector(".agpending-count")?.textContent,
+      pendingAction: pendingAction?.textContent,
+      pendingActionOnRow: !!pendingAction && pendingAction.parentElement === pendingRow,
+      pendingPreviewOverflow: !!pendingPreview && pendingPreview.scrollWidth > pendingPreview.clientWidth,
+      pendingMask: pendingPreview ? getComputedStyle(pendingPreview).maskImage : "",
       menuVisible: !menu.hidden,
       menuItems: [...menu.querySelectorAll(".agcmdrow")].map((row) => row.textContent),
       menuAboveInput: menu.getBoundingClientRect().bottom <= input.getBoundingClientRect().top + 1,
@@ -598,16 +656,21 @@ try {
     result.goalRunSaved = await api.saveGoal("新的可执行目标", { run: true });
     result.goalRunValue = meta.goal;
     result.sentAfterGoalRun = sent.slice();
-    input.value = "";
-    goal.hidden = true;
-    pending.hidden = true;
-    pending.innerHTML = "";
     return result;
   });
   if (!composerUi.goalVisible || composerUi.goalText !== "完成状态机重构"
-      || !composerUi.policy.includes("允许") || composerUi.policyLevel !== "ask"
-      || !composerUi.pendingFolded || !composerUi.pendingSummary?.startsWith("待发送")
-      || composerUi.pendingCount !== "2" || !composerUi.menuVisible
+      || !composerUi.policyHintRemoved
+      || composerUi.policyLevels.join(",") !== "default,warn,caution"
+      || composerUi.sandboxLevels.join(",") !== "default,warn,caution"
+      || composerUi.policyTextColors[0] === composerUi.policyTextColors[1]
+      || composerUi.policyTextColors[1] === composerUi.policyTextColors[2]
+      || composerUi.sandboxTextColors[0] === composerUi.sandboxTextColors[1]
+      || composerUi.sandboxTextColors[1] === composerUi.sandboxTextColors[2]
+      || !composerUi.policyWrapperNeutral
+      || !composerUi.pendingSingleLine || !composerUi.pendingSummary?.startsWith("待发送")
+      || composerUi.pendingCount !== "2" || composerUi.pendingAction !== "全部立即发送"
+      || !composerUi.pendingActionOnRow || !composerUi.pendingPreviewOverflow
+      || !composerUi.pendingMask.includes("gradient") || !composerUi.menuVisible
       || composerUi.menuItems.length !== 1 || !composerUi.menuItems[0].includes("/goal")
       || !composerUi.menuAboveInput || !composerUi.inputVisible || !composerUi.composerVisible
       || !composerUi.order
@@ -617,6 +680,20 @@ try {
       || composerUi.sentAfterGoalRun?.[0] !== "开始执行当前目标。") {
     throw new Error(`Agent composer goal/slash/pending regression: ${JSON.stringify(composerUi)}`);
   }
+  if (process.env.KDOCK_COMPOSER_SHOT) {
+    await page.screenshot({ path: resolve(root, process.env.KDOCK_COMPOSER_SHOT) });
+  }
+  await page.evaluate(() => {
+    const input = document.getElementById("ag-input");
+    if (input) input.value = "";
+    const goal = document.getElementById("ag-goal-card");
+    if (goal) goal.hidden = true;
+    const pending = document.getElementById("ag-pending");
+    if (pending) {
+      pending.hidden = true;
+      pending.innerHTML = "";
+    }
+  });
   await page.evaluate(() => {
     document.documentElement.classList.remove("noparam");
     window.dispatchEvent(new Event("resize"));
