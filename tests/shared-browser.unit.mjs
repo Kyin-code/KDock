@@ -43,6 +43,17 @@ assert.match(main, /function kbApplyPageEvent/);
 assert.match(main, /function kbWebUrlError/);
 assert.match(main, /function kbIsWebUrl/);
 assert.match(main, /function kbSetAddress/);
+assert.match(main, /function kbAddressLabel/);
+assert.match(main, /function kbShowAddressEditor/);
+assert.match(main, /function agBrowserSetAddress/);
+assert.match(main, /function agBrowserShowEditor/);
+assert.match(main, /function syncBrowserParamsAuto/);
+assert.match(main, /function kbSetLoading/);
+assert.match(main, /function kbRenderTabs/);
+assert.match(main, /function kbSelectPage/);
+assert.match(main, /function kbNewTab/);
+assert.match(main, /function kbSetPageIcon/);
+assert.match(main, /invoke\("kb_page_close"/);
 assert.match(main, /kbAddressDirty/);
 assert.match(main, /kbLastPlaceError/);
 assert.match(main, /else localStorage\.removeItem\(KB_HOME_KEY\)/);
@@ -54,7 +65,28 @@ assert.match(main, /raw\.title/);
 assert.match(main, /!agBrSource\) return/);
 assert.match(html, /id="ag-br-show"/);
 assert.match(html, /id="kb-back"/);
+assert.match(html, /id="kb-location"/);
+assert.match(html, /id="kb-location-text"/);
+assert.match(html, /id="kb-address-editor"[^>]*hidden/);
+assert.match(html, /id="ag-br-location"/);
+assert.match(html, /id="ag-br-location-text"/);
+assert.match(html, /id="ag-br-editor"[^>]*hidden/);
+assert.match(html, /id="kb-progress"/);
+assert.match(html, /id="kb-tabs"/);
+assert.match(html, /id="kb-location-icon"/);
+assert.match(html, /id="ag-br-location-icon"/);
+assert.doesNotMatch(html, /id="kb-save"/);
+assert.doesNotMatch(html, /class="trow kbaddrrow"|class="trow kbaddrbtns"/);
 assert.match(kbview, /pub fn read_dom_json/);
+assert.match(kbview, /fn browser_page_url/);
+assert.match(kbview, /const FAVICON_JS/);
+assert.match(kbview, /kb:\/\/favicon/);
+assert.match(kbview, /pub fn pages\(\)/);
+assert.match(kbview, /pub fn close_page/);
+assert.match(kbview, /struct PageInfo/);
+assert.match(kbview, /pub fn new_page_id/);
+assert.match(kbview, /pub fn active_page/);
+assert.match(kbview, /pub fn activate/);
 assert.match(kbview, /pub fn snapshot_json/);
 assert.match(kbview, /pub fn wait_for_json/);
 assert.match(kbview, /pub fn assert_json/);
@@ -65,10 +97,10 @@ assert.match(kbview, /pub fn open/);
 assert.match(kbview, /pub fn open_and_wait/);
 assert.match(kbview, /pub fn open_and_read_json/);
 assert.match(kbview, /pub fn wait_for_load/);
-assert.match(kbview, /static BROWSER_OP: LazyLock<Mutex<\(\)>>/);
+assert.match(kbview, /static BROWSER_OPS: LazyLock<Mutex<HashMap<String, Arc<Mutex<\(\)>>>>>/);
 assert.ok(
-  (kbview.match(/BROWSER_OP\s*\.lock\(\)/g) || []).length >= 8,
-  "navigation, DOM reads, clicks and fills must share one browser operation gate",
+  (kbview.match(/page_gate\(kind\)\?/g) || []).length >= 8,
+  "navigation, DOM reads, clicks and fills must use a page-scoped operation gate",
 );
 assert.match(kbview, /static OPEN_GATE: LazyLock<Mutex<\(\)>>/);
 assert.match(kbview, /fn begin_navigation/);
@@ -89,6 +121,9 @@ assert.match(tools, /browser_snapshot/);
 assert.match(tools, /browser_wait/);
 assert.match(tools, /browser_assert/);
 assert.match(tools, /browser_network/);
+assert.match(tools, /browser_tabs/);
+assert.match(tools, /"page":\{"type":"string"/);
+assert.match(tools, /new_page_id/);
 assert.equal((tools.match(/crate::shared_browser::open_and_wait/g) || []).length, 2);
 assert.equal((tools.match(/crate::shared_browser::open_and_read_json/g) || []).length, 1);
 assert.doesNotMatch(agent, /pub fn browser_fetch|pub fn browser_back|pub fn browser_current/);
@@ -122,6 +157,8 @@ console.log(JSON.stringify({
     "scheme-allowlist",
     "shell-open",
     "address-draft",
+    "address-pill-editor",
+    "multi-page-tabs",
     "structured-snapshot",
     "wait-and-assert",
     "bounded-network-observation",

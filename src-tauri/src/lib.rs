@@ -1508,6 +1508,27 @@ fn kb_current_url(kind: String) -> Option<String> {
 }
 
 #[tauri::command]
+fn kb_pages() -> Vec<kbview::PageInfo> {
+    kbview::pages()
+}
+
+#[tauri::command]
+fn kb_page_new() -> String {
+    kbview::new_page_id()
+}
+
+#[tauri::command]
+fn kb_page_activate(page: String) -> String {
+    kbview::activate(&page);
+    page
+}
+
+#[tauri::command]
+async fn kb_page_close(page: String) -> Result<String, String> {
+    kbview::close_page(&page)
+}
+
+#[tauri::command]
 async fn kb_read_dom(app: AppHandle, kind: String) -> Result<(), String> {
     kbview::read_dom(&app, &kind)
 }
@@ -3901,6 +3922,10 @@ pub fn run() {
                 kb_back,
                 kb_source,
                 kb_current_url,
+                kb_pages,
+                kb_page_new,
+                kb_page_activate,
+                kb_page_close,
                 kb_read_dom,
                 // ── 文件管理：FTP / FTPS / TFTP（客户端 + 内置 TFTP 服务端）──
                 netfs::netfs_open,

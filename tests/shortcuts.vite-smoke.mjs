@@ -29,13 +29,17 @@ try {
 
   const initial = await page.evaluate(() => ({
     definitions: window.__shortcutManager.defs.length,
+    browserReload: window.__shortcutManager.bindingFor("browser.reload"),
     rows: document.querySelectorAll(".sc-action").length,
     groups: document.querySelectorAll(".sc-group").length,
     search: !!document.querySelector(".sc-search"),
     overflow: document.documentElement.scrollWidth - window.innerWidth,
   }));
-  if (initial.definitions !== 20 || initial.rows !== 20) {
+  if (initial.definitions !== 21 || initial.rows !== 21) {
     throw new Error(`Shortcut action list is incomplete: ${JSON.stringify(initial)}`);
+  }
+  if (initial.browserReload !== "Ctrl+R") {
+    throw new Error(`Browser reload shortcut is not wired: ${JSON.stringify(initial)}`);
   }
   if (initial.groups !== 3 || !initial.search) throw new Error(`Shortcut editor structure is invalid: ${JSON.stringify(initial)}`);
   if (initial.overflow > 2) throw new Error(`Shortcut editor overflows horizontally by ${initial.overflow}px`);

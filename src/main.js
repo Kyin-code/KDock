@@ -1683,6 +1683,7 @@ function syncParamStrip() {
 /** 切页：左导航高亮 + 中间换操作区 + 右边换参数区 */
 let agAutoParamsCollapsed = false;
 let agParamsManualOpen = false;
+let kbAutoParamsCollapsed = false;
 
 function appLayoutWidth() {
   return document.getElementById("ui-root")?.clientWidth || window.innerWidth;
@@ -1723,6 +1724,22 @@ function syncAgentParamsAuto(tab) {
   }
 }
 
+/** 浏览器以网页为主：进入时默认收起右侧说明栏，顶部参数按钮仍可临时展开。 */
+function syncBrowserParamsAuto(tab) {
+  const root = document.documentElement;
+  if (tab !== "kb") {
+    if (kbAutoParamsCollapsed) {
+      setNoParam(false, false);
+      kbAutoParamsCollapsed = false;
+    }
+    return;
+  }
+  if (!root.classList.contains("noparam")) {
+    setNoParam(true, false);
+    kbAutoParamsCollapsed = true;
+  }
+}
+
 function showPane(tab) {
   const btn = document.querySelector(`.navitem[data-tab="${tab}"]`);
   if (btn) document.querySelectorAll(".navitem").forEach((b) => b.classList.toggle("active", b === btn));
@@ -1735,6 +1752,7 @@ function showPane(tab) {
   document.querySelectorAll("[data-param]").forEach((p) => { p.hidden = p.dataset.param !== tab; });
   document.documentElement.dataset.tab = tab;      // 窄窗样式要按"当前这一页"决定收不收那条参数带（如计算器）
   syncAgentParamsAuto(tab);
+  syncBrowserParamsAuto(tab);
   if (tab === "runtime") void initRuntimePage();
   if (window.kdockSyncDataLang) window.kdockSyncDataLang();
   syncParamStrip();
@@ -1808,6 +1826,8 @@ const DEBUG_UI = false;
    ========================================================================== */
 const KB_HOME_KEY = "kdock_browser_home";
 const KBB_KIND = "browser";
+let kbActivePage = KBB_KIND;
+const kbPages = new Map();
 let kbLastPlace = "";            // "x,y,w,h|url"，用来判断"要不要真的动它"
 let kbSyncing = false;
 let kbSyncQueued = false;
@@ -1835,6 +1855,14 @@ if (kbLegacyHome) {
 localStorage.removeItem("kdock_kb_mgmt");
 localStorage.removeItem("kdock_kb_chat");
 localStorage.removeItem("kdock_kb_focus");
+kbPages.set(KBB_KIND, {
+  id: KBB_KIND,
+  url: kbUrl,
+  title: "",
+  icon: "",
+  loading: false,
+  created: false,
+});
 
 
 /** 地址补全：没写协议就按 https 来（Dify 这类都是 https） */
@@ -1849,17 +1877,199 @@ function kbIsWebUrl(u) {
   return isWebBrowserUrl(u);
 }
 
+function kbPageOf(id = kbActivePage) {
+  let page = kbPages.get(id);
+  if (!page) {
+    page = { id, url: "", title: "", icon: "", loading: false, created: false };
+    kbPages.set(id, page);
+  }
+  return page;
+}
+
+function kbSafeIcon(icon) {
+  const value = String(icon || "").trim();
+  return value.startsWith("data:image/") || value.startsWith("http://") || value.startsWith("https://")
+    ? value : "";
+}
+
+function kbPaintIcon(box, icon) {
+  if (!box) return;
+  const safe = kbSafeIcon(icon);
+  if (safe) {
+    const img = document.createElement("img");
+    img.src = safe;
+    img.alt = "";
+    img.referrerPolicy = "no-referrer";
+    box.replaceChildren(img);
+  } else {
+    box.innerHTML = '<svg aria-hidden="true"><use href="#ni-globe"></use></svg>';
+  }
+}
+
+function kbSetPageIcon(id, icon) {
+  const page = kbPageOf(id);
+  page.icon = kbSafeIcon(icon);
+  if (id === kbActivePage) kbPaintIcon($("kb-location-icon"), page.icon);
+  kbRenderTabs();
+}
+
+function kbPageTitle(page) {
+  return page.title || kbAddressLabel(page.url) || en("新页面");
+}
+
+function kbRenderTabs() {
+  const box = $("kb-tabs");
+  if (!box) return;
+  box.innerHTML = "";
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "kbtabnew";
+  add.textContent = "＋";
+  add.title = en("新页面");
+  add.onclick = () => kbNewTab(true);
+  box.appendChild(add);
+  for (const page of kbPages.values()) {
+    const tab = document.createElement("div");
+    tab.className = "kbtab" + (page.id === kbActivePage ? " active" : "");
+    tab.tabIndex = 0;
+    tab.title = page.url || kbPageTitle(page);
+    const title = document.createElement("span");
+    title.className = "kbtabtitle";
+    title.textContent = kbPageTitle(page);
+    const icon = document.createElement("span");
+    icon.className = "kbtabicon";
+    kbPaintIcon(icon, page.icon);
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "kbtabclose";
+    close.textContent = "×";
+    close.title = en("关闭页面");
+    close.onclick = (event) => {
+      event.stopPropagation();
+      kbCloseTab(page.id).catch((e) => toast(String(e)));
+    };
+    tab.append(icon, title, close);
+    tab.onclick = () => kbSelectPage(page.id).catch((e) => toast(String(e)));
+    tab.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        kbSelectPage(page.id).catch((e) => toast(String(e)));
+      }
+    };
+    box.appendChild(tab);
+  }
+}
+
+async function kbSelectPage(id, edit = false) {
+  if (!kbPages.has(id)) return;
+  kbActivePage = id;
+  kbLastPlace = "";
+  const page = kbPageOf(id);
+  kbUrl = page.url || "";
+  kbWasCreated = !!page.created;
+  await invoke("kb_page_activate", { page: id }).catch(() => {});
+  kbSetAddress(kbUrl, true);
+  kbRenderTabs();
+  kbEmptyText();
+  if (edit) kbShowAddressEditor(true);
+  kbSyncSoon();
+}
+
+function kbNewTab(edit = true) {
+  const current = kbPages.get(kbActivePage);
+  if (current && !current.created && !current.url && kbPages.size === 1) {
+    kbPages.delete(current.id);
+  }
+  const id = `browser-${Date.now().toString(36)}-${kbPages.size + 1}`;
+  kbPages.set(id, { id, url: "", title: "", icon: "", loading: false, created: false });
+  kbSelectPage(id, edit).catch((e) => toast(String(e)));
+}
+
+async function kbCloseTab(id) {
+  const ids = [...kbPages.keys()];
+  const at = ids.indexOf(id);
+  const page = kbPages.get(id);
+  kbPages.delete(id);
+  if (page?.created) await invoke("kb_page_close", { page: id }).catch(() => {});
+  if (!kbPages.size) {
+    kbPages.set(KBB_KIND, {
+      id: KBB_KIND, url: "", title: "", icon: "", loading: false, created: false,
+    });
+    kbActivePage = KBB_KIND;
+  } else if (id === kbActivePage) {
+    const remaining = [...kbPages.keys()];
+    kbActivePage = remaining[Math.min(Math.max(0, at), remaining.length - 1)] || remaining[0];
+  }
+  await kbSelectPage(kbActivePage);
+  kbRenderTabs();
+}
+
+function kbAddressLabel(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return "";
+  try {
+    const u = new URL(kbNorm(raw));
+    const path = u.pathname && u.pathname !== "/" ? u.pathname : "";
+    return `${u.hostname}${u.port ? ":" + u.port : ""}${path}`;
+  } catch (_) {
+    return raw.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+  }
+}
+
+function kbSetLocation(url) {
+  const text = $("kb-location-text");
+  const location = $("kb-location");
+  kbPaintIcon($("kb-location-icon"), kbPageOf().icon);
+  if (text) text.textContent = kbAddressLabel(url) || en("由 Agent 打开页面，或点击输入地址");
+  if (location) location.title = url || en("点击输入网址");
+}
+
+function kbShowAddressEditor(show) {
+  const editor = $("kb-address-editor");
+  const location = $("kb-location");
+  const input = $("kb-url");
+  if (!editor || !location || !input) return;
+  editor.hidden = !show;
+  location.hidden = show;
+  if (show) {
+    input.value = kbUrl || "";
+    kbAddressDirty = false;
+    requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
+  } else {
+    kbAddressDirty = false;
+    kbSetLocation(kbUrl);
+  }
+}
+
 function kbSetAddress(url, force) {
   kbUrl = url;
+  kbPageOf().url = url || "";
+  kbSetLocation(url);
   const input = $("kb-url");
   if (input && (force || !kbAddressDirty)) input.value = url;
+  kbRenderTabs();
 }
 
 /** 浏览页和 Agent 共用的入口：已有视图就导航，否则先建一块隐藏视图。 */
-async function kbOpenUrl(url) {
-  await invoke("kb_open", { kind: KBB_KIND, url });
-  kbWasCreated = true;
-  kbLastPlace = "";
+async function kbOpenUrl(url, page = kbActivePage) {
+  const target = kbPageOf(page);
+  kbSetLoading(true);
+  try {
+    await invoke("kb_open", { kind: page, url });
+    target.url = url;
+    target.created = true;
+    kbActivePage = page;
+    kbPageOf(page).created = true;
+    kbWasCreated = true;
+    kbLastPlace = "";
+    kbRenderTabs();
+  } catch (e) {
+    kbSetLoading(false);
+    throw e;
+  }
 }
 
 /** 浏览器页现在露着吗（还得不是在弹窗后面 —— 子视图是原生层，会盖住弹窗） */
@@ -1887,30 +2097,31 @@ function kbRect(id) {
 async function kbPlace(hostId, url, emptyId, force) {
   // 没有首页又没有当前页时，不要保留一块空的原生视图。
   if (!url) {
-    if (kbWasCreated) await invoke("kb_hide", { kind: KBB_KIND }).catch(() => {});
+    if (kbWasCreated) await invoke("kb_hide", { kind: kbActivePage }).catch(() => {});
     kbLastPlace = "";
     return;
   }
   const empty = document.getElementById(emptyId);
   const r = kbRect(hostId);
   if (!url || !r) {
-    if (url) { await invoke("kb_hide", { kind: KBB_KIND }).catch(() => {}); }
+    if (url) { await invoke("kb_hide", { kind: kbActivePage }).catch(() => {}); }
     kbLastPlace = "";
     return;
   }
   if (empty) empty.hidden = true;
-  const live = await invoke("kb_current_url", { kind: KBB_KIND }).catch(() => "");
+  const live = await invoke("kb_current_url", { kind: kbActivePage }).catch(() => "");
   const key = `${r.x},${r.y},${r.w},${r.h}|${live || url}`;
   if (!force && kbLastPlace === key) return;
   if (!force && kbLastPlaceError === key) return;
   try {
     // 已有页面时只移动大小并显示，不重新导航，保留登录跳转。
-    await invoke("kb_show", { kind: KBB_KIND, url, x: r.x, y: r.y, w: r.w, h: r.h });
+    await invoke("kb_show", { kind: kbActivePage, url, x: r.x, y: r.y, w: r.w, h: r.h });
     kbLastPlace = key;
     kbLastPlaceError = "";
     kbWasCreated = true;
     kbStateText("");
   } catch (e) {
+    kbSetLoading(false);
     kbLastPlace = "";
     kbLastPlaceError = key;
     kbEmptyText();
@@ -1927,16 +2138,38 @@ function kbStateText(t, cls) {
   el.style.color = cls === "err" ? "hsl(var(--destructive))" : "";
 }
 
+function kbSetLoading(on) {
+  const progress = $("kb-progress");
+  if (!progress) return;
+  progress.classList.toggle("on", !!on);
+  progress.setAttribute("aria-hidden", on ? "false" : "true");
+}
+
 /** 空态那块提示（没配地址 / 还没建起来） */
 function kbEmptyText() {
   const el = $("kb-empty");
   if (!el) return;
   el.innerHTML = "";
-  const a = document.createElement("div");
-  a.textContent = en("输入网址开始浏览");
-  el.append(a);
+  const icon = document.createElement("div");
+  icon.className = "kbemptyicon";
+  icon.innerHTML = '<svg aria-hidden="true"><use href="#ni-globe"></use></svg>';
+  const title = document.createElement("div");
+  title.className = "kbemptytitle";
+  title.textContent = en("等待 Agent 打开页面");
+  const sub = document.createElement("div");
+  sub.className = "kbemptysub";
+  sub.textContent = en("Agent 打开的页面会显示在这里；需要手动访问时再输入网址");
+  const manual = document.createElement("button");
+  manual.type = "button";
+  manual.className = "btn small kbmanual";
+  manual.textContent = en("输入网址");
+  manual.onclick = (event) => {
+    event.stopPropagation();
+    kbShowAddressEditor(true);
+  };
+  el.append(icon, title, sub, manual);
   el.hidden = !!kbUrl && kbWasCreated;
-  el.onclick = () => $("kb-url")?.focus();
+  el.onclick = () => kbShowAddressEditor(true);
 }
 
 /** 贴 / 挪 / 收 —— 切页、改窗口大小、拖分栏都会调它（重复调不会重新加载页面） */
@@ -1961,11 +2194,12 @@ async function kbSync(force) {
     // Agent 可能在浏览器页不可见时创建 / 导航过共享页面。事件监听虽然平时
     // 都在，但冷启动计划任务等时序下可能错过；进入浏览器页时以后端当前 URL
     // 为准，避免明明有页面却显示空态。
-    const live = await invoke("kb_current_url", { kind: KBB_KIND }).catch(() => "");
+    const live = await invoke("kb_current_url", { kind: kbActivePage }).catch(() => "");
     if (live) {
       kbUrl = live;
       kbWasCreated = true;
     }
+    kbSetLocation(kbUrl || live);
     if ($("kb-url") && !kbAddressDirty && kbUrl) $("kb-url").value = kbUrl;
     await kbPlace("kb-host", kbUrl, "kb-empty", force);
     if (force) kbEmptyText();
@@ -1988,7 +2222,21 @@ function kbSyncSoon() {
 function bindKb() {
   if (!$("kb-url")) return;
   const urlIn = $("kb-url");
+  kbRenderTabs();
+  invoke("kb_pages").then((pages) => {
+    for (const page of pages || []) {
+      const known = kbPageOf(page.id);
+      known.url = page.url || known.url;
+      known.title = page.title || known.title;
+      known.icon = kbSafeIcon(page.icon) || known.icon;
+      known.loading = !!page.loading;
+      known.created = true;
+      if (page.active) kbActivePage = page.id;
+    }
+    kbRenderTabs();
+  }).catch(() => {});
   urlIn.value = kbUrl;
+  kbSetLocation(kbUrl);
   kbEmptyText();
   urlIn.addEventListener("input", () => { kbAddressDirty = true; });
 
@@ -2008,32 +2256,23 @@ function bindKb() {
     }
     kbAddressDirty = false;
     kbSetAddress(u, true);
+    kbShowAddressEditor(false);
     await kbSync(true);
     kbEmptyText();
   };
   $("kb-open").onclick = () => open().catch((e) => toast(String(e)));
+  $("kb-location")?.addEventListener("click", () => kbShowAddressEditor(true));
   urlIn.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); $("kb-open").click(); }
     if (e.key === "Escape") {
-      kbAddressDirty = false;
-      urlIn.value = kbUrl;
-      urlIn.blur();
+      kbShowAddressEditor(false);
     }
   });
-  if ($("kb-save")) $("kb-save").onclick = () => {
-    const u = kbNorm(urlIn.value);
-    if (!u) { toast(en("先填个地址")); return; }
-    const bad = kbWebUrlError(u);
-    if (bad) { toast(bad); return; }
-    localStorage.setItem(KB_HOME_KEY, u);
-    if ($("set-kb-home")) $("set-kb-home").value = u;
-    toast(en("地址已存为首页"));
-  };
-  $("kb-reload").onclick = () => {
+  globalThis.__kdockBrowserReload = () => {
     if (!kbWasCreated) { toast(en("还没打开过")); return; }
-    invoke("kb_reload", { kind: KBB_KIND }).catch((e) => toast(String(e)));
+    invoke("kb_reload", { kind: kbActivePage }).catch((e) => toast(String(e)));
   };
-  $("kb-back").onclick = () => invoke("kb_back", { kind: KBB_KIND }).catch((e) => toast(String(e)));
+  $("kb-back").onclick = () => invoke("kb_back", { kind: kbActivePage }).catch((e) => toast(String(e)));
   $("kb-external").onclick = () => {
     const u = kbNorm(urlIn.value || kbUrl);
     if (!u) { toast(en("先填个地址")); return; }
@@ -2043,10 +2282,7 @@ function bindKb() {
   };
   const me = $("kb-empty");
   if (me) {
-    me.onclick = () => {
-      if (kbNorm(urlIn.value || kbUrl)) open().catch(() => {});
-      else urlIn.focus();
-    };
+    me.onclick = () => kbShowAddressEditor(true);
   }
   if ($("set-kb-home")) $("set-kb-home").value = localStorage.getItem(KB_HOME_KEY) || "";
   if ($("set-kb-save")) {
@@ -2065,10 +2301,11 @@ function bindKb() {
     $("set-kb-go").onclick = () => {
       closeSettings();
       showPane("kb");
+      if (!kbUrl) kbShowAddressEditor(true);
     };
   }
   document.querySelector("[data-kb-focus-main]")?.addEventListener("click", () => {
-    $("kb-url")?.focus();
+    kbShowAddressEditor(true);
     kbSyncSoon();
   });
   // 位置跟随：窗口缩放 / 拖分栏 / 抽屉式布局变化都算
@@ -8203,6 +8440,7 @@ function bindShortcuts() {
       "batch.nextDiff": () => $("bt-diff-next").click(),
       "batch.prevDiff": () => $("bt-diff-prev").click(),
       "capture.fullscreen": () => capSetFullscreen(!capFs),
+      "browser.reload": () => globalThis.__kdockBrowserReload?.(),
     },
     canRun: (id) => {
       const tab = shortcutCurrentTab();
@@ -8211,6 +8449,7 @@ function bindShortcuts() {
         return tab === "batch" && !!$("bt-diff") && !$("bt-diff").hidden;
       }
       if (id === "capture.fullscreen") return tab === "capture";
+      if (id === "browser.reload") return tab === "kb";
       return true;
     },
   });
@@ -10765,7 +11004,7 @@ async function bindAgent() {
         agMeta.sandbox_network = r.network;
         agSyncPolicyUI();
         toast(mode === "trusted"
-          ? "宿主权限：命令可访问整台机器，请只在必要时使用"
+          ? "完全访问：命令可访问整台机器，请只在必要时使用"
           : network ? "工作区 AppContainer：仅工作区写入，允许网络" : "工作区 AppContainer：仅工作区写入，默认断网");
       } catch (e) {
         toast(String(e));
@@ -12950,13 +13189,40 @@ function agRenderPage(page) {
     agEl("ag-br-body").scrollTop = 0;
   }
   if (agEl("ag-br-state")) agEl("ag-br-state").textContent = `${(page.text || "").length} 字 · ${(page.links || []).length} 链接`;
-  if (agEl("ag-br-url")) agEl("ag-br-url").value = page.url || "";
+  agBrowserSetAddress(page.url || "");
+}
+
+function agBrowserSetAddress(url) {
+  const value = String(url || "").trim();
+  if (agEl("ag-br-url")) agEl("ag-br-url").value = value;
+  const text = agEl("ag-br-location-text");
+  if (text) text.textContent = kbAddressLabel(value) || en("由 Agent 打开页面");
+  const location = agEl("ag-br-location");
+  if (location) location.title = value || en("点击编辑网址");
+  kbPaintIcon(agEl("ag-br-location-icon"), kbPageOf().icon);
+}
+
+function agBrowserShowEditor(show) {
+  const editor = agEl("ag-br-editor");
+  const chrome = document.querySelector(".agbrchrome");
+  const input = agEl("ag-br-url");
+  if (!editor || !chrome || !input) return;
+  editor.hidden = !show;
+  chrome.hidden = show;
+  if (show) {
+    input.value = kbUrl || (agBrPage && agBrPage.url) || "";
+    requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
+  }
 }
 
 function kbRenderAgentBrowser(page, loading) {
   if (!page) return;
   agBrPage = page;
-  if (agEl("ag-br-url")) agEl("ag-br-url").value = page.url || "";
+  if (page.icon) kbSetPageIcon(kbActivePage, page.icon);
+  agBrowserSetAddress(page.url || "");
   if (agEl("ag-br-title")) agEl("ag-br-title").textContent = page.title || page.url || "";
   if (agEl("ag-br-state")) {
     agEl("ag-br-state").textContent = loading
@@ -12972,21 +13238,43 @@ function kbRenderAgentBrowser(page, loading) {
 function kbApplyPageEvent(raw) {
   if (!raw || typeof raw !== "object" || !raw.url) return;
   const url = String(raw.url);
+  if (url === "about:blank") {
+    kbSetLoading(false);
+    return;
+  }
   const loading = !!raw.loading;
+  const pageId = String(raw.page || kbActivePage);
+  const isNewPage = !kbPages.has(pageId);
+  const tab = kbPageOf(pageId);
   const changed = loading || !agBrPage || agBrPage.url !== url;
   const page = {
     url,
-    title: String(raw.title || (changed ? url : agBrPage?.title || url)),
-    text: changed ? "" : (agBrPage?.text || ""),
-    html: changed ? "" : (agBrPage?.html || ""),
-    links: changed ? [] : (agBrPage?.links || []),
+    title: String(raw.title || tab.title || (changed ? url : agBrPage?.title || url)),
+    text: pageId === kbActivePage && !changed ? (agBrPage?.text || "") : "",
+    html: pageId === kbActivePage && !changed ? (agBrPage?.html || "") : "",
+    links: pageId === kbActivePage && !changed ? (agBrPage?.links || []) : [],
   };
+  tab.url = url;
+  tab.title = page.title;
+  tab.loading = loading;
+  tab.created = true;
+  if (isNewPage) {
+    const blank = kbPages.get(KBB_KIND);
+    if (blank && !blank.created && !blank.url) kbPages.delete(KBB_KIND);
+    kbActivePage = pageId;
+    kbLastPlace = "";
+  }
+  kbRenderTabs();
+  if (pageId !== kbActivePage) return;
+  kbUrl = url;
   kbWasCreated = true;
   kbSetAddress(url, false);
-  kbStateText(loading ? en("页面载入中…") : "");
+  kbSetLoading(loading);
+  kbStateText("");
   kbRenderAgentBrowser(page, loading);
   if (changed && agEl("ag-br-body")) agEl("ag-br-body").textContent = "";
   kbEmptyText();
+  if (isNewPage) kbSyncSoon();
 }
 
 async function agBrowserOpen(url) {
@@ -13003,6 +13291,7 @@ async function agBrowserOpen(url) {
   try {
     // 实际视图留在浏览器页；Agent 右栏只同步 URL/标题，不再渲染第二份网页。
     await kbOpenUrl(normalized);
+    agBrowserShowEditor(false);
     if (!agBrPage || agBrPage.url !== normalized) {
       agBrPage = { url: normalized, title: normalized, text: "", html: "", links: [] };
       kbRenderAgentBrowser(agBrPage, true);
@@ -13023,16 +13312,19 @@ async function agLoadMcps() {
 function bindAgentPanes() {
   document.querySelectorAll(".agptab").forEach((b) => { b.onclick = () => agShowPane(b.dataset.agp); });
   if (agEl("ag-br-go")) agEl("ag-br-go").onclick = () => agBrowserOpen();
+  if (agEl("ag-br-location")) agEl("ag-br-location").onclick = () => agBrowserShowEditor(true);
+  if (agEl("ag-br-edit")) agEl("ag-br-edit").onclick = () => agBrowserShowEditor(true);
   if (agEl("ag-br-url")) {
     agEl("ag-br-url").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); agBrowserOpen(); }
+      if (e.key === "Escape") agBrowserShowEditor(false);
     });
   }
   if (agEl("ag-br-back")) {
     agEl("ag-br-back").onclick = async () => {
       try {
-        await invoke("kb_back", { kind: KBB_KIND });
-        const url = await invoke("kb_current_url", { kind: KBB_KIND }).catch(() => "");
+        await invoke("kb_back", { kind: kbActivePage });
+        const url = await invoke("kb_current_url", { kind: kbActivePage }).catch(() => "");
         if (url) kbRenderAgentBrowser({ url, title: agBrPage?.title || "", text: "", html: "", links: [] });
       } catch (e) { toast(String(e)); }
     };
@@ -13040,12 +13332,12 @@ function bindAgentPanes() {
   if (agEl("ag-br-show")) {
     agEl("ag-br-show").onclick = () => {
       showPane("kb");
-      $("kb-url") && ($("kb-url").value = kbUrl || agBrPage?.url || "");
+      kbSetAddress(kbUrl || agBrPage?.url || "");
     };
   }
   if (agEl("ag-br-ext")) {
     agEl("ag-br-ext").onclick = async () => {
-      const live = await invoke("kb_current_url", { kind: KBB_KIND }).catch(() => "");
+      const live = await invoke("kb_current_url", { kind: kbActivePage }).catch(() => "");
       const url = live || (agBrPage ? agBrPage.url : (agEl("ag-br-url") ? agEl("ag-br-url").value.trim() : ""));
       if (!url) return toast(en("没有网址"));
       await invoke("browser_open_external", { path: url }).catch((e) => toast(String(e)));
@@ -13058,13 +13350,13 @@ function bindAgentPanes() {
       agEl("ag-br-src").classList.toggle("primary", agBrSource);
       try {
         // 关掉“源码”时立刻回到正文，不能把上一次的源码继续留在框里。
-        await invoke(agBrSource ? "kb_source" : "kb_read_dom", { kind: KBB_KIND });
+        await invoke(agBrSource ? "kb_source" : "kb_read_dom", { kind: kbActivePage });
       } catch (e) { toast(String(e)); }
     };
   }
   if (agEl("ag-br-body")) {
     agEl("ag-br-body").addEventListener("click", async () => {
-      try { await invoke("kb_read_dom", { kind: KBB_KIND }); }
+      try { await invoke("kb_read_dom", { kind: kbActivePage }); }
       catch (e) { toast(String(e)); }
     });
   }
@@ -13151,7 +13443,7 @@ function agOnShow() {
   agRefreshGit();
   agRefreshBreakdown();
   agRefreshBalance();
-  invoke("kb_current_url", { kind: KBB_KIND }).then((url) => {
+  invoke("kb_current_url", { kind: kbActivePage }).then((url) => {
     if (!url) return;
     const changed = !agBrPage || agBrPage.url !== url;
     const title = changed ? url : (agBrPage?.title || url);
@@ -13572,6 +13864,17 @@ async function bindAgentEvents() {
     agScrollTail(true);
     if (!agStoppingSessions.has(agMeta ? agMeta.id : "")) agState("等你批准…", "wait");
     if (!agWatching()) agUnreadBump();
+  });
+  await agOn("kb://active", async (ev) => {
+    const page = String((ev.payload || {}).page || "");
+    if (!page) return;
+    kbPageOf(page);
+    await kbSelectPage(page);
+  });
+  await agOn("kb://favicon", (ev) => {
+    const p = ev.payload || {};
+    if (!p.page || !p.icon) return;
+    kbSetPageIcon(String(p.page), String(p.icon));
   });
   await agOn("kb://page", async (ev) => {
     kbApplyPageEvent(ev.payload);

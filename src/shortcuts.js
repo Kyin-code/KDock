@@ -115,6 +115,11 @@ export const SHORTCUT_DEFS = [
     titleZh: "屏幕共享：切换全屏", titleEn: "Screen share: toggle fullscreen",
     descZh: "仅在屏幕共享页生效；Esc 仍用于退出全屏。", descEn: "Only on Screen share; Esc still exits fullscreen.",
   },
+  {
+    id: "browser.reload", group: "tools", defaultBinding: "Ctrl+R",
+    titleZh: "浏览器：重新加载", titleEn: "Browser: reload",
+    descZh: "仅在浏览器页生效；重新加载当前页面并保留其它标签。", descEn: "Only on Browser; reload the active page without replacing other tabs.",
+  },
 ];
 
 const MODIFIERS = ["Ctrl", "Alt", "Shift"];

@@ -883,9 +883,6 @@ input.qsinput, .qsinput { flex: 1 1 auto; width: auto; min-width: 0; height: 26p
   [data-work="agent"] .agcomposer .agctl {
     min-width: 0;
   }
-  [data-work="agent"] .agcomposer .agctl-label {
-    display: none;
-  }
   [data-work="agent"] .agcomposer .agctl-model {
     flex: 1 1 160px;
     min-width: 0;
@@ -945,19 +942,115 @@ html.noparam[data-tab="agent"] .split {
    浏览器页：一块共享 WebView2，Agent 侧栏与它同步。
    这里只负责占位区的尺寸与空态提示。
    ========================================================================== */
-.kbpane { gap: 8px; }
+.workpane.kbpane { gap: 0; padding: 0 6px 6px; overflow: hidden; }
 .parampane.kbpane { flex: 1 1 auto; min-height: 0; }
-/* 地址栏：一行只放"标签 + 输入框"（宽度全给输入框），按钮另起一行；
-   整行高度按 1.5 倍放大，好点也好认。 */
-.kbaddrrow { padding: 8px 0 10px; gap: 10px; }
-.kbaddrrow .kblb { flex: 0 0 auto; font-size: 14px; }
-.kbaddrrow .dirinput { height: 46px; font-size: 15px; padding: 0 14px; border-radius: 11px; }
-.kbaddrbtns { gap: 8px; padding-bottom: 2px; }
-.kbaddrbtns .btn { height: 32px; }
-.kbaddrbtns .btn.primary { padding: 0 16px; }
+.kbtabs {
+  display: flex; align-items: flex-end; gap: 2px; flex: 0 0 34px; min-width: 0;
+  padding: 2px 1px 1px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+}
+.kbtabs::-webkit-scrollbar { display: none; }
+.kbtab {
+  display: flex; align-items: center; gap: 6px; flex: 1 1 0;
+  width: auto; min-width: 88px; max-width: none; height: 30px; padding: 0 4px 0 8px;
+  border: 1px solid transparent; border-radius: 8px; background: transparent;
+  color: hsl(var(--muted-foreground)); font: inherit; font-size: 11px; cursor: pointer;
+}
+.kbtab:hover {
+  border-color: hsl(var(--foreground) / .32);
+  background: hsl(var(--foreground) / .055);
+  color: hsl(var(--foreground));
+}
+.kbtab.active {
+  border-color: hsl(var(--foreground) / .075);
+  background: hsl(var(--foreground) / .035);
+  color: hsl(var(--foreground));
+}
+.kbtabtitle { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.kbtabicon,
+.kblocationicon {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 18px; height: 18px;
+}
+.kbtabicon img,
+.kblocationicon img,
+.agbrlocation .agbrlocationicon img {
+  width: 16px; height: 16px; object-fit: contain; border-radius: 3px;
+}
+.kbtabicon svg,
+.kblocationicon svg,
+.agbrlocation .agbrlocationicon svg {
+  width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7;
+}
+.kbtabclose {
+  display: grid; place-items: center; flex: 0 0 auto; width: 18px; height: 18px;
+  padding: 0; border: 0; border-radius: 5px; background: transparent;
+  color: hsl(var(--muted-foreground)); font: inherit; cursor: pointer;
+}
+.kbtabclose:hover { background: hsl(var(--foreground) / .09); color: hsl(var(--foreground)); }
+.kbtabnew {
+  display: grid; place-items: center; flex: 0 0 auto; width: 30px; height: 30px;
+  padding: 0; border: 0; border-radius: 8px; background: transparent;
+  color: hsl(var(--muted-foreground)); font-size: 18px; cursor: pointer;
+}
+.kbtabnew:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+.kbtoolbar { flex: 0 0 34px; gap: 3px; padding: 0 1px; margin: 0; }
+.kbicon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; min-width: 30px; padding: 0;
+  border: 0; border-radius: 8px; background: transparent;
+  color: hsl(var(--muted-foreground)); cursor: pointer;
+}
+.kbicon:hover { background: hsl(var(--foreground) / .07); color: hsl(var(--foreground)); }
+.kbicon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.kblocation {
+  display: flex; align-items: center; gap: 7px; flex: 1 1 auto; min-width: 0;
+  height: 30px; padding: 0 11px; border: 1px solid hsl(var(--foreground) / .04); border-radius: 9px;
+  background: hsl(var(--foreground) / .045); color: hsl(var(--muted-foreground));
+  font: inherit; font-size: 11.5px; text-align: left; cursor: text;
+}
+.kblocation[hidden] { display: none; }
+.kblocation:hover { border-color: hsl(var(--foreground) / .32); background: hsl(var(--foreground) / .065); }
+.kblocation:focus-visible { outline: none; border-color: hsl(var(--primary) / .55); }
+.kblocationico { flex: 0 0 auto; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.kblocationtext { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kbaddresseditor {
+  display: flex; align-items: center; flex: 1 1 auto; min-width: 0; height: 30px;
+  padding-left: 9px; border: 1px solid hsl(var(--primary) / .22); border-radius: 9px;
+  background: var(--surface-0); box-shadow: 0 0 0 2px hsl(var(--primary) / .045);
+}
+.kbaddresseditor[hidden] { display: none; }
+.kbaddresseditor input {
+  flex: 1 1 auto; min-width: 0; height: 28px; padding: 0 8px;
+  border: 0; background: transparent; box-shadow: none; font-size: 12px;
+}
+.kbaddresseditor input:focus { outline: none; }
+.kbgo {
+  flex: 0 0 auto; align-self: stretch; min-width: 48px; margin: 0 0 0 2px; padding: 0 12px;
+  border: 0; border-radius: 0 8px 8px 0; white-space: nowrap;
+  background: hsl(var(--primary) / .72); color: hsl(var(--primary-foreground));
+  font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+}
+.kbgo:hover { background: hsl(var(--primary) / .88); }
+.kbstateslot { max-width: 132px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kbprogress {
+  position: relative; flex: 0 0 2px; height: 2px; margin: 0 3px;
+  overflow: hidden; border-radius: 999px; background: transparent; opacity: 0;
+  transition: opacity .12s ease;
+}
+.kbprogress.on { opacity: 1; background: hsl(var(--primary) / .13); }
+.kbprogress.on::after {
+  content: ""; display: block; width: 34%; height: 100%; border-radius: inherit;
+  background: hsl(var(--primary));
+  animation: kbprogress-slide 1.05s ease-in-out infinite;
+}
+@keyframes kbprogress-slide {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(305%); }
+}
 .kbhost {
   position: relative; min-height: 160px;
-  border-radius: 12px; border: 1px solid var(--surface-line); background: var(--surface-1);
+  margin-top: 0;
+  border-radius: 10px; border: 1px solid var(--surface-line); background: var(--surface-1);
   overflow: hidden;
 }
 .kbhost > .kbempty {
@@ -966,8 +1059,15 @@ html.noparam[data-tab="agent"] .split {
   padding: 18px; text-align: center; line-height: 1.7; cursor: pointer;
 }
 .kbhost > .kbempty:hover { background: var(--surface-2); }
-.kbhost > .kbempty .kbbtn { pointer-events: none; }
-.kbpane #kb-url { min-width: 12rem; }
+.kbemptyicon {
+  display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px;
+  background: hsl(var(--foreground) / .05); color: hsl(var(--muted-foreground));
+}
+.kbemptyicon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.55; }
+.kbemptytitle { color: hsl(var(--foreground)); font-size: 13px; font-weight: 600; }
+.kbemptysub { max-width: 420px; margin-top: -4px; color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.55; }
+.kbmanual { margin-top: 2px; }
+.kbpane #kb-url { min-width: 0; }
 
 /* 共享浏览器占满中间工作区；右栏仅保留导航入口。 */
 
@@ -2025,8 +2125,31 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 
 /* 浏览器页 */
-.agbrurl { flex: 1 1 auto; min-width: 0; }
+.agbrchrome { display: flex; align-items: center; gap: 3px; min-width: 0; }
+.agbrchrome[hidden] { display: none; }
+.agbrlocation {
+  display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0;
+  height: 30px; padding: 0 9px; border: 1px solid hsl(var(--foreground) / .04); border-radius: 8px;
+  background: hsl(var(--foreground) / .045); color: hsl(var(--muted-foreground));
+  font: inherit; font-size: 11px; text-align: left; cursor: pointer;
+}
+.agbrlocation:hover { border-color: hsl(var(--foreground) / .32); background: hsl(var(--foreground) / .065); }
+.agbrlocation svg { flex: 0 0 auto; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.agbrlocation .agbrlocationicon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 18px; height: 18px; }
+.agbrlocation span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agbreditor { display: flex; align-items: center; gap: 5px; }
+.agbreditor[hidden] { display: none; }
+.agbreditor input { flex: 1 1 auto; min-width: 0; height: 30px; font-size: 11.5px; }
+.agbreditor .btn { flex: 0 0 auto; white-space: nowrap; }
+.agbreditor .btn.primary { background: hsl(var(--primary) / .72); }
+.agbreditor .btn.primary:hover { background: hsl(var(--primary) / .88); }
+.agbrpagehead { display: flex; align-items: flex-start; gap: 7px; min-width: 0; padding: 1px 3px 0; }
+.agbrmeta { flex: 1 1 auto; min-width: 0; }
+.agbractions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.agbractions .btn { height: 26px; min-width: 26px; padding: 0 6px; }
+.agbractions svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; vertical-align: -2px; }
 .agbrtitle { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agbrstatus { margin-top: 2px; color: hsl(var(--muted-foreground)); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agbrbody {
   flex: 1 1 auto; min-height: 170px; overflow: auto; margin: 0;
   white-space: pre-wrap; word-break: break-word;
@@ -2323,13 +2446,9 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 #ag-reasoning { width: auto; min-width: 88px; max-width: 150px; }
 #ag-perm { width: auto; min-width: 76px; }
 .agcomposer > .btn.primary { min-width: 64px; font-weight: 600; }
-#ag-perm-wrap[data-level="warn"] .agctl-label,
 #ag-perm-wrap[data-level="warn"] select,
-#ag-sandbox-wrap[data-level="warn"] .agctl-label,
 #ag-sandbox-wrap[data-level="warn"] select { color: hsl(42 92% 66%); }
-#ag-perm-wrap[data-level="caution"] .agctl-label,
 #ag-perm-wrap[data-level="caution"] select,
-#ag-sandbox-wrap[data-level="caution"] .agctl-label,
 #ag-sandbox-wrap[data-level="caution"] select { color: hsl(26 94% 64%); }
 .workpane[data-work="agent"] { position: relative; }
 .agcmdpop {

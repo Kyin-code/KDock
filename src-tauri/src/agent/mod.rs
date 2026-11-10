@@ -1540,7 +1540,7 @@ fn state_note(
         "命令沙箱={}；网络={}",
         match mode {
             sandbox::SandboxMode::Workspace => "工作区 AppContainer",
-            sandbox::SandboxMode::Trusted => "宿主权限",
+            sandbox::SandboxMode::Trusted => "完全访问",
         },
         if network_allowed {
             "允许（命令可联网；web_fetch / web_download / browser_* 可用；工具未加载时先 tool_search）"

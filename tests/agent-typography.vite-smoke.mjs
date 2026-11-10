@@ -54,13 +54,13 @@ try {
   const placeholder = await style("#ag-input", "::placeholder");
   const infoValue = await style("#ag-info .v");
   const infoLabel = await style("#ag-info .k");
-  const controlLabel = await style(".agctl-label");
+  const controlSelect = await style(".agctl select");
   const cardTitle = await style(".agentpane .cardtitle");
   const usage = await style("#ag-usage");
   const code = await style(".agmsg .bubble code");
   const editor = await style("#ag-tx-body");
 
-  for (const [name, value] of Object.entries({ body, input, placeholder, infoValue, infoLabel, controlLabel, cardTitle, usage })) {
+  for (const [name, value] of Object.entries({ body, input, placeholder, infoValue, infoLabel, controlSelect, cardTitle, usage })) {
     if (!value.family.includes("KDock Audit UI")) {
       throw new Error(`${name} did not inherit the selected UI font: ${value.family}`);
     }
@@ -87,16 +87,18 @@ try {
       placeholder: input.placeholder,
       composerOverflow: composer.scrollWidth - composer.clientWidth,
       labels,
+      fullAccessLabel: document.querySelector('#ag-sandbox option[value="trusted"]')?.textContent.trim(),
     };
   });
   if (layout.inputHeight < 90) throw new Error(`Agent input is too short: ${layout.inputHeight}`);
   if (layout.composerOverflow > 1) throw new Error(`Agent composer overflows by ${layout.composerOverflow}px`);
   if (!layout.placeholder.includes("Shift+Enter")) throw new Error("Agent input placeholder lost keyboard guidance");
-  if (!layout.labels.includes("权限") || !layout.labels.includes("模型")) {
-    throw new Error(`Agent composer labels are incomplete: ${layout.labels.join(", ")}`);
+  if (layout.labels.length) throw new Error(`Agent composer labels were not removed: ${layout.labels.join(", ")}`);
+  for (const selector of ["#ag-perm", "#ag-sandbox", "#ag-reasoning", "#ag-quick-model"]) {
+    if (await page.locator(selector).isHidden()) throw new Error(`Agent selector is missing: ${selector}`);
   }
-  if (!layout.labels.includes("思考") || await page.locator("#ag-reasoning").isHidden()) {
-    throw new Error(`Agent reasoning selector is missing: ${layout.labels.join(", ")}`);
+  if (layout.fullAccessLabel !== "完全访问") {
+    throw new Error(`Trusted sandbox label is wrong: ${layout.fullAccessLabel}`);
   }
 
   const fontAudit = await page.evaluate(() => {

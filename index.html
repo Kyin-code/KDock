@@ -121,6 +121,18 @@
       <symbol id="ni-arrow-left" viewBox="0 0 24 24">
         <path d="M20 12H4m6-6-6 6 6 6"/>
       </symbol>
+      <symbol id="ni-globe" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"/>
+        <path d="M3 12h18M12 3c2.6 2.5 4 5.5 4 9s-1.4 6.5-4 9c-2.6-2.5-4-5.5-4-9s1.4-6.5 4-9Z"/>
+      </symbol>
+      <symbol id="ni-external" viewBox="0 0 24 24">
+        <path d="M14 4h6v6M20 4l-9 9"/>
+        <path d="M18 13v6H5V6h6"/>
+      </symbol>
+      <symbol id="ni-edit" viewBox="0 0 24 24">
+        <path d="m4 16-1 5 5-1L19 9l-4-4L4 16Z"/>
+        <path d="m13 7 4 4"/>
+      </symbol>
     </svg>
     <div id="ui-root">
     <header class="titlebar" id="titlebar">
@@ -985,7 +997,6 @@
             <div class="trow agcomposer">
               <button id="ag-attach" class="btn small agattach" title="附上本机文件：复制进会话工作区，agent 就能读它">📎 文件</button>
               <label id="ag-perm-wrap" class="agctl">
-                <span class="agctl-label">权限</span>
                 <select id="ag-perm" class="tight" title="agent 的权限：只读 / 危险动作先问 / 全自动">
                   <option value="read">只读</option>
                   <option value="ask" selected>需要批准</option>
@@ -993,21 +1004,18 @@
                 </select>
               </label>
               <label id="ag-sandbox-wrap" class="agctl">
-                <span class="agctl-label">沙箱</span>
-                <select id="ag-sandbox" class="tight" title="命令执行边界：工作区 AppContainer 默认断网；宿主权限只用于明确需要整机访问的工具">
+                <select id="ag-sandbox" class="tight" title="命令执行边界：工作区 AppContainer 默认断网；完全访问只用于明确需要整机访问的工具">
                   <option value="workspace">工作区</option>
                   <option value="workspace-net">工作区+网络</option>
-                  <option value="trusted">宿主权限</option>
+                  <option value="trusted">完全访问</option>
                 </select>
               </label>
               <span class="grow"></span>
               <span id="ag-model-busy" class="spin" hidden title="正在取模型状态（AMD 那边约 20 秒）"></span>
               <label class="agctl" id="ag-reasoning-wrap" hidden>
-                <span class="agctl-label">思考</span>
                 <select id="ag-reasoning" title="本会话的思考强度"></select>
               </label>
               <label class="agctl agctl-model">
-                <span class="agctl-label">模型</span>
                 <select id="ag-quick-model" class="tight" title="这轮用哪个模型（参数去设置里改）"></select>
               </label>
               <button id="ag-send" class="btn primary">发送</button>
@@ -1495,21 +1503,35 @@
 
         <!-- 共享内部浏览器：一块 WebView2，Agent 浏览器和本页同步。 -->
         <div class="workpane kbpane" data-work="kb" hidden>
-          <div class="trow kbaddrrow">
-            <span class="lb kblb">浏览器</span>
-            <input id="kb-url" class="dirinput grow" placeholder="输入网址或域名" />
+          <div id="kb-tabs" class="kbtabs">
+            <button type="button" class="kbtabnew" title="新页面">＋</button>
+            <div class="kbtab active">
+              <span class="kbtabicon"><svg aria-hidden="true"><use href="#ni-globe"></use></svg></span>
+              <span class="kbtabtitle" data-en="New page">新页面</span>
+              <button type="button" class="kbtabclose" title="关闭页面">×</button>
+            </div>
           </div>
-          <div class="trow kbaddrbtns">
-            <button id="kb-open" class="btn primary">打开</button>
-            <button id="kb-back" class="btn small" title="后退">←</button>
-            <button id="kb-reload" class="btn small" title="重新加载">↻ 重新加载</button>
-            <button id="kb-external" class="btn small" title="用系统浏览器打开（登录 / 下载这类它更顺手）">↗ 系统浏览器</button>
-            <button id="kb-save" class="btn small" title="存为共享浏览器首页">存为首页</button>
-            <span class="grow"></span>
-            <span id="kb-state" class="lb"></span>
+          <div class="trow kbtoolbar">
+            <button id="kb-back" class="kbicon" title="后退"><svg aria-hidden="true"><use href="#ni-arrow-left"></use></svg></button>
+            <button id="kb-location" class="kblocation" type="button" title="点击输入网址">
+              <span id="kb-location-icon" class="kblocationicon"><svg aria-hidden="true"><use href="#ni-globe"></use></svg></span>
+              <span id="kb-location-text" class="kblocationtext" data-en="Opened by the Agent, or click to enter an address">由 Agent 打开页面，或点击输入地址</span>
+            </button>
+            <div id="kb-address-editor" class="kbaddresseditor" hidden>
+              <input id="kb-url" autocomplete="off" spellcheck="false" placeholder="example.com" />
+              <button id="kb-open" class="kbgo" type="button">打开</button>
+            </div>
+            <span id="kb-state" class="lb kbstateslot"></span>
+            <button id="kb-external" class="kbicon" title="用系统浏览器打开"><svg aria-hidden="true"><use href="#ni-external"></use></svg></button>
           </div>
+          <div id="kb-progress" class="kbprogress" aria-hidden="true"></div>
           <div id="kb-host" class="kbhost grow">
-            <div class="placeholder kbempty" id="kb-empty"></div>
+            <div class="placeholder kbempty" id="kb-empty">
+              <div class="kbemptyicon"><svg aria-hidden="true"><use href="#ni-globe"></use></svg></div>
+              <div class="kbemptytitle" data-en="Waiting for the Agent to open a page">等待 Agent 打开页面</div>
+              <div class="kbemptysub" data-en="Pages opened by the Agent appear here. Enter a URL only when you need manual navigation.">Agent 打开的页面会显示在这里；需要手动访问时再输入网址</div>
+              <button type="button" class="btn small kbmanual" data-en="Enter URL">输入网址</button>
+            </div>
           </div>
         </div>
 
@@ -1841,20 +1863,29 @@
 
           <!-- ① 共享浏览器：与浏览器页同一 WebView2，URL / 登录态 / 历史同步 -->
           <div class="agppane" data-agpane="browser" hidden>
-            <div class="trow">
-              <input id="ag-br-url" class="agbrurl" placeholder="输入网址或域名" />
+            <div class="agbrchrome">
+              <button id="ag-br-back" class="kbicon" title="上一个页面"><svg aria-hidden="true"><use href="#ni-arrow-left"></use></svg></button>
+              <button id="ag-br-location" class="agbrlocation" type="button" title="点击编辑网址">
+                <span id="ag-br-location-icon" class="agbrlocationicon"><svg aria-hidden="true"><use href="#ni-globe"></use></svg></span>
+                <span id="ag-br-location-text" data-en="Opened by the Agent">由 Agent 打开页面</span>
+              </button>
+              <button id="ag-br-edit" class="kbicon" title="输入网址"><svg aria-hidden="true"><use href="#ni-edit"></use></svg></button>
+              <button id="ag-br-ext" class="kbicon" title="用系统浏览器打开"><svg aria-hidden="true"><use href="#ni-external"></use></svg></button>
+            </div>
+            <div id="ag-br-editor" class="agbreditor" hidden>
+              <input id="ag-br-url" autocomplete="off" spellcheck="false" placeholder="example.com" />
               <button id="ag-br-go" class="btn small primary">打开</button>
             </div>
-            <div class="trow">
-              <button id="ag-br-back" class="btn small" title="上一个页面">←</button>
-              <button id="ag-br-ext" class="btn small" title="用系统浏览器打开">↗</button>
-              <button id="ag-br-show" class="btn small" title="在浏览器页查看共享页面">在浏览器打开</button>
-              <button id="ag-br-src" class="btn small" title="查看当前页 HTML 源码">源码</button>
-              <span class="grow"></span>
-              <span id="ag-br-state" class="lb"></span>
+            <div class="agbrpagehead">
+              <div class="agbrmeta">
+                <div class="agbrtitle" id="ag-br-title" data-en="Waiting for the Agent to open a page">等待 Agent 打开页面</div>
+                <div id="ag-br-state" class="agbrstatus" data-en="Pages open through browser_* tools or the address button">页面由 browser_* 工具或地址按钮打开</div>
+              </div>
+              <div class="agbractions">
+                <button id="ag-br-show" class="btn small" title="在浏览器页查看共享页面"><svg aria-hidden="true"><use href="#ni-globe"></use></svg></button>
+                <button id="ag-br-src" class="btn small" title="查看当前页 HTML 源码">&lt;/&gt;</button>
+              </div>
             </div>
-            <div class="agbrtitle" id="ag-br-title"></div>
-            <p class="hint">这里是共享内部浏览器的导航状态。浏览器页负责显示真实网页，Agent 的 browser_* 工具也操作同一页面。</p>
             <pre id="ag-br-body" class="agbrbody">（读取当前页后可在这里查看正文 / 源码）</pre>
           </div>
 

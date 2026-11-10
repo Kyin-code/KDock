@@ -24,6 +24,8 @@
     const split = parsed.querySelector("main.split");
     if (!split) throw new Error("Main split markup missing");
     const root = document.getElementById("ui-root");
+    const sprite = parsed.querySelector("svg.nav-sprite");
+    if (sprite) root.appendChild(sprite);
     root.appendChild(split);
     bindAgentResize();
     bindPopoverDismissal(document, "details[data-popover][open]");

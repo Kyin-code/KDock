@@ -473,9 +473,9 @@ export const EN = {
   "agent 的权限：只读 / 危险动作先问 / 全自动": "Agent permission: read-only / ask before risky actions / fully automatic",
   "只读": "Read-only", "需要批准": "Ask", "自动": "Auto",
   "沙箱": "Sandbox", "工作区": "Workspace", "工作区+网络": "Workspace + network",
-  "宿主权限": "Host access",
-  "命令执行边界：工作区 AppContainer 默认断网；宿主权限只用于明确需要整机访问的工具":
-    "Command boundary: Workspace AppContainer has no network by default; Host access is only for tools that require the full machine",
+  "完全访问": "Full access",
+  "命令执行边界：工作区 AppContainer 默认断网；完全访问只用于明确需要整机访问的工具":
+    "Command boundary: Workspace AppContainer has no network by default; Full access is only for tools that require the full machine",
   "运行中": "Running", "子任务": "Subagents",
   "停止当前会话创建的全部子任务": "Stop all subagents created by this session",
   "思考强度": "Reasoning effort", "跟随模型默认": "Use model default",
@@ -1035,6 +1035,16 @@ export const EN = {
   // ============ 共享内部浏览器 ============
   "知识库": "Knowledge base", "浏览器": "Browser",
   "共享浏览器": "Shared browser", "共享浏览器首页": "Shared browser home",
+  "由 Agent 打开页面，或点击输入地址": "Opened by the Agent, or click to enter an address",
+  "由 Agent 打开页面": "Opened by the Agent",
+  "点击输入网址": "Click to enter a URL",
+  "点击编辑网址": "Click to edit URL",
+  "等待 Agent 打开页面": "Waiting for the Agent to open a page",
+  "新页面": "New page",
+  "关闭页面": "Close page",
+  "Agent 打开的页面会显示在这里；需要手动访问时再输入网址":
+    "Pages opened by the Agent appear here. Enter a URL only when you need manual navigation.",
+  "输入网址": "Enter URL",
   "在工作区中打开": "Open workspace folder", "复制工作区路径": "Copy workspace path",
   "在这里新建对话": "New chat here", "工作区路径为空": "Workspace path is empty",
   "已复制路径": "Path copied", "本轮活动": "This turn", "本轮过程": "Turn process",

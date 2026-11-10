@@ -13,7 +13,8 @@
 //! - 这里只管理共享视图的显示、导航和只读 DOM 抽取。
 
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -26,13 +27,56 @@ use tauri::{
 static KB: LazyLock<Mutex<HashMap<String, Webview>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static LOADS: LazyLock<Mutex<HashMap<String, LoadState>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-/// 共享页只有一个，所有会读写当前文档的动作都串行。两个会话同时导航、一个
-/// 在点击而另一个在填表时，不能让 DOM 动作落到导航中的半成品页面上。
-static BROWSER_OP: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static TITLES: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static FAVICONS: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// 每个页面独立串行，页面之间可以并行工作。两个会话操作同一页时，仍不能让
+/// DOM 动作落到导航中的半成品页面上。
+static BROWSER_OPS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 /// Serialize "check whether the view exists, then create it". Without this,
 /// the Browser page and a scheduled Agent run can both observe no view and one
 /// of them can lose its initial URL.
 static OPEN_GATE: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static ACTIVE_PAGE: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new("browser".into()));
+static PAGE_SEQ: AtomicU64 = AtomicU64::new(1);
+
+fn page_gate(kind: &str) -> Result<Arc<Mutex<()>>, String> {
+    let mut gates = BROWSER_OPS.lock().map_err(|_| "浏览器操作锁不可用".to_string())?;
+    Ok(gates
+        .entry(kind.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone())
+}
+
+pub fn new_page_id() -> String {
+    format!(
+        "browser-{}-{}",
+        std::process::id(),
+        PAGE_SEQ.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+pub fn active_page() -> String {
+    ACTIVE_PAGE
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_else(|_| "browser".into())
+}
+
+pub fn activate(kind: &str) {
+    if let Ok(map) = KB.lock() {
+        for (id, wv) in map.iter() {
+            if id != kind {
+                let _ = wv.hide();
+            }
+        }
+    }
+    if let Ok(mut active) = ACTIVE_PAGE.lock() {
+        *active = kind.to_string();
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 struct LoadState {
@@ -62,6 +106,16 @@ pub struct Page {
 pub struct Link {
     pub text: String,
     pub href: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PageInfo {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub icon: String,
+    pub loading: bool,
+    pub active: bool,
 }
 
 fn clamp_min(v: f64) -> f64 {
@@ -272,11 +326,15 @@ fn show_inner(
                     if loading {
                         return;
                     }
+                    if let Ok(mut titles) = TITLES.lock() {
+                        titles.insert(kind_title_change.clone(), title.clone());
+                    }
                     let url = webview.url().map(|u| u.to_string()).unwrap_or_default();
                     if !url.is_empty() {
                         let _ = app_title_change.emit(
                             "kb://page",
                             serde_json::json!({
+                                "page": kind_title_change,
                                 "url": url,
                                 "title": title,
                                 "loading": false,
@@ -291,6 +349,7 @@ fn show_inner(
                     let _ = app_handle.emit(
                         "kb://page",
                         serde_json::json!({
+                            "page": kind_for_load,
                             "url": url,
                             "loading": event == PageLoadEvent::Started,
                         }),
@@ -323,15 +382,42 @@ fn show_inner(
                             })
                             .unwrap_or(false);
                         if still_current {
+                            if let Ok(mut titles) = TITLES.lock() {
+                                titles.insert(kind_title.clone(), title.clone());
+                            }
                             let _ = app_title.emit(
                                 "kb://page",
                                 serde_json::json!({
+                                    "page": kind_title,
                                     "url": url_title,
                                     "title": title,
                                     "loading": false,
                                 }),
                             );
                         }
+                    });
+                    let app_icon = app_handle.clone();
+                    let kind_icon = kind_for_load.clone();
+                    let _ = webview.eval_with_callback(FAVICON_JS, move |raw| {
+                        let icon = js_string_value(raw);
+                        let icon = if icon.starts_with("data:image/")
+                            || icon.starts_with("http://")
+                            || icon.starts_with("https://")
+                        {
+                            icon
+                        } else {
+                            String::new()
+                        };
+                        if icon.is_empty() {
+                            return;
+                        }
+                        if let Ok(mut icons) = FAVICONS.lock() {
+                            icons.insert(kind_icon.clone(), icon.clone());
+                        }
+                        let _ = app_icon.emit(
+                            "kb://favicon",
+                            serde_json::json!({ "page": kind_icon, "icon": icon }),
+                        );
                     });
                 }),
             pos,
@@ -357,6 +443,7 @@ pub fn show(
     w: f64,
     h: f64,
 ) -> Result<(), String> {
+    activate(kind);
     let _gate = OPEN_GATE
         .lock()
         .map_err(|_| "浏览器创建锁不可用".to_string())?;
@@ -399,15 +486,31 @@ fn open_inner(app: &AppHandle, kind: &str, url: &str) -> Result<(), String> {
         let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
         map.contains_key(kind)
     };
-    if exists {
+    let result = if exists {
         navigate_inner(kind, url)
     } else {
         show_inner(app, kind, url, 0.0, 0.0, 0.0, 0.0)
+    };
+    if result.is_ok() {
+        if let Ok(mut active) = ACTIVE_PAGE.lock() {
+            *active = kind.to_string();
+        }
+        let _ = app.emit("kb://active", serde_json::json!({ "page": kind }));
+    }
+    result
+}
+
+fn browser_page_url(url: String) -> Option<String> {
+    if url.eq_ignore_ascii_case("about:blank") {
+        None
+    } else {
+        Some(url)
     }
 }
 
 pub fn open(app: &AppHandle, kind: &str, url: &str) -> Result<(), String> {
-    let _op = BROWSER_OP
+    let gate = page_gate(kind)?;
+    let _op = gate
         .lock()
         .map_err(|_| "浏览器操作锁不可用".to_string())?;
     let _gate = OPEN_GATE
@@ -424,7 +527,8 @@ pub fn open_and_wait(
     url: &str,
     timeout: Duration,
 ) -> Result<String, String> {
-    let _op = BROWSER_OP
+    let gate = page_gate(kind)?;
+    let _op = gate
         .lock()
         .map_err(|_| "浏览器操作锁不可用".to_string())?;
     open_and_wait_locked(app, kind, url, timeout)
@@ -458,7 +562,8 @@ pub fn open_and_read_json(
     url: &str,
     timeout: Duration,
 ) -> Result<String, String> {
-    let _op = BROWSER_OP
+    let gate = page_gate(kind)?;
+    let _op = gate
         .lock()
         .map_err(|_| "浏览器操作锁不可用".to_string())?;
     open_and_wait_locked(app, kind, url, timeout)?;
@@ -467,7 +572,8 @@ pub fn open_and_read_json(
 
 /// 刷新（重载当前地址）
 pub fn reload(kind: &str) -> Result<(), String> {
-    let _op = BROWSER_OP
+    let gate = page_gate(kind)?;
+    let _op = gate
         .lock()
         .map_err(|_| "浏览器操作锁不可用".to_string())?;
     let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
@@ -480,7 +586,65 @@ pub fn reload(kind: &str) -> Result<(), String> {
 pub fn current_url(kind: &str) -> Option<String> {
     let map = KB.lock().ok()?;
     let wv = map.get(kind)?;
-    wv.url().ok().map(|u| u.to_string())
+    // WebView2 reports its initial document as about:blank. That is a
+    // placeholder, not a navigable user page, and must not be sent back to the
+    // address bar (it would later fail the http/https validation).
+    wv.url().ok().map(|u| u.to_string()).and_then(browser_page_url)
+}
+
+pub fn pages() -> Vec<PageInfo> {
+    let active = active_page();
+    let titles = TITLES.lock().map(|m| m.clone()).unwrap_or_default();
+    let icons = FAVICONS.lock().map(|m| m.clone()).unwrap_or_default();
+    let loads = LOADS.lock().map(|m| m.clone()).unwrap_or_default();
+    let ids: Vec<String> = KB
+        .lock()
+        .map(|map| map.keys().cloned().collect())
+        .unwrap_or_default();
+    let mut out: Vec<PageInfo> = ids
+        .into_iter()
+        .map(|id| PageInfo {
+            url: current_url(&id).unwrap_or_default(),
+            title: titles.get(&id).cloned().unwrap_or_default(),
+            icon: icons.get(&id).cloned().unwrap_or_default(),
+            loading: loads.get(&id).map(|s| s.loading).unwrap_or(false),
+            active: id == active,
+            id,
+        })
+        .collect();
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
+}
+
+pub fn close_page(kind: &str) -> Result<String, String> {
+    let removed = KB
+        .lock()
+        .map_err(|_| "kb mutex".to_string())?
+        .remove(kind);
+    if let Some(view) = removed {
+        let _ = view.close();
+    }
+    LOADS.lock().map_err(|_| "load mutex".to_string())?.remove(kind);
+    TITLES.lock().map_err(|_| "title mutex".to_string())?.remove(kind);
+    FAVICONS
+        .lock()
+        .map_err(|_| "favicon mutex".to_string())?
+        .remove(kind);
+    BROWSER_OPS
+        .lock()
+        .map_err(|_| "浏览器操作锁不可用".to_string())?
+        .remove(kind);
+    let next = KB
+        .lock()
+        .ok()
+        .and_then(|map| map.keys().next().cloned())
+        .unwrap_or_else(|| "browser".into());
+    if let Ok(mut active) = ACTIVE_PAGE.lock() {
+        if active.as_str() == kind {
+            *active = next.clone();
+        }
+    }
+    Ok(next)
 }
 
 fn navigate_inner(kind: &str, url: &str) -> Result<(), String> {
@@ -491,14 +655,16 @@ fn navigate_inner(kind: &str, url: &str) -> Result<(), String> {
 }
 
 pub fn navigate(kind: &str, url: &str) -> Result<(), String> {
-    let _op = BROWSER_OP
+    let gate = page_gate(kind)?;
+    let _op = gate
         .lock()
         .map_err(|_| "浏览器操作锁不可用".to_string())?;
     navigate_inner(kind, url)
 }
 
 pub fn back(kind: &str) -> Result<(), String> {
-    let _op = BROWSER_OP
+    let gate = page_gate(kind)?;
+    let _op = gate
         .lock()
         .map_err(|_| "浏览器操作锁不可用".to_string())?;
     let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
@@ -507,7 +673,8 @@ pub fn back(kind: &str) -> Result<(), String> {
 }
 
 pub fn source(app: &AppHandle, kind: &str) -> Result<(), String> {
-    let _op = BROWSER_OP
+    let gate = page_gate(kind)?;
+    let _op = gate
         .lock()
         .map_err(|_| "浏览器操作锁不可用".to_string())?;
     let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
@@ -523,7 +690,8 @@ pub fn source(app: &AppHandle, kind: &str) -> Result<(), String> {
 }
 
 pub fn read_dom(app: &AppHandle, kind: &str) -> Result<(), String> {
-    let _op = BROWSER_OP
+    let gate = page_gate(kind)?;
+    let _op = gate
         .lock()
         .map_err(|_| "浏览器操作锁不可用".to_string())?;
     let map = KB.lock().map_err(|_| "kb mutex".to_string())?;
@@ -550,7 +718,8 @@ pub fn read_dom(app: &AppHandle, kind: &str) -> Result<(), String> {
 /// 同步读取当前 WebView2 的 DOM。Agent 工具在命令线程里调用；回调通过 channel
 /// 回来，避免为了读一次网页就复制一套浏览器/会话。
 pub fn read_dom_json(kind: &str) -> Result<String, String> {
-    let _op = BROWSER_OP
+    let gate = page_gate(kind)?;
+    let _op = gate
         .lock()
         .map_err(|_| "浏览器操作锁不可用".to_string())?;
     read_dom_json_inner(kind)
@@ -586,7 +755,8 @@ fn read_dom_json_inner(kind: &str) -> Result<String, String> {
 }
 
 fn eval_json(kind: &str, js: String) -> Result<String, String> {
-    let _op = BROWSER_OP
+    let gate = page_gate(kind)?;
+    let _op = gate
         .lock()
         .map_err(|_| "浏览器操作锁不可用".to_string())?;
     wait_for_load(kind, Duration::from_secs(8))?;
@@ -830,6 +1000,34 @@ pub fn network_json(kind: &str, clear: bool) -> Result<String, String> {
     eval_json(kind, js)
 }
 
+const FAVICON_JS: &str = r#"(async () => {
+  try {
+    const links = [...document.querySelectorAll(
+      'link[rel~="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]'
+    )];
+    let href = links.length ? links[links.length - 1].href : '';
+    if (!href) href = new URL('/favicon.ico', location.origin).href;
+    if (!href) return '';
+    try {
+      const response = await fetch(href, { credentials: 'include', cache: 'force-cache' });
+      if (response.ok) {
+        const blob = await response.blob();
+        if (blob.size > 0 && blob.size <= 512 * 1024) {
+          return await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => resolve(href);
+            reader.readAsDataURL(blob);
+          });
+        }
+      }
+    } catch (_) {}
+    return href;
+  } catch (_) {
+    return '';
+  }
+})()"#;
+
 const BROWSER_PROBE_JS: &str = r#"(() => {
   if (window.__kdockProbeInstalled) return;
   window.__kdockProbeInstalled = true;
@@ -919,6 +1117,26 @@ mod tests {
             js_string_value("\"{\\\"url\\\":\\\"https://x\\\"}\"".into()),
             "{\"url\":\"https://x\"}"
         );
+    }
+
+    #[test]
+    fn blank_placeholder_is_not_reported_as_a_page_url() {
+        assert_eq!(browser_page_url("about:blank".into()), None);
+        assert_eq!(
+            browser_page_url("https://kyin.top/".into()),
+            Some("https://kyin.top/".into())
+        );
+    }
+
+    #[test]
+    fn browser_pages_get_unique_ids_and_operation_gates() {
+        let a = new_page_id();
+        let b = new_page_id();
+        assert_ne!(a, b);
+        let ga = page_gate(&a).unwrap();
+        let gb = page_gate(&b).unwrap();
+        assert!(!Arc::ptr_eq(&ga, &gb), "different pages must not share the global operation lock");
+        assert!(Arc::ptr_eq(&ga, &page_gate(&a).unwrap()));
     }
 
     #[test]

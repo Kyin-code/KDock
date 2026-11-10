@@ -70,6 +70,138 @@ try {
     throw new Error(`Transfer controls/popover regression: ${JSON.stringify(transferUi)}`);
   }
 
+  const browserUi = await page.evaluate(() => {
+    window.__showAllPagesPage("kb");
+    const rect = (selector) => document.querySelector(selector)?.getBoundingClientRect();
+    const toolbar = rect(".kbtoolbar");
+    const location = rect("#kb-location");
+    const address = rect("#kb-url");
+    const empty = document.querySelector("#kb-empty");
+    const emptyUi = {
+      emptyHasAgentGuidance: !!empty?.querySelector(".kbemptytitle")
+        && empty.textContent.includes("Agent")
+        && !!empty.querySelector(".kbmanual"),
+    };
+    const tabsBox = document.getElementById("kb-tabs");
+    const firstTab = tabsBox?.querySelector(".kbtab");
+    const plus = tabsBox?.querySelector(".kbtabnew");
+    const tabsUi = {
+      tabsPresent: !!tabsBox,
+      newTabPresent: !!plus,
+      newTabBeforeFirstTab: !!plus && !!firstTab
+        && !!(plus.compareDocumentPosition(firstTab) & Node.DOCUMENT_POSITION_FOLLOWING),
+    };
+    const singleTabWidth = firstTab?.getBoundingClientRect().width || 0;
+    let equalTabWidths = false;
+    if (firstTab && plus) {
+      const twin = firstTab.cloneNode(true);
+      twin.classList.remove("active");
+      tabsBox.insertBefore(twin, plus);
+      equalTabWidths = Math.abs(
+        firstTab.getBoundingClientRect().width - twin.getBoundingClientRect().width,
+      ) <= 1;
+      twin.remove();
+    }
+    const tabsRect = tabsBox?.getBoundingClientRect();
+    const firstTabRect = firstTab?.getBoundingClientRect();
+    const tabIconRect = firstTab?.querySelector(".kbtabicon")?.getBoundingClientRect();
+    const tabCloseRect = firstTab?.querySelector(".kbtabclose")?.getBoundingClientRect();
+    const tabGlyphRect = firstTab?.querySelector(".kbtabicon svg")?.getBoundingClientRect();
+    const toolbarRect = rect(".kbtoolbar");
+    const hostRect = rect("#kb-host");
+    const tabLayoutUi = {
+      singleTabFillsRow: !!tabsBox && singleTabWidth >= tabsBox.clientWidth - 40,
+      equalTabWidths,
+      tabsTouchToolbar: !!tabsRect && !!firstTabRect && !!toolbarRect
+        && toolbarRect.top - firstTabRect.bottom <= 3,
+      toolbarTouchesPage: !!toolbarRect && !!hostRect
+        && hostRect.top - toolbarRect.bottom <= 3,
+      newTabAlignedWithBack: !!plus && !!rect("#kb-back")
+        && Math.abs(plus.getBoundingClientRect().left - rect("#kb-back").left) <= 2,
+      tabSideZonesEqual: !!tabIconRect && !!tabCloseRect
+        && Math.abs(tabIconRect.width - tabCloseRect.width) <= 1
+        && Math.abs(tabIconRect.height - tabCloseRect.height) <= 1,
+      tabGlyphIs16: !!tabGlyphRect
+        && Math.abs(tabGlyphRect.width - 16) <= 1
+        && Math.abs(tabGlyphRect.height - 16) <= 1,
+      tabsAndToolbarRightAligned: !!tabsRect && !!toolbarRect
+        && Math.abs(tabsRect.right - toolbarRect.right) <= 1,
+    };
+    const progress = document.getElementById("kb-progress");
+    progress?.classList.add("on");
+    const progressUi = {
+      exists: !!progress,
+      height: progress ? Math.round(progress.getBoundingClientRect().height) : 0,
+      animation: progress ? getComputedStyle(progress, "::after").animationName : "",
+    };
+    progress?.classList.remove("on");
+    const locationButton = document.getElementById("kb-location");
+    const editor = document.getElementById("kb-address-editor");
+    const openButton = document.getElementById("kb-open");
+    const alphaOf = (color) => {
+      const match = String(color).match(/rgba?\([^)]*,\s*([0-9.]+)\)$/);
+      return match ? Number(match[1]) : 1;
+    };
+    const chromeUi = {
+      activeTabBorderAlpha: firstTab ? alphaOf(getComputedStyle(firstTab).borderColor) : 1,
+      locationBorderAlpha: locationButton ? alphaOf(getComputedStyle(locationButton).borderColor) : 1,
+    };
+    if (locationButton) locationButton.hidden = true;
+    if (editor) editor.hidden = false;
+    const editorRect = editor?.getBoundingClientRect();
+    const openRect = openButton?.getBoundingClientRect();
+    const editorUi = {
+      editorWidthRatio: toolbar && editorRect ? editorRect.width / toolbar.width : 0,
+      openButtonFullHeight: !!openRect && !!editorRect && openRect.height >= editorRect.height - 2,
+      openButtonWideEnough: !!openRect && openRect.width >= 44,
+      openButtonNowrap: openButton ? getComputedStyle(openButton).whiteSpace : "",
+      openButtonBackgroundAlpha: openButton ? alphaOf(getComputedStyle(openButton).backgroundColor) : 1,
+    };
+    if (editor) editor.hidden = true;
+    if (locationButton) locationButton.hidden = false;
+    window.__showAllPagesPage("agent");
+    const agentPane = document.querySelector('[data-agpane="browser"]');
+    if (agentPane) agentPane.hidden = false;
+    const agentLocation = rect("#ag-br-location");
+    const agentAddress = rect("#ag-br-url");
+    return {
+      toolbarHeight: toolbar ? Math.round(toolbar.height) : 0,
+      locationVisible: !!location && location.width > 100 && location.height <= 34,
+      addressHidden: !address || address.width === 0 || address.height === 0,
+      ...emptyUi,
+      ...tabsUi,
+      ...tabLayoutUi,
+      ...editorUi,
+      ...chromeUi,
+      ...progressUi,
+      agentLocationVisible: !!agentLocation && agentLocation.width > 50 && agentLocation.height <= 34,
+      agentAddressHidden: !agentAddress || agentAddress.width === 0 || agentAddress.height === 0,
+      agentEditorHidden: document.getElementById("ag-br-editor")?.hidden === true,
+      bodyOverflow: document.documentElement.scrollWidth - window.innerWidth,
+    };
+  });
+  if (browserUi.toolbarHeight > 38 || !browserUi.locationVisible || !browserUi.addressHidden
+      || browserUi.editorWidthRatio < 0.65 || !browserUi.openButtonFullHeight
+      || !browserUi.openButtonWideEnough || browserUi.openButtonNowrap !== "nowrap"
+      || !browserUi.exists || browserUi.height > 3 || browserUi.animation !== "kbprogress-slide"
+      || !browserUi.emptyHasAgentGuidance || !browserUi.agentLocationVisible
+      || !browserUi.tabsPresent || !browserUi.newTabPresent
+      || !browserUi.newTabBeforeFirstTab || !browserUi.newTabAlignedWithBack
+      || !browserUi.tabSideZonesEqual || !browserUi.tabGlyphIs16
+      || !browserUi.tabsAndToolbarRightAligned
+      || !browserUi.singleTabFillsRow || !browserUi.equalTabWidths
+      || !browserUi.tabsTouchToolbar || !browserUi.toolbarTouchesPage
+      || browserUi.activeTabBorderAlpha > 0.12 || browserUi.locationBorderAlpha > 0.12
+      || browserUi.openButtonBackgroundAlpha > 0.8
+      || !browserUi.agentAddressHidden || !browserUi.agentEditorHidden
+      || browserUi.bodyOverflow > 2) {
+    throw new Error(`Shared browser compact UI regression: ${JSON.stringify(browserUi)}`);
+  }
+  await page.evaluate(() => {
+    const pane = document.querySelector('[data-agpane="browser"]');
+    if (pane) pane.hidden = true;
+  });
+
   const pages = await page.evaluate(() => window.__allPages);
   if (pages.length < 20) throw new Error(`Expected at least 20 pages, got ${pages.length}: ${pages.join(", ")}`);
 
@@ -622,6 +754,9 @@ try {
       goalVisible: !goal.hidden,
       goalText: document.getElementById("ag-goal-text").value,
       policyHintRemoved: !document.getElementById("ag-policy-hint"),
+      policyLabelsRemoved: !document.querySelector(
+        "#ag-perm-wrap .agctl-label, #ag-sandbox-wrap .agctl-label, #ag-reasoning-wrap .agctl-label, .agctl-model .agctl-label",
+      ),
       policyLevels: [defaultPolicy.permLevel, warnedPolicy.permLevel, cautionPolicy.permLevel],
       sandboxLevels: [defaultPolicy.sandboxLevel, warnedPolicy.sandboxLevel, cautionPolicy.sandboxLevel],
       policyTextColors: [defaultPolicy.permColor, warnedPolicy.permColor, cautionPolicy.permColor],
@@ -660,6 +795,7 @@ try {
   });
   if (!composerUi.goalVisible || composerUi.goalText !== "完成状态机重构"
       || !composerUi.policyHintRemoved
+      || !composerUi.policyLabelsRemoved
       || composerUi.policyLevels.join(",") !== "default,warn,caution"
       || composerUi.sandboxLevels.join(",") !== "default,warn,caution"
       || composerUi.policyTextColors[0] === composerUi.policyTextColors[1]
