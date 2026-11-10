@@ -281,8 +281,7 @@ fn capture_blocking(
             Err(e) => return Err(format!("等待采集进程失败：{e}")),
         }
         if t0.elapsed() > timeout {
-            let _ = child.kill();
-            let _ = child.wait();
+            crate::process_guard::terminate_tree(&mut child);
             let _ = std::fs::remove_file(&bin);
             return Err(format!("采集超时（{} 秒）", timeout.as_secs()));
         }

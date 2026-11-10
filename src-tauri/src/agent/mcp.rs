@@ -194,8 +194,7 @@ struct Client {
 impl Drop for StdioTransport {
     fn drop(&mut self) {
         if let Ok(mut child) = self.child.lock() {
-            let _ = child.kill();
-            let _ = child.wait();
+            crate::process_guard::terminate_tree(&mut child);
         }
     }
 }
@@ -439,14 +438,15 @@ impl Client {
         loop {
             let left = timeout.saturating_sub(start.elapsed());
             if left.is_zero() { return Err(format!("{method} 超时{}", self.stderr_tail_text())); }
+            if crate::agent::stop_requested() {
+                return Err("用户停止了这次 MCP 调用".into());
+            }
             let Transport::Stdio(t) = &self.transport else { return Err("不是 stdio transport".into()); };
             let line = {
                 let rx = t.rx.lock().map_err(|_| "MCP stdout mutex".to_string())?;
-                match rx.recv_timeout(left) {
+                match rx.recv_timeout(left.min(Duration::from_millis(100))) {
                     Ok(line) => line,
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                        return Err(format!("等 MCP 回话超时（服务没响应）{}", self.stderr_tail_text()))
-                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                         return Err(format!("MCP 进程提前退出{}", self.stderr_tail_text()))
                     }
@@ -463,6 +463,9 @@ impl Client {
     }
 
     fn request(&mut self, method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
+        if crate::agent::stop_requested() {
+            return Err("用户停止了这次 MCP 调用".into());
+        }
         match self.transport {
             Transport::Http(_) => self.request_http(method, params, timeout),
             Transport::Stdio(_) => self.request_stdio(method, params, timeout),
@@ -573,6 +576,9 @@ pub fn call_tool(srv: &McpServer, tool: &str, args: &Value) -> Result<String, St
     match call(c) {
         Ok(v) => Ok(v),
         Err(e) => {
+            if crate::agent::stop_requested() {
+                return Err(e);
+            }
             // 进程可能已经死了/协议错位：丢掉旧进程再试一次。
             drop_client(srv);
             let c = client_for(srv)?;

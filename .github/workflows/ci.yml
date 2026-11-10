@@ -60,6 +60,9 @@ jobs:
       - name: Test responsive UI matrix
         run: npm run test:vite:pages
 
+      - name: Test agent stop state machine
+        run: npm run test:vite:agent-stop
+
       # A cold Windows PowerShell start can take much longer on a fresh hosted
       # runner than on a developer machine. Warm it once before the Rust suite,
       # which contains several real PowerShell process tests.

@@ -958,7 +958,7 @@ fn run_capture(exe: &std::path::Path, args: &[&str], timeout_ms: u64) -> Option<
             Err(_) => return None,
         }
         if t0.elapsed().as_millis() as u64 > timeout_ms {
-            let _ = child.kill();
+            crate::process_guard::terminate_tree(&mut child);
             return None;
         }
         std::thread::sleep(std::time::Duration::from_millis(20));

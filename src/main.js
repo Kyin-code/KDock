@@ -24,7 +24,7 @@ import {
 } from "./agent-activity.js";
 import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
 import { bindAgentResize } from "./agent-layout.js";
-import { pendingBatchText } from "./agent-pending.js";
+import { agentRunPresentation, pendingBatchText } from "./agent-pending.js";
 import { logNumberColumnWidth } from "./log-gutter.js";
 import { remindUpdateLater, skipUpdate } from "./app-update.js";
 import { createAsciiHistory, loadAsciiHistory, saveAsciiHistory } from "./ascii-history.js";
@@ -8376,6 +8376,8 @@ let agThinkNode = null;           // 正在流式写入的"思考过程"块
 let agReasonText = "";
 let agRunning = false;
 const agRunSessions = new Set();
+const agStoppingSessions = new Set();
+let agSyncRunningSeq = 0;
 const agPending = new Map();      // session id -> 尚未并入对话的补充消息
 const agPendingSending = new Set();
 const agDoneWaiters = new Map();
@@ -8969,11 +8971,13 @@ function agMd(text) {
 function agSetSendDisabled(on) {
   const b = agEl("ag-send");
   if (!b) return;
-  b.disabled = false;                                   // 永远可点
-  b.textContent = en(on ? "补充" : "发送");
-  b.title = on ? "agent 正在跑：发出去不会打断输出，会在这一轮的下一个步骤并入" : "";
+  const stopping = !!(agMeta && agStoppingSessions.has(agMeta.id));
+  b.disabled = stopping;
+  b.textContent = en(stopping ? "正在停止…" : on ? "补充" : "发送");
+  b.title = stopping ? en("正在停止…") :
+    on ? "agent 正在跑：发出去不会打断输出，会在这一轮的下一个步骤并入" : "";
   const t = agEl("ag-input");
-  if (t) t.disabled = false;
+  if (t) t.disabled = stopping;
 }
 
 // 状态灯：空闲 = 绿灯，思考中/跑工具 = 转圈，出错 = 红点，等你批准 = 黄点。
@@ -8993,6 +8997,25 @@ function agState(text, cls) {
   agStateText = text ? en(text) : "";
   agStateKind = cls === "ok" ? "busy" : cls === "err" ? "err" : cls === "wait" ? "wait" : "";
   agStatePaint();
+}
+
+function agPaintRunUi() {
+  const stopping = !!(agMeta && agStoppingSessions.has(agMeta.id));
+  const ui = agentRunPresentation({ running: agRunning, stopping });
+  agState(ui.text, ui.kind);
+  const stop = agEl("ag-stop");
+  if (stop) {
+    stop.hidden = !ui.stopVisible;
+    stop.disabled = ui.stopDisabled;
+    stop.textContent = ui.stopDisabled ? en(ui.stopLabel) : "⏹ " + en(ui.stopLabel);
+  }
+  agSetSendDisabled(agRunning);
+}
+
+function agClearIdleStopping() {
+  for (const sid of agStoppingSessions) {
+    if (!agRunSessions.has(sid)) agStoppingSessions.delete(sid);
+  }
 }
 /** agent 页现在是不是可见（用户有没有可能正看着它） */
 const agAgentVisible = () => { const p = document.querySelector('.workpane[data-work="agent"]'); return !!p && !p.hidden; };
@@ -9672,8 +9695,8 @@ function agSetMeta(m, why) {
   if (window.__agMeta.length > 50) window.__agMeta.shift();
   agMeta = m;
   agRunning = !!(m && agRunSessions.has(m.id));
-  if (agEl("ag-stop")) agEl("ag-stop").hidden = !agRunning;
-  agSetSendDisabled(agRunning);
+  agClearIdleStopping();
+  agPaintRunUi();
   agRenderPending();
 }
 let agOpenWs = {};          // 哪些工作区是展开的
@@ -10568,8 +10591,7 @@ async function agPendingSendNow() {
     agRunSessions.add(sid);
     if (sameView) {
       agRunning = true;
-      agState("思考中…", "ok");
-      agSetSendDisabled(true);
+      agPaintRunUi();
     }
   } catch (e) {
     if (optimistic && agMeta && agMeta.id === sid) {
@@ -10594,6 +10616,10 @@ async function agSend(forcedText = null) {
   const text = String(fromInput ? (box.value || "") : forcedText).trim();
   if (!text) return toast("先写点东西");
   if (!agMeta) { await agNewSession(); if (!agMeta) return; }
+  if (agStoppingSessions.has(agMeta.id)) {
+    toast(en("正在停止…"));
+    return;
+  }
   // 斜杠命令：本地处理，不走模型
   if (fromInput && text.startsWith("/")) {
     box.value = "";
@@ -10648,7 +10674,7 @@ async function agSend(forcedText = null) {
     agRender();
     if (fromInput) box.value = backup;
     agRunning = false;
-    agState("空闲");
+    agPaintRunUi();
     agSyncRunning();
     toast(String(e));
     return;
@@ -10657,8 +10683,7 @@ async function agSend(forcedText = null) {
   agStreamNode = null;
   agRunning = true;
   if (agMeta) agRunSessions.add(agMeta.id);
-  agState("思考中…", "ok");
-  agSetSendDisabled(true);
+  agPaintRunUi();
   agUpdateHeader();
 }
 
@@ -10814,10 +10839,22 @@ async function bindAgent() {
     agEl("ag-stop").onclick = async () => {
       // 后端除了置停止标志，还会把"等你点允许"的审批直接判成拒绝 —— 否则这一轮要等到
       // 5 分钟审批超时才动，用户看到的就是"点了停止没反应"
-      await invoke("agent_stop", { session: agMeta ? agMeta.id : null }).catch(() => {});
-      agState("正在停止…", "err");
+      if (!agMeta) return;
+      const sid = agMeta.id;
+      agStoppingSessions.add(sid);
+      agPaintRunUi();
       const acts = document.querySelector("#ag-chat .agapprove .acts");
       if (acts) acts.innerHTML = '<span class="hint">已停止</span>';
+      try {
+        await invoke("agent_stop", { session: sid });
+        // agent_stop 同步置停止标志；这里再对一次后端事实。若进程树还在回收，
+        // stopping 集合会继续压住"思考中"和输入框，直到 done / idle 确认。
+        await agSyncRunning();
+      } catch (e) {
+        agStoppingSessions.delete(sid);
+        await agSyncRunning();
+        toast(en("停止失败：") + String(e));
+      }
     };
   }
   if (agEl("ag-stop-all")) {
@@ -13089,15 +13126,16 @@ const agWriteWorkspace = (path0, text) =>
 /** 切到 agent 页时把该刷的刷一遍 */
 /** 后端才是"在不在跑"的唯一事实来源：切页/重连后同步一次 */
 async function agSyncRunning() {
+  const seq = ++agSyncRunningSeq;
   try {
     const c = await invoke("agent_running", { session: agMeta ? agMeta.id : null });
+    if (seq !== agSyncRunningSeq) return;
     agRunSessions.clear();
     for (const sid of c.sessions || []) agRunSessions.add(sid);
     agRunning = !!(agMeta && agRunSessions.has(agMeta.id));
-    agState(agRunning ? en("思考中…") : en("空闲"), agRunning ? "ok" : "");
-    if (agEl("ag-stop")) agEl("ag-stop").hidden = !agRunning;
+    agClearIdleStopping();
+    agPaintRunUi();
     agUpdateHeader();
-    agSetSendDisabled(agRunning);
     agSyncReasoningControl();
   } catch (_) {}
 }
@@ -13360,10 +13398,11 @@ async function bindAgentEvents() {
     if (!mine) return;
     agRunning = !!p.running;
     if (agRunning) {
-      agState("思考中…", "ok");
+      agPaintRunUi();
       agThinkEnsure();          // 先摆一个"思考中…"；模型真吐思考就往上长
     } else {
-      agState("空闲");
+      agStoppingSessions.delete(p.session);
+      agPaintRunUi();
       agFlushStream();
       agStreamNode = null;
       agThinkSettle();
@@ -13390,12 +13429,16 @@ async function bindAgentEvents() {
   await agOn("agent://round", (ev) => {
     const p = ev.payload || {};
     if (agMeta && p.session !== agMeta.id) return;
-    if (agRunning) agState(`思考中…（第 ${p.round} 轮）`, "ok");
+    if (agRunning && !agStoppingSessions.has(p.session)) {
+      agState(`思考中…（第 ${p.round} 轮）`, "ok");
+    }
   });
   await agOn("agent://tool_call", (ev) => {
     const p = ev.payload || {};
     if (agMeta && p.session !== agMeta.id) return;
-    if (agRunning) agState(`正在跑工具：${p.name}`, "ok");
+    if (agRunning && !agStoppingSessions.has(p.session)) {
+      agState(`正在跑工具：${p.name}`, "ok");
+    }
     agThinkSettle();                          // 这一段结束了：思考块收起来
     // 有工具调用说明这一轮的正文结束了
     if (agStreamNode) { agStreamNode.classList.remove("streaming"); agStreamNode = null; }
@@ -13425,7 +13468,7 @@ async function bindAgentEvents() {
     const p = ev.payload || {};
     if (agMeta && p.session !== agMeta.id) return;
     agAppendEvent({ type: "err", text: p.text });
-    agState("出错", "err");
+    if (!agStoppingSessions.has(p.session)) agState("出错", "err");
     if (!agWatching()) agUnreadBump();
   });
   await agOn("agent://usage", (ev) => {
@@ -13527,7 +13570,7 @@ async function bindAgentEvents() {
     card.appendChild(ttl); card.appendChild(pre); card.appendChild(acts);
     box.appendChild(card);
     agScrollTail(true);
-    agState("等你批准…", "wait");
+    if (!agStoppingSessions.has(agMeta ? agMeta.id : "")) agState("等你批准…", "wait");
     if (!agWatching()) agUnreadBump();
   });
   await agOn("kb://page", async (ev) => {
@@ -13556,12 +13599,14 @@ async function bindAgentEvents() {
     if (sid) {
       agResolveDone(sid);
       agRunSessions.delete(sid);
+      agStoppingSessions.delete(sid);
       agPending.delete(sid);
       if (agMeta && sid === agMeta.id) agRenderPending();
     }
     if (agMeta && sid === agMeta.id) {
+      agSyncRunningSeq += 1; // 作废停止前发出、停止后才返回的轮询
       agRunning = false;
-      agState("空闲");
+      agPaintRunUi();
       agThinkSettle();
     }
     if (!agWatching()) agUnreadBump();         // 没在看这一页 → 挂个"有未读"角标

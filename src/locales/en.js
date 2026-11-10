@@ -347,6 +347,7 @@ export const EN = {
   "支持工具": "Tools", "流式": "Stream", "拉模型列表": "Fetch models",
   "测一测": "Test", "技能": "Skills", "工具": "Tools", "会话": "Sessions",
   "新会话": "New session", "压缩上下文": "Compact", "停止": "Stop",
+  "停止失败：": "Stop failed: ",
   "说点什么": "Say something", "发送": "Send", "保存技能": "Save skill",
   "改工作区": "Change workspace", "删除当前会话": "Delete session",
   "期待方式": "Match mode", "包含文本": "Contains text", "正则表达式": "Regex",

@@ -91,8 +91,7 @@ pub fn debug_gdb_stop(app: AppHandle) -> Result<(), String> {
         let _ = p.stdin.write_all(b"-gdb-exit\n");
         let _ = p.stdin.flush();
         std::thread::sleep(std::time::Duration::from_millis(120));
-        let _ = p.child.kill();
-        let _ = p.child.wait();
+        crate::process_guard::terminate_tree(&mut p.child);
         let _ = app.emit("debug://gdb", "\n[kdock] gdb 已关闭");
     }
     Ok(())

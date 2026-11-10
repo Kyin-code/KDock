@@ -206,15 +206,14 @@ fn wait_ready(child: &mut Child, port: u16) -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(220));
     }
-    let _ = child.kill();
+    crate::process_guard::terminate_tree(child);
     Err("分析器启动超时（45 秒）".into())
 }
 
 fn stop_locked() {
     if let Ok(mut g) = RUNTIME.lock() {
         if let Some(mut p) = g.take() {
-            let _ = p.child.kill();
-            let _ = p.child.wait();
+            crate::process_guard::terminate_tree(&mut p.child);
         }
     }
 }
@@ -237,8 +236,7 @@ fn ensure(
         {
             return Ok(p.port);
         }
-        let _ = p.child.kill();
-        let _ = p.child.wait();
+        crate::process_guard::terminate_tree(&mut p.child);
         *g = None;
     }
     let (py, pkg) = find_python(app).ok_or_else(|| {

@@ -730,8 +730,7 @@ fn ffmpeg_thread(
             std::thread::sleep(Duration::from_millis(frame_ms - used));
         }
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    crate::process_guard::terminate_tree(&mut child);
     if let Ok(g) = errs.lock() {
         if !g.is_empty() {
             emit_error(&app, session, &format!("ffmpeg：{}", g.iter().rev().take(3).cloned().collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" | ")));

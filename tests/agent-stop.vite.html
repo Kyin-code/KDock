@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KDock Agent Stop State Vite Test</title>
+</head>
+<body>
+  <main id="root"></main>
+  <script type="module">
+    import { agentRunPresentation } from "/src/agent-pending.js";
+
+    const states = {
+      running: agentRunPresentation({ running: true, stopping: false }),
+      stopping: agentRunPresentation({ running: true, stopping: true }),
+      idle: agentRunPresentation({ running: false, stopping: false }),
+      staleStopping: agentRunPresentation({ running: false, stopping: true }),
+    };
+    window.__agentStopStates = states;
+    document.getElementById("root").innerHTML = Object.entries(states)
+      .map(([name, state]) => `<span data-state="${name}">${state.text}</span>`)
+      .join("");
+    document.documentElement.dataset.agentStopReady = "1";
+  </script>
+</body>
+</html>

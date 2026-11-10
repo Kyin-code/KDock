@@ -259,7 +259,12 @@ fn plink_args(host: &str, port: u16, user: &str, password: &str, extra: &str, ho
     a
 }
 
-fn plink_run(exe: &PathBuf, args: &[String], timeout: Duration) -> Option<(i32, String)> {
+fn plink_run(
+    exe: &PathBuf,
+    args: &[String],
+    timeout: Duration,
+    should_stop: Option<&dyn Fn() -> bool>,
+) -> Option<(i32, String)> {
     use std::process::{Command, Stdio};
     let mut c = Command::new(exe);
     c.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -279,9 +284,12 @@ fn plink_run(exe: &PathBuf, args: &[String], timeout: Duration) -> Option<(i32, 
                 return Some((st.code().unwrap_or(-1), s));
             }
             Ok(None) => {
+                if should_stop.map(|f| f()).unwrap_or(false) {
+                    crate::process_guard::terminate_tree(&mut child);
+                    return Some((-1, "（用户已停止主机指纹探测）".into()));
+                }
                 if t0.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    crate::process_guard::terminate_tree(&mut child);
                     return Some((-1, "（探测主机指纹超时）".into()));
                 }
                 std::thread::sleep(Duration::from_millis(60));
@@ -292,12 +300,20 @@ fn plink_run(exe: &PathBuf, args: &[String], timeout: Duration) -> Option<(i32, 
 }
 
 /// 首次连接先探一次主机指纹（拿不到就返回 None，让上层照原样跑）
-fn plink_ensure_hostkey(exe: &PathBuf, host: &str, port: u16, user: &str, password: &str, extra: &str) -> Option<String> {
+fn plink_ensure_hostkey(
+    exe: &PathBuf,
+    host: &str,
+    port: u16,
+    user: &str,
+    password: &str,
+    extra: &str,
+    should_stop: &dyn Fn() -> bool,
+) -> Option<String> {
     if let Some(k) = hostkey_get(host, port) {
         return Some(k);
     }
     let args = plink_args(host, port, user, password, extra, None, Some("echo kdock-probe"));
-    let (_, text) = plink_run(exe, &args, Duration::from_secs(12))?;
+    let (_, text) = plink_run(exe, &args, Duration::from_secs(12), Some(should_stop))?;
     let fp = parse_plink_fingerprint(&text)?;
     hostkey_put(host, port, &fp);
     Some(fp)
@@ -313,6 +329,7 @@ pub fn ssh_run_once(
     key: &str,
     cmd: &str,
     timeout_ms: u64,
+    should_stop: &dyn Fn() -> bool,
 ) -> Result<(i32, String), String> {
     use std::process::{Command, Stdio};
     let host = host.trim();
@@ -329,7 +346,7 @@ pub fn ssh_run_once(
         let exe = find_plink().ok_or_else(|| {
             "密码登录要用 PuTTY 的 plink（Windows 自带的 ssh.exe 只在控制台里读密码，管道喂不进去）。到「环境配置 → PuTTY plink」一键安装。".to_string()
         })?;
-        let fp = plink_ensure_hostkey(&exe, host, port, user, password, &extra);
+        let fp = plink_ensure_hostkey(&exe, host, port, user, password, &extra, should_stop);
         c = Command::new(&exe);
         c.args(plink_args(host, port, user, password, &extra, fp.as_deref(), Some(cmd)));
     } else {
@@ -374,9 +391,12 @@ pub fn ssh_run_once(
                 return Ok((st.code().unwrap_or(-1), s));
             }
             None => {
+                if should_stop() {
+                    crate::process_guard::terminate_tree(&mut child);
+                    return Err("用户停止了这条 SSH 命令（进程树已杀掉）".into());
+                }
                 if t0.elapsed().as_millis() as u64 > timeout_ms {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    crate::process_guard::terminate_tree(&mut child);
                     return Err(format!("远端命令超时（{timeout_ms} ms）：{cmd}"));
                 }
                 std::thread::sleep(Duration::from_millis(80));
@@ -408,7 +428,7 @@ impl SshConn {
         let mut cmd;
         if use_plink {
             let exe = find_plink().expect("plink 在上面判断过存在");
-            let fp = plink_ensure_hostkey(&exe, host, port, user, password, extra);
+            let fp = plink_ensure_hostkey(&exe, host, port, user, password, extra, &|| false);
             cmd = Command::new(&exe);
             cmd.args(plink_args(host, port, user, password, extra, fp.as_deref(), None));
         } else {

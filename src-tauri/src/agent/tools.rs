@@ -2961,7 +2961,16 @@ fn ssh_run(_ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         timeout = timeout.min(15_000);
     }
     let (code, text) =
-        crate::transport::ssh_run_once(&host, port, &user, &password, &key, &cmd, timeout)?;
+        crate::transport::ssh_run_once(
+            &host,
+            port,
+            &user,
+            &password,
+            &key,
+            &cmd,
+            timeout,
+            &crate::agent::stop_requested,
+        )?;
     // 只做一个内存安全上限；真正进上下文的截断由 mod.rs 的 cap_tool_result
     // 按 token 预算做（并落盘给 output_read）。这里用 chars()，避免 UTF-8
     // 输出里 6000 正好落在汉字中间时 panic。
@@ -4024,11 +4033,11 @@ fn flash(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
             }
             None => {
                 if crate::agent::stop_requested() {
-                    let _ = child.kill();
+                    crate::process_guard::terminate_tree(&mut child);
                     return Err("用户停止了这次烧录（烧录器进程已杀掉）".into());
                 }
                 if start.elapsed() > timeout {
-                    let _ = child.kill();
+                    crate::process_guard::terminate_tree(&mut child);
                     return Err("烧录超过 180s，已中断".into());
                 }
                 std::thread::sleep(Duration::from_millis(200));

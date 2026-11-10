@@ -133,8 +133,9 @@ assert.equal(pendingBatchText([]), "");
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const main = await readFile(resolve(root, "src/main.js"), "utf8");
-assert.match(main, /agpending-guide/);
-assert.match(main, /全部立即发送/);
+const composer = await readFile(resolve(root, "src/agent-composer.js"), "utf8");
+assert.match(composer, /agpending-guide/);
+assert.match(composer, /全部立即发送/);
 assert.match(
   main,
   /invoke\("agent_stop", \{ session: sid \}\)[\s\S]{0,160}?await stopped/,

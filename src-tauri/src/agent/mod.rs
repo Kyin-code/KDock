@@ -2907,6 +2907,9 @@ fn run_turn(
             }
             // 执行工具（逐个，串行 —— 设备类操作没必要并行，还容易打架）
             for call in out.tool_calls.iter() {
+                if stop.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
                 let args = call.args();
                 // 权限可以在回合运行中切换。每个工具执行前重新读取，不能复用
                 // turn 开始时的旧快照，否则切到“自动”后后续工具仍会逐条审批。
@@ -2936,9 +2939,6 @@ fn run_turn(
                     json!({ "session": session_id, "round": round + 1,
                     "id": call.id, "name": call.name, "args": args }),
                 );
-                if stop.load(Ordering::Relaxed) {
-                    return Ok(());
-                }
                 let ctx = ToolCtx {
                     app: &app,
                     state: &st,
@@ -2991,6 +2991,11 @@ fn run_turn(
                     json!({ "session": session_id,
                     "id": call.id, "name": call.name, "args": args, "ok": ok, "text": text }),
                 );
+                // A killed tool returns immediately. Do not append later calls from
+                // the same model response and pretend the stopped turn continued.
+                if stop.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
             }
         }
         store::session_append(

@@ -461,8 +461,7 @@ fn run_ps(name: &str, body: &'static str, args: &[String]) -> Result<String, Str
         match child.try_wait().map_err(|e| e.to_string())? {
             Some(status) => break status,
             None if started.elapsed() > std::time::Duration::from_secs(20) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                crate::process_guard::terminate_tree(&mut child);
                 return Err("Windows UI 自动化超过 20 秒未返回".into());
             }
             None => std::thread::sleep(std::time::Duration::from_millis(40)),

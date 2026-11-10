@@ -69,8 +69,7 @@ fn adb_run(args: &[&str], timeout_ms: u64) -> Result<(i32, String, String), Stri
             Some(st) => break st.code().unwrap_or(-1),
             None => {
                 if t0.elapsed().as_millis() as u64 > timeout_ms {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    crate::process_guard::terminate_tree(&mut child);
                     return Err(format!("adb 命令超时（{} ms）：adb {}", timeout_ms, args.join(" ")));
                 }
                 std::thread::sleep(Duration::from_millis(20));
@@ -335,14 +334,14 @@ fn screencap(serial: &str, timeout_ms: u64) -> Result<Vec<u8>, String> {
             Ok(n) => {
                 buf.extend_from_slice(&tmp[..n]);
                 if buf.len() > 64 * 1024 * 1024 {
-                    let _ = child.kill();
+                    crate::process_guard::terminate_tree(&mut child);
                     return Err("截图太大（超过 64 MB），放弃".into());
                 }
             }
             Err(e) => return Err(format!("读截图失败: {e}")),
         }
         if t0.elapsed().as_millis() as u64 > timeout_ms {
-            let _ = child.kill();
+            crate::process_guard::terminate_tree(&mut child);
             return Err("截图超时（设备没反应？）".into());
         }
     }

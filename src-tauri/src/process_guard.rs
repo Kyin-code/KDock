@@ -118,6 +118,29 @@ pub fn spawn(cmd: &mut Command) -> io::Result<Child> {
     Ok(child)
 }
 
+/// Stop one spawned command and every process below it.
+///
+/// `Child::kill()` on Windows only terminates the direct `cmd.exe`/`powershell`
+/// launcher. Tools such as J-Link, OpenOCD, adb, npx and `Start-Process` create
+/// descendants which otherwise keep running (and keep the agent turn blocked).
+/// `taskkill /T /F` walks the live process tree from the exact PID we spawned;
+/// the direct kill remains as a fallback when taskkill is unavailable.
+pub fn terminate_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        let pid = child.id().to_string();
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid, "/T", "/F"])
+            .creation_flags(0x0800_0000)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// 应用退出时集中回收。Windows 优先终止 job；再对登记过的 PID 做一次兜底。
 /// 这里只处理本进程启动过的 PID，不会按名字误杀用户自己开的同名程序。
 pub fn cleanup_all() {

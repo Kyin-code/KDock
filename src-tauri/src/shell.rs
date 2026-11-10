@@ -190,13 +190,11 @@ pub fn run_in(
             Some(s) => break s,
             None => {
                 if should_stop() {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    crate::process_guard::terminate_tree(&mut child);
                     return Err("用户停止了这条本机命令（进程已杀掉）".into());
                 }
                 if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    crate::process_guard::terminate_tree(&mut child);
                     return Err(format!("命令超过 {}ms 没结束，已杀掉", timeout.as_millis()));
                 }
                 std::thread::sleep(Duration::from_millis(40));
@@ -254,5 +252,86 @@ mod tests {
         // 结尾反斜杠：以前会被当成转义引号
         let (_, out2, _) = run("cmd /C dir /b C:\\", 60_000, &|| false).expect("跑得起来");
         assert!(!out2.contains("syntax is incorrect"), "dir C:\\ 不该报语法错：{out2}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stop_kills_the_whole_process_tree() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        use windows_sys::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+        };
+
+        fn process_alive(pid: u32) -> bool {
+            unsafe {
+                let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+                if handle.is_null() {
+                    return false;
+                }
+                let rc = WaitForSingleObject(handle, 0);
+                CloseHandle(handle);
+                rc == WAIT_TIMEOUT
+            }
+        }
+
+        let dir = std::env::temp_dir().join(format!(
+            "kdock-shell-tree-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pid_file = dir.join("child.pid");
+        let script = format!(
+            "$p = Start-Process -FilePath 'ping.exe' -ArgumentList '-n','60','127.0.0.1' \
+             -WindowStyle Hidden -PassThru; \
+             Set-Content -LiteralPath '{}' -Value $p.Id; Wait-Process -Id $p.Id",
+            pid_file.display().to_string().replace('\'', "''")
+        );
+        let cmd = format!(
+            "powershell -NoProfile -ExecutionPolicy Bypass -Command \"{}\"",
+            script
+        );
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let monitor_stop = stop.clone();
+        let monitor_pid = pid_file.clone();
+        let monitor = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut pid = None;
+            while Instant::now() < deadline {
+                if let Ok(text) = std::fs::read_to_string(&monitor_pid) {
+                    if let Ok(value) = text.trim().parse::<u32>() {
+                        pid = Some(value);
+                        break;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            // Give PowerShell enough time to actually own the child process.
+            std::thread::sleep(Duration::from_millis(250));
+            monitor_stop.store(true, Ordering::Release);
+            pid
+        });
+
+        let started = Instant::now();
+        let result = run(&cmd, 60_000, &|| stop.load(Ordering::Acquire));
+        let pid = monitor.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(20), "stop should not wait for ping's timeout");
+        assert!(
+            result.as_ref().is_err_and(|e| e.contains("用户停止")),
+            "command should report the user stop, got: {result:?}"
+        );
+        let pid = pid.expect("PowerShell did not record its child PID");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while process_alive(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!process_alive(pid), "descendant process survived Stop: {pid}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
