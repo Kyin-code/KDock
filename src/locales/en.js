@@ -858,6 +858,8 @@ export const EN = {
   "Agent 工作区文件（下载/导出的文件）": "Agent workspace files (downloaded / exported)",
   "里面有 agent 收发的文件，删了就没了": "files the agent sent and received — gone once deleted",
   "出字速度统计": "Throughput stats", "速度与平均速度重新累计": "last and average throughput start over",
+  "上下文压缩诊断日志": "Context compaction diagnostics",
+  "只清诊断记录，不影响对话": "clears diagnostics only; chats are not affected",
   "包头里的三段式版本号（PD_HW.PD_SW.PD_FIX）， 由设备端规则决定是否允许升级/降级，和上面的应用版本无关。":
     " header (three segments) that the device uses to accept or reject an upgrade — unrelated to the app version.",
   "未选择固件": "no firmware selected", "升级中…": "upgrading…", "升级完成": "upgrade finished",

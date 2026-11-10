@@ -125,8 +125,8 @@ export const HELP_GROUPS = [
       {
         id: "help-agent-context",
         title: "上下文成分",
-        zh: "### 用途\n拆解系统提示、工具定义、技能、历史对话、工具结果和摘要各占多少 token。\n### 怎么判断\n- 工具定义很大时，在设置 → 工具关闭不用的分类。\n- 历史过长时，压缩会提炼摘要；原始记录仍可用 history_search 回查。\n### 联动\n- 工具开关按会话冻结，新会话才应用。\n- 技能正文按需读取；只有常驻技能会每轮进入提示。",
-        en: "### Purpose\nBreak down context usage across system prompt, tool schemas, skills, history, tool results and summaries.\n### How to use it\n- If tool schemas dominate, disable unused tool categories in Settings → Tools.\n- Long history is compacted into a summary; history_search can still find original details.\n### Relationships\n- Tool switches are frozen per session and apply to new sessions.\n- Skill bodies are loaded on demand; only always-on skills enter every turn."
+        zh: "### 用途\n拆解系统提示、工具定义、技能、历史对话、工具结果和摘要各占多少 token。\n### 怎么判断\n- 输入预算是模型上下文减去最大输出；自动摘要和单次请求裁剪都在输入预算的 80% 触发。\n- 工具定义很大时，在设置 → 工具关闭不用的分类。\n- 历史过长时，压缩会提炼摘要；原始记录仍可用 history_search 回查。\n### 诊断\n- 压缩、跳过和每次请求裁剪的原因记录在 Agent 数据目录的 logs/context.jsonl，也可以在设置 → 数据位置里查看。\n### 联动\n- 工具开关按会话冻结，新会话才应用。\n- 技能正文按需读取；只有常驻技能会每轮进入提示。",
+        en: "### Purpose\nBreak down context usage across system prompt, tool schemas, skills, history, tool results and summaries.\n### How to use it\n- Input budget is the model context minus reserved output; automatic summaries and per-request trimming trigger at 80% of that budget.\n- If tool schemas dominate, disable unused tool categories in Settings → Tools.\n- Long history is compacted into a summary; history_search can still find original details.\n### Diagnostics\n- Compaction, skip and request-trim reasons are written to logs/context.jsonl under the Agent data directory, also listed in Settings → Data locations.\n### Relationships\n- Tool switches are frozen per session and apply to new sessions.\n- Skill bodies are loaded on demand; only always-on skills enter every turn."
       },
       {
         id: "help-agent-skills",

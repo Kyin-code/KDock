@@ -12,6 +12,7 @@
 
 pub mod anthropic;
 mod builtin;
+mod diagnostics;
 pub mod fingerprint;
 pub mod llm;
 pub mod mcp;
@@ -1629,12 +1630,44 @@ fn tools_schema_frozen(app: &AppHandle, session_id: &str) -> Vec<Value> {
 ///   · 触发线 80%、但**一次降到 60%**（水位线，不是贴着砍）—— 贴着砍会逐轮往前滑，
 ///     每轮都变成"从裁剪点往后全 miss"，前缀缓存等于白建；
 ///   · 估算口径要含工具定义（它在 prompt 最前面，也是最大的一块）。
+#[cfg(test)]
 fn trim_for_request(messages: Vec<Value>, budget: usize, tools_tokens: usize) -> Vec<Value> {
+    trim_for_request_detailed(messages, budget, tools_tokens).0
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TrimStats {
+    before: usize,
+    after: usize,
+    trigger: usize,
+    target: usize,
+    messages_before: usize,
+    messages_after: usize,
+    did_trim: bool,
+}
+
+fn trim_for_request_detailed(
+    messages: Vec<Value>,
+    budget: usize,
+    tools_tokens: usize,
+) -> (Vec<Value>, TrimStats) {
     let trigger = budget * 8 / 10;
     let target = budget * 6 / 10;
+    let messages_before = messages.len();
     let used = llm::estimate_messages_tokens(&messages) + tools_tokens;
     if used <= trigger {
-        return messages;
+        return (
+            messages,
+            TrimStats {
+                before: used,
+                after: used,
+                trigger,
+                target,
+                messages_before,
+                messages_after: messages_before,
+                did_trim: false,
+            },
+        );
     }
     // 第 0 条是系统提示，可能第 1 条是摘要 —— 这两个都不动
     let head = if messages.len() > 1
@@ -1676,7 +1709,17 @@ fn trim_for_request(messages: Vec<Value>, budget: usize, tools_tokens: usize) ->
             cur.insert(1, messages[1].clone());
         }
     }
-    cur
+    let after = llm::estimate_messages_tokens(&cur) + tools_tokens;
+    let stats = TrimStats {
+        before: used,
+        after,
+        trigger,
+        target,
+        messages_before,
+        messages_after: cur.len(),
+        did_trim: cut > head,
+    };
+    (cur, stats)
 }
 
 fn tool_msg(id: &str, text: &str) -> Value {
@@ -1933,6 +1976,7 @@ fn compact_if_needed(
     provider: &Provider,
     key: &str,
     session_id: &str,
+    origin: &str,
 ) -> Option<String> {
     let events = store::session_read(app, session_id);
     let ws = workspace_of(app, session_id);
@@ -1947,8 +1991,25 @@ fn compact_if_needed(
         .map(|m| m.last_tokens)
         .unwrap_or(0);
     let used = estimate.max(reported) as usize;
+    let trigger = budget * 8 / 10;
+    let keep_target = budget * 8 / 10;
     // 留 20% 余量给这轮新增的东西
-    if used * 10 < budget * 8 {
+    if used < trigger {
+        diagnostics::context_event(
+            app,
+            session_id,
+            provider,
+            "compact_skip",
+            json!({
+                "reason": "below_trigger",
+                "origin": origin,
+                "estimated": estimate,
+                "reported": reported,
+                "used": used,
+                "trigger": trigger,
+                "target": keep_target,
+            }),
+        );
         return None;
     }
     // 要压多少？算出来的不是"压一半"，而是"这轮超出预算的部分 + 一点余量"：
@@ -1965,7 +2026,6 @@ fn compact_if_needed(
     let est_full = llm::estimate_messages_tokens(&messages).max(1) as f64;
     let ratio = ((used as f64) / est_full).clamp(0.5, 4.0);
     let history_tokens = ((raw_history as f64) * ratio) as usize;
-    let keep_target = budget * 8 / 10;
     let need = used.saturating_sub(keep_target).max(200);
     if history_tokens < 400 {
         // 历史本来就没多少：大头是系统提示 + 工具定义（每个工具都带 schema），压历史救不了。
@@ -1989,6 +2049,22 @@ fn compact_if_needed(
                 json!({ "text": note.replace('\n', " ") }),
             );
         }
+        diagnostics::context_event(
+            app,
+            session_id,
+            provider,
+            "compact_skip",
+            json!({
+                "reason": "history_too_small",
+                "origin": origin,
+                "estimated": estimate,
+                "reported": reported,
+                "used": used,
+                "trigger": trigger,
+                "target": keep_target,
+                "historyTokens": history_tokens,
+            }),
+        );
         return None;
     }
     // **渐进式**：一次不用把欠的账全还清（欠太多时反而永远压不动）。
@@ -2011,6 +2087,20 @@ fn compact_if_needed(
         keep_from += 1;
     }
     if keep_from == 0 {
+        diagnostics::context_event(
+            app,
+            session_id,
+            provider,
+            "compact_skip",
+            json!({
+                "reason": "no_safe_cut",
+                "origin": origin,
+                "used": used,
+                "trigger": trigger,
+                "target": keep_target,
+                "historyTokens": history_tokens,
+            }),
+        );
         return Some(format!(
             "上下文估算 {used} tokens 超预算 {budget}，历史也凑不够一段可压的（这一轮先照常跑）"
         ));
@@ -2076,6 +2166,24 @@ fn compact_if_needed(
     } {
         Ok(summary) => match store::session_mark_summary(app, session_id, keep_from, &summary) {
             Ok(()) => {
+                diagnostics::context_event(
+                    app,
+                    session_id,
+                    provider,
+                    "compact_summary",
+                    json!({
+                        "origin": origin,
+                        "estimated": estimate,
+                        "reported": reported,
+                        "used": used,
+                        "trigger": trigger,
+                        "target": keep_target,
+                        "historyTokens": history_tokens,
+                        "keepFrom": keep_from,
+                        "droppedEvents": keep_from,
+                        "summaryChars": summary.chars().count(),
+                    }),
+                );
                 emit(
                     app,
                     "agent://note",
@@ -2087,6 +2195,21 @@ fn compact_if_needed(
             Err(e) => Some(format!("压缩后重写会话失败：{e}")),
         },
         Err(e) => {
+            diagnostics::context_event(
+                app,
+                session_id,
+                provider,
+                "compact_failed",
+                json!({
+                    "origin": origin,
+                    "used": used,
+                    "trigger": trigger,
+                    "target": keep_target,
+                    "historyTokens": history_tokens,
+                    "keepFrom": keep_from,
+                    "error": e,
+                }),
+            );
             // 摘要失败也要能继续：照样标记一段"已被丢弃"，但原文还在文件里（可回查）
             let marker = format!("（这段内容的自动摘要没生成成功：{e}。原文还在会话文件里，可以用 history_search 回查）");
             let _ = store::session_mark_summary(app, session_id, keep_from, &marker);
@@ -2449,7 +2572,7 @@ fn run_turn(
         if let Some(meta) = store::session_touch(&app, &session_id) {
             emit(&app, "agent://session", json!(meta));
         }
-        if let Some(note) = compact_if_needed(&app, &provider, &key, &session_id) {
+        if let Some(note) = compact_if_needed(&app, &provider, &key, &session_id, "turn") {
             // 也写进会话文件：不然 done 时按文件重画，这条提示就没了
             let _ = store::session_append(
                 &app,
@@ -2499,11 +2622,39 @@ fn run_turn(
             // 工具定义也在 prompt 里，估算时得一起算，否则阈值永远踩不准
             let tools_est =
                 llm::estimate_tokens(&serde_json::to_string(&tools_schema).unwrap_or_default()) / 4;
-            let messages = trim_for_request(
+            let (messages, trim) = trim_for_request_detailed(
                 events_to_messages(&app, &session_id, &events, &ws),
                 budget_now.max(1),
                 tools_est,
             );
+            if trim.before > trim.trigger || trim.did_trim {
+                let reported = store::session_meta_of(&app, &session_id)
+                    .map(|m| m.last_tokens)
+                    .unwrap_or(0);
+                diagnostics::context_event(
+                    &app,
+                    &session_id,
+                    &provider,
+                    if trim.did_trim {
+                        "request_trim"
+                    } else {
+                        "request_trim_limited"
+                    },
+                    json!({
+                        "origin": "turn",
+                        "round": round + 1,
+                        "reported": reported,
+                        "tools": tools_est,
+                        "before": trim.before,
+                        "after": trim.after,
+                        "trigger": trim.trigger,
+                        "target": trim.target,
+                        "removedTokens": trim.before.saturating_sub(trim.after),
+                        "messagesBefore": trim.messages_before,
+                        "messagesAfter": trim.messages_after,
+                    }),
+                );
+            }
             emit(
                 &app,
                 "agent://round",
@@ -3185,7 +3336,7 @@ pub fn mcp_path_hint(app: AppHandle) -> String {
 pub fn agent_compact(app: AppHandle, session_id: String) -> Result<Value, String> {
     let meta = store::session_meta_of(&app, &session_id).ok_or("找不到这个会话")?;
     let (provider, key) = resolve_provider(&app, Some(&meta.provider_id))?;
-    match compact_if_needed(&app, &provider, &key, &session_id) {
+    match compact_if_needed(&app, &provider, &key, &session_id, "manual") {
         Some(note) => Ok(json!({ "ok": true, "note": note })),
         None => Ok(json!({ "ok": true, "note": "上下文还很富裕，不用压缩" })),
     }

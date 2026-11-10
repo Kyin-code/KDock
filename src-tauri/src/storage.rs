@@ -116,6 +116,8 @@ pub fn cache_items(app: AppHandle) -> Vec<Value> {
         push("workspace-files", "Agent 工作区文件（下载/导出的文件）", Some(d.join("workspace")),
              "dir", "里面有 agent 收发的文件，删了就没了", json!({ "confirm": true }));
         push("speed", "出字速度统计", Some(d.join("speed.json")), "file", "速度与平均速度重新累计", json!({}));
+        push("context-log", "上下文压缩诊断日志", Some(d.join("logs").join("context.jsonl")),
+             "file", "只清诊断记录，不影响对话", json!({}));
     }
     out
 }
@@ -152,6 +154,7 @@ pub fn cache_delete(app: AppHandle, keys: Vec<String>) -> Result<Value, String> 
             "workspaces" => vec![agent.join("workspaces.json")],
             "workspace-files" => vec![agent.join("workspace")],
             "speed" => vec![agent.join("speed.json")],
+            "context-log" => vec![agent.join("logs").join("context.jsonl")],
             _ => return Err(format!("不认识的缓存项: {k}")),
         };
         for t in targets {
