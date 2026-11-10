@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.25 -->
+## v0.3.25
+
+### 新增
+
+- feat(browser): add multi-page tabs and agent page targeting
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.24 -->
 ## v0.3.24
 
