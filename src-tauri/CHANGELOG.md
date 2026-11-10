@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.23 -->
+## v0.3.23
+
+### 修复
+
+- fix(agent): stop tools and process trees reliably
+
+### Dependencies
+
+- Update kdock-core to 0.3.23.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.22 -->
 ## v0.3.22
 
