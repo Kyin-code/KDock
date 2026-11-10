@@ -438,7 +438,7 @@ try {
       || railScroll.activeBackground !== "rgba(0, 0, 0, 0)"
       || railScroll.markerBackground === "rgba(0, 0, 0, 0)"
       || railScroll.gap !== 3 || railScroll.tickHeight !== 10
-      || railScroll.markerHeight !== 3 || railScroll.activeMarkerHeight !== 3) {
+      || railScroll.markerHeight !== 2 || railScroll.activeMarkerHeight !== 2) {
     throw new Error(`Agent message rail cannot scroll through long histories: ${JSON.stringify(railScroll)}`);
   }
   const railHoverPoint = await page.evaluate(() => {
@@ -463,7 +463,7 @@ try {
     rail.innerHTML = "";
     return shapes;
   });
-  const expectedHoverWidths = [15, 18, 24, 30, 24, 18, 15, 12, 12];
+  const expectedHoverWidths = [12, 16, 20, 24, 20, 16, 12, 8, 8];
   if (railHover.some(([width], index) => width !== expectedHoverWidths[index])) {
     throw new Error(`Agent rail hover is not a neighbouring ripple: ${JSON.stringify(railHover)}`);
   }
@@ -502,13 +502,15 @@ try {
       count: panel.querySelectorAll(".agrailpreview-item").length,
       selected: selected?.textContent,
       listScrollable: list.scrollHeight > list.clientHeight,
+      textAlign: getComputedStyle(first).textAlign,
       whiteSpace: getComputedStyle(first).whiteSpace,
       overflow: getComputedStyle(first).overflow,
     };
   });
   if (previewState.missing || previewState.hidden || previewState.count !== 24
       || !previewState.selected?.startsWith("第 3 条")
-      || !previewState.listScrollable || previewState.whiteSpace !== "nowrap"
+      || !previewState.listScrollable || previewState.textAlign !== "left"
+      || previewState.whiteSpace !== "nowrap"
       || previewState.overflow !== "hidden") {
     throw new Error(`Agent rail hover preview is broken: ${JSON.stringify(previewState)}`);
   }
