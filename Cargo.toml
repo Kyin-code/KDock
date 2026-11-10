@@ -3,6 +3,6 @@ resolver = "2"
 members = ["crates/kdock-core", "src-tauri"]
 
 [workspace.package]
-version = "0.3.23"
+version = "0.3.24"
 edition = "2021"
 

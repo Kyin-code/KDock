@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.24 -->
+## v0.3.24
+
+### 修复
+
+- fix(agent): refine policy labels and pending preview
+
+### Dependencies
+
+- Update kdock-core to 0.3.24.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.23 -->
 ## v0.3.23
 
