@@ -536,6 +536,87 @@ try {
   if (!previewStayedOpen || !previewClosed) {
     throw new Error(`Agent rail preview cannot be entered or closed: ${previewStayedOpen}/${previewClosed}`);
   }
+  const composerUi = await page.evaluate(async () => {
+    window.__showAllPagesPage("agent");
+    const { bindAgentComposer } = await import("/src/agent-composer.js");
+    const meta = { id: "test-session", goal: "完成状态机重构", perm: "ask", sandbox_mode: "workspace", sandbox_network: true };
+    const sent = [];
+    const api = bindAgentComposer({
+      en: (text) => text,
+      toast: () => {},
+      confirm: async () => true,
+      getMeta: () => meta,
+      getSessions: () => [meta],
+      getLang: () => "zh",
+      newSession: async () => {},
+      updateHeader: () => {},
+      sendText: async (text) => sent.push(text),
+      sendPendingNow: () => {},
+      uiScale: () => 1,
+      setGoal: async (_id, value) => ({ ok: true, goal: value, cleared: !value }),
+    });
+    api.init();
+    api.syncGoal(true);
+    api.syncPolicy();
+    api.renderPending(["第一条待发送", "第二条待发送"], false);
+    const input = document.getElementById("ag-input");
+    input.value = "/go";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const menu = document.getElementById("ag-cmd-hint");
+    const goal = document.getElementById("ag-goal-card");
+    const pending = document.getElementById("ag-pending");
+    const policy = document.getElementById("ag-policy-hint");
+    const composer = document.querySelector('[data-work="agent"] .agcomposer');
+    const pane = document.querySelector('[data-work="agent"] > .inpane');
+    const inputRect = input.getBoundingClientRect();
+    const composerRect = composer.getBoundingClientRect();
+    const paneRect = pane.getBoundingClientRect();
+    const result = {
+      goalVisible: !goal.hidden,
+      goalText: document.getElementById("ag-goal-text").value,
+      policy: policy.textContent,
+      policyLevel: policy.dataset.level,
+      pendingFolded: !pending.querySelector("details")?.open,
+      pendingSummary: pending.querySelector(".agpending-summary-text")?.textContent,
+      pendingCount: pending.querySelector(".agpending-count")?.textContent,
+      menuVisible: !menu.hidden,
+      menuItems: [...menu.querySelectorAll(".agcmdrow")].map((row) => row.textContent),
+      menuAboveInput: menu.getBoundingClientRect().bottom <= input.getBoundingClientRect().top + 1,
+      inputVisible: inputRect.top >= paneRect.top && inputRect.bottom <= composerRect.top + 1,
+      composerVisible: composerRect.bottom <= paneRect.bottom + 1,
+      order: !!(goal.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING)
+        && !!(pending.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING),
+      consumed: api.handleKey(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })),
+      inserted: input.value,
+    };
+    input.value = "/co";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    result.escapeConsumed = api.handleKey(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    result.menuClosed = menu.hidden;
+    result.goalRunSaved = await api.saveGoal("新的可执行目标", { run: true });
+    result.goalRunValue = meta.goal;
+    result.sentAfterGoalRun = sent.slice();
+    input.value = "";
+    goal.hidden = true;
+    pending.hidden = true;
+    pending.innerHTML = "";
+    return result;
+  });
+  if (!composerUi.goalVisible || composerUi.goalText !== "完成状态机重构"
+      || !composerUi.policy.includes("允许") || composerUi.policyLevel !== "ask"
+      || !composerUi.pendingFolded || !composerUi.pendingSummary?.startsWith("待发送")
+      || composerUi.pendingCount !== "2" || !composerUi.menuVisible
+      || composerUi.menuItems.length !== 1 || !composerUi.menuItems[0].includes("/goal")
+      || !composerUi.menuAboveInput || !composerUi.inputVisible || !composerUi.composerVisible
+      || !composerUi.order
+      || !composerUi.consumed || composerUi.inserted !== "/goal "
+      || !composerUi.escapeConsumed || !composerUi.menuClosed
+      || !composerUi.goalRunSaved || composerUi.goalRunValue !== "新的可执行目标"
+      || composerUi.sentAfterGoalRun?.[0] !== "开始执行当前目标。") {
+    throw new Error(`Agent composer goal/slash/pending regression: ${JSON.stringify(composerUi)}`);
+  }
   await page.evaluate(() => {
     document.documentElement.classList.remove("noparam");
     window.dispatchEvent(new Event("resize"));
@@ -625,6 +706,7 @@ try {
     railScroll,
     railHover,
     railPreview: { ...previewState, stayedOpen: previewStayedOpen, closed: previewClosed },
+    composerUi,
     responsiveMatrix: {
       profiles: matrix.length,
       pageChecks: matrixResults.length,

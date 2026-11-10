@@ -1,6 +1,6 @@
 export const AGENT_CHAT_MIN = 140;
 export const AGENT_INPUT_MIN = 180;
-export const AGENT_INPUT_DEFAULT = 220;
+export const AGENT_INPUT_DEFAULT = 320;
 
 const AGENT_INPUT_KEY = "kdock_agent_input_h";
 const LEGACY_CHAT_KEY = "kdock_agent_chat_h";

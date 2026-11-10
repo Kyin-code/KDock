@@ -934,7 +934,6 @@
             <span id="ag-title" class="agtitle">Work with KDock</span>
             <span id="ag-turns" class="agturn"></span>
             <span id="ag-state" class="agst" title="空闲"><span class="led"></span><span class="spin"></span></span>
-            <span id="ag-goal" class="aggoal" hidden></span>
             <span class="grow"></span>
             <button id="ag-stop-all" class="btn small" hidden title="停止当前会话创建的全部子任务">⏹ 子任务</button>
             <button id="ag-stop" class="btn small" hidden>⏹ 停止</button>
@@ -964,19 +963,29 @@
             <div class="trow agcomposer-meta">
               <span class="lb agcomposer-title">给 Agent</span>
               <span class="grow"></span>
+              <div id="ag-policy-hint" class="agpolicyhint"></div>
               <span id="ag-usage" class="lb" title="上一轮的 token 用量"></span>
             </div>
+            <div id="ag-goal-card" class="aggoalcard" hidden>
+              <div class="aggoalhead">
+                <span class="aggoallabel">目标</span>
+                <span id="ag-goal-count" class="aggoalcount"></span>
+                <span class="grow"></span>
+                <button id="ag-goal-save" class="btn small">保存</button>
+                <button id="ag-goal-run" class="btn small primary">执行</button>
+                <button id="ag-goal-expand" class="btn small" title="展开或收起目标编辑器">展开</button>
+                <button id="ag-goal-clear" class="btn small danger">清除</button>
+              </div>
+              <textarea id="ag-goal-text" rows="2" placeholder="写下希望 Agent 持续完成的目标"></textarea>
+            </div>
             <div id="ag-pending" class="agpending" hidden></div>
-            <textarea id="ag-input" rows="3" placeholder="说明目标、现象或贴一段日志；Enter 发送，Shift+Enter 换行"></textarea>
-            <div id="ag-cmd-hint" class="hint" hidden>
-              <code>/goal &lt;目标&gt;</code> 设定长期目标（每轮都带上，<code>/goal clear</code> 清除）·
-              <code>/compact</code> 压缩上下文 · <code>/new</code> 新会话 ·
-              <code>/perm ask|auto|read</code> 切权限 · <code>/stop</code> 停止 ·
-              <code>/timer 10m 任务</code> 倒计时 · <code>/at 09:30 任务</code> 定时 · <code>/help</code>
+            <div class="aginputwrap">
+              <textarea id="ag-input" rows="3" placeholder="说明目标、现象或贴一段日志；Enter 发送，Shift+Enter 换行"></textarea>
+              <div id="ag-cmd-hint" class="agcmdpop" role="listbox" hidden></div>
             </div>
             <div class="trow agcomposer">
               <button id="ag-attach" class="btn small agattach" title="附上本机文件：复制进会话工作区，agent 就能读它">📎 文件</button>
-              <label class="agctl">
+              <label id="ag-perm-wrap" class="agctl">
                 <span class="agctl-label">权限</span>
                 <select id="ag-perm" class="tight" title="agent 的权限：只读 / 危险动作先问 / 全自动">
                   <option value="read">只读</option>
@@ -984,7 +993,7 @@
                   <option value="auto">自动</option>
                 </select>
               </label>
-              <label class="agctl">
+              <label id="ag-sandbox-wrap" class="agctl">
                 <span class="agctl-label">沙箱</span>
                 <select id="ag-sandbox" class="tight" title="命令执行边界：工作区 AppContainer 默认断网；宿主权限只用于明确需要整机访问的工具">
                   <option value="workspace">工作区</option>

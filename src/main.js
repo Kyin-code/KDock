@@ -8388,6 +8388,48 @@ let agToolArgs = {};              // call id -> 参数（结果事件不带参�
 
 const agEl = (id) => document.getElementById(id);
 
+let agComposerApi = null;
+let agComposerPromise = null;
+function agEnsureComposer() {
+  if (agComposerApi) return Promise.resolve(agComposerApi);
+  if (!agComposerPromise) {
+    agComposerPromise = import("./agent-composer.js")
+      .then(({ bindAgentComposer }) => bindAgentComposer({
+        en,
+        toast,
+        confirm: agConfirm,
+        getMeta: () => agMeta,
+        getSessions: () => agSessions,
+        getLang: () => LANG,
+        newSession: agNewSession,
+        updateHeader: agUpdateHeader,
+        sendText: (text) => agSend(text),
+        sendPendingNow: agPendingSendNow,
+        uiScale: uiScaleValue,
+        setGoal: (id, goal) => invoke("agent_session_set_goal", { id, goal }),
+      }))
+      .then((api) => {
+        api.init();
+        agComposerApi = api;
+        return api;
+      });
+  }
+  return agComposerPromise;
+}
+
+function agSyncPolicyUI() {
+  agComposerApi?.syncPolicy();
+}
+
+function agSyncGoal(force = false) {
+  agComposerApi?.syncGoal(force);
+}
+
+async function agSaveGoal(goal, run = false) {
+  const api = await agEnsureComposer();
+  return api.saveGoal(goal, { run });
+}
+
 function agWaitForDone(sid, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const old = agDoneWaiters.get(sid);
@@ -8445,38 +8487,9 @@ function agPendingTake(sid, text) {
 }
 
 function agRenderPending() {
-  const box = agEl("ag-pending");
-  if (!box) return;
   const rows = (agMeta && agPending.get(agMeta.id)) || [];
-  box.innerHTML = "";
-  box.hidden = rows.length === 0;
-  if (rows.length) {
-    const busy = agPendingSending.has(agMeta.id);
-    const guide = document.createElement("div");
-    guide.className = "agpending-guide";
-    const hint = document.createElement("span");
-    hint.textContent = en("下一步自动并入；也可以现在发送");
-    const sendNow = document.createElement("button");
-    sendNow.className = "btn small primary";
-    sendNow.textContent = en(busy ? "正在中断…" : "全部立即发送");
-    sendNow.title = en("停止当前轮，立即发送待发送区的全部内容");
-    sendNow.disabled = busy;
-    sendNow.onclick = () => agPendingSendNow();
-    guide.append(hint, sendNow);
-    box.appendChild(guide);
-  }
-  for (const text of rows) {
-    const row = document.createElement("div");
-    row.className = "agpending-item";
-    const tag = document.createElement("span");
-    tag.className = "agpending-tag";
-    tag.textContent = en("待发送 · 下一步并入");
-    const body = document.createElement("span");
-    body.className = "agpending-text";
-    body.textContent = text;
-    row.append(tag, body);
-    box.appendChild(row);
-  }
+  const busy = agPendingSending.has(agMeta.id);
+  agComposerApi?.renderPending(rows, busy);
 }
 
 /**
@@ -9900,14 +9913,8 @@ function agUpdateHeader() {
   const n = countUserTurns(agEvents);
   const g = agEl("ag-turns");
   if (g) g.textContent = agMeta ? n + en(" 轮") : "";
-  // /goal 设的长期目标：钉在头上，随时能看见（也能看出它还生效着）
-  const goalEl = agEl("ag-goal");
-  if (goalEl) {
-    const goal = agMeta && agMeta.goal;
-    goalEl.hidden = !goal;
-    goalEl.textContent = goal ? `目标：${goal}` : "";
-    goalEl.title = goal || "";
-  }
+  agSyncGoal();
+  agSyncPolicyUI();
   if (agEl("ag-m-wsname")) agEl("ag-m-wsname").textContent = agMeta ? (agMeta.workspace || en("（默认）")) : en("（无）");
   if (agEl("ag-stop")) agEl("ag-stop").hidden = !agRunning;
   const runningSubs = agMeta
@@ -10343,22 +10350,12 @@ async function agSlash(text) {
   switch ((cmd || "").toLowerCase()) {
     case "goal": {
       if (!arg) {
-        // 先看当前打开的这个会话（agMeta 是活的），再退回列表缓存 ——
-        // 只查 agSessions 会读到旧快照：刚设完目标再敲 /goal 会误报"还没设定目标"（实测踩过）
-        const cached = (agSessions || []).find((m) => m.id === agMeta.id) || {};
-        const cur = (agMeta && agMeta.goal) || cached.goal || "";
-        note(cur ? `当前目标：${cur}` : "还没设定目标。用法：/goal 你的目标（/goal clear 清除）");
+        agSyncGoal(true);
+        agEl("ag-goal-text")?.focus();
         return true;
       }
-      try {
-        const r = await invoke("agent_session_set_goal", { id: agMeta.id, goal: arg });
-        agMeta.goal = r.goal || "";
-        // 列表缓存也一起更新（左侧树 / 之后再查都读它）
-        const cached = (agSessions || []).find((m) => m.id === agMeta.id);
-        if (cached) cached.goal = agMeta.goal;
-        agUpdateHeader();
-        note(r.cleared ? "已清除本次会话的目标。" : `目标已设定：${r.goal}\n（每轮都会带上它，直到 /goal clear）`);
-      } catch (e) { toast(String(e)); }
+      const clearing = ["clear", "清除", "清空"].includes(arg.toLowerCase());
+      await agSaveGoal(clearing ? "" : arg, !clearing);
       return true;
     }
     case "compact": {
@@ -10377,6 +10374,7 @@ async function agSlash(text) {
         agMeta.perm = r.perm;
         if (agEl("ag-perm")) agEl("ag-perm").value = r.perm;
         if (r.perm === "auto") agMarkPendingApprovalsAuto();
+        agSyncPolicyUI();
         note(`权限已切到「${r.perm === "read" ? "只读" : r.perm === "auto" ? "自动" : "需要批准"}」` +
              (r.autoApproved ? `（顺手放行了 ${r.autoApproved} 个待批准的调用）` : ""));
       } catch (e) { toast(String(e)); }
@@ -10590,20 +10588,21 @@ async function agPendingSendNow() {
   }
 }
 
-async function agSend() {
+async function agSend(forcedText = null) {
   const box = agEl("ag-input");
-  const text = (box.value || "").trim();
+  const fromInput = typeof forcedText !== "string";
+  const text = String(fromInput ? (box.value || "") : forcedText).trim();
   if (!text) return toast("先写点东西");
   if (!agMeta) { await agNewSession(); if (!agMeta) return; }
   // 斜杠命令：本地处理，不走模型
-  if (text.startsWith("/")) {
+  if (fromInput && text.startsWith("/")) {
     box.value = "";
     await agSlash(text);
     return;
   }
   const runningNow = agRunSessions.has(agMeta.id);
-  const backup = box.value;
-  box.value = "";
+  const backup = fromInput ? box.value : "";
+  if (fromInput) box.value = "";
   // 空闲发送时先乐观上屏，避免思考块抢在用户消息前面。
   // 运行中补充只进入输入框上方的待发送区；后端真正并入后才转成正式消息。
   if (runningNow) {
@@ -10647,7 +10646,7 @@ async function agSend() {
       agEvents.splice(i, 1);
     }
     agRender();
-    box.value = backup;
+    if (fromInput) box.value = backup;
     agRunning = false;
     agState("空闲");
     agSyncRunning();
@@ -10685,6 +10684,7 @@ async function bindAgent() {
   if (window.kdockOnLang) window.kdockOnLang(agRenderPending);
   agInitReasoningModes();
   await agLoadConfig();
+  await agEnsureComposer();
   await agLoadTree();
   // 打开最近一个对话；一个都没有才新建
   if (!agMeta) {
@@ -10710,7 +10710,7 @@ async function bindAgent() {
     agSyncRunning();
   }, 1500);
 
-  agEl("ag-send").onclick = agSend;
+  agEl("ag-send").onclick = () => agSend();
   if (agEl("ag-perm")) {
     agEl("ag-perm").onchange = async () => {
       if (!agMeta) return toast("先建一个会话");
@@ -10721,6 +10721,7 @@ async function bindAgent() {
         // 切成"自动"时后端会把正等着的审批直接放行 —— 前端那张卡片也得跟着改成"已放行"，
         // 不然它挂着"允许/拒绝"两个已经没用的按钮（点下去也没人接）
         if (perm === "auto") agMarkPendingApprovalsAuto();
+        agSyncPolicyUI();
         toast(perm === "read" ? "只读：写设备/写文件/烧录都会被拒" :
               perm === "auto" ? `自动：危险动作直接执行${r && r.autoApproved ? `（顺手放行 ${r.autoApproved} 个待批准）` : ""}` :
               "需要批准：危险动作会先弹给你点");
@@ -10737,6 +10738,7 @@ async function bindAgent() {
         const r = await invoke("agent_session_set_sandbox", { id: agMeta.id, mode, network });
         agMeta.sandbox_mode = r.mode;
         agMeta.sandbox_network = r.network;
+        agSyncPolicyUI();
         toast(mode === "trusted"
           ? "宿主权限：命令可访问整台机器，请只在必要时使用"
           : network ? "工作区 AppContainer：仅工作区写入，允许网络" : "工作区 AppContainer：仅工作区写入，默认断网");
@@ -10832,7 +10834,9 @@ async function bindAgent() {
       agLoadTree();
     };
   }
+  agEl("ag-input").addEventListener("input", agSyncWelcome);
   agEl("ag-input").addEventListener("keydown", (e) => {
+    if (agComposerApi?.handleKey(e)) return;
     if (e.key !== "Enter") return;
     // Enter 直接发（跟传输页、其它 agent 工具一致）；Shift+Enter 才是换行。
     // 跑着的时候也发：算"补充"，后端排队并入下一轮。
@@ -10840,14 +10844,6 @@ async function bindAgent() {
     e.preventDefault();
     agSend();
   });
-  // 打 "/" 时把可用命令提示出来
-  if (agEl("ag-input") && agEl("ag-cmd-hint")) {
-    agEl("ag-input").addEventListener("input", () => {
-      agEl("ag-cmd-hint").hidden = !agEl("ag-input").value.startsWith("/");
-      agSyncWelcome();
-    });
-  }
-
   // 供应商：两个子页（使用 / 新增）
   document.querySelectorAll("#ag-prov-tabs .segtab").forEach((b) => {
     b.onclick = () => agProvTab(b.dataset.provtab);

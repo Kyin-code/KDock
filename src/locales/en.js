@@ -455,6 +455,11 @@ export const EN = {
   "在这个工作区里新开一个对话": "Start a new session in this workspace",
   "右键可以删除": "Right-click to delete", "默认工作区": "Default workspace",
   "删除工作区": "Delete",
+  "允许": "Allow", "禁止": "Blocked", "待发送": "Pending",
+  "展开": "Expand", "目标": "Goal", "清除": "Clear", "开始执行": "Start",
+  "展开或收起目标编辑器": "Expand or collapse the goal editor",
+  "写下希望 Agent 持续完成的目标": "Describe the goal the Agent should keep pursuing",
+  "每轮自动带入；可随时编辑": "Included every turn; editable at any time",
   "3.14 或 0x4048F5C3 ": "3.14 or 0x4048F5C3 ",
   "上一轮的 token 用量": "token usage of the last round",
   "例：看一下设备根目录里有什么，再把 /config/config.bin 取回来":
