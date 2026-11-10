@@ -1918,6 +1918,23 @@ mod tests {
     }
 
     #[test]
+    fn web_and_browser_tools_are_network_gated() {
+        for name in [
+            "web_fetch",
+            "web_download",
+            "browser_open",
+            "browser_navigate",
+            "browser_read",
+            "browser_find",
+            "browser_snapshot",
+        ] {
+            assert!(is_network_tool(name), "{name} must respect sandbox network");
+        }
+        assert!(!is_network_tool("workspace_read"));
+        assert!(!is_network_tool("ui_show_text"));
+    }
+
+    #[test]
     fn web_fetch_and_download_handle_a_real_http_response() {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2433,6 +2450,13 @@ pub fn is_core_tool(name: &str) -> bool {
             | "workspace_search"
             | "workspace_context"
             | "output_read"
+            | "web_fetch"
+            | "web_download"
+            | "browser_open"
+            | "browser_navigate"
+            | "browser_read"
+            | "browser_find"
+            | "browser_snapshot"
             | "skill_list"
             | "skill_read"
             | "tool_search"
@@ -2460,7 +2484,40 @@ pub fn is_dangerous(name: &str) -> bool {
     )
 }
 
+fn is_network_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "web_fetch"
+            | "web_download"
+            | "browser_open"
+            | "browser_navigate"
+            | "browser_read"
+            | "browser_find"
+            | "browser_click"
+            | "browser_fill"
+            | "browser_snapshot"
+            | "browser_wait"
+            | "browser_assert"
+            | "browser_network"
+    )
+}
+
+fn network_allowed(ctx: &ToolCtx) -> bool {
+    store::session_meta_of(ctx.app, ctx.session)
+        .map(|meta| {
+            crate::agent::sandbox::SandboxMode::parse(&meta.sandbox_mode)
+                == crate::agent::sandbox::SandboxMode::Trusted
+                || meta.sandbox_network
+        })
+        .unwrap_or(false)
+}
+
 pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String> {
+    if is_network_tool(name) && !network_allowed(ctx) {
+        return Err(format!(
+            "网络工具 {name} 当前被沙箱禁止。把「沙箱」切到「工作区+网络」或「宿主权限」后再试。"
+        ));
+    }
     // 权限闸门：只读直接拒；需要批准就先问人
     if is_dangerous(name) || name.starts_with("mcp__") {
         if !(ctx.allowed)(name, args) {

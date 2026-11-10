@@ -1526,6 +1526,8 @@ fn state_note(
     names: &str,
 ) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
+    let mode = sandbox::SandboxMode::parse(sandbox_mode);
+    let network_allowed = mode == sandbox::SandboxMode::Trusted || sandbox_network;
     parts.push(format!(
         "权限={}",
         match perm {
@@ -1536,11 +1538,15 @@ fn state_note(
     ));
     parts.push(format!(
         "命令沙箱={}；网络={}",
-        match sandbox::SandboxMode::parse(sandbox_mode) {
+        match mode {
             sandbox::SandboxMode::Workspace => "工作区 AppContainer",
             sandbox::SandboxMode::Trusted => "宿主权限",
         },
-        if sandbox_network { "允许" } else { "禁止" }
+        if network_allowed {
+            "允许（命令可联网；web_fetch / web_download / browser_* 可用；工具未加载时先 tool_search）"
+        } else {
+            "禁止（命令和 web_fetch / web_download / browser_* 均不可用）"
+        }
     ));
     if !goal.trim().is_empty() {
         parts.push(format!("目标={}", goal.trim()));
@@ -2545,10 +2551,6 @@ fn run_turn(
         json!({ "running": true, "session": session_id }),
     );
 
-    let (perm, allow, allow_cmd) = match store::session_meta_of(&app, &session_id) {
-        Some(m) => (m.perm, m.allow, m.allow_cmd),
-        None => ("ask".to_string(), Vec::new(), Vec::new()),
-    };
     // goal / 称呼这类"会话状态"走注记（见 Event::State），不再进系统提示
     let _ = append_state_note(&app, &session_id);
     let result: Result<(), String> = (|| {
@@ -2906,6 +2908,18 @@ fn run_turn(
             // 执行工具（逐个，串行 —— 设备类操作没必要并行，还容易打架）
             for call in out.tool_calls.iter() {
                 let args = call.args();
+                // 权限可以在回合运行中切换。每个工具执行前重新读取，不能复用
+                // turn 开始时的旧快照，否则切到“自动”后后续工具仍会逐条审批。
+                let live_meta = store::session_meta_of(&app, &session_id);
+                let perm_now = live_meta
+                    .as_ref()
+                    .map(|m| m.perm.clone())
+                    .unwrap_or_else(|| "ask".into());
+                let allow_now = live_meta.as_ref().map(|m| m.allow.clone()).unwrap_or_default();
+                let allow_cmd_now = live_meta
+                    .as_ref()
+                    .map(|m| m.allow_cmd.clone())
+                    .unwrap_or_default();
                 store::session_append(
                     &app,
                     &session_id,
@@ -2930,16 +2944,16 @@ fn run_turn(
                     state: &st,
                     workspace: ws.clone(),
                     session: &session_id,
-                    perm: &perm,
+                    perm: &perm_now,
                     approve: &|tool: &str, a: &Value| ask_user(&app, &st, &session_id, tool, a),
                     allowed: &|tool: &str, a: &Value| {
-                        if allow.iter().any(|x| x == tool) {
+                        if allow_now.iter().any(|x| x == tool) {
                             return true;
                         }
                         if matches!(tool, "local_run" | "workspace_run" | "workspace_test" | "ssh_run") {
                             let cmd = a.get("cmd").and_then(|v| v.as_str()).unwrap_or("").trim();
                             return !cmd.is_empty()
-                                && allow_cmd.iter().any(|p| {
+                                && allow_cmd_now.iter().any(|p| {
                                     let p = p.trim();
                                     !p.is_empty() && cmd.starts_with(p)
                                 });
@@ -3469,6 +3483,16 @@ mod tests {
         assert!((context_estimate_scale(80_000, 124_000) - 1.55).abs() < 0.001);
         assert_eq!(context_estimate_scale(0, 124_000), 1.0);
         assert_eq!(context_estimate_scale(80_000, 0), 1.0);
+    }
+
+    #[test]
+    fn state_note_uses_effective_network_permission() {
+        let trusted = state_note("ask", "trusted", false, "", "").unwrap();
+        assert!(trusted.contains("网络=允许"));
+        let offline = state_note("ask", "workspace", false, "", "").unwrap();
+        assert!(offline.contains("网络=禁止"));
+        let online = state_note("ask", "workspace", true, "", "").unwrap();
+        assert!(online.contains("网络=允许"));
     }
 
     #[test]
