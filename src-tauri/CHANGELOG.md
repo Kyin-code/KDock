@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.28 -->
+## v0.3.28
+
+### 修复
+
+- fix(i18n): translate ADB page navigation
+
+### Dependencies
+
+- Update kdock-core to 0.3.28.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.27 -->
 ## v0.3.27
 
