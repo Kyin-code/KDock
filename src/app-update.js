@@ -7,17 +7,30 @@ export function updateIdentity(info) {
   return `${String(info?.latestVersion || "").trim()}|${String(info?.latestBuild || "").trim()}`;
 }
 
+function remindKey(info) {
+  return `${REMIND_KEY}:${updateIdentity(info)}`;
+}
+
+export function updateRemindAt(info, storage = localStorage) {
+  return Number(storage.getItem(remindKey(info)) || 0);
+}
+
+export function updateSuppressionReason(info, now = Date.now(), storage = localStorage) {
+  if (!info || info.available !== true) return "";
+  if (storage.getItem(SKIP_KEY) === updateIdentity(info)) return "skipped";
+  const until = updateRemindAt(info, storage);
+  return until > now ? "deferred" : "";
+}
+
 export function shouldOfferUpdate(info, now = Date.now(), storage = localStorage) {
-  if (!info || info.available !== true) return false;
-  if (storage.getItem(SKIP_KEY) === updateIdentity(info)) return false;
-  return Number(storage.getItem(REMIND_KEY) || 0) <= now;
+  return info?.available === true && !updateSuppressionReason(info, now, storage);
 }
 
 export function skipUpdate(info, storage = localStorage) {
   storage.setItem(SKIP_KEY, updateIdentity(info));
-  storage.removeItem(REMIND_KEY);
+  storage.removeItem(remindKey(info));
 }
 
 export function remindUpdateLater(info, now = Date.now(), storage = localStorage) {
-  storage.setItem(REMIND_KEY, String(now + UPDATE_REMIND_MS));
+  storage.setItem(remindKey(info), String(now + UPDATE_REMIND_MS));
 }

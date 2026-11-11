@@ -1,4 +1,4 @@
-import { shouldOfferUpdate } from "./app-update.js";
+import { shouldOfferUpdate, updateRemindAt, updateSuppressionReason } from "./app-update.js";
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
@@ -37,13 +37,43 @@ export function createAppUpdateController({
     if (button) button.disabled = true;
     if (manual) setStatus(translate("正在检查更新…"));
     try {
-      const info = await invoke("app_update_check");
+      const attempts = manual ? 1 : 3;
+      const retryDelays = [0, 2500, 6000];
+      let info = null;
+      let lastError = null;
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        if (retryDelays[attempt]) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]));
+        }
+        try {
+          info = await invoke("app_update_check");
+          lastError = null;
+          break;
+        } catch (error) {
+          lastError = error;
+          if (attempt + 1 < attempts) {
+            setStatus(translate("更新清单同步中，正在重试…"));
+          }
+        }
+      }
+      if (!info) throw lastError || new Error("update check failed");
       storage.setItem("kdock_update_last_check", String(Date.now()));
       storage.removeItem("kdock_update_last_error");
       if (info?.available) {
         const latestBuild = String(info.latestBuild || "").slice(0, 7);
-        setStatus(`${translate("发现新版本")} v${info.latestVersion}${latestBuild ? ` (${latestBuild})` : ""}`);
-        if (manual || shouldOfferUpdate(info, Date.now(), storage)) showPrompt(info);
+        const version = `v${info.latestVersion}${latestBuild ? ` (${latestBuild})` : ""}`;
+        const now = Date.now();
+        const reason = updateSuppressionReason(info, now, storage);
+        if (reason === "skipped") {
+          setStatus(`${translate("发现新版本")} ${version} · ${translate("此版本已跳过")}`);
+        } else if (reason === "deferred") {
+          const until = updateRemindAt(info, storage);
+          const text = until > 0 ? new Date(until).toLocaleString() : "";
+          setStatus(`${translate("发现新版本")} ${version} · ${translate("已选择稍后")}${text ? `：${text}` : ""}`);
+        } else {
+          setStatus(`${translate("发现新版本")} ${version}`);
+        }
+        if (manual || shouldOfferUpdate(info, now, storage)) showPrompt(info);
       } else {
         const version = info?.latestVersion ? ` v${info.latestVersion}` : "";
         setStatus(`${translate("已是最新版本")}${version}`);

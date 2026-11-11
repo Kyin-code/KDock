@@ -586,6 +586,9 @@ export const EN = {
   "发现新版本": "Update ready",
   "已是最新版本": "Current",
   "更新检查失败：": "Failed: ",
+  "更新清单同步中，正在重试…": "The update manifest is still syncing; retrying…",
+  "此版本已跳过": "this version was skipped",
+  "已选择稍后": "remind later",
   "上次检查：": "Last: ",
   "启动后自动检查，也可手动检查": "Auto + manual check",
   "安装包下载完成，请点击“启动安装程序”":

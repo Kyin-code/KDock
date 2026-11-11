@@ -6,9 +6,12 @@ import {
   shouldOfferUpdate,
   skipUpdate,
   remindUpdateLater,
+  updateRemindAt,
+  updateSuppressionReason,
   updateIdentity,
   UPDATE_REMIND_MS,
 } from "../src/app-update.js";
+import { createAppUpdateController } from "../src/app-update-controller.js";
 import { makeManifest } from "../scripts/release-manifest.mjs";
 import { needsReleaseVersion } from "../scripts/tauri-entry.mjs";
 import { verifyBuildEntry } from "../scripts/verify-tauri-build-entry.mjs";
@@ -42,6 +45,68 @@ const laterStorage = memoryStorage();
 remindUpdateLater(info, 1000, laterStorage);
 assert.equal(shouldOfferUpdate(info, 1000 + UPDATE_REMIND_MS - 1, laterStorage), false);
 assert.equal(shouldOfferUpdate(info, 1000 + UPDATE_REMIND_MS + 1, laterStorage), true);
+assert.equal(updateSuppressionReason(info, 1000 + 1, laterStorage), "deferred");
+assert.ok(updateRemindAt(info, laterStorage) > 1000);
+assert.equal(
+  shouldOfferUpdate({ ...info, latestBuild: "newbuild" }, 1000 + 1, laterStorage),
+  true,
+  "deferring one build must not hide a newer build",
+);
+
+async function withUpdateControllerDom(run) {
+  const status = { textContent: "", title: "", style: {} };
+  const button = { disabled: false };
+  const oldWindow = globalThis.window;
+  const oldDocument = globalThis.document;
+  const oldSetInterval = globalThis.setInterval;
+  globalThis.window = {
+    addEventListener() {},
+  };
+  globalThis.document = {
+    hidden: false,
+    getElementById(id) {
+      if (id === "set-update-status") return status;
+      if (id === "set-check-update") return button;
+      return null;
+    },
+    addEventListener() {},
+  };
+  globalThis.setInterval = () => 1;
+  try {
+    return await run(status, button);
+  } finally {
+    globalThis.window = oldWindow;
+    globalThis.document = oldDocument;
+    globalThis.setInterval = oldSetInterval;
+  }
+}
+
+await withUpdateControllerDom(async () => {
+  const controllerStorage = memoryStorage();
+  const startupInfo = { ...info, latestVersion: "0.3.2", latestBuild: "startupbuild" };
+  remindUpdateLater(startupInfo, Date.now(), controllerStorage);
+  const prompts = [];
+  let invokeCount = 0;
+  const controller = createAppUpdateController({
+    invoke: async () => {
+      invokeCount += 1;
+      return invokeCount > 1 ? { ...startupInfo, latestBuild: "newbuild" } : startupInfo;
+    },
+    showPrompt: (value) => prompts.push(value),
+    toast() {},
+    translate: (value) => value,
+    storage: controllerStorage,
+  });
+
+  await controller.check(false);
+  assert.equal(prompts.length, 0, "deferred build must not prompt on startup");
+  await controller.check(false);
+  assert.equal(prompts.length, 1, "a newer build must prompt despite an older defer");
+  remindUpdateLater({ ...startupInfo, latestBuild: "newbuild" }, Date.now(), controllerStorage);
+  await controller.check(true);
+  assert.equal(prompts.length, 2, "manual checks must still show a deferred build");
+  assert.equal(invokeCount, 3);
+});
 
 const manifestArgs = {
   version: "0.3.1",
@@ -82,6 +147,8 @@ assert.match(main, /setTimeout\(checkAppUpdateOnStartup, 8000\)/);
 assert.match(main, /checkAppUpdateOnStartup\(true\)/);
 assert.match(main, /import\("\.\/app-update-controller\.js"\)/);
 assert.match(appUpdateController, /shouldOfferUpdate\(info/);
+assert.match(appUpdateController, /updateSuppressionReason\(info/);
+assert.match(appUpdateController, /const attempts = manual \? 1 : 3/);
 assert.match(appUpdateController, /kdock_update_last_error/);
 assert.match(appUpdateController, /setInterval\(/);
 assert.match(appUpdateController, /addEventListener\("online"/);
