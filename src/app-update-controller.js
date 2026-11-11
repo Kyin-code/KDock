@@ -1,9 +1,10 @@
-import { shouldOfferUpdate, updateRemindAt, updateSuppressionReason } from "./app-update.js";
+import { updateRemindAt, updateSuppressionReason } from "./app-update.js";
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 export function createAppUpdateController({
   invoke,
+  showUpdate,
   showPrompt,
   toast,
   translate,
@@ -73,11 +74,13 @@ export function createAppUpdateController({
         } else {
           setStatus(`${translate("发现新版本")} ${version}`);
         }
-        if (manual || shouldOfferUpdate(info, now, storage)) showPrompt(info);
+        showUpdate?.(info, { manual, reason });
+        if (manual) showPrompt(info);
       } else {
         const version = info?.latestVersion ? ` v${info.latestVersion}` : "";
         setStatus(`${translate("已是最新版本")}${version}`);
         if (manual) toast(`${translate("已是最新版本")}${version}`);
+        showUpdate?.(null, { manual, reason: "" });
       }
       return true;
     } catch (error) {

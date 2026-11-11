@@ -668,6 +668,43 @@ try {
   if (!previewStayedOpen || !previewClosed) {
     throw new Error(`Agent rail preview cannot be entered or closed: ${previewStayedOpen}/${previewClosed}`);
   }
+  const updateIndicatorUi = await page.evaluate(() => {
+    const button = document.createElement("button");
+    button.id = "tb-update";
+    button.className = "tb-update";
+    button.hidden = true;
+    button.innerHTML = '<span class="tb-update-ring"></span><svg class="tb-update-ico" viewBox="0 0 24 24"></svg>';
+    document.body.appendChild(button);
+    const ring = button.querySelector(".tb-update-ring");
+    const wasHidden = button.hidden;
+    button.hidden = false;
+    button.dataset.state = "downloading";
+    button.style.setProperty("--update-pct", "37%");
+    const rect = button.getBoundingClientRect();
+    const ringStyle = getComputedStyle(ring);
+    const result = {
+      missing: false,
+      hiddenByDefault: wasHidden,
+      width: rect.width,
+      height: rect.height,
+      borderRadius: getComputedStyle(button).borderRadius,
+      ringAnimation: ringStyle.animationName,
+      ringMask: ringStyle.maskImage || ringStyle.webkitMaskImage,
+      color: getComputedStyle(button).color,
+    };
+    button.hidden = true;
+    button.dataset.state = "";
+    button.style.removeProperty("--update-pct");
+    button.remove();
+    return result;
+  });
+  if (updateIndicatorUi.missing || !updateIndicatorUi.hiddenByDefault
+      || updateIndicatorUi.width !== 28 || updateIndicatorUi.height !== 28
+      || !updateIndicatorUi.borderRadius.includes("999")
+      || updateIndicatorUi.ringAnimation === "none"
+      || !updateIndicatorUi.ringMask?.includes("radial-gradient")) {
+    throw new Error(`Title-bar update indicator is broken: ${JSON.stringify(updateIndicatorUi)}`);
+  }
   const composerUi = await page.evaluate(async () => {
     window.__showAllPagesPage("agent");
     const alphaOf = (color) => {
@@ -939,6 +976,7 @@ try {
     railScroll,
     railHover,
     railPreview: { ...previewState, stayedOpen: previewStayedOpen, closed: previewClosed },
+    updateIndicatorUi,
     composerUi,
     responsiveMatrix: {
       profiles: matrix.length,

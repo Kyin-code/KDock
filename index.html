@@ -147,7 +147,13 @@
         <span id="status-chip" class="chip">未连接</span>
         <span id="ip-location-chip" class="chip ipchip" title="公网 IP 归属地">当前：未知</span>
         <button id="tb-params" class="tb-icon" title="收起参数区">▭</button>
-                <button id="tb-settings" class="tb-chip" title="设置（Ctrl+, ）"><span class="tbs-ico">⚙</span><span class="tbs-txt">设置</span></button>
+        <button id="tb-update" class="tb-update" title="发现新版本" aria-label="发现新版本" hidden>
+          <span class="tb-update-ring" aria-hidden="true"></span>
+          <svg class="tb-update-ico" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 4v11"/><path d="m8 11 4 4 4-4"/><path d="M5 19h14"/>
+          </svg>
+        </button>
+        <button id="tb-settings" class="tb-chip" title="设置（Ctrl+, ）"><span class="tbs-ico">⚙</span><span class="tbs-txt">设置</span></button>
         <div class="tb-win">
           <button id="win-min" class="tb-wbtn" title="最小化">–</button>
           <button id="win-max" class="tb-wbtn" title="最大化 / 还原">□</button>
@@ -181,7 +187,7 @@
           <button id="app-update-later" class="btn small" data-en="Remind me later">稍后提醒</button>
           <span class="grow"></span>
           <button id="app-update-manual" class="btn small" data-en="Open installer" hidden>手动安装</button>
-          <button id="app-update-download" class="btn small primary" data-en="Download installer">下载安装包</button>
+          <button id="app-update-download" class="btn small primary" data-en="Download in background">后台下载</button>
         </div>
       </div>
     </div>

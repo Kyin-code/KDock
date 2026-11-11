@@ -575,6 +575,16 @@ export const EN = {
   "当前版本": "Current version",
   "KDock 会在应用内下载并校验安装包；下载完成后由你确认启动，覆盖升级会保留数据和会话。":
     "KDock downloads and verifies the installer in-app, then asks you to launch it. An in-place upgrade preserves data and sessions.",
+  "下载会在后台继续，关闭此窗口不会影响下载；完成后从右上角更新按钮安装。":
+    "The download continues in the background after this window closes. Use the update button in the title bar when it is ready.",
+  "后台下载更新": "Downloading update in background",
+  "后台下载": "Download in background",
+  "更新正在后台下载": "Update is downloading in the background",
+  "已下载，点击安装": "downloaded; click to install",
+  "更新下载失败，点击重试": "Update download failed; click to retry",
+  "后台下载中…": "Downloading in background…",
+  "重试下载": "Retry download",
+  "，可从右上角更新按钮继续": "; continue from the update button in the title bar",
   "正在下载安装包…": "Downloading installer…",
   "正在校验安装包…": "Verifying installer…",
   "下载完成": "Download complete",

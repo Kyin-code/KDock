@@ -86,12 +86,14 @@ await withUpdateControllerDom(async () => {
   const startupInfo = { ...info, latestVersion: "0.3.2", latestBuild: "startupbuild" };
   remindUpdateLater(startupInfo, Date.now(), controllerStorage);
   const prompts = [];
+  const updates = [];
   let invokeCount = 0;
   const controller = createAppUpdateController({
     invoke: async () => {
       invokeCount += 1;
       return invokeCount > 1 ? { ...startupInfo, latestBuild: "newbuild" } : startupInfo;
     },
+    showUpdate: (value, context) => updates.push({ value, context }),
     showPrompt: (value) => prompts.push(value),
     toast() {},
     translate: (value) => value,
@@ -99,12 +101,16 @@ await withUpdateControllerDom(async () => {
   });
 
   await controller.check(false);
-  assert.equal(prompts.length, 0, "deferred build must not prompt on startup");
+  assert.equal(prompts.length, 0, "startup checks must never open the update dialog");
+  assert.equal(updates.length, 1, "startup checks must publish the title-bar update state");
+  assert.equal(updates[0].context.reason, "deferred");
   await controller.check(false);
-  assert.equal(prompts.length, 1, "a newer build must prompt despite an older defer");
+  assert.equal(prompts.length, 0, "new builds must still wait for the title-bar update button");
+  assert.equal(updates.length, 2);
+  assert.equal(updates[1].value.latestBuild, "newbuild");
   remindUpdateLater({ ...startupInfo, latestBuild: "newbuild" }, Date.now(), controllerStorage);
   await controller.check(true);
-  assert.equal(prompts.length, 2, "manual checks must still show a deferred build");
+  assert.equal(prompts.length, 1, "manual checks must still show a deferred build");
   assert.equal(invokeCount, 3);
 });
 
@@ -135,18 +141,20 @@ const [main, html] = await Promise.all([
   readFile(resolve(root, "src/main.js"), "utf8"),
   readFile(resolve(root, "index.html"), "utf8"),
 ]);
-const [pkg, tauriConf, tauriEntry, ciWorkflow, appUpdateRust, appUpdateController] = await Promise.all([
+const [pkg, tauriConf, tauriEntry, ciWorkflow, appUpdateRust, appUpdateController, appUpdateUi] = await Promise.all([
   readFile(resolve(root, "package.json"), "utf8").then(JSON.parse),
   readFile(resolve(root, "src-tauri/tauri.conf.json"), "utf8").then(JSON.parse),
   readFile(resolve(root, "scripts/tauri-entry.mjs"), "utf8"),
   readFile(resolve(root, ".github/workflows/ci.yml"), "utf8"),
   readFile(resolve(root, "src-tauri/src/app_update.rs"), "utf8"),
   readFile(resolve(root, "src/app-update-controller.js"), "utf8"),
+  readFile(resolve(root, "src/app-update-ui.js"), "utf8"),
 ]);
 assert.match(main, /setTimeout\(checkAppUpdateOnStartup, 8000\)/);
 assert.match(main, /checkAppUpdateOnStartup\(true\)/);
 assert.match(main, /import\("\.\/app-update-controller\.js"\)/);
-assert.match(appUpdateController, /shouldOfferUpdate\(info/);
+assert.match(main, /import\("\.\/app-update-ui\.js"\)/);
+assert.match(appUpdateController, /showUpdate\?\.\(info/);
 assert.match(appUpdateController, /updateSuppressionReason\(info/);
 assert.match(appUpdateController, /const attempts = manual \? 1 : 3/);
 assert.match(appUpdateController, /kdock_update_last_error/);
@@ -155,20 +163,27 @@ assert.match(appUpdateController, /addEventListener\("online"/);
 assert.match(main, /set-check-update/);
 assert.match(appUpdateRust, /AutoConfigURL/);
 assert.match(appUpdateRust, /WinHttpGetProxyForUrl/);
-assert.match(main, /invoke\("app_update_download"/);
-assert.match(main, /invoke\("app_update_launch"/);
+assert.match(appUpdateUi, /invoke\("app_update_download"/);
+assert.match(appUpdateUi, /invoke\("app_update_launch"/);
 assert.doesNotMatch(main, /openExternal\(info\.installerUrl\)/);
-assert.match(main, /安装包下载完成，请点击“启动安装程序”/);
-assert.match(main, /pendingAppUpdateSilent/);
-assert.match(main, /silent,\s*\}/);
-assert.match(main, /toast\(readyText\)/);
+assert.match(appUpdateUi, /安装包下载完成，请点击“启动安装程序”/);
+assert.match(appUpdateUi, /pendingAppUpdateSilent/);
+assert.match(appUpdateUi, /silent,\s*\}/);
+assert.match(appUpdateUi, /readyText.*可从右上角更新按钮继续/);
 assert.match(html, /id="app-update-skip"/);
 assert.match(html, /id="app-update-later"/);
 assert.match(html, /id="app-update-manual"/);
 assert.match(html, /id="app-update-download"/);
 assert.match(html, /id="app-update-progress"/);
+assert.match(html, /id="tb-update"/);
 assert.match(html, /id="set-check-update"/);
 assert.match(html, /id="set-update-status"/);
+assert.match(appUpdateUi, /APP_UPDATE_READY_KEY/);
+assert.match(main, /showUpdate: updateUi\.showForCheck/);
+assert.match(appUpdateUi, /function hide\(\) \{[\s\S]{0,180}box\.hidden = true/);
+assert.doesNotMatch(appUpdateUi, /function hide\(\) \{[\s\S]{0,220}pendingAppUpdate = null/);
+assert.match(appUpdateUi, /hide\(\);\s*toast\(en\("更新正在后台下载"\)\)/);
+assert.match(appUpdateUi, /storage\.setItem\(APP_UPDATE_READY_KEY/);
 assert.equal(pkg.scripts.tauri, "node scripts/tauri-entry.mjs");
 assert.equal(pkg.scripts["build:tauri"], "node scripts/verify-tauri-build-entry.mjs && npm run build");
 assert.equal(tauriConf.build.beforeBuildCommand, "npm run build:tauri");

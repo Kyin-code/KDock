@@ -26,7 +26,6 @@ import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
 import { bindAgentResize } from "./agent-layout.js";
 import { agentRunPresentation, pendingBatchText } from "./agent-pending.js";
 import { logNumberColumnWidth } from "./log-gutter.js";
-import { remindUpdateLater, skipUpdate } from "./app-update.js";
 import { createAsciiHistory, loadAsciiHistory, saveAsciiHistory } from "./ascii-history.js";
 import { bindPopoverDismissal } from "./popover.js";
 import { termFeed, termModes, termNew, termText } from "./terminal.js";
@@ -12543,89 +12542,34 @@ const TOOL_DESC_EN = {
 const KDOCK_REPO = "https://github.com/Kyin-code/KDock";
 const KDOCK_AUTHOR = "https://github.com/Kyin-code";
 let appVersion = "0.1.0";
-let pendingAppUpdate = null;
-let pendingAppUpdateDownload = null;
-let pendingAppUpdateSilent = false;
-let appUpdateBusy = false;
 let appUpdateControllerPromise = null;
 
 function openExternal(url) {
   invoke("browser_open_external", { path: url }).catch((e) => toast(String(e)));
 }
 
-function hideAppUpdatePrompt() {
-  const box = document.getElementById("app-update-dlg");
-  if (appUpdateBusy) return;
-  if (box) box.hidden = true;
-  pendingAppUpdate = null;
-  pendingAppUpdateDownload = null;
-  pendingAppUpdateSilent = false;
-  kbSyncSoon();
-}
-
-function appUpdateProgress(phase, pct, text) {
-  const wrap = document.getElementById("app-update-progress");
-  const bar = document.getElementById("app-update-progress-bar");
-  const status = document.getElementById("app-update-status");
-  if (!wrap || !bar || !status) return;
-  wrap.hidden = false;
-  status.hidden = false;
-  if (pct < 0) {
-    bar.style.width = "28%";
-    wrap.classList.add("indeterminate");
-  } else {
-    wrap.classList.remove("indeterminate");
-    bar.style.width = Math.max(0, Math.min(100, Number(pct) || 0)) + "%";
-  }
-  status.textContent = text || (phase === "verify" ? en("正在校验安装包…") : en("正在下载安装包…"));
-}
-
-function showAppUpdatePrompt(info) {
-  const box = document.getElementById("app-update-dlg");
-  const text = document.getElementById("app-update-text");
-  if (!box || !text) return;
-  pendingAppUpdate = info;
-  pendingAppUpdateDownload = null;
-  pendingAppUpdateSilent = false;
-  appUpdateBusy = false;
-  const currentBuild = String(info.currentBuild || "").slice(0, 7);
-  const latestBuild = String(info.latestBuild || "").slice(0, 7);
-  const notes = String(info.notes || "").trim().slice(0, 600);
-  text.textContent = [
-    `${en("当前版本")} v${info.currentVersion}${currentBuild ? ` (${currentBuild})` : ""} → v${info.latestVersion}${latestBuild ? ` (${latestBuild})` : ""}`,
-    notes,
-    en("KDock 会在应用内下载并校验安装包；下载完成后由你确认启动，覆盖升级会保留数据和会话。"),
-  ].filter(Boolean).join("\n\n");
-  const progress = document.getElementById("app-update-progress");
-  const status = document.getElementById("app-update-status");
-  const download = document.getElementById("app-update-download");
-  const manual = document.getElementById("app-update-manual");
-  if (progress) progress.hidden = true;
-  if (status) { status.hidden = true; status.textContent = ""; }
-  if (manual) manual.hidden = true;
-  if (download) {
-    download.disabled = false;
-    download.textContent = en("下载安装包");
-  }
-  for (const id of ["app-update-skip", "app-update-later"]) {
-    const button = document.getElementById(id);
-    if (button) button.disabled = false;
-  }
-  box.hidden = false;
-  kbSyncSoon();
-  setTimeout(() => document.getElementById("app-update-download")?.focus(), 30);
-}
-
 async function appUpdateController() {
   if (!appUpdateControllerPromise) {
-    appUpdateControllerPromise = import("./app-update-controller.js").then(
-      ({ createAppUpdateController }) => createAppUpdateController({
+    appUpdateControllerPromise = Promise.all([
+      import("./app-update-controller.js"),
+      import("./app-update-ui.js"),
+    ]).then(([{ createAppUpdateController }, { createAppUpdateUi }]) => {
+      const updateUi = createAppUpdateUi({
         invoke,
-        showPrompt: showAppUpdatePrompt,
+        listen,
         toast,
         translate: en,
-      }),
-    );
+        syncNativeView: kbSyncSoon,
+      });
+      updateUi.bind();
+      return createAppUpdateController({
+        invoke,
+        showUpdate: updateUi.showForCheck,
+        showPrompt: updateUi.open,
+        toast,
+        translate: en,
+      });
+    });
   }
   return appUpdateControllerPromise;
 }
@@ -12637,123 +12581,6 @@ async function checkAppUpdateOnStartup(manual = false) {
     console.warn("[update] controller failed:", error);
     return false;
   }
-}
-
-function bindAppUpdatePrompt() {
-  const box = document.getElementById("app-update-dlg");
-  if (!box) return;
-  const bind = (id, fn) => {
-    const button = document.getElementById(id);
-    if (button) button.onclick = fn;
-  };
-  listen("app-update://progress", (event) => {
-    if (box.hidden || !pendingAppUpdate) return;
-    const p = event.payload || {};
-    const pct = Number(p.pct);
-    const gotMb = Number(p.received || 0) / 1048576;
-    const totalMb = Number(p.total || 0) / 1048576;
-    let text = en("正在下载安装包…");
-    if (p.phase === "verify") text = en("正在校验安装包…");
-    else if (p.phase === "done") text = en("下载完成");
-    else if (pct >= 0 && totalMb > 0) text = `${en("正在下载安装包…")} ${Math.round(pct)}% · ${gotMb.toFixed(1)} / ${totalMb.toFixed(1)} MB`;
-    else if (gotMb > 0) text = `${en("正在下载安装包…")} ${gotMb.toFixed(1)} MB`;
-    appUpdateProgress(p.phase, pct, text);
-  });
-  bind("app-update-skip", () => {
-    if (appUpdateBusy) return;
-    if (pendingAppUpdate) skipUpdate(pendingAppUpdate);
-    hideAppUpdatePrompt();
-  });
-  bind("app-update-later", () => {
-    if (appUpdateBusy) return;
-    if (pendingAppUpdate) remindUpdateLater(pendingAppUpdate);
-    hideAppUpdatePrompt();
-  });
-  bind("app-update-download", async () => {
-    const info = pendingAppUpdate;
-    if (!info || appUpdateBusy) return;
-    if (pendingAppUpdateDownload) {
-      const silent = pendingAppUpdateSilent;
-      try {
-        await invoke("app_update_launch", {
-          path: pendingAppUpdateDownload,
-          silent,
-        });
-        hideAppUpdatePrompt();
-        toast(silent ? en("正在静默更新，KDock 将自动重启…") : en("正在启动安装程序…"));
-      } catch (e) {
-        appUpdateProgress("error", 100, en("无法启动安装程序：") + String(e));
-      }
-      return;
-    }
-    appUpdateBusy = true;
-    const download = document.getElementById("app-update-download");
-    const manual = document.getElementById("app-update-manual");
-    if (manual) manual.hidden = true;
-    for (const id of ["app-update-skip", "app-update-later", "app-update-download", "app-update-manual"]) {
-      const button = document.getElementById(id);
-      if (button) button.disabled = true;
-    }
-    if (download) download.textContent = en("正在下载安装包…");
-    appUpdateProgress("download", -1, en("正在下载安装包…"));
-    try {
-      const got = await invoke("app_update_download", {
-        url: info.installerUrl,
-        sha256: String(info.sha256 || ""),
-      });
-      pendingAppUpdateDownload = got.path;
-      pendingAppUpdateSilent = Boolean(got.silentUpdate);
-      const readyText = pendingAppUpdateSilent
-        ? en("安装包下载完成，点击“立即静默更新”将沿用上次安装目录并自动重启 KDock")
-        : en("安装包下载完成，请点击“启动安装程序”");
-      if (got.verified) {
-        appUpdateProgress("done", 100, `${en("安装包已下载，SHA-256 校验通过")}。${readyText}`);
-      } else {
-        appUpdateProgress("done", 100, `${en("安装包已下载；旧版更新清单未提供 SHA-256")}。${readyText}`);
-      }
-      if (download) download.textContent = pendingAppUpdateSilent ? en("立即静默更新") : en("启动安装程序");
-      if (manual) manual.hidden = !pendingAppUpdateSilent;
-      toast(readyText);
-      setTimeout(() => download?.focus(), 30);
-    } catch (e) {
-      appUpdateProgress("error", 100, en("下载失败：") + String(e));
-      toast(String(e));
-    } finally {
-      appUpdateBusy = false;
-      if (download && !pendingAppUpdateDownload) download.textContent = en("下载安装包");
-      for (const id of ["app-update-skip", "app-update-later", "app-update-download", "app-update-manual"]) {
-        const button = document.getElementById(id);
-        if (button) button.disabled = false;
-      }
-    }
-  });
-  bind("app-update-manual", async () => {
-    if (!pendingAppUpdateDownload || appUpdateBusy) return;
-    try {
-      await invoke("app_update_launch", {
-        path: pendingAppUpdateDownload,
-        silent: false,
-      });
-      hideAppUpdatePrompt();
-      toast(en("正在启动安装程序…"));
-    } catch (e) {
-      appUpdateProgress("error", 100, en("无法启动安装程序：") + String(e));
-    }
-  });
-  box.onclick = (event) => {
-    if (event.target !== box) return;
-    if (appUpdateBusy) return;
-    if (pendingAppUpdate) remindUpdateLater(pendingAppUpdate);
-    hideAppUpdatePrompt();
-  };
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || box.hidden) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (appUpdateBusy) return;
-    if (pendingAppUpdate) remindUpdateLater(pendingAppUpdate);
-    hideAppUpdatePrompt();
-  }, true);
 }
 
 function aboutRow(box, k, v, cls, title) {
@@ -14302,7 +14129,6 @@ async function main() {
   bindDebug();
   bindEnv();                    // 环境配置：驱动 / 工具链
   bindUsb();                    // USB 诊断
-  bindAppUpdatePrompt();
   setTimeout(envFirstRunCheck, 900);       // 首次运行检查：缺必需驱动才提示一次（不挡启动）
   setTimeout(checkAppUpdateOnStartup, 8000); // 启动后检查；在线/恢复窗口/每 6 小时再补查
   listen("debug://gdb", (ev) => { if (window.__dbgOnGdb) window.__dbgOnGdb(String(ev.payload || "")); });

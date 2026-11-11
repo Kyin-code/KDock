@@ -46,6 +46,7 @@ const lazySources = [
   "src/logic-analyzer.js",
   "src/runtime-graph.js",
   "src/tools-batch-calc.js",
+  "src/app-update-ui.js",
   "node_modules/uplot/dist/uPlot.esm.js",
 ];
 for (const source of lazySources) {
