@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.26 -->
+## v0.3.26
+
+### 修复
+
+- fix(agent): show policy severity through text color
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.25 -->
 ## v0.3.25
 
