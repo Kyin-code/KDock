@@ -150,7 +150,15 @@
         <button id="tb-update" class="tb-update" title="发现新版本" aria-label="发现新版本" hidden>
           <span class="tb-update-ring" aria-hidden="true"></span>
           <svg class="tb-update-ico" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 4v11"/><path d="m8 11 4 4 4-4"/><path d="M5 19h14"/>
+            <defs>
+              <clipPath id="tb-update-arrow-clip">
+                <rect x="0" y="0" width="24" height="18"/>
+              </clipPath>
+            </defs>
+            <g class="tb-update-arrow" clip-path="url(#tb-update-arrow-clip)">
+              <path d="M12 4v11"/><path d="m8 11 4 4 4-4"/>
+            </g>
+            <path class="tb-update-line" d="M5 19h14"/>
           </svg>
         </button>
         <button id="tb-settings" class="tb-chip" title="设置（Ctrl+, ）"><span class="tbs-ico">⚙</span><span class="tbs-txt">设置</span></button>

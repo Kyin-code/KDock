@@ -1557,9 +1557,14 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   background: conic-gradient(hsl(var(--primary)) var(--update-pct, 0%), hsl(var(--primary) / .16) 0);
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
   mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
-  animation: tb-update-spin 1.1s linear infinite;
 }
-.tb-update[data-state="downloading"] .tb-update-ico { animation: tb-update-bob .9s ease-in-out infinite; }
+.tb-update-arrow {
+  transform-box: fill-box; transform-origin: center;
+}
+.tb-update[data-state="downloading"] .tb-update-arrow {
+  animation: tb-update-arrow-drop 1.15s cubic-bezier(.45, 0, .2, 1) infinite;
+}
+.tb-update-line { animation: none; }
 .tb-update[data-state="ready"] {
   border-color: hsl(var(--success) / .48); background: hsl(var(--success) / .13); color: hsl(var(--success));
 }
@@ -1568,11 +1573,13 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   border-color: hsl(var(--destructive) / .52); background: hsl(var(--destructive) / .11); color: hsl(var(--destructive));
 }
 .tb-update[data-state="error"]::after { background: hsl(var(--destructive)); }
-@keyframes tb-update-spin { to { transform: rotate(360deg); } }
-@keyframes tb-update-bob { 0%, 100% { transform: translateY(-1px); } 50% { transform: translateY(2px); } }
+@keyframes tb-update-arrow-drop {
+  0% { transform: translateY(-12%); opacity: 0; }
+  14% { opacity: 1; }
+  72%, 100% { transform: translateY(72%); opacity: 1; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .tb-update[data-state="downloading"] .tb-update-ring,
-  .tb-update[data-state="downloading"] .tb-update-ico { animation: none; }
+  .tb-update[data-state="downloading"] .tb-update-arrow { animation: none; }
 }
 /* 顶栏里的设置弹层跟着标题栏走 */
 #theme-more { position: relative; }
