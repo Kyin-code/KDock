@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.27 -->
+## v0.3.27
+
+### 新增
+
+- feat(update): add background download indicator
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.26 -->
 ## v0.3.26
 
