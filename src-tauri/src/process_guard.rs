@@ -17,6 +17,8 @@ use std::sync::Mutex;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
@@ -139,6 +141,70 @@ pub fn terminate_tree(child: &mut Child) {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Per-command Windows Job used to keep all descendants of one tool call
+/// together even when its launcher exits before the children do.
+pub struct CommandJob {
+    #[cfg(windows)]
+    handle: Option<HANDLE>,
+}
+
+impl CommandJob {
+    pub fn assign(child: &Child) -> io::Result<Self> {
+        #[cfg(windows)]
+        {
+            unsafe {
+                let handle = create_command_job()
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                if AssignProcessToJobObject(handle, child.as_raw_handle() as HANDLE) == 0 {
+                    let err = io::Error::last_os_error();
+                    CloseHandle(handle);
+                    return Err(err);
+                }
+                Ok(Self { handle: Some(handle) })
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = child;
+            Ok(Self {})
+        }
+    }
+
+    pub fn terminate(&self) {
+        #[cfg(windows)]
+        unsafe {
+            if let Some(handle) = self.handle {
+                let _ = TerminateJobObject(handle, 1);
+            }
+        }
+    }
+}
+
+impl Drop for CommandJob {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        unsafe {
+            if let Some(handle) = self.handle.take() {
+                CloseHandle(handle);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn create_command_job() -> Result<HANDLE, String> {
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return Err(format!(
+                "CreateJobObject(command) 失败（{}）",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(job)
+    }
 }
 
 /// 应用退出时集中回收。Windows 优先终止 job；再对登记过的 PID 做一次兜底。

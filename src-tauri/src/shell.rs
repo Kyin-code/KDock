@@ -13,6 +13,7 @@
 //!      代码页兜底，因此英文和 CI Windows 也能正确解中文输出。
 
 use std::io::Read;
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// 把一段字节解成文本：UTF-8 优先；非 UTF-8 先识别明确的 GBK 中文，
@@ -183,6 +184,50 @@ pub fn run_in(
     cwd: Option<&std::path::Path>,
 ) -> Result<(i32, String, String), String> {
     let mut child = spawn_in(cmd, cwd).map_err(|e| format!("起进程失败: {e}"))?;
+    let job = crate::process_guard::CommandJob::assign(&child).ok();
+    let out_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let err_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let (done_tx, done_rx) = mpsc::channel::<()>();
+    let mut readers = 0usize;
+    if let Some(mut stdout) = child.stdout.take() {
+        let buf = out_buf.clone();
+        let done = done_tx.clone();
+        std::thread::spawn(move || {
+            let mut chunk = [0u8; 8192];
+            loop {
+                match stdout.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if let Ok(mut data) = buf.lock() {
+                            data.extend_from_slice(&chunk[..n]);
+                        }
+                    }
+                }
+            }
+            let _ = done.send(());
+        });
+        readers += 1;
+    }
+    if let Some(mut stderr) = child.stderr.take() {
+        let buf = err_buf.clone();
+        let done = done_tx.clone();
+        std::thread::spawn(move || {
+            let mut chunk = [0u8; 8192];
+            loop {
+                match stderr.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if let Ok(mut data) = buf.lock() {
+                            data.extend_from_slice(&chunk[..n]);
+                        }
+                    }
+                }
+            }
+            let _ = done.send(());
+        });
+        readers += 1;
+    }
+    drop(done_tx);
     let start = Instant::now();
     let timeout = Duration::from_millis(timeout_ms.max(200));
     let status = loop {
@@ -190,25 +235,45 @@ pub fn run_in(
             Some(s) => break s,
             None => {
                 if should_stop() {
-                    crate::process_guard::terminate_tree(&mut child);
+                    if let Some(job) = job.as_ref() {
+                        job.terminate();
+                        let _ = child.wait();
+                    } else {
+                        crate::process_guard::terminate_tree(&mut child);
+                    }
                     return Err("用户停止了这条本机命令（进程已杀掉）".into());
                 }
                 if start.elapsed() > timeout {
-                    crate::process_guard::terminate_tree(&mut child);
+                    if let Some(job) = job.as_ref() {
+                        job.terminate();
+                        let _ = child.wait();
+                    } else {
+                        crate::process_guard::terminate_tree(&mut child);
+                    }
                     return Err(format!("命令超过 {}ms 没结束，已杀掉", timeout.as_millis()));
                 }
                 std::thread::sleep(Duration::from_millis(40));
             }
         }
     };
-    let mut out = Vec::new();
-    if let Some(mut so) = child.stdout.take() {
-        let _ = so.read_to_end(&mut out);
+    // A child launched with `start`/`Start-Process` may keep inherited pipe
+    // handles after its launcher exits. Wait briefly for normal pipe drainage,
+    // then return the bytes already captured instead of blocking the tool for
+    // the lifetime of that detached process.
+    let deadline = Instant::now() + Duration::from_millis(1500);
+    let mut completed = 0usize;
+    while completed < readers {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        match done_rx.recv_timeout(left) {
+            Ok(()) => completed += 1,
+            Err(_) => break,
+        }
     }
-    let mut err = Vec::new();
-    if let Some(mut se) = child.stderr.take() {
-        let _ = se.read_to_end(&mut err);
-    }
+    let out = out_buf.lock().map(|v| v.clone()).unwrap_or_default();
+    let err = err_buf.lock().map(|v| v.clone()).unwrap_or_default();
     Ok((status.code().unwrap_or(-1), decode(&out), decode(&err)))
 }
 
@@ -332,6 +397,50 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         assert!(!process_alive(pid), "descendant process survived Stop: {pid}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn detached_child_holding_pipe_does_not_block_command_completion() {
+        let dir = std::env::temp_dir().join(format!(
+            "kdock-shell-pipe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pid_file = dir.join("child.pid");
+        let script = format!(
+            "$p = Start-Process -FilePath 'ping.exe' -ArgumentList '-n','60','127.0.0.1' \
+             -WindowStyle Hidden -PassThru; \
+             Set-Content -LiteralPath '{}' -Value $p.Id; Write-Output 'started'",
+            pid_file.display().to_string().replace('\'', "''")
+        );
+        let cmd = format!(
+            "powershell -NoProfile -ExecutionPolicy Bypass -Command \"{}\"",
+            script
+        );
+        let started = Instant::now();
+        let (code, out, err) = run(&cmd, 15_000, &|| false).expect("launcher should complete");
+        assert_eq!(code, 0, "stderr={err}");
+        assert!(out.contains("started"));
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "detached child inherited stdout/stderr and blocked completion"
+        );
+        if let Ok(text) = std::fs::read_to_string(&pid_file) {
+            if let Ok(pid) = text.trim().parse::<u32>() {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
