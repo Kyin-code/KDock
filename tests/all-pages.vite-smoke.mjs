@@ -670,6 +670,10 @@ try {
   }
   const composerUi = await page.evaluate(async () => {
     window.__showAllPagesPage("agent");
+    const alphaOf = (color) => {
+      const match = String(color).match(/rgba?\([^)]*,\s*([0-9.]+)\)$/);
+      return match ? Number(match[1]) : 1;
+    };
     const { bindAgentComposer } = await import("/src/agent-composer.js");
     const meta = { id: "test-session", goal: "完成状态机重构", perm: "ask", sandbox_mode: "workspace", sandbox_network: true };
     const sent = [];
@@ -693,6 +697,8 @@ try {
     const sandboxWrap = document.getElementById("ag-sandbox-wrap");
     const permSelect = document.getElementById("ag-perm");
     const sandboxSelect = document.getElementById("ag-sandbox");
+    const permTrigger = document.getElementById("ag-perm-trigger");
+    const sandboxTrigger = document.getElementById("ag-sandbox-trigger");
     meta.perm = "read";
     meta.sandbox_mode = "workspace";
     meta.sandbox_network = false;
@@ -702,8 +708,8 @@ try {
       sandboxLevel: sandboxWrap.dataset.level,
       background: getComputedStyle(permWrap).backgroundColor,
       border: getComputedStyle(permWrap).borderColor,
-      permColor: getComputedStyle(permSelect).color,
-      sandboxColor: getComputedStyle(sandboxSelect).color,
+      permColor: getComputedStyle(permTrigger).color,
+      sandboxColor: getComputedStyle(sandboxTrigger).color,
     };
     meta.perm = "ask";
     meta.sandbox_mode = "workspace";
@@ -714,8 +720,8 @@ try {
       sandboxLevel: sandboxWrap.dataset.level,
       background: getComputedStyle(permWrap).backgroundColor,
       border: getComputedStyle(permWrap).borderColor,
-      permColor: getComputedStyle(permSelect).color,
-      sandboxColor: getComputedStyle(sandboxSelect).color,
+      permColor: getComputedStyle(permTrigger).color,
+      sandboxColor: getComputedStyle(sandboxTrigger).color,
     };
     meta.perm = "auto";
     meta.sandbox_mode = "trusted";
@@ -726,13 +732,23 @@ try {
       sandboxLevel: sandboxWrap.dataset.level,
       background: getComputedStyle(permWrap).backgroundColor,
       border: getComputedStyle(permWrap).borderColor,
-      permColor: getComputedStyle(permSelect).color,
-      sandboxColor: getComputedStyle(sandboxSelect).color,
+      permColor: getComputedStyle(permTrigger).color,
+      sandboxColor: getComputedStyle(sandboxTrigger).color,
     };
     meta.perm = "ask";
     meta.sandbox_mode = "workspace";
     meta.sandbox_network = true;
     api.syncPolicy();
+    permTrigger.click();
+    const permissionMenu = document.getElementById("ag-perm-menu");
+    const policyMenuUi = {
+      selectMenuVisible: !!permissionMenu && !permissionMenu.hidden,
+      selectOptions: permissionMenu ? permissionMenu.querySelectorAll(".agselect-option").length : 0,
+      selectSelected: permissionMenu?.querySelector(".agselect-option.selected b")?.textContent || "",
+      selectMenuPosition: permissionMenu ? getComputedStyle(permissionMenu).position : "",
+      selectMenuBorderAlpha: permissionMenu ? alphaOf(getComputedStyle(permissionMenu).borderColor) : 1,
+    };
+    permTrigger.click();
     const longPending = "这是一段很长的待发送文本，用于检查单行截断、右侧渐隐和按钮同排布局。".repeat(6);
     api.renderPending(["第一条待发送", longPending], false);
     const input = document.getElementById("ag-input");
@@ -765,6 +781,7 @@ try {
         && defaultPolicy.background === cautionPolicy.background
         && defaultPolicy.border === warnedPolicy.border
         && defaultPolicy.border === cautionPolicy.border,
+      ...policyMenuUi,
       pendingSingleLine: !!pendingRow && !pending.querySelector("details")
         && !pending.querySelector(".agpending-body") && !pending.querySelector(".agpending-guide"),
       pendingSummary: pendingPreview?.textContent,
@@ -803,6 +820,9 @@ try {
       || composerUi.sandboxTextColors[0] === composerUi.sandboxTextColors[1]
       || composerUi.sandboxTextColors[1] === composerUi.sandboxTextColors[2]
       || !composerUi.policyWrapperNeutral
+      || !composerUi.selectMenuVisible || composerUi.selectOptions !== 3
+      || composerUi.selectSelected !== "需要批准" || composerUi.selectMenuPosition !== "fixed"
+      || composerUi.selectMenuBorderAlpha > 0.12
       || !composerUi.pendingSingleLine || !composerUi.pendingSummary?.startsWith("待发送")
       || composerUi.pendingCount !== "2" || composerUi.pendingAction !== "全部立即发送"
       || !composerUi.pendingActionOnRow || !composerUi.pendingPreviewOverflow

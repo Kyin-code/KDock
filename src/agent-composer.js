@@ -35,6 +35,110 @@ export function bindAgentComposer(deps) {
   let custom = [];
   let matches = [];
   let active = 0;
+  const policySelects = [];
+
+  const setCustomSelectValue = (select, value) => {
+    if (!select) return;
+    select.value = value;
+    const entry = policySelects.find((item) => item.select === select);
+    if (!entry) return;
+    const selected = [...select.options].find((option) => option.value === value);
+    entry.trigger.querySelector(".agselect-value").textContent =
+      selected ? selected.textContent.trim() : value;
+    entry.trigger.dataset.level = entry.level(value);
+    entry.menu.querySelectorAll(".agselect-option").forEach((row) => {
+      const on = row.dataset.value === value;
+      row.classList.toggle("selected", on);
+      row.setAttribute("aria-selected", on ? "true" : "false");
+    });
+  };
+
+  const closePolicyMenus = (except = null) => {
+    for (const entry of policySelects) {
+      if (entry.menu === except) continue;
+      entry.menu.hidden = true;
+      entry.trigger.setAttribute("aria-expanded", "false");
+    }
+  };
+
+  const bindPolicySelect = (selectId, descriptions, level) => {
+    const select = el(selectId);
+    const wrap = select?.closest(".agctl");
+    if (!select || !wrap || policySelects.some((item) => item.select === select)) return;
+    const trigger = document.createElement("button");
+    trigger.id = `${selectId}-trigger`;
+    trigger.type = "button";
+    trigger.className = "agselect-trigger";
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.innerHTML = '<span class="agselect-value"></span><span class="agselect-chev">⌄</span>';
+    const menu = document.createElement("div");
+    menu.id = `${selectId}-menu`;
+    menu.className = "agselect-menu";
+    menu.setAttribute("role", "listbox");
+    menu.hidden = true;
+    for (const option of [...select.options]) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "agselect-option";
+      row.dataset.value = option.value;
+      row.dataset.level = level(option.value);
+      row.setAttribute("role", "option");
+      const mark = document.createElement("span");
+      mark.className = "agselect-mark";
+      const copy = document.createElement("span");
+      copy.className = "agselect-copy";
+      const title = document.createElement("b");
+      title.textContent = option.textContent.trim();
+      const desc = document.createElement("small");
+      desc.textContent = descriptions[option.value] || "";
+      copy.append(title, desc);
+      const check = document.createElement("span");
+      check.className = "agselect-check";
+      check.textContent = "✓";
+      row.append(mark, copy, check);
+      row.onclick = () => {
+        select.value = option.value;
+        setCustomSelectValue(select, option.value);
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        closePolicyMenus();
+      };
+      menu.appendChild(row);
+    }
+    wrap.append(trigger);
+    document.body.append(menu);
+    wrap.classList.add("agselect-ready");
+    const entry = { select, wrap, trigger, menu, level };
+    policySelects.push(entry);
+    trigger.onclick = (event) => {
+      event.stopPropagation();
+      const open = menu.hidden;
+      closePolicyMenus(menu);
+      menu.hidden = !open;
+      trigger.setAttribute("aria-expanded", open ? "true" : "false");
+      if (!open) return;
+      const rect = trigger.getBoundingClientRect();
+      const width = Math.min(270, window.innerWidth - 16);
+      menu.style.width = width + "px";
+      menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) + "px";
+      menu.style.bottom = window.innerHeight - rect.top + 6 + "px";
+    };
+    document.addEventListener("pointerdown", (event) => {
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest(".agselect-menu") || event.target === trigger) return;
+      closePolicyMenus();
+    }, true);
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closePolicyMenus();
+    });
+    setCustomSelectValue(select, select.value);
+  };
+
+  const syncCustomSelects = () => {
+    for (const entry of policySelects) {
+      setCustomSelectValue(entry.select, entry.select.value);
+    }
+  };
 
   const syncPolicy = () => {
     const meta = getMeta();
@@ -52,6 +156,7 @@ export function bindAgentComposer(deps) {
     const sandboxSelect = el("ag-sandbox");
     if (permSelect) permSelect.value = perm;
     if (sandboxSelect) sandboxSelect.value = trusted ? "trusted" : workspaceNet ? "workspace-net" : "workspace";
+    syncCustomSelects();
   };
 
   const resizeGoal = () => {
@@ -222,6 +327,24 @@ export function bindAgentComposer(deps) {
   };
 
   const init = () => {
+    bindPolicySelect(
+      "ag-perm",
+      {
+        read: l("不会执行写入、设备操作或烧录", "No writes, device actions or flashing"),
+        ask: l("危险动作执行前先询问你", "Ask before risky actions"),
+        auto: l("危险动作直接执行，不再逐条确认", "Run risky actions without step-by-step approval"),
+      },
+      (value) => value === "auto" ? "caution" : value === "ask" ? "warn" : "default",
+    );
+    bindPolicySelect(
+      "ag-sandbox",
+      {
+        workspace: l("仅工作区文件，默认禁止网络", "Workspace files only; network blocked"),
+        "workspace-net": l("限制文件访问，但允许联网", "Restrict files while allowing network"),
+        trusted: l("可直接访问整台电脑和网络", "Direct access to the whole machine and network"),
+      },
+      (value) => value === "trusted" ? "caution" : value === "workspace-net" ? "warn" : "default",
+    );
     el("ag-goal-text")?.addEventListener("input", () => {
       resizeGoal();
       const count = el("ag-goal-count");
