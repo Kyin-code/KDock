@@ -25,6 +25,8 @@ import {
 import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
 import { bindAgentResize } from "./agent-layout.js";
 import { agentRunPresentation, pendingBatchText } from "./agent-pending.js";
+import { showAdbPage } from "./adb-pages.js";
+import { findAdbConnectService, normalizeAdbAddress, pairGuidFromText, parseAdbMdns } from "./adb-wireless.js";
 import { logNumberColumnWidth } from "./log-gutter.js";
 import { createAsciiHistory, loadAsciiHistory, saveAsciiHistory } from "./ascii-history.js";
 import { bindPopoverDismissal } from "./popover.js";
@@ -3917,9 +3919,13 @@ let adbStCount = 1;          // 编号（adb push 能推出多台，这里给"�
 
 function adbState(text, cls) {
   const d = $("adb-state");
-  if (d) { d.textContent = en(text); d.className = "dot" + (cls ? " " + cls : ""); }
+  if (d) {
+    d.textContent = en(cls === "err" ? "需要处理" : adbDevs.length ? "ADB 已连接" : "ADB 未连接");
+  }
   const dot = $("adb-dot");
   if (dot) dot.className = "dot" + (cls === "err" ? " err" : adbDevs.length ? " ok" : "");
+  const summary = $("adb-side-summary");
+  if (summary) summary.textContent = en(text);
 }
 function adbLog(text) {
   const box = $("adb-log");
@@ -3959,20 +3965,31 @@ function adbPairedRemember(o) {
   if (idx >= 0) a[idx] = rec; else a.unshift(rec);
   adbPairedSave(a);
 }
-function adbParseMdns(list) {
-  const out = [];
-  for (const raw of (list || [])) {
-    const m = /^(.+?)\s+_(adb(?:-tls-connect|-tls-pairing)?)\._tcp\.\s+([0-9.]+):(\d+)/.exec(String(raw).trim());
-    if (!m) continue;
-    out.push({ name: m[1].replace(/\s+\(\d+\)$/, ""), kind: m[2], host: m[3], port: Number(m[4]) });
-  }
-  return out;
-}
 function adbWirelessTag(row, tag) {
   const x = document.createElement("span");
   x.className = "tag " + tag.cls;
   x.textContent = tag.text;
   row.appendChild(x);
+}
+function adbSetConnectAddress(service) {
+  if (!service || !$("adb-connect-addr")) return;
+  $("adb-connect-addr").value = service.host + ":" + service.port;
+}
+async function adbConnectWireless(service) {
+  if (!service || !service.host || !service.port) {
+    throw new Error("没有拿到无线调试的连接端口，请先重新扫描设备");
+  }
+  adbSetConnectAddress(service);
+  const got = await invoke("adb_connect", { host: service.host, port: service.port });
+  adbPairedRemember({
+    guid: service.guid || service.name || "",
+    host: service.host,
+    port: service.port,
+    model: service.model || "",
+  });
+  await adbRefreshDevices(true);
+  await adbMdnsScan(true);
+  return got;
 }
 function renderAdbWireless(services) {
   const box = $("adb-wl-found");
@@ -3995,7 +4012,6 @@ function renderAdbWireless(services) {
     if (!x.port || seen.has((x.guid || "") + "|" + target) || seen.has("|" + target)) continue;
     rows.push({ name: x.guid || "saved", guid: x.guid || "", host: x.host, port: Number(x.port), paired: true, connected: devSerials.has(target), model: x.model || "", legacy: false, offline: true });
   }
-  if ($("adb-paired-count")) $("adb-paired-count").textContent = rows.length ? rows.length + " " + T("台") : "";
   if (!rows.length) {
     const d = document.createElement("div");
     d.className = "adbfound-empty";
@@ -4019,17 +4035,15 @@ function renderAdbWireless(services) {
     btn.textContent = T(r.connected ? "断开" : "连接");
     btn.onclick = async () => {
       try {
-        if (r.connected) await invoke("adb_disconnect", { host: r.host, port: r.port });
-        else {
-          const got = await invoke("adb_connect", { host: r.host, port: r.port });
-          adbPairedRemember({ guid: r.guid, host: r.host, port: r.port, model: r.model });
-          if ($("adb-wl-host")) $("adb-wl-host").value = r.host;
-          if ($("adb-wl-port")) $("adb-wl-port").value = String(r.port);
+        if (r.connected) {
+          adbSetConnectAddress(r);
+          await invoke("adb_disconnect", { host: r.host, port: r.port });
+          await adbRefreshDevices(true);
+          await adbMdnsScan(true);
+        } else {
+          await adbConnectWireless(r);
           pushSys("[ADB] " + T("已连接") + " " + r.host + ":" + r.port);
-          void got;
         }
-        await adbRefreshDevices(true);
-        await adbMdnsScan(true);
       } catch (e) {
         const m = String(e);
         if (/auth|unauthorized|pair/i.test(m)) {
@@ -4044,8 +4058,13 @@ function renderAdbWireless(services) {
 async function adbMdnsScan(silent) {
   try {
     const r = await invoke("adb_mdns");
-    adbMdnsLast = adbParseMdns(r.list || []);
+    adbMdnsLast = parseAdbMdns(r.list || []);
     renderAdbWireless(adbMdnsLast);
+    const connectable = adbMdnsLast.find((service) => service.kind === "adb-tls-connect")
+      || adbMdnsLast.find((service) => service.kind === "adb");
+    if (connectable && $("adb-connect-addr") && !$("adb-connect-addr").value.trim()) {
+      adbSetConnectAddress(connectable);
+    }
     if (!silent) return r;
   } catch (e) {
     if (!silent) toast(String(e));
@@ -4167,54 +4186,104 @@ async function adbInit() {
   await adbRefreshDevices(true);
   await adbMdnsScan(true);
 }
+async function adbWaitForConnectService(guid, host, attempts = 8) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await adbMdnsScan(true);
+    const service = findAdbConnectService(adbMdnsLast, { guid, host });
+    if (service) return service;
+    await new Promise((resolve) => setTimeout(resolve, 650));
+  }
+  return null;
+}
+async function adbAutoConnectAfterPair(guid, host, wlLog) {
+  wlLog(en("等待无线调试连接服务广播…"));
+  const service = await adbWaitForConnectService(guid, host);
+  if (!service) {
+    wlLog(en("已配对，但暂时没发现连接端口。请保持「无线调试」页面打开，再点「扫描设备」。"));
+    return false;
+  }
+  adbSetConnectAddress(service);
+  wlLog(`$ adb connect ${service.host}:${service.port}`);
+  try {
+    const result = await adbConnectWireless(service);
+    wlLog(result.text || en("已连接"));
+    pushSys(`[ADB] 自动连接 ${service.host}:${service.port}`);
+    return true;
+  } catch (error) {
+    wlLog(en("自动连接失败：") + String(error));
+    return false;
+  }
+}
 function bindAdb() {
   adbOnShow();
+  document.querySelectorAll(".adbtab").forEach((button) => {
+    button.onclick = () => showAdbPage(button.dataset.adbp);
+  });
+  document.querySelectorAll("[data-adb-open]").forEach((button) => {
+    button.onclick = () => showAdbPage(button.dataset.adbOpen);
+  });
+  document.querySelectorAll("[data-adb-preset]").forEach((button) => {
+    button.onclick = () => {
+      const preset = button.dataset.adbPreset;
+      if (preset === "usb") {
+        showAdbPage("connect");
+        void adbRefreshDevices();
+      } else if (preset === "wireless") {
+        showAdbPage("connect");
+        $("adb-pair-addr").focus();
+        void adbMdnsScan(true);
+      } else if (preset === "smooth") {
+        $("adb-fps").value = "20";
+        $("adb-q").value = "65";
+        $("adb-scale").value = "0.6";
+        showAdbPage("mirror");
+      } else if (preset === "sharp") {
+        $("adb-fps").value = "8";
+        $("adb-q").value = "90";
+        $("adb-scale").value = "1";
+        showAdbPage("mirror");
+      }
+    };
+  });
+  showAdbPage(localStorage.getItem("kdock_adb_page") || "connect");
   $("adb-refresh").onclick = () => adbRefreshDevices();
-  // ── 无线调试（Android 11+）：配对 → 连接 ──
+  // ── 无线调试（Android 11+）：配对 → 等连接广播 → connect ──
   const wlLog = (t) => {
     const box = $("adb-wl-log");
     if (!box) return;
     box.hidden = false;
     box.textContent += t + "\n";
   };
-  const wlArgs = () => {
-    const raw = $("adb-wl-host").value.trim();
-    const port = Number($("adb-wl-port").value) || null;
-    const [h, p] = raw.includes(":") ? raw.split(":") : [raw, ""];
-    return { host: h, port: port || (p ? Number(p) : null) };
-  };
+  const pairArgs = () => normalizeAdbAddress($("adb-pair-addr").value);
+  const connectArgs = () => normalizeAdbAddress($("adb-connect-addr").value);
   if ($("adb-mdns")) $("adb-mdns").onclick = async () => {
     wlLog("$ adb mdns services");
     const r = await adbMdnsScan(false);
     if (!r) { wlLog("扫描失败"); return; }
     wlLog((r.raw || "").trim() || en("（没发现广播：设备上要打开「无线调试」，两边要在同一网段）"));
     const first = adbMdnsLast.find((x) => x.kind === "adb-tls-connect") || adbMdnsLast.find((x) => x.kind === "adb");
-    if (first && !$("adb-wl-host").value.trim()) {
-      $("adb-wl-host").value = first.host;
-      $("adb-wl-port").value = String(first.port);
-    }
+    if (first) adbSetConnectAddress(first);
   };
   if ($("adb-pair")) $("adb-pair").onclick = async () => {
-    const a = wlArgs();
+    const a = pairArgs();
     const code = $("adb-wl-code").value.trim();
     if (!a.host || !a.port || !code) { toast(en("配对要填 地址 + 配对端口 + 6 位配对码")); return; }
-    wlLog(`$ adb pair ${a.host}:${a.port} ${code}`);
+    wlLog(`$ adb pair ${a.target} ${code}`);
     try {
       const r = await invoke("adb_pair", { host: a.host, port: a.port, code });
       const text = r.text || "";
-      const guid = (/\[guid=([^\]]+)\]/.exec(text) || [])[1] || "";
+      const guid = pairGuidFromText(text);
       adbPairedRemember({ guid, host: a.host });
       wlLog(text || en("配对成功"));
-      wlLog(en("已记录为已配对设备。只有第一次需要配对；现在到「已配对 / 可连接设备」里点「连接」。"));
-      pushSys("[ADB] " + en("配对成功，不需要再次配对；请在已配对设备列表里点连接"));
-      await adbMdnsScan(true);
+      pushSys("[ADB] " + en("配对成功，正在自动连接"));
+      await adbAutoConnectAfterPair(guid, a.host, wlLog);
     } catch (e) {
       const m = String(e);
       if (/already|known|paired/i.test(m)) {
         adbPairedRemember({ host: a.host });
-        wlLog(en("这台设备已经配对过，不需要再次配对；直接到「已配对 / 可连接设备」点连接。"));
-        toast(en("已配对过，直接点连接"));
-        await adbMdnsScan(true);
+        wlLog(en("这台设备已经配对过，跳过配对，直接查找连接端口。"));
+        toast(en("已配对过，正在自动连接"));
+        await adbAutoConnectAfterPair("", a.host, wlLog);
       } else {
         wlLog(en("配对失败：") + m);
         toast(m);
@@ -4222,20 +4291,20 @@ function bindAdb() {
     }
   };
   if ($("adb-connect")) $("adb-connect").onclick = async () => {
-    const a = wlArgs();
-    if (!a.host) { toast("要填设备地址"); return; }
-    wlLog(`$ adb connect ${a.host}:${a.port || 5555}`);
+    const a = connectArgs();
+    if (!a.host || !a.port) { toast(en("要填 mDNS 扫描到的连接地址，不能使用配对端口")); return; }
+    wlLog(`$ adb connect ${a.target}`);
     try {
       const r = await invoke("adb_connect", { host: a.host, port: a.port });
       wlLog(r.text || "已连接");
-      adbPairedRemember({ host: a.host, port: a.port || 5555 });
+      adbPairedRemember({ host: a.host, port: a.port });
       await adbRefreshDevices(true);
       await adbMdnsScan(true);
     } catch (e) { wlLog(en("连接失败：") + e); toast(String(e)); }
   };
   if ($("adb-disconnect")) $("adb-disconnect").onclick = async () => {
-    const a = wlArgs();
-    if (!a.host) { toast("要填设备地址"); return; }
+    const a = connectArgs();
+    if (!a.host || !a.port) { toast(en("要填连接地址")); return; }
     try {
       const r = await invoke("adb_disconnect", { host: a.host, port: a.port });
       wlLog(r.text || "已断开");

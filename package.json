@@ -26,6 +26,7 @@
     "test:ssh": "node tests/ssh-history.unit.mjs",
     "test:update": "node tests/app-update.unit.mjs",
     "test:vite:update": "node tests/app-update-ui.vite-smoke.mjs",
+    "test:adb": "node tests/adb-wireless.unit.mjs",
     "test:browser": "node tests/shared-browser.unit.mjs",
     "test:bundle": "node tests/bundle-budget.unit.mjs",
     "test:i18n": "node tests/i18n.unit.mjs",

@@ -311,8 +311,8 @@ export const HELP_GROUPS = [
       {
         id: "help-adb-wireless",
         title: "无线调试与配对",
-        zh: "### 步骤\n- 手机开启开发者选项和无线调试。\n- 用「使用配对码配对」的 IP、端口和 6 位码完成配对。\n- 再连接无线调试页面显示的另一个端口。\n### 联动\n配对端口与调试端口通常不同；配对成功不代表已连接。",
-        en: "### Steps\n- Enable Developer options and Wireless debugging on the phone.\n- Pair with the IP, port and 6-digit code shown by Pair using pairing code.\n- Then connect to the separate debug port shown on the Wireless debugging page.\n### Relationship\nPairing and debugging use different ports; pairing alone does not connect the device."
+        zh: "### 步骤\n- 手机开启开发者选项和无线调试。\n- 在「连接」页填写手机配对弹窗里的 IP、配对端口和 6 位码。\n- KDock 配对成功后会等待 mDNS 的 `_adb-tls-connect._tcp` 广播，并自动用连接端口连接。\n### 注意\n配对端口和连接端口不同。手动「连接」只能填扫描到的连接地址，不能继续使用配对端口。",
+        en: "### Steps\n- Enable Developer options and Wireless debugging on the phone.\n- On the Connect page, enter the IP, pairing port and 6-digit code from the phone's pairing dialog.\n- After pairing, KDock waits for the mDNS `_adb-tls-connect._tcp` advertisement and connects with that port automatically.\n### Note\nPairing and connection use different ports. Manual Connect accepts only the discovered connection address, never the pairing port."
       },
       {
         id: "help-adb-mirror",

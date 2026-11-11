@@ -155,6 +155,13 @@ fn adb_target(host: &str, port: Option<u16>, def_port: u16) -> Result<String, St
     }
 }
 
+fn device_state_for_serial(devices_output: &str, serial: &str) -> Option<String> {
+    devices_output.lines().skip(1).find_map(|line| {
+        let mut parts = line.split_whitespace();
+        (parts.next() == Some(serial)).then(|| parts.next().unwrap_or("unknown").to_string())
+    })
+}
+
 /// 无线调试列表（Android 11+ 的 `adb mdns services`）：配对/连接前先看这个
 #[tauri::command]
 pub fn adb_mdns() -> Result<Value, String> {
@@ -186,7 +193,23 @@ pub fn adb_connect(host: String, port: Option<u16>) -> Result<Value, String> {
              用设备上显示的配对码在这里先配对；配对端口和连接端口不是同一个）"
         ));
     }
-    Ok(json!({ "target": target, "code": code, "text": text }))
+    let mut state = String::new();
+    for _ in 0..10 {
+        if let Ok((_, devices, _)) = adb_run(&["devices"], 8_000) {
+            state = device_state_for_serial(&devices, &target).unwrap_or_default();
+            if state == "device" {
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    if state != "device" {
+        return Err(format!(
+            "已连接 {target}，但设备状态是 {}；请在手机上确认无线调试授权后重试",
+            if state.is_empty() { "未出现" } else { state.as_str() }
+        ));
+    }
+    Ok(json!({ "target": target, "code": code, "text": text, "state": state }))
 }
 
 /// 配对新设备（Android 11+）：`adb pair IP:配对端口 配对码`
@@ -532,5 +555,18 @@ mod tests {
     fn shell_quoting_survives_single_quotes() {
         assert_eq!(sh_quote("a b"), "'a b'");
         assert_eq!(sh_quote("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn connected_state_is_read_from_adb_devices() {
+        let output = "List of devices attached\n192.168.1.33:42117\tdevice product:test model:Phone\n";
+        assert_eq!(
+            device_state_for_serial(output, "192.168.1.33:42117").as_deref(),
+            Some("device")
+        );
+        assert_eq!(
+            device_state_for_serial(output, "192.168.1.33:42118").as_deref(),
+            None
+        );
     }
 }

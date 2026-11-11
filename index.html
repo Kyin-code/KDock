@@ -1740,28 +1740,162 @@
           <div id="cap-fs-hint" class="fshint" hidden>全屏中 · 按 F11 或 Esc 退出</div>
         </div>
 
-        <!-- 安卓 ADB：投屏 + shell + 日志 -->
+        <!-- 安卓 ADB：连接 / 投屏 / 详细功能 / 日志 四个子页面 -->
         <div class="workpane adbpane" data-work="adb" hidden>
-          <div class="trow">
-            <span class="lb">安卓设备</span>
-            <span id="adb-dot" class="dot"></span>
-            <span class="grow"></span>
-            <span id="adb-mir-state" class="lb"></span>
-            <button id="adb-mir" class="btn small primary" title="内置投屏：抓屏轮询，画面可直接点（反向控制）">投屏</button>
-            <button id="adb-mir-stop" class="btn small">停止投屏</button>
-            <button id="adb-scrcpy" class="btn small" title="用 scrcpy 投屏（独立窗口，更丝滑；需要先装 scrcpy）">scrcpy 投屏（外置）</button>
-            <button id="adb-scrcpy-stop" class="btn small">关 scrcpy</button>
+          <div class="adbtabs" role="tablist" aria-label="安卓 ADB 页面">
+            <button class="adbtab active" data-adbp="connect">连接</button>
+            <button class="adbtab" data-adbp="mirror">投屏</button>
+            <button class="adbtab" data-adbp="tools">详细功能</button>
+            <button class="adbtab" data-adbp="logs">日志</button>
           </div>
-          <div id="adb-view" class="capview fit grown" tabindex="0">
-            <div class="placeholder">选一台设备 → 点【投屏】；画面里点一下就是点手机（在右栏打开「反向控制」）</div>
+
+          <div class="adbpagestack">
+            <section class="adbpage adbconnectpage" data-adbpage="connect">
+              <div class="adbconnectgrid">
+                <section class="adbsection">
+                  <div class="cardtitle">当前设备
+                    <span class="grow"></span>
+                    <button id="adb-refresh" class="btn small" title="重新枚举 USB 与已连接的无线设备">刷新设备</button>
+                  </div>
+                  <div class="field">
+                    <label for="adb-dev">选择设备</label>
+                    <select id="adb-dev"></select>
+                  </div>
+                  <p class="hint">USB 调试需要先在手机上允许本机；无线连接成功后也会出现在这里。</p>
+                </section>
+
+                <section class="adbsection">
+                  <div class="cardtitle">无线调试
+                    <span class="grow"></span>
+                    <button id="adb-mdns" class="btn small" title="扫描局域网内的无线调试广播">扫描设备</button>
+                  </div>
+                  <div id="adb-wl-found" class="adbfound"></div>
+                  <p class="hint">配对成功后会自动等待连接服务广播并连接，不需要再次使用配对端口。</p>
+                </section>
+              </div>
+
+              <section class="adbsection">
+                <div class="cardtitle">首次配对</div>
+                <div class="adbformrow">
+                  <label for="adb-pair-addr">配对地址</label>
+                  <input id="adb-pair-addr" class="grow" placeholder="手机配对弹窗中的 192.168.1.33:41053" />
+                  <label for="adb-wl-code">配对码</label>
+                  <input id="adb-wl-code" class="num" inputmode="numeric" maxlength="6" placeholder="257688" />
+                  <button id="adb-pair" class="btn primary" title="adb pair，仅首次配对使用">配对并连接</button>
+                </div>
+              </section>
+
+              <section class="adbsection">
+                <div class="cardtitle">连接地址
+                  <span class="grow"></span>
+                  <span class="hint">来自无线调试广播，不是配对端口</span>
+                </div>
+                <div class="adbformrow">
+                  <label for="adb-connect-addr">连接地址</label>
+                  <input id="adb-connect-addr" class="grow" placeholder="例如 192.168.1.33:42117" />
+                  <button id="adb-connect" class="btn primary">连接</button>
+                  <button id="adb-disconnect" class="btn">断开</button>
+                </div>
+                <pre id="adb-wl-log" class="dbgout adblog" hidden></pre>
+              </section>
+            </section>
+
+            <section class="adbpage adbmirrorpage" data-adbpage="mirror" hidden>
+              <div class="trow">
+                <span class="lb">设备画面</span>
+                <span id="adb-mir-state" class="lb"></span>
+                <span class="grow"></span>
+                <button id="adb-mir" class="btn small primary" title="内置投屏：抓屏轮询，画面可直接点">开始投屏</button>
+                <button id="adb-mir-stop" class="btn small">停止</button>
+                <button id="adb-scrcpy" class="btn small" title="用 scrcpy 打开独立窗口">scrcpy 外置</button>
+                <button id="adb-scrcpy-stop" class="btn small">关闭 scrcpy</button>
+              </div>
+              <div id="adb-view" class="capview fit grown" tabindex="0">
+                <div class="placeholder">选择设备后点「开始投屏」；画面可点击或拖动控制手机。</div>
+              </div>
+              <div class="adbmirrorctl">
+                <div class="field"><label for="adb-fps">帧率</label><input id="adb-fps" type="number" min="1" max="30" value="6" class="num" /><span class="lb">fps</span></div>
+                <div class="field"><label for="adb-q">画质</label><input id="adb-q" type="number" min="20" max="95" value="75" class="num" /></div>
+                <div class="field"><label for="adb-scale">缩放</label>
+                  <select id="adb-scale">
+                    <option value="1">原始</option>
+                    <option value="0.6" selected>60%</option>
+                    <option value="0.35">35%</option>
+                  </select>
+                </div>
+                <label class="chk"><input type="checkbox" id="adb-ctl" checked /> 反向控制</label>
+              </div>
+              <div class="trow">
+                <button id="adb-key-back" class="btn small">返回</button>
+                <button id="adb-key-home" class="btn small">主屏</button>
+                <button id="adb-key-apps" class="btn small">多任务</button>
+                <button id="adb-key-power" class="btn small">电源键</button>
+                <input id="adb-text" class="grow" placeholder="输入文字" />
+                <button id="adb-text-send" class="btn small">输入</button>
+              </div>
+              <details class="adv">
+                <summary>scrcpy 参数</summary>
+                <div class="field"><label for="adb-scrcpy-args">附加参数</label><input id="adb-scrcpy-args" placeholder="--max-size 1280 --max-fps 30" /></div>
+              </details>
+            </section>
+
+            <section class="adbpage adbtoolspage adbpagedscroll" data-adbpage="tools" hidden>
+              <div class="adbtoolgrid">
+                <section class="adbsection">
+                  <div class="cardtitle">传文件</div>
+                  <div class="field">
+                    <label>本机 → 设备</label>
+                    <div class="inline">
+                      <input id="adb-push-file" type="file" hidden />
+                      <button id="adb-pick" class="btn file">选择本机文件</button>
+                    </div>
+                  </div>
+                  <div class="field"><label for="adb-push-to">设备路径</label><input id="adb-push-to" placeholder="/sdcard/Download/x.bin" /></div>
+                  <div class="btnrow"><button id="adb-push" class="btn primary">推送</button></div>
+                  <div class="field"><label for="adb-pull-from">设备上的路径</label><input id="adb-pull-from" placeholder="/sdcard/Download/x.bin" /></div>
+                  <div class="btnrow">
+                    <button id="adb-pull" class="btn">取回本机</button>
+                    <button id="adb-shot-save" class="btn">截图存盘</button>
+                  </div>
+                </section>
+
+                <section class="adbsection">
+                  <div class="cardtitle">APK</div>
+                  <div class="field">
+                    <label>安装包</label>
+                    <div class="inline">
+                      <input id="adb-apk-file" type="file" hidden />
+                      <button id="adb-apk-pick" class="btn file">选择 APK</button>
+                    </div>
+                  </div>
+                  <div class="trow">
+                    <label class="chk"><input type="checkbox" id="adb-apk-r" checked /> 覆盖安装</label>
+                    <span class="grow"></span>
+                    <button id="adb-apk-go" class="btn small primary">安装</button>
+                  </div>
+                  <div class="field"><label for="adb-pkg">卸载包名</label>
+                    <div class="inline"><input id="adb-pkg" placeholder="com.example.app" /><button id="adb-pkg-list" class="btn small">列表</button></div>
+                  </div>
+                  <div class="btnrow"><button id="adb-pkg-rm" class="btn small">卸载</button></div>
+                </section>
+              </div>
+
+              <section class="adbsection">
+                <div class="cardtitle">常用命令</div>
+                <div class="chips" id="adb-quick"></div>
+              </section>
+            </section>
+
+            <section class="adbpage adblogpage" data-adbpage="logs" hidden>
+              <div class="trow">
+                <span class="lb">shell</span>
+                <input id="adb-cmd" class="grow" placeholder="getprop ro.product.model / ls -l /sdcard / dumpsys battery …" />
+                <button id="adb-run" class="btn small primary">执行</button>
+                <button id="adb-clear" class="btn small">清空</button>
+              </div>
+              <pre id="adb-log" class="dbgout adblog"></pre>
+            </section>
           </div>
-          <div class="trow">
-            <span class="lb">shell</span>
-            <input id="adb-cmd" class="grow" placeholder="adb shell 命令：getprop ro.product.model / ls -l /sdcard / dumpsys battery …" />
-            <button id="adb-run" class="btn small primary">执行</button>
-            <button id="adb-clear" class="btn small">清空</button>
-          </div>
-          <pre id="adb-log" class="dbgout adblog"></pre>
         </div>
 
         <!-- 内嵌调试：GDB（MI）+ GDB Server -->
@@ -2895,110 +3029,40 @@
           <p class="hint">全屏：点上面的【⛶ 全屏】或按 F11；退出按 Esc 或 F11。VNC 全屏后鼠标键盘直接作用到被控端（「允许控制键鼠」打开时）。</p>
         </div>
 
-        <!-- 安卓 ADB 参数：设备 / 投屏 / 推拉 / APK / 常用命令 -->
-        <div class="parampane" data-param="adb" hidden>
-          <div class="cardtitle">设备
-            <span class="grow"></span>
-            <button id="adb-refresh" class="btn small" title="重新列设备（新插的线 / 新开的无线调试点这个）">↻ 刷新</button>
-          </div>
-          <div class="field">
-            <label for="adb-dev">当前设备</label>
-            <select id="adb-dev"></select>
-          </div>
-          <div class="state"><span class="dot" id="adb-state">未检测</span></div>
-          <p class="hint" id="adb-hint">没看到设备？两条路：① USB：手机打开「开发者选项 → USB 调试」，插线后在手机上允许这台电脑；② 无线调试（Android 11+）：手机打开「开发者选项 → 无线调试」，先用下面的「配对」填手机弹窗上的地址和配对码，再「连接」到无线调试页面上显示的那个端口。</p>
-
-          <div class="cardtitle">无线调试（Android 11+）
-            <span class="grow"></span>
-            <button id="adb-mdns" class="btn small" title="列出局域网里正在广播的无线调试设备（adb mdns services）">找设备</button>
-          </div>
-          <div class="cardtitle">已配对 / 可连接设备<span class="grow"></span><span id="adb-paired-count" class="lb"></span></div>
-          <div id="adb-wl-found" class="adbfound"></div>
-          <p class="hint">已经配对过的设备会显示在上面，直接点「连接」即可，不需要再次配对。地址变了也没关系，以这里扫描到的为准。</p>
-          <details class="adv" id="adb-pair-manual">
-            <summary>首次配对 / 手动连接（只做一次）</summary>
-            <div class="field">
-              <label for="adb-wl-host">地址</label>
-              <div class="inline">
-                <input id="adb-wl-host" class="grow" placeholder="192.168.1.37 或 192.168.1.37:37000" />
-                <input id="adb-wl-port" type="number" class="num" placeholder="端口" />
-              </div>
-            </div>
-            <div class="field">
-              <label for="adb-wl-code">首次配对码</label>
-              <div class="inline">
-                <input id="adb-wl-code" class="grow" placeholder="手机「使用配对码配对设备」里那 6 位" />
-                <button id="adb-pair" class="btn small" title="adb pair（只用一次；已配对设备不要重复配对）">配对</button>
-              </div>
-            </div>
-            <div class="btnrow">
-              <button id="adb-connect" class="btn primary" title="adb connect：连到无线调试页面上显示的那个端口">连接</button>
-              <button id="adb-disconnect" class="btn" title="adb disconnect">断开</button>
-            </div>
-          </details>
-          <pre id="adb-wl-log" class="dbgout adblog" hidden></pre>
-
-          <div class="cardtitle">投屏</div>
-          <div class="field"><label for="adb-fps">帧率</label><input id="adb-fps" type="number" min="1" max="30" value="6" class="num" /> fps</div>
-          <div class="field"><label for="adb-q">画质</label><input id="adb-q" type="number" min="20" max="95" value="75" class="num" /></div>
-          <div class="field">
-            <label for="adb-scale">缩放</label>
-            <select id="adb-scale">
-              <option value="1">原始</option>
-              <option value="0.6" selected>60%</option>
-              <option value="0.35">35%</option>
-            </select>
-          </div>
-          <div class="trow"><label class="chk" title="打开后：画面里点一下 = 点手机；拖动 = 滑动；上面那行还能直接发按键和文字"><input type="checkbox" id="adb-ctl" checked /> 反向控制（点画面 = 点手机）</label></div>
-          <p class="hint">内置投屏是「抓屏轮询」（约 3~10 fps），直接嵌在 KDock 里；scrcpy 使用自己的 SDL 窗口（性能更好，所以作为外置窗口运行）。</p>
-          <div class="trow">
-            <button id="adb-key-back" class="btn small" title="KEYCODE_BACK(4)">返回</button>
-            <button id="adb-key-home" class="btn small" title="KEYCODE_HOME(3)">主屏</button>
-            <button id="adb-key-apps" class="btn small" title="KEYCODE_APP_SWITCH(187)">多任务</button>
-            <button id="adb-key-power" class="btn small" title="KEYCODE_POWER(26)">电源键</button>
-          </div>
-          <div class="trow">
-            <input id="adb-text" class="grow" placeholder="要输入的文字（走 input text）" />
-            <button id="adb-text-send" class="btn small">输入</button>
-          </div>
-          <div class="field"><label for="adb-scrcpy-args">scrcpy 参数</label><input id="adb-scrcpy-args" placeholder="--max-size 1280 --max-fps 30" /></div>
-
-          <div class="cardtitle">传文件</div>
-          <div class="field">
-            <label>本机 → 设备</label>
-            <div class="inline">
-              <input id="adb-push-file" type="file" hidden />
-              <button id="adb-pick" class="btn file">选择本机文件</button>
+        <!-- 安卓 ADB 右栏：只留状态、预设与子页面入口 -->
+        <div class="parampane adbside" data-param="adb" hidden>
+          <div class="adbside-status">
+            <span id="adb-dot" class="dot"></span>
+            <div>
+              <b id="adb-state">未检测</b>
+              <small id="adb-side-summary">先连接设备</small>
             </div>
           </div>
-          <div class="field"><label for="adb-push-to">写到设备</label><input id="adb-push-to" placeholder="/sdcard/Download/x.bin" /></div>
-          <div class="btnrow"><button id="adb-push" class="btn primary">推送</button></div>
-          <div class="field"><label for="adb-pull-from">设备上的路径</label><input id="adb-pull-from" placeholder="/sdcard/Download/x.bin" /></div>
-          <div class="btnrow">
-            <button id="adb-pull" class="btn">取回本机</button>
-            <button id="adb-shot-save" class="btn">截图存盘</button>
+
+          <div class="cardtitle">预设</div>
+          <div class="adbpresets">
+            <button class="adbentry" data-adb-preset="usb">
+              <b>USB 调试</b><small>打开连接页并刷新设备</small>
+            </button>
+            <button class="adbentry" data-adb-preset="wireless">
+              <b>无线调试</b><small>扫描、配对并自动连接</small>
+            </button>
+            <button class="adbentry" data-adb-preset="smooth">
+              <b>流畅投屏</b><small>低分辨率、较高帧率</small>
+            </button>
+            <button class="adbentry" data-adb-preset="sharp">
+              <b>清晰投屏</b><small>原始尺寸、较低帧率</small>
+            </button>
           </div>
 
-          <div class="cardtitle">APK</div>
-          <div class="field">
-            <label>安装包</label>
-            <div class="inline">
-              <input id="adb-apk-file" type="file" hidden />
-              <button id="adb-apk-pick" class="btn file">选择 APK</button>
-            </div>
+          <div class="cardtitle">页面</div>
+          <div class="adbpages">
+            <button class="adbentry" data-adb-open="connect"><b>连接</b><small>USB 与无线调试</small></button>
+            <button class="adbentry" data-adb-open="mirror"><b>投屏</b><small>画面、按键与文字</small></button>
+            <button class="adbentry" data-adb-open="tools"><b>详细功能</b><small>文件、APK、常用命令</small></button>
+            <button class="adbentry" data-adb-open="logs"><b>日志</b><small>Shell 与输出记录</small></button>
           </div>
-          <div class="trow">
-            <label class="chk" title="已装过就覆盖安装（adb install -r）"><input type="checkbox" id="adb-apk-r" checked /> 覆盖安装</label>
-            <span class="grow"></span>
-            <button id="adb-apk-go" class="btn small primary">安装</button>
-          </div>
-          <div class="field"><label for="adb-pkg">卸载包名</label>
-            <div class="inline"><input id="adb-pkg" placeholder="com.example.app" /><button id="adb-pkg-list" class="btn small" title="列出第三方包（点一下填进来）">列表</button></div>
-          </div>
-          <div class="btnrow"><button id="adb-pkg-rm" class="btn small">卸载</button></div>
-
-          <div class="cardtitle">常用命令</div>
-          <div class="chips" id="adb-quick"></div>
+          <p class="hint" id="adb-hint">参数在各子页面内调整，右栏只保留高频入口。</p>
         </div>
 
         <!-- 逻辑分析仪参数 -->

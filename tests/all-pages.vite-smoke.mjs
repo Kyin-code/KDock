@@ -239,6 +239,46 @@ try {
     if (screenshotDir) await page.screenshot({ path: resolve(screenshotDir, `${tab}.png`) });
     results.push(state);
   }
+  const adbUi = await page.evaluate(async () => {
+    window.__showAllPagesPage("adb");
+    const { showAdbPage } = await import("/src/adb-pages.js");
+    showAdbPage("connect");
+    const tabs = [...document.querySelectorAll(".adbtab")];
+    const visiblePage = () => [...document.querySelectorAll(".adbpage")].find((page) => !page.hidden);
+    const side = document.querySelector('.parampane[data-param="adb"]');
+    const firstState = {
+      tabCount: tabs.length,
+      activeTab: tabs.find((tab) => tab.classList.contains("active"))?.dataset.adbp || "",
+      page: visiblePage()?.dataset.adbpage || "",
+      pages: [...document.querySelectorAll(".adbpage")].map((page) => ({
+        name: page.dataset.adbpage || "",
+        hidden: page.hidden,
+      })),
+    };
+    const seen = [];
+    for (const name of ["mirror", "tools", "logs", "connect"]) {
+      showAdbPage(name);
+      seen.push({
+        name,
+        page: visiblePage()?.dataset.adbpage || "",
+        active: tabs.find((tab) => tab.classList.contains("active"))?.dataset.adbp || "",
+      });
+    }
+    return {
+      ...firstState,
+      seen,
+      sidePageLinks: side?.querySelectorAll("[data-adb-open]").length || 0,
+      sidePresets: side?.querySelectorAll("[data-adb-preset]").length || 0,
+      controlsMoved: !side?.querySelector("#adb-dev") && !side?.querySelector("#adb-mir"),
+      connectInputHeight: Math.round(document.getElementById("adb-connect-addr")?.getBoundingClientRect().height || 0),
+    };
+  });
+  if (adbUi.tabCount !== 4 || adbUi.activeTab !== "connect" || adbUi.page !== "connect"
+      || adbUi.seen.some((item) => item.page !== item.name || item.active !== item.name)
+      || adbUi.sidePageLinks !== 4 || adbUi.sidePresets !== 4
+      || !adbUi.controlsMoved || adbUi.connectInputHeight < 30) {
+    throw new Error(`ADB page split/preset regression: ${JSON.stringify(adbUi)}`);
+  }
 
   await page.evaluate(() => window.__showAllPagesPage("agent"));
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -966,6 +1006,7 @@ try {
     ok: true,
     pageCount: pages.length,
     pages: results,
+    adbUi,
     logGutter,
     agentLayout,
     agentAfterWindowShrink,
