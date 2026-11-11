@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.29 -->
+## v0.3.29
+
+### 修复
+
+- fix(update): animate clipped download arrow
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.28 -->
 ## v0.3.28
 
