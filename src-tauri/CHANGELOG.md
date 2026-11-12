@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.30 -->
+## v0.3.30
+
+### 新增
+
+- feat: stabilize transport lifecycle and transfer UI
+
+### Dependencies
+
+- Update kdock-core to 0.3.30.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.29 -->
 ## v0.3.29
 
