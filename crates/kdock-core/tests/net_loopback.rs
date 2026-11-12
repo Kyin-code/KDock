@@ -133,6 +133,34 @@ fn udp_learns_remote_from_first_packet() {
     assert_eq!(a.remote().unwrap().port(), b.local_port());
 }
 
+#[test]
+fn udp_zero_length_datagram_is_still_a_datagram() {
+    let a = UdpEndpoint::bind(0).unwrap();
+    let b = UdpEndpoint::bind(0).unwrap();
+    a.set_read_timeout(T).unwrap();
+    b.set_remote("127.0.0.1", a.local_port()).unwrap();
+    b.send(&[]).unwrap();
+
+    let mut buf = [0u8; 8];
+    let (n, from) = a.recv(&mut buf).expect("零长度 UDP 报文不是连接关闭");
+    assert_eq!(n, 0);
+    assert_eq!(from.port(), b.local_port());
+}
+
+#[test]
+fn udp_learn_does_not_overwrite_configured_remote() {
+    let a = UdpEndpoint::bind(0).unwrap();
+    let b = UdpEndpoint::bind(0).unwrap();
+    a.set_read_timeout(T).unwrap();
+    a.set_remote("127.0.0.1", 9).unwrap();
+    b.set_remote("127.0.0.1", a.local_port()).unwrap();
+    b.send(b"keep configured peer").unwrap();
+
+    let mut buf = [0u8; 64];
+    a.recv_learn(&mut buf).unwrap();
+    assert_eq!(a.remote().unwrap().port(), 9);
+}
+
 // AC-6：可以绑定指定的监听端口；端口被占用时给出可读错误而不是 panic。
 #[test]
 fn ac6_explicit_port_and_occupied_port_error() {

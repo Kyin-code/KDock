@@ -58,3 +58,59 @@ export function appendAsciiTxEntry(entries, entry) {
   last.ts_ms = Math.max(Number(last.ts_ms) || 0, Number(entry.ts_ms) || 0);
   return true;
 }
+
+export function removeTransferEntry(entries, target) {
+  const index = entries.indexOf(target);
+  if (index < 0) return false;
+  entries.splice(index, 1);
+  return true;
+}
+
+/**
+ * A partial RX line is a real entry in the ordered stream. Later TX/RX entries
+ * must be appended after it, not rendered before a global "tail" at the bottom.
+ */
+export function updateTransferTail({ pending, buffer, tail, partial, nextNo }) {
+  if (!partial) {
+    if (tail) {
+      removeTransferEntry(pending, tail);
+      removeTransferEntry(buffer, tail);
+    }
+    return null;
+  }
+  if (tail) {
+    Object.assign(tail, partial);
+    return tail;
+  }
+  const entry = {
+    dir: "RX",
+    ...partial,
+    partial: true,
+    no: typeof nextNo === "function" ? nextNo() : partial.no,
+  };
+  pending.push(entry);
+  return entry;
+}
+
+/** Replace a partial line in place so its original position in the stream is kept. */
+export function completeTransferTail({ pending, buffer, tail, entry }) {
+  if (!tail) {
+    pending.push(entry);
+    return entry;
+  }
+  if (entry.no == null) entry.no = tail.no;
+  for (const entries of [pending, buffer]) {
+    const index = entries.indexOf(tail);
+    if (index >= 0) {
+      entries[index] = entry;
+      return entry;
+    }
+  }
+  pending.push(entry);
+  return entry;
+}
+
+export function clearTransferEntries(pending, buffer) {
+  pending.length = 0;
+  buffer.length = 0;
+}

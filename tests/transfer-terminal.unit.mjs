@@ -3,10 +3,15 @@ import { readFile } from "node:fs/promises";
 import { createAsciiHistory, loadAsciiHistory, saveAsciiHistory } from "../src/ascii-history.js";
 import {
   appendAsciiTxEntry,
+  clearTransferEntries,
+  completeTransferTail,
   createLiveTimestampGuard,
   formatHexDump,
   joinTransferHex,
+  updateTransferTail,
 } from "../src/transfer-log.js";
+import { EN } from "../src/locales/en.js";
+import { translateTransportText } from "../src/transport-i18n.js";
 import { termFeed, termModes, termNew, termText } from "../src/terminal.js";
 import { terminalKeySequence, terminalPastePayload } from "../src/terminal-keys.js";
 
@@ -126,6 +131,69 @@ function feed(text) {
     "00000000  41 54 0D 0A                                      |AT..|",
   ]);
   assert.equal(joinTransferHex("41 42", "43"), "41 42 43");
+}
+
+{
+  const pending = [];
+  const buffer = [];
+  let no = 0;
+  let tail = updateTransferTail({
+    pending,
+    buffer,
+    tail: null,
+    partial: { text: "RX part", ts_ms: 10 },
+    nextNo: () => ++no,
+  });
+  pending.push({ dir: "TX", text: "next command", no: ++no, ts_ms: 11 });
+  tail = updateTransferTail({
+    pending,
+    buffer,
+    tail,
+    partial: { text: "RX complete", ts_ms: 12 },
+    nextNo: () => ++no,
+  });
+  const completed = completeTransferTail({
+    pending,
+    buffer,
+    tail,
+    entry: { dir: "RX", text: "RX complete\n", ts_ms: 12 },
+  });
+  assert.deepEqual(pending.map((entry) => entry.dir), ["RX", "TX"],
+    "a completed RX line must stay before later TX log entries");
+  assert.equal(completed.no, 1, "completing a tail must preserve its original sequence number");
+  assert.equal(tail.text, "RX complete");
+}
+
+{
+  const pending = [{ dir: "TX", text: "queued" }];
+  const buffer = [{ dir: "RX", text: "visible" }];
+  clearTransferEntries(pending, buffer);
+  assert.deepEqual(pending, []);
+  assert.deepEqual(buffer, []);
+}
+
+{
+  const translate = (value) => EN[value] || value;
+  assert.equal(
+    translateTransportText("已连接 UDP 192.168.2.48:9001 <-> 192.168.2.178:23（本地端口 9001）", translate),
+    "Connected to UDP 192.168.2.48:9001 <-> 192.168.2.178:23 (local port 9001)",
+  );
+  assert.equal(
+    translateTransportText("[链路] 连接断了，1.5s 后重连（第 3 次）...", translate),
+    "[Link] Connection lost; reconnecting in 1.5s (attempt 3)...",
+  );
+  assert.equal(
+    translateTransportText("[会话] 已保存 12 行到 D:\\logs\\session.jsonl", translate),
+    "[Session] Saved 12 lines to D:\\logs\\session.jsonl",
+  );
+  assert.equal(
+    translateTransportText("读取失败: connection reset", translate),
+    "Read failed: connection reset",
+  );
+  assert.equal(
+    translateTransportText("历史记录…", translate),
+    "History…",
+  );
 }
 
 {

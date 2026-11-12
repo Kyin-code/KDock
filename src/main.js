@@ -33,8 +33,12 @@ import { bindPopoverDismissal } from "./popover.js";
 import { termFeed, termModes, termNew, termText } from "./terminal.js";
 import {
   appendAsciiTxEntry,
+  clearTransferEntries,
+  completeTransferTail,
   createLiveTimestampGuard,
   formatHexDump,
+  removeTransferEntry,
+  updateTransferTail,
 } from "./transfer-log.js";
 import { EN } from "./locales/en.js";
 import {
@@ -186,6 +190,10 @@ let rxMode = "text";
 let rxOnly = localStorage.getItem("kdock_rx_only") === "1";
 let tailEntry = null;      // "正在长的半行"（设备还没发换行），渲染在最后一行、就地更新
 let rxEntryNo = 0;
+let rxRedrawDeferred = false;
+let rxPointerHold = false;
+let rxClearAfter = 0;
+let rxClearTimer = null;
 const liveTs = createLiveTimestampGuard(() => Date.now());
 let currentTermModes = { applicationCursor: false, bracketedPaste: false };
 let sshHistoryControllerPromise = null;
@@ -226,20 +234,69 @@ function flushRxPending() {
   if (!rxPending.length) return;
   for (const x of rxPending) rxBuffer.push(x);
   rxPending = [];
-  if (rxBuffer.length > MAX_RX) rxBuffer = rxBuffer.slice(-MAX_RX);
+  if (rxBuffer.length > MAX_RX) {
+    rxBuffer = rxBuffer.slice(-MAX_RX);
+    if (tailEntry && !rxBuffer.includes(tailEntry)) tailEntry = null;
+  }
   redrawRx();
+}
+
+function scheduleRxFlush() {
+  if (rxTimer !== null) return;
+  // 攒 ~16ms 一帧再重绘；窗口被遮挡/最小化时浏览器不给 rAF，
+  // 所以 setTimeout 兜底，rAF 抢先在可见时更跟手。
+  rxTimer = setTimeout(flushRxPending, RX_FLUSH_MS);
+  requestAnimationFrame(flushRxPending);
 }
 
 function pushEntry(e) {
   if (rxPaused) return;
   if (e.no == null) e.no = ++rxEntryNo;              // 一条一个号（多行的话只在这一条的第一行显示）
   rxPending.push(e);
-  if (rxTimer !== null) return;
-  // 攒 ~16ms 一帧再重绘；**不能只靠 requestAnimationFrame** ——
-  // 窗口被遮挡/最小化时浏览器不给 rAF，日志就再也不刷新了（实测踩过），
-  // 所以用 setTimeout 兜底、rAF 抢先（可见时更跟手）。
-  rxTimer = setTimeout(flushRxPending, RX_FLUSH_MS);
-  requestAnimationFrame(flushRxPending);
+  scheduleRxFlush();
+}
+
+function isStaleRxEvent(ts) {
+  const stamp = Number(ts);
+  return rxClearAfter > 0 && Number.isFinite(stamp) && stamp > 0 && stamp <= rxClearAfter;
+}
+
+function setRxTail(payload) {
+  if (payload && (rxPaused || isStaleRxEvent(payload.ts_ms))) return;
+  tailEntry = updateTransferTail({
+    pending: rxPending,
+    buffer: rxBuffer,
+    tail: tailEntry,
+    partial: payload ? {
+      ts_ms: liveTs(payload.ts_ms),
+      text: payload.text || "",
+      hex: payload.hex || "",
+      ascii: payload.ascii || "",
+    } : null,
+    nextNo: () => ++rxEntryNo,
+  });
+  scheduleRxFlush();
+  redrawRx();
+}
+
+function clearRxView() {
+  if (rxTimer !== null) {
+    clearTimeout(rxTimer);
+    rxTimer = null;
+  }
+  clearTransferEntries(rxPending, rxBuffer);
+  tailEntry = null;
+  rxEntryNo = 0;
+  rxRedrawDeferred = false;
+  stickBottom = true;
+  if ($("rx-jump")) $("rx-jump").hidden = true;
+  rxClearAfter = liveTs(Date.now());
+  if (rxClearTimer !== null) clearTimeout(rxClearTimer);
+  rxClearTimer = setTimeout(() => {
+    rxClearAfter = 0;
+    rxClearTimer = null;
+  }, 1500);
+  redrawRx(true);
 }
 
 // 跟随最新：只有"本来就在底部"才自动滚；用户上翻时停下并亮出"↓ 最新"徽章
@@ -248,6 +305,19 @@ function pushEntry(e) {
 let stickBottom = true;
 function bindScrollFollow() {
   const el = $("rx");
+  el.addEventListener("pointerdown", (e) => {
+    if (e.button === 0) rxPointerHold = true;
+  });
+  const releaseSelectionHold = () => {
+    if (!rxPointerHold) return;
+    setTimeout(() => {
+      rxPointerHold = false;
+      if (rxRedrawDeferred && !rxSelectionActive()) redrawRx();
+    }, 0);
+  };
+  document.addEventListener("pointerup", releaseSelectionHold);
+  document.addEventListener("pointercancel", releaseSelectionHold);
+  window.addEventListener("blur", releaseSelectionHold);
   el.addEventListener("scroll", () => {
     const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
     if (atBottom !== stickBottom) {
@@ -271,6 +341,9 @@ function bindScrollFollow() {
     $("rx-jump").hidden = true;
     el.scrollTop = el.scrollHeight;
   };
+  document.addEventListener("selectionchange", () => {
+    if (rxRedrawDeferred && !rxSelectionActive()) redrawRx();
+  });
 }
 // ASCII 交互(终端)模式：直接在输出区敲键盘，收到的字节原样铺开
 let asciiMode = false;
@@ -461,6 +534,14 @@ function decodeEntry(e) {
   gbkCache.set(e.hex, out);
   return out;
 }
+
+function displayEntryText(e) {
+  const text = decodeEntry(e);
+  return e.dir === "SYS" && window.kdockTranslateText
+    ? window.kdockTranslateText(text)
+    : text;
+}
+
 function bindEncoding() {
   const sel = $("encoding");
   sel.value = encMode;
@@ -538,10 +619,10 @@ function ansiToHtml(text) {
 /** 一条记录里可能含好几行（设备一次吐一批），按行拆开显示，时间戳沿用这条记录的时间 */
 function entryLines(e) {
   if (rxMode === "hex") {
-    return formatHexDump(e.hex, { text: decodeEntry(e) })
+    return formatHexDump(e.hex, { text: displayEntryText(e) })
       .map((line) => `<span class="hexdump">${escapeHtml(line)}</span>`);
   }
-  const t = decodeEntry(e);
+  const t = displayEntryText(e);
   const textParts = ansiBackspaceText(t).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
   if (textParts.length > 1 && textParts[textParts.length - 1] === "") textParts.pop();  // 结尾换行不留空行
   return textParts.map(ansiToHtml);
@@ -640,7 +721,7 @@ function termRender() {
   const mine = [];          // 本地回显里"设备还没回显"的字符
   const devSeen = [];       // 设备回显里"可能是我们自己敲的"字符
   for (const e of visibleEntries(rxBuffer)) {
-    const t = e.dir === "RX" || e.dir === "TX" ? decodeEntry(e) : String(e.text);
+    const t = displayEntryText(e);
     const ts = e.ts_ms || 0;
     if (e.dir === "TX") {
       if (!$("local-echo")?.checked) continue;   // Remote echo is authoritative.
@@ -656,7 +737,6 @@ function termRender() {
     termFeed(st, t);
     if (!t.endsWith("\n")) termFeed(st, "\r\n");
   }
-  if (tailEntry) termFeed(st, decodeEntry(tailEntry));   // 半行接在最后，就地长出来
   currentTermModes = termModes(st);
   return termText(st, 1000);                            // 只渲染最后 1000 行
 }
@@ -685,22 +765,33 @@ function logNoSet(on, silent) {
   if (!silent && $("fl-items")) flList();
 }
 
-function redrawRx() {
+function rxSelectionActive() {
+  const selection = window.getSelection();
   const box = $("rx");
+  if (rxPointerHold) return true;
+  if (!selection || selection.isCollapsed || !selection.rangeCount || !box) return false;
+  return box.contains(selection.anchorNode) || box.contains(selection.focusNode);
+}
+
+function redrawRx(force = false) {
+  const box = $("rx");
+  if (!box) return;
+  // Replacing innerHTML destroys the native selection. While the user is
+  // selecting/copying, keep ingesting data but defer the DOM rebuild.
+  if (!force && rxSelectionActive()) {
+    rxRedrawDeferred = true;
+    return;
+  }
+  rxRedrawDeferred = false;
   // 重画会重建整段内容：先记住用户现在看的位置，画完再放回去（跟随最新时才跳到底部）
   const keepTop = box.scrollTop;
   const wasBottom = stickBottom || keepTop + box.clientHeight >= box.scrollHeight - 8;
   const shown = visibleEntries(rxBuffer);
-  const tail = tailEntry && (!rxOnly || tailEntry.dir === "RX") ? lineRows(tailEntry) : "";
   box.classList.toggle("with-no", logNoOn());            // 只管左边那一列显不显示
-  const maxNo = Math.max(
-    rxEntryNo,
-    ...shown.map((e) => Number(e.no) || 0),
-    Number(tailEntry && tailEntry.no) || 0,
-  );
+  const maxNo = Math.max(rxEntryNo, ...shown.map((e) => Number(e.no) || 0));
   applyLogNoWidth(box, maxNo);
   if (asciiMode) box.textContent = termRender();          // 终端就是纯文本，不走 HTML
-  else box.innerHTML = shown.map(lineRows).join("") + tail;
+  else box.innerHTML = shown.map(lineRows).join("");
   if (wasBottom && $("autoscroll").checked) {
     box.scrollTop = box.scrollHeight;
   } else {
@@ -714,8 +805,7 @@ function pushSys(text) {
   if (rxPaused) return;
   for (const line of String(text).split(/\r?\n/)) {
     if (!line.trim()) continue;
-    const shown = window.kdockTranslateText ? window.kdockTranslateText(line) : line;
-    pushEntry({ dir: "SYS", ts_ms: liveTs(Date.now()), text: shown, hex: "", ascii: "" });
+    pushEntry({ dir: "SYS", ts_ms: liveTs(Date.now()), text: line, hex: "", ascii: "" });
   }
 }
 
@@ -908,7 +998,13 @@ async function bindNetipEvents() {
 async function refreshStats() {
   try {
     const s = await invoke("get_stats");
-    const state = en(s.connected ? "已连接" : s.listening ? "监听中" : "未连接");
+    const reconnectLabel = LANG === "en"
+      ? `Reconnecting ${s.reconnect_attempt || 0}/20`
+      : `重连中 ${s.reconnect_attempt || 0}/20`;
+    const state = s.connected
+      ? en("已连接")
+      : s.reconnecting ? reconnectLabel
+        : s.listening ? en("监听中") : en("未连接");
     const chip = s.connected ? (s.label || en("已连接")) : state;
     chipSet(chip, s.connected);
     $("status").textContent = s.connected ? `${state} · ${s.label || ""}` : state;
@@ -920,25 +1016,27 @@ async function refreshStats() {
     // 升级页也看一眼"升级会挂在哪条连接上"
     $("upg-link").textContent = s.connected
       ? `${s.label || ""}`
-      : s.listening ? en("监听中（等对端接入）") : en("未连接");
-    $("upg-link").className = "dot" + (s.connected ? " ok" : "");
+      : s.reconnecting ? reconnectLabel
+        : s.listening ? en("监听中（等对端接入）") : en("未连接");
+    $("upg-link").className = "dot" + (s.connected ? " ok" : s.reconnecting ? " warn" : "");
     $("fl-link").textContent = s.connected
       ? `${s.label || ""}`
-      : s.listening ? en("监听中（等对端接入）") : en("未连接");
-    $("fl-link").className = "dot" + (s.connected ? " ok" : "");
+      : s.reconnecting ? reconnectLabel
+        : s.listening ? en("监听中（等对端接入）") : en("未连接");
+    $("fl-link").className = "dot" + (s.connected ? " ok" : s.reconnecting ? " warn" : "");
     // 「连接」按钮跟着**真实状态**走：连上（不管谁连的：用户点的还是 agent 的 port_open）就变成
     // 「已连接」并点不动，断开之后才回到「连接」。
     const openBtn = $("open");
     if (openBtn) {
-      const busy = !!(s.connected || s.listening);
-      const label = s.connected ? "已连接" : s.listening ? "监听中" : "连接";
+      const busy = !!(s.connected || s.listening || s.reconnecting);
+      const label = s.connected ? "已连接" : s.reconnecting ? "重连中" : s.listening ? "监听中" : "连接";
       if (openBtn.textContent !== en(label)) openBtn.textContent = en(label);
       openBtn.className = busy ? "btn connected" : "btn primary";
       openBtn.disabled = busy;
       openBtn.title = busy ? en("已连上，要换连接先点「断开」") : "";
     }
     const closeBtn = $("close");
-    if (closeBtn) closeBtn.disabled = !(s.connected || s.listening);
+    if (closeBtn) closeBtn.disabled = !(s.connected || s.listening || s.reconnecting);
   } catch (_) {
     /* 还没连接时拿不到，忽略 */
   }
@@ -948,7 +1046,7 @@ async function doOpen() {
   try {
     const endpoint = buildEndpoint();
     const msg = await invoke("open_transport", { endpoint });
-    toast(msg);
+    toast(window.kdockTranslateText ? window.kdockTranslateText(msg) : msg);
     pushSys(msg);
     if (endpoint.mode === "ssh") {
       try {
@@ -965,7 +1063,7 @@ async function doOpen() {
 async function doClose() {
   try {
     const msg = await invoke("close_transport");
-    toast(msg);
+    toast(window.kdockTranslateText ? window.kdockTranslateText(msg) : msg);
     pushSys(msg);
   } catch (e) {
     toast(String(e));
@@ -976,32 +1074,52 @@ async function doClose() {
 function txMode() {
   return rxMode === "hex" ? "hex" : "text";
 }
+function beginTxLog(text) {
+  if (rxPaused) return null;
+  const entry = {
+    dir: "TX",
+    ts_ms: liveTs(Date.now()),
+    text: String(text || ""),
+    hex: "",
+    ascii: "",
+    awaitingAck: true,
+  };
+  pushEntry(entry);
+  return entry;
+}
+function finishTxLog(entry, ack) {
+  if (!entry) return;
+  entry.text = ack.text;
+  entry.hex = ack.hex;
+  entry.ascii = ack.ascii;
+  entry.awaitingAck = false;
+  redrawRx();
+}
+function cancelTxLog(entry) {
+  if (!entry) return;
+  removeTransferEntry(rxPending, entry);
+  removeTransferEntry(rxBuffer, entry);
+  redrawRx();
+}
 async function doSend() {
   const payload = $("tx").value;
   const txm = txMode();
   const le = $("line-ending").value;
   if (!payload.trim()) return toast(en("没有可发送的内容"));
+  const txEntry = beginTxLog(payload);
   try {
     // 后端返回真正写到线上的字节，TX 行直接用它渲染
     const ack = await invoke("write_data", { payload, mode: txm, lineEnding: le });
-    if (!rxPaused) {
-      pushEntry({ dir: "TX", ts_ms: liveTs(Date.now()), text: ack.text, hex: ack.hex, ascii: ack.ascii });
-    }
+    finishTxLog(txEntry, ack);
 
     if (payload && history[0] !== payload) {
       history.unshift(payload);
       history = history.slice(0, 30);
-      const sel = $("history");
-      sel.innerHTML = '<option value="">历史记录…</option>';
-      history.forEach((h, i) => {
-        const o = document.createElement("option");
-        o.value = String(i);
-        o.textContent = h.length > 60 ? h.slice(0, 60) + "…" : h;
-        sel.appendChild(o);
-      });
+      refreshHistory();
     }
     toast(`${en("已发送")} ${ack.bytes} B`);
   } catch (e) {
+    cancelTxLog(txEntry);
     toast(String(e));
   }
 }
@@ -6161,21 +6279,26 @@ function qsSave() { localStorage.setItem("kdock_quick", JSON.stringify(qsItems))
 
 async function sendPayload(payload, hex) {
   if (!payload) return;
+  const txEntry = beginTxLog(payload);
   try {
     const le = $("line-ending").value;
     const ack = await invoke("write_data", { payload, mode: hex ? "hex" : "text", lineEnding: le });
-    if (!rxPaused) pushEntry({ dir: "TX", ts_ms: liveTs(Date.now()), text: ack.text, hex: ack.hex, ascii: ack.ascii });
+    finishTxLog(txEntry, ack);
     if ($("history") && !hex && history[0] !== payload) {
       history.unshift(payload);
       history = history.slice(0, 30);
       refreshHistory();
     }
-  } catch (e) { toast(String(e)); }
+  } catch (e) {
+    cancelTxLog(txEntry);
+    toast(String(e));
+  }
 }
 
 function refreshHistory() {
   const sel = $("history");
-  sel.innerHTML = '<option value="">历史…</option>';
+  if (!sel) return;
+  sel.innerHTML = `<option value="">${en("历史记录…")}</option>`;
   history.forEach((h, i) => {
     const o = document.createElement("option");
     o.value = String(i);
@@ -8536,6 +8659,15 @@ function bindShortcuts() {
 }
 
 // ---------------- 设置弹窗（供应商/模型、主题配色、通用、关于） ----------------
+function syncSettingsHeader(section) {
+  const tab = [...document.querySelectorAll(".modaltab")]
+    .find((item) => item.dataset.set === section)
+    || document.querySelector(".modaltab.active");
+  const title = document.getElementById("set-section-title");
+  const desc = document.getElementById("set-section-desc");
+  if (title) title.textContent = tab?.querySelector("b")?.textContent?.trim() || tab?.textContent?.trim() || "";
+  if (desc) desc.textContent = tab?.dataset.desc || "";
+}
 function openSettings(section) {
   const m = document.getElementById("settings-modal");
   if (!m) return;
@@ -8544,6 +8676,7 @@ function openSettings(section) {
     document.querySelectorAll(".modaltab").forEach((b) => b.classList.toggle("active", b.dataset.set === section));
     document.querySelectorAll(".setpane").forEach((p) => { p.hidden = p.dataset.setpane !== section; });
   }
+  syncSettingsHeader(section || document.querySelector(".modaltab.active")?.dataset.set || "general");
   if (section === "model" && !agNewProfile) agLoadConfig();
   // 打开模型页先落在「使用」面板；实时负载**不主动拉**（等用户展开免费模型那块再拉）
   if (section === "model") agProvTab("use");
@@ -8567,6 +8700,7 @@ function bindSettings() {
     b.onclick = () => {
       document.querySelectorAll(".modaltab").forEach((x) => x.classList.toggle("active", x === b));
       document.querySelectorAll(".setpane").forEach((p) => { p.hidden = p.dataset.setpane !== b.dataset.set; });
+      syncSettingsHeader(b.dataset.set);
       if (b.dataset.set === "model" && !agNewProfile) agLoadConfig();
       if (b.dataset.set === "model") agProvTab("use");
       if (b.dataset.set === "shortcuts" && shortcutSettingsUi) shortcutSettingsUi.refresh();
@@ -8641,6 +8775,7 @@ function bindSettings() {
     document.getElementById("set-about-more").onclick = () => {
       document.querySelectorAll(".modaltab").forEach((x) => x.classList.toggle("active", x.dataset.set === "about"));
       document.querySelectorAll(".setpane").forEach((p) => { p.hidden = p.dataset.setpane !== "about"; });
+      syncSettingsHeader("about");
       agLoadTools();
       agRenderAbout();
     };
@@ -13848,6 +13983,11 @@ let LANG = localStorage.getItem("kdock_lang") === "zh" ? "zh" : "en";
 // cached and reviewed independently.
 const appI18n = createI18n(EN, LANG);
 const en = (t, values) => translate(appI18n, LANG, t, values);
+let transportTextTranslator = null;
+import("./transport-i18n.js").then(({ translateTransportText }) => {
+  transportTextTranslator = translateTransportText;
+  if (LANG === "en") redrawRx(true);
+}).catch(() => {});
 // 分文件写的小模块（批量文本/计算器）也要能翻译 + 切语言时重画
 const langHooks = [];
 window.kdockT = en;
@@ -13857,7 +13997,9 @@ window.kdockOnLang = (fn) => { if (typeof fn === "function") langHooks.push(fn);
 window.kdockTranslateText = (text) => {
   if (LANG !== "en") return text;
   const s = String(text);
-  return en(s) !== s ? en(s) : s.replace(
+  const transport = transportTextTranslator ? transportTextTranslator(s, en) : en(s);
+  if (transport !== s) return transport;
+  return s.replace(
     /^(未找到便携分析器：去环境配置 → 固件运行结构分析器 准备。|便携分析器就绪：|选择固件失败：|已选择 )/,
     (m) => en(m),
   );
@@ -13890,6 +14032,8 @@ function applyLang(lang) {
   try {
     safe(outHeadRefresh, "outHeadRefresh");
     safe(outClockTick, "outClockTick");
+    safe(refreshHistory, "refreshHistory");
+    safe(() => redrawRx(true), "redrawRx");
     safe(sqRender, "sqRender");            // 画布节点正文 + 右侧配置面板，都是运行时拼的
     safe(netipPaint, "netipPaint"); // 顶栏归属地 / 设置摘要按当前语言重画
     safe(buildCmdTable, "buildCmdTable");  // 命令表（说明文字按当前语言重画）
@@ -14216,10 +14360,16 @@ async function main() {
   $("close").onclick = doClose;
   $("send").onclick = doSend;
   $("clear").onclick = async () => {
-    rxBuffer = [];
-    rxEntryNo = 0;         // 清屏后序号从 1 重数
-    await invoke("clear_log");
-    redrawRx();
+    clearRxView();
+    try {
+      await invoke("clear_log");
+    } catch (e) {
+      toast(String(e));
+    } finally {
+      // Data already in flight while the backend command was running belongs
+      // to the cleared view. Freeze it again after the round-trip completes.
+      clearRxView();
+    }
     if (asciiMode) $("rx").focus();     // ASCII 交互时别把焦点丢在按钮上，否则敲不动
   };
   $("pause").onchange = (e) => {
@@ -14492,17 +14642,27 @@ async function main() {
     pushSys(`串口列表变化: ${list.length ? list.join(", ") : "（无串口）"}`);
   });
   await listen("link://data", (ev) => {
-    const p = ev.payload;
+    const p = ev.payload || {};
     // 中控的步骤可以用"主连接"发；主连接的收包走 link://data，这里同步进 sqRx，
     // 否则主连接上写的 expect 永远等不到（只有中控自建的 extra 连接在推 seq://data）。
     sqRx.push({ id: "main", text: p.text || "", hex: p.hex || "" });
     if (sqRx.length > 4000) sqRx.splice(0, 1000);
     chartFeed(p.text);                                    // 数值行顺便喂给图表
-    tailEntry = null;                                     // 整行已经来了，半行作废
-    if (!rxPaused) {
-      pushEntry({ dir: "RX", ts_ms: liveTs(p.ts_ms), text: p.text, hex: p.hex, ascii: p.ascii });
-    } else {
+    if (rxPaused || isStaleRxEvent(p.ts_ms)) return;
+    const entry = {
+      dir: "RX",
+      ts_ms: liveTs(p.ts_ms),
+      text: p.text || "",
+      hex: p.hex || "",
+      ascii: p.ascii || "",
+    };
+    if (tailEntry) {
+      completeTransferTail({ pending: rxPending, buffer: rxBuffer, tail: tailEntry, entry });
+      tailEntry = null;
+      scheduleRxFlush();
       redrawRx();
+    } else {
+      pushEntry(entry);
     }
   });
   // agent 用 port_open 连上了主连接：界面里的连接参数也跟着切过去
@@ -14520,31 +14680,36 @@ async function main() {
   });
   await listen("link://tail", (ev) => {
     let p = ev.payload;
-    if (!p) { tailEntry = null; }
-    else {
-      if (typeof p === "string") { try { p = JSON.parse(p); } catch (_) { p = null; } }
-      tailEntry = p ? { dir: "RX", ts_ms: liveTs(p.ts_ms), text: p.text, hex: p.hex, ascii: p.ascii } : null;
+    if (typeof p === "string") {
+      if (!p) p = null;
+      else {
+        try { p = JSON.parse(p); } catch (_) { p = null; }
+      }
     }
-    if (!rxPaused) redrawRx();
+    setRxTail(p);
   });
   await listen("link://reconnecting", (ev) => {
-    chipSet(`重连中 ${ev.payload}/20`, false);
+    chipSet(LANG === "en" ? `Reconnecting ${ev.payload}/20` : `重连中 ${ev.payload}/20`, false);
     pushSys(`[链路] 连接断了，1.5s 后重连（第 ${ev.payload} 次）...`);
   });
   await listen("link://reconnected", (ev) => {
-    toast(`断线后自动重连成功（第 ${ev.payload} 次）`);
+    toast(LANG === "en" ? `Reconnected automatically (attempt ${ev.payload})` : `断线后自动重连成功（第 ${ev.payload} 次）`);
     pushSys(`[链路] 重连成功（第 ${ev.payload} 次）`);
     refreshStats();
   });
   await listen("link://error", (ev) => {
-    toast(String(ev.payload));
+    const message = String(ev.payload);
+    toast(window.kdockTranslateText ? window.kdockTranslateText(message) : message);
     pushSys(String(ev.payload));
   });
   await listen("link://state", (ev) => {
     const s = String(ev.payload);
     if (s === "connected") pushSys("TCP 客户端已接入");
     else if (s === "closed") pushSys("对端已断开");
-    else if (s === "reconnect-failed") { pushSys("[链路] 自动重连失败，请手动重连"); toast("自动重连失败，请手动重连"); }
+    else if (s === "reconnect-failed") {
+      pushSys("[链路] 自动重连失败，请手动重连");
+      toast(en("自动重连失败，请手动重连"));
+    }
     else pushSys(`[链路] ${s}`);
     refreshStats();
   });

@@ -102,36 +102,67 @@ fn set_auto_reconnect(v: bool) {
 
 /// 断线后在后台重连：每 1.5s 试一次，最多 ~20 次；期间报 reconnecting/reconnected 事件。
 /// 有"独占连接"的操作(升级/收发文件)在跑时跳过，别去抢。
-fn spawn_reconnect(app: AppHandle, st: Arc<AppState>, ep: Endpoint) {
+fn spawn_reconnect(app: AppHandle, st: Arc<AppState>, ep: Endpoint, session: u64) {
+    if st.link_session.load(Ordering::SeqCst) != session {
+        return;
+    }
+    if st.reconnecting.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    st.reconnect_attempt.store(0, Ordering::SeqCst);
     std::thread::spawn(move || {
+        let mut connected = false;
         for i in 1..=20u32 {
-            if !AUTO_RECONNECT.load(Ordering::Relaxed) {
-                return;
+            if st.link_session.load(Ordering::SeqCst) != session
+                || !AUTO_RECONNECT.load(Ordering::Relaxed)
+            {
+                break;
             }
+            st.reconnect_attempt.store(i, Ordering::SeqCst);
             let _ = app.emit("link://reconnecting", i);
             std::thread::sleep(std::time::Duration::from_millis(1500));
+            if st.link_session.load(Ordering::SeqCst) != session {
+                break;
+            }
             let guard = match LINK_OP.try_lock() {
                 Ok(g) => g,
                 Err(_) => continue,          // 正在升级/收发文件，等下一次
             };
-            if st.link.lock().expect("link mutex").is_some() {
-                return;                       // 已经有人接上了
+            if st.link_session.load(Ordering::SeqCst) != session
+                || st.link.lock().expect("link mutex").is_some()
+            {
+                break;                       // 已经有人接上了，或用户切了连接
             }
             match transport::open_endpoint(&ep) {
                 Ok(conn) => {
-                    drop(guard);
-                    let _ = st.reader_stop.lock().expect("stop mutex").replace(
-                        Arc::new(AtomicBool::new(false)),
-                    );
-                    if start_reader(app.clone(), st.clone(), conn).is_ok() {
+                    let stop = Arc::new(AtomicBool::new(false));
+                    // Clear the guard before spawning the reader: an immediate
+                    // disconnect may legitimately start the next retry cycle.
+                    st.reconnecting.store(false, Ordering::SeqCst);
+                    if start_reader(app.clone(), st.clone(), conn, session, stop, None).is_ok() {
+                        connected = true;
+                        st.reconnect_attempt.store(0, Ordering::SeqCst);
                         let _ = app.emit("link://reconnected", i);
+                        drop(guard);
+                        break;
                     }
-                    return;
+                    if st.link_session.load(Ordering::SeqCst) == session {
+                        st.reconnecting.store(true, Ordering::SeqCst);
+                    }
                 }
-                Err(_) => continue,
+                Err(_) => {}
+            }
+            drop(guard);
+        }
+        if st.link_session.load(Ordering::SeqCst) == session {
+            if !connected {
+                st.reconnecting.store(false, Ordering::SeqCst);
+                st.reconnect_attempt.store(0, Ordering::SeqCst);
+                if AUTO_RECONNECT.load(Ordering::Relaxed) {
+                    let _ = app.emit("link://state", "reconnect-failed");
+                }
             }
         }
-        let _ = app.emit("link://state", "reconnect-failed");
     });
 }
 
@@ -1641,6 +1672,7 @@ fn encode_payload(
 fn extra_open(app: AppHandle, endpoint: Endpoint) -> Result<serde_json::Value, String> {
     let conn = transport::open_endpoint(&endpoint)?;
     let mut reader = conn.try_clone()?;
+    let stream_like = reader.is_stream();
     let id = EXTRA_SEQ.fetch_add(1, Ordering::Relaxed);
     let label = endpoint.label();
     let stop = Arc::new(AtomicBool::new(false));
@@ -1658,8 +1690,12 @@ fn extra_open(app: AppHandle, endpoint: Endpoint) -> Result<serde_json::Value, S
                 break;
             }
             match reader.read(&mut buf) {
-                Ok(0) => break,
+                Ok(0) if stream_like => break,
+                Ok(0) => {}
                 Ok(n) => {
+                    if stop.load(Ordering::SeqCst) {
+                        break;
+                    }
                     let data = buf[..n].to_vec();
                     let _ = app2.emit(
                         "seq://data",
@@ -1674,6 +1710,12 @@ fn extra_open(app: AppHandle, endpoint: Endpoint) -> Result<serde_json::Value, S
                 Err(_) => break,
             }
         }
+        if let Ok(mut g) = EXTRA.lock() {
+            if let Some(pos) = g.iter().position(|c| c.id == id) {
+                g[pos].stop.store(true, Ordering::SeqCst);
+                g.remove(pos);
+            }
+        }
         let _ = app2.emit("seq://closed", id);
     });
     Ok(serde_json::json!({"id": id, "label": label}))
@@ -1683,8 +1725,9 @@ fn extra_open(app: AppHandle, endpoint: Endpoint) -> Result<serde_json::Value, S
 fn extra_close(id: u32) {
     let mut g = EXTRA.lock().expect("extra mutex");
     if let Some(pos) = g.iter().position(|c| c.id == id) {
-        g[pos].stop.store(true, Ordering::Relaxed);
-        g.remove(pos);
+        let mut conn = g.remove(pos);
+        conn.stop.store(true, Ordering::SeqCst);
+        conn.conn.shutdown();
     }
 }
 
@@ -1930,6 +1973,8 @@ fn spawn_port_watcher(app: AppHandle) {
 pub struct Stats {
     pub connected: bool,
     pub listening: bool,
+    pub reconnecting: bool,
+    pub reconnect_attempt: u32,
     pub mode: Option<String>,
     pub label: Option<String>,
     pub tx_bytes: u64,
@@ -1965,11 +2010,22 @@ pub struct WriteAck {
 
 #[derive(Default)]
 pub struct AppState {
+    /// Serializes connection ownership changes. Reader shutdown, close and
+    /// exclusive operations take this before touching `link`/`reader_stop`.
+    lifecycle: Mutex<()>,
     /// 写端。`Some` 表示已经有可用连接。
     link: Mutex<Option<Conn>>,
     /// TCP Server 正在监听时的监听器。
     listener: Mutex<Option<kdock_core::net::TcpServer>>,
     reader_stop: Mutex<Option<Arc<AtomicBool>>>,
+    /// Logical connection generation. User open/close invalidate it; automatic
+    /// reconnect keeps the same generation.
+    link_session: AtomicU64,
+    /// Reader-thread generation. A stale reader must never clear a newer link.
+    reader_seq: AtomicU64,
+    reconnecting: AtomicBool,
+    reconnect_attempt: AtomicU32,
+    closing: AtomicBool,
     log: Mutex<SessionLog>,
     /// Serialize TX logging with reader RX logging so an echo cannot be
     /// recorded before the write that caused it.
@@ -1985,22 +2041,47 @@ impl AppState {
     fn is_busy(&self) -> bool {
         self.link.lock().expect("link mutex").is_some()
             || self.listener.lock().expect("listener mutex").is_some()
+            || self.reconnecting.load(Ordering::Relaxed)
+            || self.closing.load(Ordering::Relaxed)
     }
 }
 
 // ── reader 线程 ───────────────────────────────────────────────
 
-fn start_reader(app: AppHandle, st: Arc<AppState>, conn: Conn) -> Result<(), String> {
+fn start_reader(
+    app: AppHandle,
+    st: Arc<AppState>,
+    conn: Conn,
+    session: u64,
+    stop: Arc<AtomicBool>,
+    startup_log: Option<String>,
+) -> Result<(), String> {
     let mut reader = conn.try_clone()?;
     let stream_like = conn.is_stream();
-    *st.link.lock().expect("link mutex") = Some(conn);
-
-    let stop = st
-        .reader_stop
-        .lock()
-        .expect("stop mutex")
-        .clone()
-        .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    let reader_id;
+    {
+        let _lifecycle = st.lifecycle.lock().expect("lifecycle mutex");
+        if st.link_session.load(Ordering::SeqCst) != session {
+            return Err("连接已取消或已切换".into());
+        }
+        let mut link = st.link.lock().expect("link mutex");
+        if link.is_some() {
+            return Err("已有一个连接，请先断开".into());
+        }
+        reader_id = st.reader_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        *st.reader_stop.lock().expect("stop mutex") = Some(stop.clone());
+        *link = Some(conn);
+        drop(link);
+        // The reader is not spawned yet, so this startup line always precedes
+        // its first RX event. Keep lifecycle locked so close cannot interleave.
+        if let Some(line) = startup_log {
+            let _order = st.log_order.lock().expect("log order mutex");
+            st.log
+                .lock()
+                .expect("log mutex")
+                .push(now_ms(), Direction::Sys, line.into_bytes());
+        }
+    }
 
     let ep_for_reconnect = st.endpoint.lock().expect("endpoint mutex").clone();
     std::thread::spawn(move || {
@@ -2052,27 +2133,26 @@ fn start_reader(app: AppHandle, st: Arc<AppState>, conn: Conn) -> Result<(), Str
         let mut pending: Vec<u8> = Vec::new();
         let mut last_rx_ts = now_ms();
         let mut last_rx = std::time::Instant::now();
+        let mut read_error: Option<String> = None;
         loop {
-            if stop.load(Ordering::Relaxed) {
+            if stop.load(Ordering::Relaxed)
+                || st.link_session.load(Ordering::SeqCst) != session
+                || st.reader_seq.load(Ordering::SeqCst) != reader_id
+            {
                 break;
             }
             match reader.read(&mut buf) {
                 Ok(0) => {
                     if stream_like {
-                        let _ = app.emit("link://state", "closed");
-                        // 对端关了：把自己从 link 里摘掉，必要时后台重连
-                        if st.link.lock().expect("link mutex").is_some() {
-                            *st.link.lock().expect("link mutex") = None;
-                            if AUTO_RECONNECT.load(Ordering::Relaxed) {
-                                if let Some(ep @ Endpoint::TcpClient { .. }) = ep_for_reconnect.clone() {
-                                    spawn_reconnect(app.clone(), st.clone(), ep);
-                                }
-                            }
-                        }
                         break;
                     }
                 }
                 Ok(n) => {
+                    if st.link_session.load(Ordering::SeqCst) != session
+                        || st.reader_seq.load(Ordering::SeqCst) != reader_id
+                    {
+                        break;
+                    }
                     // The timestamp belongs to the read that completed the line,
                     // not an older byte still waiting in `pending`. Otherwise a
                     // fresh response can inherit a timestamp from minutes ago.
@@ -2110,23 +2190,37 @@ fn start_reader(app: AppHandle, st: Arc<AppState>, conn: Conn) -> Result<(), Str
                     }
                 }
                 Err(e) => {
-                    let _ = app.emit("link://error", format!("读取失败: {e}"));
-                    if stream_like {
-                        if st.link.lock().expect("link mutex").is_some() {
-                            *st.link.lock().expect("link mutex") = None;
-                            if AUTO_RECONNECT.load(Ordering::Relaxed) {
-                                if let Some(ep @ Endpoint::TcpClient { .. }) = ep_for_reconnect.clone() {
-                                    spawn_reconnect(app.clone(), st.clone(), ep);
-                                }
-                            }
-                        }
-                    }
+                    read_error = Some(e.to_string());
                     break;
                 }
             }
         }
-        if !pending.is_empty() {
-            log_lines(&app, &pending, last_rx_ts);
+        let disconnected = {
+            let _lifecycle = st.lifecycle.lock().expect("lifecycle mutex");
+            if st.link_session.load(Ordering::SeqCst) != session
+                || st.reader_seq.load(Ordering::SeqCst) != reader_id
+            {
+                None
+            } else {
+                if !pending.is_empty() {
+                    log_lines(&app, &pending, last_rx_ts);
+                }
+                st.link.lock().expect("link mutex").take()
+            }
+        };
+        let Some(_) = disconnected else {
+            return;
+        };
+
+        if let Some(error) = read_error {
+            let _ = app.emit("link://error", format!("读取失败: {error}"));
+        } else {
+            let _ = app.emit("link://state", "closed");
+        }
+        if AUTO_RECONNECT.load(Ordering::Relaxed) {
+            if let Some(ep @ Endpoint::TcpClient { .. }) = ep_for_reconnect {
+                spawn_reconnect(app, st, ep, session);
+            }
         }
     });
     Ok(())
@@ -2160,78 +2254,110 @@ pub(crate) fn open_main(app: &AppHandle, endpoint: Endpoint, by: &str) -> Result
 }
 
 fn open_main_inner(app: &AppHandle, endpoint: Endpoint) -> Result<String, String> {
-    let state = app.state::<Arc<AppState>>();
-    if state.is_busy() {
+    let st = app.state::<Arc<AppState>>().inner().clone();
+    // File transfer and upgrade take this same lock while they exclusively own
+    // the connection, so a new link cannot silently replace their handle.
+    let _setup = LINK_OP
+        .try_lock()
+        .map_err(|_| "当前有独占连接的操作正在进行，请等待完成".to_string())?;
+    if st.is_busy() {
         return Err("已有一个连接，请先断开".into());
     }
-
-    *state.counters.lock().expect("counters mutex") = (0, 0);
-    *state.char_counts.lock().expect("chars mutex") = (0, 0);
-    *state.opened_at.lock().expect("opened mutex") = Some(Instant::now());
-    *state.endpoint.lock().expect("endpoint mutex") = Some(endpoint.clone());
-
-    let stop = Arc::new(AtomicBool::new(false));
-    *state.reader_stop.lock().expect("stop mutex") = Some(stop.clone());
+    let open_request = st.link_session.load(Ordering::SeqCst);
 
     if let Endpoint::TcpServer { .. } = endpoint {
         let server = transport::bind_server(&endpoint)?;
         let port = server.local_port();
-        *state.listener.lock().expect("listener mutex") = Some(server.clone());
-        state.log.lock().expect("log mutex").push(
-            now_ms(),
-            Direction::Sys,
-            format!("listen {}", endpoint.label()).into_bytes(),
-        );
+        let stop = Arc::new(AtomicBool::new(false));
+        let session;
+        {
+            let _lifecycle = st.lifecycle.lock().expect("lifecycle mutex");
+            if st.is_busy() {
+                return Err("已有一个连接，请先断开".into());
+            }
+            if st.link_session.load(Ordering::SeqCst) != open_request {
+                return Err("连接请求已取消".into());
+            }
+            session = st.link_session.fetch_add(1, Ordering::SeqCst) + 1;
+            st.reconnecting.store(false, Ordering::SeqCst);
+            st.reconnect_attempt.store(0, Ordering::SeqCst);
+            *st.counters.lock().expect("counters mutex") = (0, 0);
+            *st.char_counts.lock().expect("chars mutex") = (0, 0);
+            *st.opened_at.lock().expect("opened mutex") = Some(Instant::now());
+            *st.endpoint.lock().expect("endpoint mutex") = Some(endpoint.clone());
+            *st.reader_stop.lock().expect("stop mutex") = Some(stop.clone());
+            *st.listener.lock().expect("listener mutex") = Some(server.clone());
+            let _order = st.log_order.lock().expect("log order mutex");
+            st.log.lock().expect("log mutex").push(
+                now_ms(),
+                Direction::Sys,
+                format!("listen {}", endpoint.label()).into_bytes(),
+            );
+        }
 
-        let st = state.inner().clone();
         let handle = app.clone();
+        let st2 = st.clone();
         std::thread::spawn(move || {
             // 循环收：一个客户端断开后继续等下一个（设备重启/重连能自动接上），
             // 用户不用重新点"连接"。
             loop {
-                if stop.load(Ordering::Relaxed) {
+                if stop.load(Ordering::Relaxed)
+                    || st2.link_session.load(Ordering::SeqCst) != session
+                {
                     return;
                 }
                 let stream = match transport::accept_client(&server, &stop) {
                     Some(s) => s,
                     None => return,
                 };
-                if stop.load(Ordering::Relaxed) {
+                if stop.load(Ordering::Relaxed)
+                    || st2.link_session.load(Ordering::SeqCst) != session
+                {
                     return;
                 }
                 let addr = stream
                     .peer_addr()
                     .map(|a| a.to_string())
                     .unwrap_or_else(|_| "?".to_string());
-                *st.listener.lock().expect("listener mutex") = None;
-                if let Some(st0) = handle.try_state::<Arc<AppState>>() {
-                    st0.log.lock().expect("log mutex").push(
-                        now_ms(),
-                        Direction::Sys,
-                        format!("客户端接入 {addr}").into_bytes(),
-                    );
-                }
+                let _order = st2.log_order.lock().expect("log order mutex");
+                st2.log.lock().expect("log mutex").push(
+                    now_ms(),
+                    Direction::Sys,
+                    format!("客户端接入 {addr}").into_bytes(),
+                );
+                drop(_order);
                 let _ = handle.emit("srv-client", format!("接入 {addr}"));
                 let _ = handle.emit("link://state", "connected");
-                if let Err(e) = start_reader(handle.clone(), st.clone(), Conn::Tcp(stream)) {
+                if let Err(e) = start_reader(
+                    handle.clone(),
+                    st2.clone(),
+                    Conn::Tcp(stream),
+                    session,
+                    stop.clone(),
+                    None,
+                ) {
                     let _ = handle.emit("link://error", e);
                 }
                 // 等这条连接结束（reader 会在断开时把 link 清掉）
-                while st.link.lock().expect("link mutex").is_some()
+                while st2.link.lock().expect("link mutex").is_some()
                     && !stop.load(Ordering::Relaxed)
+                    && st2.link_session.load(Ordering::SeqCst) == session
                 {
                     std::thread::sleep(std::time::Duration::from_millis(200));
                 }
-                if let Some(st0) = handle.try_state::<Arc<AppState>>() {
-                    st0.log.lock().expect("log mutex").push(
-                        now_ms(),
-                        Direction::Sys,
-                        format!("客户端断开 {addr}").into_bytes(),
-                    );
+                if stop.load(Ordering::Relaxed)
+                    || st2.link_session.load(Ordering::SeqCst) != session
+                {
+                    return;
                 }
+                let _order = st2.log_order.lock().expect("log order mutex");
+                st2.log.lock().expect("log mutex").push(
+                    now_ms(),
+                    Direction::Sys,
+                    format!("客户端断开 {addr}").into_bytes(),
+                );
+                drop(_order);
                 let _ = handle.emit("srv-client", format!("断开 {addr}"));
-                *st.reader_stop.lock().expect("stop mutex") =
-                    Some(Arc::new(AtomicBool::new(false)));
             }
         });
         return Ok(format!("正在监听，端口 {port}（可反复接入）"));
@@ -2243,12 +2369,39 @@ fn open_main_inner(app: &AppHandle, endpoint: Endpoint) -> Result<String, String
         Some(ep) => format!("（本地端口 {}）", ep.local_port()),
         None => String::new(),
     };
-    start_reader(app.clone(), state.inner().clone(), conn)?;
-    state.log.lock().expect("log mutex").push(
-        now_ms(),
-        Direction::Sys,
-        format!("open {}{}", endpoint.label(), local_hint).into_bytes(),
-    );
+    let stop = Arc::new(AtomicBool::new(false));
+    let session;
+    {
+        let _lifecycle = st.lifecycle.lock().expect("lifecycle mutex");
+        if st.is_busy() {
+            return Err("已有一个连接，请先断开".into());
+        }
+        if st.link_session.load(Ordering::SeqCst) != open_request {
+            return Err("连接请求已取消".into());
+        }
+        session = st.link_session.fetch_add(1, Ordering::SeqCst) + 1;
+        st.reconnecting.store(false, Ordering::SeqCst);
+        st.reconnect_attempt.store(0, Ordering::SeqCst);
+        *st.counters.lock().expect("counters mutex") = (0, 0);
+        *st.char_counts.lock().expect("chars mutex") = (0, 0);
+        *st.opened_at.lock().expect("opened mutex") = Some(Instant::now());
+        *st.endpoint.lock().expect("endpoint mutex") = Some(endpoint.clone());
+    }
+    if let Err(e) = start_reader(
+        app.clone(),
+        st.clone(),
+        conn,
+        session,
+        stop,
+        Some(format!("open {}{}", endpoint.label(), local_hint)),
+    ) {
+        let _lifecycle = st.lifecycle.lock().expect("lifecycle mutex");
+        if st.link_session.load(Ordering::SeqCst) == session {
+            st.endpoint.lock().expect("endpoint mutex").take();
+            *st.opened_at.lock().expect("opened mutex") = None;
+        }
+        return Err(e);
+    }
     Ok(format!("已连接 {}{}", endpoint.label(), local_hint))
 }
 
@@ -2260,29 +2413,53 @@ async fn close_transport(app: AppHandle) -> Result<String, String> {
 
 /// 断开主连接（界面「断开」和 agent 的 `port_close` 共用）
 pub(crate) fn close_main(app: &AppHandle) -> Result<String, String> {
-    let state = app.state::<Arc<AppState>>();
-    let stop = state.reader_stop.lock().expect("stop mutex").take();
-    if let Some(flag) = &stop {
-        flag.store(true, Ordering::Relaxed);
+    let st = app.state::<Arc<AppState>>().inner().clone();
+    if st.closing.swap(true, Ordering::SeqCst) {
+        return Err("正在断开，请稍候".into());
     }
-    let listening = state.listener.lock().expect("listener mutex").take().is_some();
-    let mut link = state.link.lock().expect("link mutex").take();
-    if let Some(conn) = link.as_mut() {
-        conn.shutdown();
+    let had_link;
+    let listening;
+    let label;
+    {
+        let _lifecycle = st.lifecycle.lock().expect("lifecycle mutex");
+        // Invalidate readers and reconnect loops first. A stale reader must not
+        // clear or revive a connection after the user asked to disconnect.
+        st.link_session.fetch_add(1, Ordering::SeqCst);
+        st.reader_seq.fetch_add(1, Ordering::SeqCst);
+        st.reconnecting.store(false, Ordering::SeqCst);
+        st.reconnect_attempt.store(0, Ordering::SeqCst);
+        if let Some(flag) = st.reader_stop.lock().expect("stop mutex").take() {
+            flag.store(true, Ordering::SeqCst);
+        }
+        listening = st.listener.lock().expect("listener mutex").take().is_some();
+        let mut link = st.link.lock().expect("link mutex").take();
+        had_link = link.is_some();
+        if let Some(conn) = link.as_mut() {
+            conn.shutdown();
+        }
+        drop(link);
+        label = st
+            .endpoint
+            .lock()
+            .expect("endpoint mutex")
+            .take()
+            .map(|e| e.label());
+        *st.opened_at.lock().expect("opened mutex") = None;
     }
-    let label = state
-        .endpoint
-        .lock()
-        .expect("endpoint mutex")
-        .take()
-        .map(|e| e.label());
-    *state.opened_at.lock().expect("opened mutex") = None;
+    let had_connection = had_link || listening || label.is_some();
+    if had_link || listening {
+        // Reader/listener poll every 50 ms. Wait for their clones to leave the
+        // OS handles before another open attempt can race the same COM/socket.
+        std::thread::sleep(std::time::Duration::from_millis(70));
+    }
+    st.closing.store(false, Ordering::SeqCst);
 
-    if link.is_none() && !listening {
+    if !had_connection {
         return Err("当前没有连接".into());
     }
     let label = label.unwrap_or_else(|| "?".into());
-    state.log.lock().expect("log mutex").push(
+    let _order = st.log_order.lock().expect("log order mutex");
+    st.log.lock().expect("log mutex").push(
         now_ms(),
         Direction::Sys,
         format!("close {label}").into_bytes(),
@@ -2339,14 +2516,24 @@ pub(crate) fn write_main(
         return Err("没有可发送的内容".into());
     }
 
+    let _write_guard = LINK_OP
+        .try_lock()
+        .map_err(|_| "当前有独占连接的操作正在进行，请等待完成".to_string())?;
+    let session = state.link_session.load(Ordering::SeqCst);
     let _order = state.log_order.lock().expect("log order mutex");
     {
         let mut guard = state.link.lock().expect("link mutex");
+        if state.link_session.load(Ordering::SeqCst) != session {
+            return Err("连接已切换，本次发送已取消".into());
+        }
         let conn = guard
             .as_mut()
             .ok_or("还没有连接（TCP Server 需要先等客户端接入）")?;
         conn.write_paced(&bytes)
             .map_err(|e| format!("发送失败: {e}"))?;
+    }
+    if state.link_session.load(Ordering::SeqCst) != session {
+        return Err("连接已断开，本次发送未写入日志".into());
     }
 
     {
@@ -2565,6 +2752,8 @@ pub(crate) fn stats_of(app: &AppHandle) -> Result<Stats, String> {
     Ok(Stats {
         connected,
         listening,
+        reconnecting: state.reconnecting.load(Ordering::SeqCst),
+        reconnect_attempt: state.reconnect_attempt.load(Ordering::SeqCst),
         mode: endpoint.as_ref().map(|e| e.mode().to_string()),
         label: endpoint.as_ref().map(|e| e.label()),
         tx_bytes: tx,
@@ -2659,6 +2848,7 @@ fn upg_set(running: bool, percent: f64, text: impl Into<String>) {
 /// 一行升级输出: 进主输出窗口(SessionLog 的 SYS 行) + 前端事件
 fn upg_log(app: &AppHandle, text: &str) {
     if let Some(st) = app.try_state::<Arc<AppState>>() {
+        let _order = st.log_order.lock().expect("log order mutex");
         st.log
             .lock()
             .expect("log mutex")
@@ -2723,21 +2913,38 @@ fn with_link<T>(
     f: impl FnOnce(Conn) -> (Result<T, String>, Conn),
 ) -> Result<T, String> {
     let _serial = LINK_OP.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(stop) = st.reader_stop.lock().expect("stop mutex").as_ref() {
-        stop.store(true, Ordering::Relaxed);
+    let session = st.link_session.load(Ordering::SeqCst);
+    {
+        let _lifecycle = st.lifecycle.lock().expect("lifecycle mutex");
+        if st.link_session.load(Ordering::SeqCst) != session {
+            return Err("连接已切换，请重试".into());
+        }
+        st.reader_seq.fetch_add(1, Ordering::SeqCst);
+        if let Some(stop) = st.reader_stop.lock().expect("stop mutex").take() {
+            stop.store(true, Ordering::SeqCst);
+        }
     }
-    std::thread::sleep(std::time::Duration::from_millis(450));
-    let conn = st
-        .link
-        .lock()
-        .expect("link mutex")
-        .take()
-        .ok_or_else(|| "还没有连接：先在这页(或【传输】页)连上设备".to_string())?;
-    let (res, back) = f(conn);
+    // Reader poll timeout is 50 ms; leave enough room for the old read clone to
+    // leave the OS handle before an exclusive operation takes ownership.
     std::thread::sleep(std::time::Duration::from_millis(200));
-    *st.reader_stop.lock().expect("stop mutex") = Some(Arc::new(AtomicBool::new(false)));
-    if let Err(e) = start_reader(app.clone(), st.clone(), back) {
-        return Err(format!("用完把连接还回去失败: {e}"));
+    let conn = {
+        let _lifecycle = st.lifecycle.lock().expect("lifecycle mutex");
+        if st.link_session.load(Ordering::SeqCst) != session {
+            return Err("连接已断开，独占操作已取消".into());
+        }
+        st.link
+            .lock()
+            .expect("link mutex")
+            .take()
+            .ok_or_else(|| "还没有连接：先在这页(或【传输】页)连上设备".to_string())?
+    };
+    let (res, back) = f(conn);
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    if st.link_session.load(Ordering::SeqCst) == session {
+        let stop = Arc::new(AtomicBool::new(false));
+        if let Err(e) = start_reader(app.clone(), st.clone(), back, session, stop, None) {
+            return Err(format!("用完把连接还回去失败: {e}"));
+        }
     }
     res
 }
@@ -3036,13 +3243,17 @@ fn start_upgrade(
     if UPG.lock().expect("upg mutex").running {
         return Err("上一次升级还没结束".into());
     }
-    let endpoint = state
-        .endpoint
-        .lock()
-        .expect("endpoint mutex")
-        .clone()
-        .ok_or_else(|| "请先连接设备: 串口选 COM 口, 网口用 TCP Client 连 设备IP:6666".to_string())?;
     let st = state.inner().clone();
+    let (endpoint, session) = {
+        let _lifecycle = st.lifecycle.lock().expect("lifecycle mutex");
+        let endpoint = st
+            .endpoint
+            .lock()
+            .expect("endpoint mutex")
+            .clone()
+            .ok_or_else(|| "请先连接设备: 串口选 COM 口, 网口用 TCP Client 连 设备IP:6666".to_string())?;
+        (endpoint, st.link_session.load(Ordering::SeqCst))
+    };
     upg_set(true, 0.0, "准备升级 ...");
     let _ = app.emit(
         "upgrade://state",
@@ -3050,6 +3261,7 @@ fn start_upgrade(
     );
 
     std::thread::spawn(move || {
+        let _serial = LINK_OP.lock().unwrap_or_else(|e| e.into_inner());
         let a1 = app.clone();
         let mut log = move |s: &str| upg_log(&a1, s);
         let a2 = app.clone();
@@ -3123,12 +3335,23 @@ fn start_upgrade(
             // 2) 按当前连接方式升级。两种方式都要独占"当前连接":
             //    串口 -> 停 reader 拿串口; 网口 -> 停 reader 复用那条 TCP
             //    (F4 只有一条服务 socket, 再开第二条会被静默丢掉)
-            let take_link = |st: &Arc<AppState>| -> Option<Conn> {
-                if let Some(stop) = st.reader_stop.lock().expect("stop mutex").as_ref() {
-                    stop.store(true, Ordering::Relaxed);
+            let take_link = |st: &Arc<AppState>| -> Result<Option<Conn>, String> {
+                {
+                    let _lifecycle = st.lifecycle.lock().expect("lifecycle mutex");
+                    if st.link_session.load(Ordering::SeqCst) != session {
+                        return Err("连接已断开，升级已取消".into());
+                    }
+                    st.reader_seq.fetch_add(1, Ordering::SeqCst);
+                    if let Some(stop) = st.reader_stop.lock().expect("stop mutex").take() {
+                        stop.store(true, Ordering::SeqCst);
+                    }
                 }
-                std::thread::sleep(std::time::Duration::from_millis(450));
-                st.link.lock().expect("link mutex").take()
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                let _lifecycle = st.lifecycle.lock().expect("lifecycle mutex");
+                if st.link_session.load(Ordering::SeqCst) != session {
+                    return Err("连接已断开，升级已取消".into());
+                }
+                Ok(st.link.lock().expect("link mutex").take())
             };
 
             match endpoint.clone() {
@@ -3136,7 +3359,7 @@ fn start_upgrade(
                     if host.trim().is_empty() {
                         return Err("TCP Client 没填目标 IP".into());
                     }
-                    let conn = take_link(&st);
+                    let conn = take_link(&st)?;
                     let r = match conn {
                         Some(c) if matches!(c, Conn::Tcp(_)) => {
                             upg_log(&app, "[升级] 复用已经连好的那条网络连接\n");
@@ -3159,7 +3382,7 @@ fn start_upgrade(
                     if remote_host.trim().is_empty() || remote_port == 0 {
                         return Err("UDP 升级要填目标 IP 和端口".into());
                     }
-                    let conn = take_link(&st);
+                    let conn = take_link(&st)?;
                     let r = match conn {
                         Some(c) if matches!(c, Conn::Udp(_)) => {
                             upg_log(&app, "[升级] 复用已经连好的 UDP 连接\n");
@@ -3181,7 +3404,7 @@ fn start_upgrade(
                     r
                 }
                 Endpoint::Serial { .. } => {
-                    let conn = take_link(&st);
+                    let conn = take_link(&st)?;
                     let mut conn = match conn {
                         Some(c) => c,
                         None => return Err("请先在左边点【连接】再升级".into()),
@@ -3201,20 +3424,25 @@ fn start_upgrade(
                 let g = st.endpoint.lock().expect("endpoint mutex");
                 g.clone()
             };
-            if let Some(ep) = ep {
-                std::thread::sleep(std::time::Duration::from_millis(400));
-                match transport::open_endpoint(&ep) {
-                    Ok(conn) => {
-                        *st.reader_stop.lock().expect("stop mutex") =
-                            Some(Arc::new(AtomicBool::new(false)));
-                        if let Err(e) = start_reader(app.clone(), st.clone(), conn) {
-                            upg_log(&app, &format!("[升级] 提示: 升级后自动重连失败({}), 请手动连接\n", e));
+            // User disconnected or switched during upgrade: do not revive the
+            // old endpoint, but still finish the upgrade status normally.
+            if st.link_session.load(Ordering::SeqCst) == session {
+                if let Some(ep) = ep {
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                    match transport::open_endpoint(&ep) {
+                        Ok(conn) => {
+                            let stop = Arc::new(AtomicBool::new(false));
+                            if let Err(e) =
+                                start_reader(app.clone(), st.clone(), conn, session, stop, None)
+                            {
+                                upg_log(&app, &format!("[升级] 提示: 升级后自动重连失败({}), 请手动连接\n", e));
+                            }
                         }
+                        Err(e) => upg_log(
+                            &app,
+                            &format!("[升级] 提示: 升级后自动重连失败({}), 请手动点【连接】\n", e),
+                        ),
                     }
-                    Err(e) => upg_log(
-                        &app,
-                        &format!("[升级] 提示: 升级后自动重连失败({}), 请手动点【连接】\n", e),
-                    ),
                 }
             }
         }

@@ -21,6 +21,8 @@ use kdock_core::SerialConfig;
 
 /// 读超时。所有实现都用它，好让 reader 线程周期性检查停止开关。
 pub const POLL_TIMEOUT: Duration = Duration::from_millis(50);
+/// 写超时：TCP 对端挂死时不能让发送命令、断开和升级永久卡住。
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 读线程的"空闲"判定：这些错误表示**当前没有数据**，不该让读线程退出。
 /// 串口、TCP、UDP 三种实现共用这一条判定。
@@ -100,7 +102,11 @@ impl Endpoint {
                 None => format!("TCP {host}:{port}"),
             },
             Endpoint::TcpServer { host, port } => {
-                let h = host.clone().unwrap_or_else(|| "0.0.0.0".into());
+                let h = host
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("0.0.0.0");
                 format!("TCP 监听 {h}:{port}")
             }
             Endpoint::Udp {
@@ -666,6 +672,9 @@ impl Conn {
 pub fn open_endpoint(endpoint: &Endpoint) -> Result<Conn, String> {
     match endpoint {
         Endpoint::Serial { port, config } => {
+            if port.trim().is_empty() {
+                return Err("串口名称不能为空".into());
+            }
             let params = config
                 .to_port_params()
                 .map_err(|e| format!("串口参数非法: {e}"))?;
@@ -684,11 +693,20 @@ pub fn open_endpoint(endpoint: &Endpoint) -> Result<Conn, String> {
             port,
             local_addr,
         } => {
+            if host.trim().is_empty() {
+                return Err("TCP Client 没填目标地址".into());
+            }
+            if *port == 0 {
+                return Err("TCP Client 端口不能为 0".into());
+            }
             let local = local_addr.as_deref().unwrap_or("");
             let s = connect_tcp_from(local, host, *port, Duration::from_secs(5))
                 .map_err(|e| e.to_string())?;
             s.set_read_timeout(Some(POLL_TIMEOUT))
                 .map_err(|e| format!("设置读超时失败: {e}"))?;
+            s.set_write_timeout(Some(WRITE_TIMEOUT))
+                .map_err(|e| format!("设置写超时失败: {e}"))?;
+            let _ = s.set_nodelay(true);
             Ok(Conn::Tcp(s))
         }
         Endpoint::Udp {
@@ -697,6 +715,9 @@ pub fn open_endpoint(endpoint: &Endpoint) -> Result<Conn, String> {
             remote_host,
             remote_port,
         } => {
+            if (!remote_host.trim().is_empty()) != (*remote_port != 0) {
+                return Err("UDP 远端地址和端口要同时填写，或同时留空".into());
+            }
             let local = local_addr
                 .as_deref()
                 .filter(|s| !s.is_empty())
@@ -711,13 +732,18 @@ pub fn open_endpoint(endpoint: &Endpoint) -> Result<Conn, String> {
             Ok(Conn::Udp(ep))
         }
         Endpoint::TcpServer { .. } => Err("TCP Server 用 bind_server 打开".into()),
-        Endpoint::Ssh { host, port, user, password, extra } => Ok(Conn::Ssh(SshConn::spawn(
-            host,
-            *port,
-            user,
-            password,
-            extra,
-        )?)),
+        Endpoint::Ssh { host, port, user, password, extra } => {
+            if host.trim().is_empty() {
+                return Err("SSH 主机不能为空".into());
+            }
+            Ok(Conn::Ssh(SshConn::spawn(
+                host,
+                *port,
+                user,
+                password,
+                extra,
+            )?))
+        }
     }
 }
 
@@ -725,7 +751,11 @@ pub fn open_endpoint(endpoint: &Endpoint) -> Result<Conn, String> {
 pub fn bind_server(endpoint: &Endpoint) -> Result<TcpServer, String> {
     match endpoint {
         Endpoint::TcpServer { host, port } => {
-            let h = host.clone().unwrap_or_else(|| "0.0.0.0".into());
+            let h = host
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("0.0.0.0");
             TcpServer::bind(&h, *port).map_err(|e| e.to_string())
         }
         _ => Err("不是 TCP Server 参数".into()),
@@ -743,6 +773,8 @@ pub fn accept_client(server: &TcpServer, stop: &AtomicBool) -> Option<TcpStream>
         match server.try_accept() {
             Ok(Some(stream)) => {
                 let _ = stream.set_read_timeout(Some(POLL_TIMEOUT));
+                let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
+                let _ = stream.set_nodelay(true);
                 return Some(stream);
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
@@ -755,6 +787,7 @@ pub fn accept_client(server: &TcpServer, stop: &AtomicBool) -> Option<TcpStream>
 mod tests {
     use super::*;
     use std::io::ErrorKind;
+    use std::sync::Arc;
 
     /// AC-3 的可观察证据：UDP 的空闲读超时穿到 transport 层之后，
     /// `ErrorKind` 仍然是 `TimedOut`——读线程正是按它判断"空闲"的。
@@ -788,6 +821,23 @@ mod tests {
             err,
             ErrorKind::TimedOut | ErrorKind::Interrupted | ErrorKind::WouldBlock
         ));
+    }
+
+    #[test]
+    fn incomplete_network_endpoints_are_rejected_before_socket_open() {
+        assert!(open_endpoint(&Endpoint::TcpClient {
+            host: "127.0.0.1".into(),
+            port: 0,
+            local_addr: None,
+        })
+        .is_err());
+        assert!(open_endpoint(&Endpoint::Udp {
+            local_port: 0,
+            local_addr: None,
+            remote_host: "127.0.0.1".into(),
+            remote_port: 0,
+        })
+        .is_err());
     }
 
     fn serialize_only_error_kind() -> ErrorKind {
@@ -841,6 +891,39 @@ mod tests {
         b.write(b"pong from b").unwrap();
         let n2 = a.read(&mut buf).expect("b -> a 应当收得到");
         assert_eq!(&buf[..n2], b"pong from b");
+    }
+
+    #[test]
+    fn tcp_server_accepts_the_next_client_after_disconnect() {
+        let server = bind_server(&Endpoint::TcpServer {
+            host: Some("127.0.0.1".into()),
+            port: 0,
+        })
+        .expect("bind server");
+        let port = server.local_port();
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let accepting = server.clone();
+        let stop_first = stop.clone();
+        let first_accept =
+            std::thread::spawn(move || accept_client(&accepting, &stop_first).expect("first client"));
+        let first = kdock_core::net::connect_tcp("127.0.0.1", port, Duration::from_secs(2))
+            .expect("connect first");
+        let accepted_first = first_accept.join().expect("first accept thread");
+        drop(accepted_first);
+        drop(first);
+
+        let accepting = server.clone();
+        let stop_second = stop.clone();
+        let second_accept =
+            std::thread::spawn(move || accept_client(&accepting, &stop_second).expect("second client"));
+        let second = kdock_core::net::connect_tcp("127.0.0.1", port, Duration::from_secs(2))
+            .expect("connect second");
+        let accepted_second = second_accept.join().expect("second accept thread");
+        assert_eq!(
+            accepted_second.peer_addr().unwrap().port(),
+            second.local_addr().unwrap().port()
+        );
     }
 
     fn read_until(conn: &SshConn, needle: &str, timeout: Duration) -> String {

@@ -25,14 +25,49 @@ export const HELP_GROUPS = [
       {
         id: "help-app-update",
         title: "应用更新",
-        zh: "### 检查时机\n- 启动 8 秒后检查一次；网络恢复、窗口重新可见或应用连续运行满 6 小时时会再次检查。\n- 检测到新版本时不会强制弹窗，而是在标题栏设置按钮旁显示圆形下载图标。\n- 设置 → 关于里仍可手动「检查更新」，并显示成功、已是最新或具体错误。\n- 更新检查会使用环境变量、Windows 静态代理和 PAC 自动代理；公司网络仍拦截 GitHub 时，关于页会显示失败原因。\n### 后台下载与安装\n- 点击圆形更新图标查看版本说明；点击「后台下载」后窗口会自动收起，下载继续在后台进行。\n- 图标下载时会显示环形进度动画，完成或失败时会变色；再次点击可查看状态。\n- 已下载的安装包会按版本记住，关闭详情窗或重启 KDock 后不会重复下载；文件失效时会自动回到可重试状态。\n- 更新清单提供 SHA-256 时，下载完成会先校验；通过后按钮变为「启动安装程序」，仍需用户确认，不会静默安装。\n- 安装包目前未做 Authenticode 签名，Windows 仍可能提示未知发布者或 SmartScreen。",
-        en: "### Check timing\n- KDock checks 8 seconds after startup, then again when the network returns, the window becomes visible, or the app has been running for 6 hours.\n- A new version appears as a circular download button beside Settings instead of opening a forced dialog.\n- Settings → About still offers Check for updates and shows success, up-to-date, or the exact error.\n- Update checks use environment proxies, the Windows static proxy, and PAC auto-proxy. If a corporate network still blocks GitHub, About shows the failure reason.\n### Background download and install\n- Click the circular update button to view release notes. Download in background closes the dialog automatically while the transfer continues.\n- The icon shows an animated ring while downloading and changes color on success or failure; click it again to inspect progress.\n- Downloaded installers are remembered per version across dialog closes and KDock restarts. If the file disappears, the UI returns to a retryable state.\n- If the update manifest provides SHA-256, KDock verifies it before enabling Launch installer; the user must click again and nothing installs silently.\n- The installer is not Authenticode-signed yet, so Windows may still show Unknown publisher or SmartScreen warnings."
+        zh: "### 检查时机\n- 启动 8 秒后检查一次；网络恢复、窗口重新可见或应用连续运行满 6 小时时会再次检查。\n- 检测到新版本时不会强制弹窗，而是在标题栏设置按钮旁显示圆形下载图标。\n- 设置 → 关于里仍可手动「检查更新」，并显示成功、已是最新或具体错误。\n- 更新检查会使用环境变量、Windows 静态代理和 PAC 自动代理；公司网络仍拦截 GitHub 时，关于页会显示失败原因。\n### 后台下载与安装\n- 点击圆形更新图标查看版本说明；点击「后台下载」后窗口会自动收起，下载继续在后台进行。\n- 下载时横线保持不动，箭头穿过横线后由裁剪区遮住；完成或失败时按钮变色，再次点击可查看状态。\n- 已下载的安装包会按版本记住，关闭详情窗或重启 KDock 后不会重复下载；文件失效时会自动回到可重试状态。\n- 更新清单提供 SHA-256 时，下载完成会先校验；通过后按钮变为「启动安装程序」，仍需用户确认，不会静默安装。\n- 安装包目前未做 Authenticode 签名，Windows 仍可能提示未知发布者或 SmartScreen。",
+        en: "### Check timing\n- KDock checks 8 seconds after startup, then again when the network returns, the window becomes visible, or the app has been running for 6 hours.\n- A new version appears as a circular download button beside Settings instead of opening a forced dialog.\n- Settings → About still offers Check for updates and shows success, up-to-date, or the exact error.\n- Update checks use environment proxies, the Windows static proxy, and PAC auto-proxy. If a corporate network still blocks GitHub, About shows the failure reason.\n### Background download and install\n- Click the circular update button to view release notes. Download in background closes the dialog automatically while the transfer continues.\n- The baseline stays fixed while the arrow moves through it and is clipped below the line. The button changes color on success or failure; click it again to inspect progress.\n- Downloaded installers are remembered per version across dialog closes and KDock restarts. If the file disappears, the UI returns to a retryable state.\n- If the update manifest provides SHA-256, KDock verifies it before enabling Launch installer; the user must click again and nothing installs silently.\n- The installer is not Authenticode-signed yet, so Windows may still show Unknown publisher or SmartScreen warnings."
       },
       {
         id: "help-output-dir",
         title: "输出与日志目录",
         zh: "在「设置 → 通用 → 输出与日志」指定统一目录。留空时沿用默认位置。该目录用于保存会话日志、Agent 工具的大输出、运行结构分析器日志、逻辑分析采集以及环境组件下载文件；子目录会自动创建。",
         en: "Set a shared folder in Settings → General → Output and logs. Leave it blank to keep the default locations. The folder stores session logs, large Agent tool output, runtime analyzer logs, logic captures, and environment component downloads; subfolders are created automatically."
+      },
+    ],
+  },
+  {
+    title: "端到端流程",
+    items: [
+      {
+        id: "help-flow-device",
+        title: "从设备连接到烧录 / 升级",
+        zh: "### 前置\n- 先用「环境配置」确认调试器、烧录器、串口驱动和目标工具链的状态。\n- USB 设备插好后，确认系统设备没有黄色感叹号。\n### 步骤\n1. 在「传输」选择串口或网络方式，连接并确认能收到设备数据。\n2. 需要读取芯片或写入 Flash 时进入「烧录」，选择正确烧录器、接口速度、目标芯片和固件地址。\n3. 先看命令预览，确认芯片型号和文件路径没有选错，再执行。\n4. 走设备自身升级协议时进入「固件升级」，选择 `.fw` 包和目标连接，按设备要求进入 Bootloader。\n5. 烧录或升级结束后重新连接，读取版本、CRC 或启动日志做验收。\n### 失败排查\n- 能连串口但不能烧录：检查调试器占用、目标供电、复位方式和芯片型号。\n- 烧录成功但不启动：核对固件地址、启动选项、校验值和是否选错 Flash Bank。\n- 文件管理、抓包和 ADB 使用独立通道，不会自动替代调试器连接。",
+        en: "### Prerequisites\n- Confirm programmer, debug probe, serial driver and target toolchain state in Environment setup.\n- After connecting USB, verify the device has no warning icon in Device Manager.\n### Steps\n1. Connect through Transfer and confirm real data is received.\n2. For chip access or Flash writes, open Flash and choose the correct probe, interface speed, target chip and firmware address.\n3. Review the command preview before executing to verify chip model and file paths.\n4. For the device's own upgrade protocol, open Firmware, choose the `.fw` package and target link, then enter the bootloader as required.\n5. Reconnect and verify version, checksum or boot log after writing.\n### Troubleshooting\n- Serial works but programming fails: check probe ownership, target power, reset wiring and chip selection.\n- Programming succeeds but the device does not boot: verify flash address, boot options, checksum and Flash bank.\n- Files, capture and ADB use separate channels and do not replace the debug probe link."
+      },
+      {
+        id: "help-flow-adb",
+        title: "无线 ADB：配对到投屏 / 文件",
+        zh: "### 首次连接\n1. 手机开启开发者选项和「无线调试」。\n2. 在 ADB「连接」页填手机配对弹窗里的 IP、配对端口和 6 位配对码。\n3. KDock 配对后等待 `_adb-tls-connect._tcp` 广播，自动使用真正的连接端口。\n4. 设备状态变成 `device` 后才能投屏、传文件或装 APK。\n### 后续连接\n- 端口会随无线调试重启而变化；重新扫描后点设备行「连接」，不要重复使用配对端口。\n- `unauthorized` 时回到手机确认授权；`offline` 时断开后重连。\n### 验收\n- 在「日志」执行 `getprop ro.product.model`，能返回型号说明通道可用。\n- 投屏无画面时先在「详细功能」测试 shell，再检查反向控制权限。",
+        en: "### First connection\n1. Enable Developer options and Wireless debugging on the phone.\n2. On ADB → Connect, enter the IP, pairing port and 6-digit code from the phone pairing dialog.\n3. KDock waits for the `_adb-tls-connect._tcp` advertisement and uses the real connection port automatically.\n4. Mirroring, files and APK install require device state `device`.\n### Reconnecting\n- The port changes when wireless debugging restarts. Scan again and connect from the device row; never reuse the pairing port.\n- For `unauthorized`, approve the phone prompt. For `offline`, disconnect and reconnect.\n### Verification\n- Run `getprop ro.product.model` in Logs; a model value proves the channel works.\n- If mirroring is blank, test shell first under Tools, then check remote-control permissions."
+      },
+      {
+        id: "help-flow-runtime",
+        title: "ELF / BIN 分析到 Agent 协作",
+        zh: "### 前置\n- 优先使用带调试符号的 ELF；BIN 必须知道准确加载基址，否则函数地址和调用关系会整体偏移。\n- 首次使用需要在「环境配置」准备运行结构分析器。\n### 步骤\n1. 在「运行结构」选择 ELF/BIN，确认架构、基址和入口点。\n2. 先看全固件或 main 运行链，再按调用深度整理、折叠库函数、搜索符号或拉取长链路。\n3. 选中节点查看上下游和函数详情；点击空白或再次选择可取消高亮。\n4. 需要 Agent 分析时，让 Agent 读取当前运行图、所选节点或链路，而不是只描述截图。\n### 验收\n- 长链路中应能看到真实业务函数，而不只是日志库和启动桩。\n- 地址、函数名和调用边能与反汇编或 map 文件交叉核对。",
+        en: "### Prerequisites\n- Prefer an ELF with debug symbols. A BIN requires the exact load base or every function address and call edge will be shifted.\n- Prepare the runtime analyzer in Environment setup on first use.\n### Steps\n1. Select the ELF/BIN in Runtime graph and verify architecture, base address and entry point.\n2. Inspect the full graph or main path, tidy by call depth, collapse libraries, search symbols or isolate a long chain.\n3. Select a node to inspect callers, callees and details; click empty space or select again to clear highlighting.\n4. Ask the Agent to read the current graph, selected node or chain instead of describing a screenshot.\n### Verification\n- A real chain should include business functions, not only logging libraries and startup stubs.\n- Cross-check addresses, names and edges against disassembly or a map file."
+      },
+      {
+        id: "help-flow-capture",
+        title: "从采集到定位问题",
+        zh: "### 选择通道\n- 普通串口、TCP、UDP、SSH：用「传输」，日志可以直接保存和回放。\n- 原始 USB：用「监听 → 本机 USB」，需要 USBPcap 和完整重启后的驱动状态。\n- 网络报文：用「监听 → 网络抓包」，需要 tshark / Npcap。\n### 分析\n1. 先清屏并记录一次最小可复现操作。\n2. 保留时间戳、方向和行号，确认问题发生在 TX、RX 还是设备内部。\n3. 数字行可同时送「实时图表」；文本行可送「批量文本」做比对或转换。\n4. 需要 Agent 协助时，把日志路径、复现步骤和期望结果一起给它。\n### 导出\n- 保存会话或抓包前确认当前来源，避免把不同设备的数据混在一起。",
+        en: "### Pick a channel\n- Serial, TCP, UDP and SSH use Transfer and support saved/replayable logs.\n- Raw USB uses Monitor → Local USB and requires USBPcap plus a full restart after driver installation.\n- Network packets use Monitor → Network capture and require tshark/Npcap.\n### Analyze\n1. Clear first and record one minimal reproducible operation.\n2. Keep timestamps, direction and line numbers to locate whether the issue is TX, RX or inside the device.\n3. Send numeric lines to Charts and text lines to Batch text for comparison or conversion.\n4. When asking the Agent for help, include log path, reproduction steps and expected behavior.\n### Export\n- Confirm the active source before saving so data from different devices is not mixed."
+      },
+      {
+        id: "help-flow-browser-mcp",
+        title: "浏览器、MCP 与 Agent 协作",
+        zh: "### 浏览器\n- 「浏览器」页和 Agent 右栏共用同一个 WebView2 页面、登录态和标签。\n- 先手动打开目标页面并确认能登录，再让 Agent 读取页面、点击、填写、等待或断言。\n### MCP\n1. 在「设置 → MCP」新增远程 HTTP 或本地 stdio 服务。\n2. 先点「测一测」完成握手并列出工具，再保存并启用。\n3. 工具以 `mcp__<id>__<tool>` 暴露；新会话会冻结当时的工具清单。\n### 失败排查\n- MCP 启动失败先看命令、参数、环境变量和 stderr。\n- 远程服务要核对 URL、鉴权头和网络权限。\n- 中途新增 MCP 后，需要新会话或手动刷新工具 schema 才能稳定使用。",
+        en: "### Browser\n- Browser and the Agent side panel share the same WebView2 page, login state and tabs.\n- Open and sign in to the target page manually first; then let the Agent read, click, fill, wait or assert.\n### MCP\n1. Add a remote HTTP or local stdio server in Settings → MCP.\n2. Run Test first to complete the handshake and list tools; then save and enable it.\n3. Tools appear as `mcp__<id>__<tool>`; a new session freezes the tool list at session start.\n### Troubleshooting\n- If an MCP server fails to start, inspect command, arguments, environment variables and stderr.\n- For remote servers, verify URL, authorization headers and network permission.\n- After adding MCP mid-session, start a new session or refresh the tool schema for stable use."
       },
     ],
   },
@@ -764,6 +799,12 @@ export const HELP_GROUPS = [
 
 export const HELP_TITLE_EN = {
   "Work with KDock": "Work with KDock",
+  "端到端流程": "End-to-end workflows",
+  "从设备连接到烧录 / 升级": "From device connection to flashing / firmware upgrade",
+  "无线 ADB：配对到投屏 / 文件": "Wireless ADB: pairing to mirroring / files",
+  "ELF / BIN 分析到 Agent 协作": "ELF / BIN analysis to Agent collaboration",
+  "从采集到定位问题": "From capture to diagnosis",
+  "浏览器、MCP 与 Agent 协作": "Browser, MCP and Agent collaboration",
   "快捷键与通用操作": "Shortcuts and common actions",
   "快捷键": "Shortcuts",
   "应用更新": "App updates",

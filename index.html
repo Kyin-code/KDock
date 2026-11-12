@@ -87,12 +87,42 @@
         <circle cx="12" cy="12" r="3"/>
         <path d="M12 2v3M12 19v3M4.9 4.9 7 7M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/>
       </symbol>
+      <symbol id="ni-palette" viewBox="0 0 24 24">
+        <path d="M12 3a9 9 0 1 0 0 18h1.2a2 2 0 0 0 0-4h-.4a2 2 0 0 1 0-4H16a5 5 0 0 0 5-5c0-3-4-5-9-5Z"/>
+        <circle cx="7.5" cy="9" r="1"/><circle cx="10" cy="6.5" r="1"/><circle cx="14" cy="6.5" r="1"/>
+      </symbol>
+      <symbol id="ni-keyboard" viewBox="0 0 24 24">
+        <rect x="2.5" y="5" width="19" height="14" rx="2.5"/>
+        <path d="M5 9h.01M8 9h.01M11 9h.01M14 9h.01M17 9h.01M19 9h.01M5 12h.01M8 12h.01M11 12h.01M14 12h.01M17 12h.01M19 12h.01M7 15h10"/>
+      </symbol>
+      <symbol id="ni-server" viewBox="0 0 24 24">
+        <rect x="4" y="3" width="16" height="7" rx="2"/><rect x="4" y="14" width="16" height="7" rx="2"/>
+        <path d="M8 6.5h.01M8 17.5h.01M12 6.5h5M12 17.5h5"/>
+      </symbol>
+      <symbol id="ni-network" viewBox="0 0 24 24">
+        <circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="19" cy="18" r="2.5"/>
+        <path d="m7.3 10.9 9.4-3.8M7.3 13.1l9.4 3.8"/>
+      </symbol>
+      <symbol id="ni-database" viewBox="0 0 24 24">
+        <ellipse cx="12" cy="5.5" rx="7.5" ry="3"/><path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"/>
+        <path d="M4.5 11.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"/>
+      </symbol>
+      <symbol id="ni-help" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"/><path d="M9.7 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1.2 1-1.2 1.7v.4"/>
+        <path d="M12 17h.01"/>
+      </symbol>
+      <symbol id="ni-info" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>
+      </symbol>
       <symbol id="ni-folder-plus" viewBox="0 0 24 24">
         <path d="M3 6h7l2 2h9v11H3V6Z"/>
         <path d="M12 11v6M9 14h6"/>
       </symbol>
       <symbol id="ni-menu" viewBox="0 0 24 24">
         <path d="M4 7h16M4 12h16M4 17h16"/>
+      </symbol>
+      <symbol id="ni-sidebar" viewBox="0 0 24 24">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/>
       </symbol>
       <symbol id="ni-search" viewBox="0 0 24 24">
         <circle cx="10.5" cy="10.5" r="6.5"/>
@@ -146,7 +176,7 @@
       <div class="tb-right">
         <span id="status-chip" class="chip">未连接</span>
         <span id="ip-location-chip" class="chip ipchip" title="公网 IP 归属地">当前：未知</span>
-        <button id="tb-params" class="tb-icon" title="收起参数区">▭</button>
+        <button id="tb-params" class="tb-icon" title="收起参数区"><svg class="tb-paramsico" aria-hidden="true"><use href="#ni-sidebar"></use></svg></button>
         <button id="tb-update" class="tb-update" title="发现新版本" aria-label="发现新版本" hidden>
           <span class="tb-update-ring" aria-hidden="true"></span>
           <svg class="tb-update-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -161,7 +191,7 @@
             <path class="tb-update-line" d="M5 19h14"/>
           </svg>
         </button>
-        <button id="tb-settings" class="tb-chip" title="设置（Ctrl+, ）"><span class="tbs-ico">⚙</span><span class="tbs-txt">设置</span></button>
+        <button id="tb-settings" class="tb-chip" title="设置（Ctrl+, ）"><svg class="tbs-svg" aria-hidden="true"><use href="#ni-settings"></use></svg><span class="tbs-txt">设置</span></button>
         <div class="tb-win">
           <button id="win-min" class="tb-wbtn" title="最小化">–</button>
           <button id="win-max" class="tb-wbtn" title="最大化 / 还原">□</button>
@@ -204,26 +234,91 @@
     <div id="settings-modal" class="modal" hidden>
       <div class="modalbox">
         <div class="modalhead">
-          <span class="modaltitle">设置</span>
+          <div class="settings-headcopy">
+            <span class="modaltitle">设置</span>
+            <span class="modal-subtitle">配置界面、模型、工具与设备联动</span>
+          </div>
           <span class="grow"></span>
           <button id="settings-close" class="tb-wbtn">×</button>
         </div>
         <div class="modalbody">
           <div class="modalnav">
-            <button class="modaltab active" data-set="general">通用</button>
-            <button class="modaltab" data-set="theme">主题与配色</button>
-            <button class="modaltab" data-set="shortcuts">快捷键</button>
-            <button class="modaltab" data-set="model">模型与供应商</button>
-            <button class="modaltab" data-set="skills">技能</button>
-            <button class="modaltab" data-set="tools">工具</button>
-            <button class="modaltab" data-set="mcp">MCP</button>
-            <button class="modaltab" data-set="kb">浏览器</button>
-            <button class="modaltab" data-set="netip">网络与代理</button>
-            <button class="modaltab" data-set="cache">缓存</button>
-            <button class="modaltab" data-set="help">帮助</button>
-            <button class="modaltab" data-set="about">关于与数据</button>
+            <div class="modalnav-group">
+              <div class="modalnav-label">基础</div>
+              <button class="modaltab active" data-set="general" data-desc="语言、输出目录与启动行为">
+                <svg class="modalnavico" aria-hidden="true"><use href="#ni-settings"></use></svg>
+                <span class="modaltab-copy"><b>通用</b><small>界面与运行习惯</small></span>
+                <span class="modaltab-arrow">›</span>
+              </button>
+              <button class="modaltab" data-set="theme" data-desc="主题、配色、字号与界面缩放">
+                <svg class="modalnavico" aria-hidden="true"><use href="#ni-palette"></use></svg>
+                <span class="modaltab-copy"><b>主题与配色</b><small>外观与显示比例</small></span>
+                <span class="modaltab-arrow">›</span>
+              </button>
+              <button class="modaltab" data-set="shortcuts" data-desc="查看、录制和恢复应用快捷键">
+                <svg class="modalnavico" aria-hidden="true"><use href="#ni-keyboard"></use></svg>
+                <span class="modaltab-copy"><b>快捷键</b><small>录制与冲突检查</small></span>
+                <span class="modaltab-arrow">›</span>
+              </button>
+            </div>
+            <div class="modalnav-group">
+              <div class="modalnav-label">Agent 与工具</div>
+              <button class="modaltab" data-set="model" data-desc="选择模型、供应商、上下文与思考强度">
+                <svg class="modalnavico" aria-hidden="true"><use href="#ni-sparkles"></use></svg>
+                <span class="modaltab-copy"><b>模型与供应商</b><small>模型、密钥与能力</small></span>
+                <span class="modaltab-arrow">›</span>
+              </button>
+              <button class="modaltab" data-set="skills" data-desc="管理全局指导、技能、工作区技能与斜杠指令">
+                <svg class="modalnavico" aria-hidden="true"><use href="#ni-layers"></use></svg>
+                <span class="modaltab-copy"><b>技能</b><small>流程、指导与归档</small></span>
+                <span class="modaltab-arrow">›</span>
+              </button>
+              <button class="modaltab" data-set="tools" data-desc="按类别开关 Agent 工具，并搜索工具说明">
+                <svg class="modalnavico" aria-hidden="true"><use href="#ni-sliders"></use></svg>
+                <span class="modaltab-copy"><b>工具</b><small>能力开关与检索</small></span>
+                <span class="modaltab-arrow">›</span>
+              </button>
+              <button class="modaltab" data-set="mcp" data-desc="配置远程 HTTP 或本地 stdio MCP 服务">
+                <svg class="modalnavico" aria-hidden="true"><use href="#ni-server"></use></svg>
+                <span class="modaltab-copy"><b>MCP</b><small>服务、请求头与测试</small></span>
+                <span class="modaltab-arrow">›</span>
+              </button>
+            </div>
+            <div class="modalnav-group">
+              <div class="modalnav-label">连接与系统</div>
+              <button class="modaltab" data-set="kb" data-desc="设置共享浏览器首页，并进入浏览器页面">
+                <svg class="modalnavico" aria-hidden="true"><use href="#ni-globe"></use></svg>
+                <span class="modaltab-copy"><b>浏览器</b><small>共享首页与登录态</small></span>
+                <span class="modaltab-arrow">›</span>
+              </button>
+              <button class="modaltab" data-set="netip" data-desc="公网归属探测、请求预算与网络重试">
+                <svg class="modalnavico" aria-hidden="true"><use href="#ni-network"></use></svg>
+                <span class="modaltab-copy"><b>网络与代理</b><small>归属、配额与重试</small></span>
+                <span class="modaltab-arrow">›</span>
+              </button>
+              <button class="modaltab" data-set="cache" data-desc="查看和清理应用持久化数据">
+                <svg class="modalnavico" aria-hidden="true"><use href="#ni-database"></use></svg>
+                <span class="modaltab-copy"><b>缓存</b><small>数据目录与清理</small></span>
+                <span class="modaltab-arrow">›</span>
+              </button>
+              <button class="modaltab" data-set="help" data-desc="按页面查找功能说明和操作流程">
+                <svg class="modalnavico" aria-hidden="true"><use href="#ni-help"></use></svg>
+                <span class="modaltab-copy"><b>帮助</b><small>流程与故障排查</small></span>
+                <span class="modaltab-arrow">›</span>
+              </button>
+              <button class="modaltab" data-set="about" data-desc="版本、更新、开源许可和数据目录">
+                <svg class="modalnavico" aria-hidden="true"><use href="#ni-info"></use></svg>
+                <span class="modaltab-copy"><b>关于与数据</b><small>版本、许可与更新</small></span>
+                <span class="modaltab-arrow">›</span>
+              </button>
+            </div>
           </div>
           <div class="modalcontent">
+            <header class="settings-section-head">
+              <h2 id="set-section-title">通用</h2>
+              <p id="set-section-desc">语言、输出目录与启动行为</p>
+            </header>
+            <div class="settings-panes">
             <div class="setpane" data-setpane="general">
               <div class="cardtitle">界面</div>
               <div class="field"><label>语言</label><div class="trow">
@@ -684,6 +779,7 @@
               <p class="hint">浏览器页和 Agent 右栏共用同一页面、登录状态和导航历史。</p>
             </div>
 
+            </div>
           </div>
         </div>
       </div>
@@ -814,7 +910,7 @@
                 <label><input type="radio" name="rx-mode" value="hex" /> HEX</label>
               </div>
               <span class="sep"></span>
-              <select id="history" class="tight"><option value="">历史…</option></select>
+              <select id="history" class="tight"><option value="" data-en="History…">历史记录…</option></select>
               <button id="clear" class="btn small">清屏</button>
               <span class="grow"></span>
               <label class="chk" title="显示时间戳"><input type="checkbox" id="show-ts" checked /> 时间戳</label>

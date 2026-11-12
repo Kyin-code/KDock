@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KDock Transfer Stream Vite Test</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body>
+  <pre id="rx" class="rx lognum"></pre>
+  <select id="history"><option value="" data-en="History…">历史记录…</option></select>
+  <script type="module">
+    import {
+      clearTransferEntries,
+      completeTransferTail,
+      updateTransferTail,
+    } from "/src/transfer-log.js";
+    import { translateTransportText } from "/src/transport-i18n.js";
+    import { EN } from "/src/locales/en.js";
+
+    const pending = [];
+    const buffer = [];
+    let no = 0;
+    let tail = updateTransferTail({
+      pending,
+      buffer,
+      tail: null,
+      partial: { text: "partial RX", ts_ms: 10 },
+      nextNo: () => ++no,
+    });
+    pending.push({ dir: "TX", no: ++no, text: "tx one", ts_ms: 11 });
+    tail = updateTransferTail({
+      pending,
+      buffer,
+      tail,
+      partial: { text: "complete RX", ts_ms: 12 },
+      nextNo: () => ++no,
+    });
+    completeTransferTail({
+      pending,
+      buffer,
+      tail,
+      entry: { dir: "RX", no: tail.no, text: "complete RX\n", ts_ms: 12 },
+    });
+    pending.push({ dir: "TX", no: ++no, text: "tx two", ts_ms: 13 });
+
+    const rx = document.getElementById("rx");
+    rx.innerHTML = pending
+      .map((entry) => `<div class="rxline"><span class="nox">${entry.no}</span><span class="rxtx">${entry.text.trim()}</span></div>`)
+      .join("");
+    const order = [...rx.querySelectorAll(".rxtx")].map((node) => node.textContent);
+    const selection = getComputedStyle(rx).userSelect;
+    const gutter = getComputedStyle(rx.querySelector(".nox")).userSelect;
+    const translated = translateTransportText(
+      "已连接 UDP 192.168.2.48:9001 <-> 192.168.2.178:23（本地端口 9001）",
+      (value) => EN[value] || value,
+    );
+
+    clearTransferEntries(pending, buffer);
+    window.__transferStream = {
+      order,
+      translated,
+      selection,
+      gutter,
+      cleared: pending.length === 0 && buffer.length === 0,
+    };
+    document.documentElement.dataset.transferStreamReady = "1";
+  </script>
+</body>
+</html>
