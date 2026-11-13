@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.32 -->
+## v0.3.32
+
+### 新增
+
+- feat(settings): add font studio and tune typography
+
+### Dependencies
+
+- Update kdock-core to 0.3.32.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.31 -->
 ## v0.3.31
 

@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.32 -->
+## v0.3.32
+
+### 新增
+
+- feat(settings): add font studio and tune typography
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.31 -->
 ## v0.3.31
 
