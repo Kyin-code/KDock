@@ -541,10 +541,8 @@ export const EN = {
   "高": "High", "极高": "Extra high", "最大": "Max", "超强": "Ultra",
   "OpenAI 兼容发 reasoning_effort；Anthropic 转成 thinking budget":
     "OpenAI-compatible providers receive reasoning_effort; Anthropic maps it to a thinking budget",
-  "正在取模型状态（AMD 那边约 20 秒）": "Fetching model status (takes ~20 s for AMD)",
   "这轮用哪个模型（参数去设置里改）": "Model to use (edit parameters in Settings)",
-  "＋ 新增/编辑…": "＋ Add / edit…", "取状态中…": "fetching status…",
-  "状态未知": "status unknown", "满载": "full", "繁忙": "busy",
+  "＋ 新增/编辑…": "＋ Add / edit…",
   "（还没有技能）· 去「设置 → 技能」导入": "(no skills yet) · import one in Settings → Skills",
   "（还没有 MCP 服务）· 去「设置 → MCP」新增": "(no MCP servers yet) · add one in Settings → MCP",
   "这里只管**开关**（关掉的技能不进口令索引，也不会被主动提及）。": "This page only shows toggles (disabled skills are not indexed or suggested automatically).",
@@ -559,7 +557,7 @@ export const EN = {
   // ============ 设置：模型与供应商 ============
   "厂家预设": "Vendor preset", "— 选厂家 —": "— pick a vendor —", "填入表单": "Fill form",
   "选择模型…": "Choose a model…", "从已获取的模型列表中选择": "Choose from the fetched model list",
-  "添加模型": "Add model", "高级": "Advanced",
+  "添加模型": "Add model", "＋ 添加模型": "＋ Add model", "高级": "Advanced",
   "搜索模型或供应商，例如 claude / deepseek / glm": "Search models or providers, e.g. claude / deepseek / glm",
   "刷新目录": "Refresh catalog", "读取 models.dev…": "Loading models.dev…",
   "显示全部": "Show all", "只看常用": "Popular only",
@@ -582,17 +580,11 @@ export const EN = {
   "DeepSeek（Anthropic 格式）": "DeepSeek (Anthropic format)",
   "智谱 GLM": "Zhipu GLM", "阿里通义 DashScope": "Alibaba DashScope", "硅基流动": "SiliconFlow",
   "火山方舟（豆包）": "Volcano Ark (Doubao)", "Ollama（本机）": "Ollama (local)",
-  "LM Studio（本机）": "LM Studio (local)", "AMD Radeon Cloud（免费额度）": "AMD Radeon Cloud (free tier)",
+  "LM Studio（本机）": "LM Studio (local)",
   "自定义 / 自建网关": "Custom / self-hosted gateway",
-  "选一个预设 -> 填入表单 -> 只补 API Key 就能用。都是 OpenAI 兼容写法（能填 base_url 的服务）。":
-    "Pick a preset → fill the form → only the API key is missing. All of them are OpenAI-compatible (any service with a base_url).",
   "导入…": "Import…", "导出…": "Export…", "全部测一测": "Test all",
-  "+ AMD 免费模型": "+ AMD free models",
-  "把 AMD Radeon Cloud 那批免费模型加回列表（删掉之后不会自己回来，点这里加）":
-    "Add the AMD Radeon Cloud free models back to the list (deleted ones do not come back by themselves)",
   "导入/导出的是 profile（**不含密钥**：密钥按用户 DPAPI 加密，换机器本来也带不走，导过去重新粘一次）。":
     "Import/export covers profiles only (**no API keys**: keys are DPAPI-encrypted per user, so paste them again on another machine).",
-  "这个 profile 的参数": "Parameters of this profile",
   "deepseek（只给程序用，随便起）": "deepseek (internal id, any name works)",
   "OpenAI 兼容（/chat/completions）": "OpenAI-compatible (/chat/completions)",
   "OpenAI 兼容 /chat/completions": "OpenAI-compatible /chat/completions",
@@ -663,6 +655,7 @@ export const EN = {
   "配置界面、模型、工具与设备联动": "Configure UI, models, tools and devices",
   "基础": "Basics",
   "AI 与工具": "AI & tools",
+  "Agent 与工具": "Agent & tools",
   "连接与系统": "Connections & system",
   "语言、输出目录与启动行为": "Language, output and startup",
   "界面与运行习惯": "UI and startup",
@@ -688,11 +681,6 @@ export const EN = {
   "流程与故障排查": "Workflows and troubleshooting",
   "版本、更新、开源许可和数据目录": "Version, licenses and data",
   "版本、许可与更新": "Version and updates",
-  "这两个直接用上面**当前填的值**试，不用先保存": "Both use the values currently typed above — no need to save first",
-  "AMD Radeon Cloud 实时负载": "AMD Radeon Cloud live load",
-  "这些是 AMD Radeon Cloud（tokenfactory）各模型当前的并发占用，来自他们页面上\n                \"Live capacity\" 那份公开数据（后端去取，绕开跨域）。":
-    "Current concurrency usage per AMD Radeon Cloud (tokenfactory) model — the same public data as the \"Live capacity\" line on their page (fetched by the backend to bypass CORS).",
-  "只在打开这个页面时才刷新": "refreshed only while this page is open", "，\n                每 15 秒一次。": ", every 15 s.",
 
   // ============ 设置：技能 / MCP ============
   "本机技能": "Local skills", "（还没有技能：点「导入…」选一个 SKILL.md，或「新建」）":
@@ -913,7 +901,7 @@ export const EN = {
   "取消": "Cancel", "确定": "OK",
 
   // ============ 设置 → 缓存 ============
-  "缓存": "Cache", "持久化数据（缓存）": "Persisted data (cache)", "↻ 刷新": "↻ Refresh",
+  "缓存": "Cache", "持久化数据": "Persisted data", "持久化数据（缓存）": "Persisted data (cache)", "↻ 刷新": "↻ Refresh",
   "这里是本软件在你这台机器上留下的**全部**数据：界面偏好、窗口状态、LLM 供应商与密钥、 对话历史、技能副本、MCP 配置、指令表、工作区文件…… 每一项都标了路径，可以单独删。 删除后软件会自动重启（避免半截状态）。":
     "Everything this app leaves on your machine: UI preferences, window state, LLM providers and keys, chat history, skill copies, MCP config, command table, workspace files… Each row shows its path and can be deleted on its own. The app restarts afterwards to avoid half-deleted state.",
   "全选": "Select all", "全不选": "Select none", "删除选中…": "Delete selected…",
@@ -923,6 +911,11 @@ export const EN = {
     "Checked items are deleted and the app restarts. Items marked ⚠ lose real data (chats, keys, provider config, skill copies) — make sure you do not need them.",
   "删除并重启": "Delete and restart", "已删除，正在重启…": "deleted, restarting…",
   "先勾选要删的项": "tick something first", "一个都没勾": "nothing selected",
+  "查看 KDock 在本机保存的配置、会话、密钥和文件。可逐项选择后清理；删除完成会重启应用。":
+    "Review configuration, sessions, keys and files stored by KDock on this machine. Select individual items to remove; the app restarts afterwards.",
+  "删除选中": "Delete selected",
+  "会丢失数据": "Data loss",
+  "未选择项目": "No items selected",
   // 后端返回的缓存项文案
   "界面偏好（主题 / 配色 / 语言；栏宽那些存在浏览器本地存储里）":
     "UI preferences (theme / accent / language; pane widths live in browser local storage)",
@@ -985,22 +978,10 @@ export const EN = {
   // ============ 设置 → 模型：供应商面板（使用 / 新增）============
   "使用": "Use", "新增 / 编辑": "Add / Edit",
   "当前模型": "Current model",
-  "选中的这个模型，agent 后面几轮就用它。点下面任意一条也能直接切过去。":
-    "The selected model is what the agent uses from now on. Clicking any row below switches to it.",
-  "自建 / 自己编辑的模型": "Your own / hand-edited models",
-  "显示免费模型 ▾": "Show free models ▾", "收起免费模型 ▴": "Hide free models ▴",
-  "个免费模型": "free models", "实时负载": "Live load",
-  "立刻取一次（这个接口本身要 20 多秒）": "Fetch now (this endpoint takes ~20s)",
-  "AMD Radeon Cloud（tokenfactory）各模型当前的并发占用，来自他们页面上 \"Live capacity\" 那份公开数据（后端去取，绕开跨域）。":
-    "Current concurrency usage of the AMD Radeon Cloud (tokenfactory) models, taken from the public \"Live capacity\" data on their page (fetched by the backend to avoid CORS).",
-  "只有你把这块展开时才去取": "It is fetched only while you keep this section expanded",
-  "，展开期间每 15 秒一次。": ", once every 15 seconds while expanded.",
   "其它": "Other",
   "（还没有自建供应商：去「新增 / 编辑」加一个）": "(no custom provider yet — add one under Add / Edit)",
-  "（没有免费模型：展开后点「+ AMD 免费模型」加回来）": "(no free model — expand this and click “+ AMD free models”)",
-  "把 AMD Radeon Cloud 那批免费模型加回列表（删掉之后不会自己回来，点这里加）":
-    "Add the AMD Radeon Cloud free models back to the list (they do not come back on their own)",
   "在这条的基础上改（跳到「新增 / 编辑」）": "Edit this entry (jumps to Add / Edit)",
+  "在这条的基础上改": "Edit this profile",
   "删掉这个 profile（密钥一起删）": "Delete this profile (its key is deleted too)",
   "密钥也一起删。": "Its API key is deleted too.",
   "点一下切到它": "Click to switch to it", "当前在用": "in use",
@@ -1012,8 +993,36 @@ export const EN = {
   "使用默认模版": "Use default template",
   "把选中预设的地址 / 模型 / 上下文填进下面": "Fill the selected preset's endpoint / model / context into the form below",
   "取消编辑": "Cancel edit", "编辑：": "Editing: ",
-  "新增供应商": "Add a provider",
   "把这条 profile 删掉？": "Delete this profile?",
+  "自定义地址": "Custom address",
+  "模型稍后填写": "Model set later",
+  "选择来源，再填写连接信息": "Choose a source, then fill in the connection",
+  "从预设开始": "Start from a preset",
+  "从模型目录选择": "Choose from model catalog",
+  "选择服务商后会带入地址、模型和建议参数；你只需要补 API Key。自建网关选最后一项。":
+    "Choosing a provider fills in the endpoint, model and suggested settings; you only add the API key. Pick the last option for a self-hosted gateway.",
+  "补全 API Key，确认参数后保存": "Add the API key, then verify and save",
+  "修改连接、模型和能力参数": "Edit the connection, model and capability settings",
+  "内部 ID": "Internal ID",
+  "编辑已有模型时内部 ID 不可修改": "The internal ID cannot be changed while editing an existing model",
+  "推理与计费": "Reasoning & billing",
+  "内部 ID 与维护": "Internal ID & maintenance",
+  "一般无需修改": "Usually unchanged",
+  "默认 · 按量计费": "Default · usage-based",
+  "代码 Agent 建议保留工具调用；流式输出用于实时显示生成过程。":
+    "Keep tool calls enabled for coding agents; streaming shows generation progress live.",
+  "新模型可留空，保存时会根据名称生成。编辑已有模型时请保持原 ID。":
+    "Leave blank for a new model; the ID is generated from its name. Keep the original ID when editing.",
+  "直接使用当前填写的参数测试，不需要先保存": "Test with the values currently entered; no need to save first",
+  "保存并使用": "Save and use",
+  "已删除": "Deleted",
+  "点击使用": "Click to use",
+  "尚未选择": "Not selected",
+  "添加一个模型后即可开始对话": "Add a model to start chatting",
+  "还没有模型": "No models yet",
+  "点击上方「添加模型」，从预设或模型目录开始": "Click “Add model” above and start from a preset or the model catalog",
+  "从模型目录添加": "Add from model catalog",
+  "搜索 models.dev，自动带入连接参数": "Search models.dev and fill in connection settings automatically",
 
   // ============ 计算器：位控制板 / 显示区 ============
   "表达式（C 风格）": "Expression (C style)",

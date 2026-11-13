@@ -1565,6 +1565,11 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
   mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
 }
+.tb-update-arrow-window {
+  /* Keep the clipping window stationary. Applying clip-path to the animated
+     group itself makes the clip move with the arrow, so nothing is hidden. */
+  clip-path: url(#tb-update-arrow-clip);
+}
 .tb-update-arrow {
   transform-box: fill-box; transform-origin: center;
 }
@@ -1581,9 +1586,9 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .tb-update[data-state="error"]::after { background: hsl(var(--destructive)); }
 @keyframes tb-update-arrow-drop {
-  0% { transform: translateY(-12%); opacity: 0; }
+  0% { transform: translateY(-2px); opacity: 0; }
   14% { opacity: 1; }
-  72%, 100% { transform: translateY(72%); opacity: 1; }
+  72%, 100% { transform: translateY(9px); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .tb-update[data-state="downloading"] .tb-update-arrow { animation: none; }
@@ -1857,11 +1862,58 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .kditem span { font-size: 12.5px; line-height: 1.6; }
 .kditem code { font-size: 11px; color: hsl(var(--muted-foreground)); word-break: break-all; }
 
-/* 缓存页条目 */
-.cacherow { align-items: flex-start; }
-.cacherow > input { margin-top: 4px; }
-.cacherow .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.cacherow .warn { font-size: 11px; color: hsl(var(--warning)); }
+/* 缓存页：概览卡 + 可选数据卡 */
+.cachehero {
+  display: flex; align-items: center; gap: 14px;
+  margin-bottom: 12px; padding: 16px 17px;
+  border: 1px solid var(--surface-line-soft); border-radius: 15px;
+  background: linear-gradient(135deg, hsl(var(--primary) / .08), var(--surface-2));
+}
+.cachehero-ico {
+  width: 42px; height: 42px; flex: 0 0 42px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 12px; background: hsl(var(--primary) / .12); color: hsl(var(--primary));
+}
+.cachehero-ico svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.65; }
+.cachehero-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cachehero-copy strong { font-size: 15px; font-weight: 650; }
+.cachehero-copy p { margin: 0; color: hsl(var(--muted-foreground)); font-size: 11.5px; line-height: 1.55; }
+.cachehero > .btn { margin-left: auto; flex: 0 0 auto; }
+.cachetoolbar {
+  display: flex; align-items: center; gap: 7px;
+  margin-bottom: 10px; padding: 8px 10px;
+  border: 1px solid var(--surface-line-soft); border-radius: 11px;
+  background: var(--surface-2);
+}
+.cachetoolbar-select { display: flex; gap: 4px; }
+.cache-list { display: flex; flex-direction: column; gap: 7px; }
+.cachecard {
+  display: grid; grid-template-columns: 18px 34px minmax(0, 1fr);
+  align-items: start; gap: 11px; padding: 11px 12px;
+  border: 1px solid var(--surface-line-soft); border-radius: 12px;
+  background: var(--surface-2);
+}
+.cachecard:hover { border-color: hsl(var(--foreground) / .12); }
+.cachecard.danger { border-left: 3px solid hsl(var(--warning) / .72); }
+.cachecard.missing { opacity: .62; }
+.cachecard-check { margin-top: 8px; accent-color: hsl(var(--primary)); }
+.cachecard-icon {
+  width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 9px; background: hsl(var(--foreground) / .045); color: hsl(var(--muted-foreground));
+}
+.cachecard-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.cachecard .info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cachecard-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.cachecard-head .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 600; }
+.cachecard-badge {
+  flex: 0 0 auto; padding: 1px 6px; border-radius: 999px;
+  background: hsl(var(--warning) / .11); color: hsl(var(--warning));
+  font-size: 9px; font-weight: 650;
+}
+.cachecard-badge.muted { color: hsl(var(--muted-foreground)); background: hsl(var(--foreground) / .05); }
+.cachecard .meta { overflow-wrap: anywhere; white-space: normal; }
+.cachecard-facts { color: hsl(var(--muted-foreground)); font-size: 10.5px; }
+.cachecard .warn { margin-top: 2px; font-size: 10.5px; line-height: 1.45; color: hsl(var(--warning) / .9); }
 
 /* ==========================================================================
    4) 编排：连线要"看得见 + 点得到"，选中时高亮、并把两端节点也点亮
@@ -3350,6 +3402,27 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 /* ==========================================================================
    设置 → 模型：供应商面板拆成「使用 / 新增」两个子页（对齐 CC Switch 的用法）
    ========================================================================== */
+.provcurrent {
+  display: grid; grid-template-columns: minmax(0, 1fr);
+  align-items: center; gap: 18px;
+  margin-bottom: 14px; padding: 16px 18px;
+  border: 1px solid hsl(var(--primary) / .22); border-radius: 14px;
+  background: linear-gradient(135deg, hsl(var(--primary) / .11), hsl(var(--surface-2) / .72));
+}
+.provcurrent-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.provcurrent-kicker {
+  color: hsl(var(--primary)); font-size: 10px; font-weight: 700;
+  letter-spacing: .8px; text-transform: uppercase;
+}
+.provcurrent strong {
+  color: hsl(var(--foreground)); font-size: 17px; font-weight: 650;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.provcurrent-meta {
+  color: hsl(var(--muted-foreground)); font: 11px/1.55 var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 .segtabs {
   display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 12px;
   border-radius: 10px; background: var(--surface-3);
@@ -3362,10 +3435,141 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .segtab.active { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-weight: 600; }
 
 .provtab { display: flex; flex-direction: column; }
-.provlist { gap: 4px; }
-.provlist .provrow { padding: 7px 9px; cursor: pointer; }
-.provrow button { height: 22px; padding: 0 8px; font-size: 11px; border-radius: 6px; }
-.provrow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.provlist { gap: 7px; }
+.provlist .provrow { padding: 11px 12px; cursor: pointer; }
+.provrow {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; gap: 12px;
+  border: 1px solid var(--surface-line-soft); border-radius: 12px;
+  background: var(--surface-2);
+}
+.provmain { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.provtitle { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.provtitle .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.provmeta {
+  min-width: 0; color: hsl(var(--muted-foreground)); font: 10.5px/1.45 var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.provactive {
+  margin-left: auto; flex: 0 0 auto; padding: 2px 7px; border-radius: 999px;
+  color: hsl(var(--success)); background: hsl(var(--success) / .1);
+  font-size: 9.5px; font-weight: 650; letter-spacing: .15px;
+}
+.provactive.off { color: hsl(var(--muted-foreground)); background: hsl(var(--foreground) / .045); }
+.provrow-actions { display: flex; align-items: center; gap: 4px; }
+.provact {
+  width: 28px; min-width: 28px; height: 28px !important; padding: 0 !important;
+  border-radius: 8px !important; font-size: 13px !important;
+}
+.provempty {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 34px 18px; border: 1px dashed var(--surface-line);
+  border-radius: 14px; color: hsl(var(--muted-foreground)); text-align: center;
+}
+.provempty b { color: hsl(var(--foreground)); font-size: 13px; }
+.provempty span { font-size: 11.5px; }
+.prov-footer {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--surface-line-soft);
+}
+.provwizard-head {
+  display: flex; align-items: center; gap: 11px;
+  margin-bottom: 14px; padding-bottom: 13px;
+  border-bottom: 1px solid var(--surface-line-soft);
+}
+.provwizard-head.compact { margin-bottom: 10px; }
+.provback {
+  width: 32px; height: 32px; flex: 0 0 32px; padding: 0;
+  border: 1px solid var(--surface-line); border-radius: 9px;
+  background: var(--surface-2); color: hsl(var(--foreground)); cursor: pointer;
+}
+.provback:hover { border-color: hsl(var(--primary) / .42); background: hsl(var(--primary) / .08); }
+.provwizard-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.provwizard-title { font-size: 15px; font-weight: 650; }
+.provwizard-sub { color: hsl(var(--muted-foreground)); font-size: 11px; }
+.provstep-pill {
+  margin-left: auto; flex: 0 0 auto; padding: 3px 8px;
+  border-radius: 999px; background: hsl(var(--primary) / .1); color: hsl(var(--primary));
+  font-size: 10px; font-weight: 650;
+}
+.provstep-pick { display: flex; flex-direction: column; gap: 11px; }
+.provsource-head { display: flex; align-items: center; gap: 8px; font-size: 11.5px; font-weight: 600; }
+.preset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.presetcard {
+  display: grid; grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center; gap: 9px; min-height: 58px;
+  padding: 9px 10px; border: 1px solid var(--surface-line-soft); border-radius: 12px;
+  background: var(--surface-2); color: hsl(var(--foreground)); text-align: left; cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, transform .15s ease;
+}
+.presetcard:hover {
+  border-color: hsl(var(--primary) / .42); background: hsl(var(--primary) / .075);
+  transform: translateY(-1px);
+}
+.presetmark, .provselected-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 10px;
+  background: hsl(var(--primary) / .12); color: hsl(var(--primary));
+  font-size: 13px; font-weight: 700;
+}
+.presetcopy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.presetcopy strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.presetcopy small {
+  color: hsl(var(--muted-foreground)); font: 10px/1.35 var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.presetkind {
+  align-self: start; padding: 2px 5px; border-radius: 5px;
+  background: hsl(var(--foreground) / .05); color: hsl(var(--muted-foreground));
+  font-size: 9px;
+}
+.provselected {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 11px; padding: 10px 12px;
+  border: 1px solid hsl(var(--primary) / .2); border-radius: 12px;
+  background: hsl(var(--primary) / .065);
+}
+.provselected-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.provselected-copy strong { font-size: 12.5px; }
+.provselected-copy small { color: hsl(var(--muted-foreground)); font-size: 10.5px; line-height: 1.5; }
+#ag-prov-step-form > .field,
+.provadvanced .field,
+.modelcap-grid .field {
+  display: grid; grid-template-columns: minmax(130px, .7fr) minmax(0, 1.3fr);
+  align-items: center; gap: 12px; min-width: 0;
+  margin: 0 0 8px; padding: 9px 11px;
+  border: 1px solid var(--surface-line-soft); border-radius: 10px;
+  background: var(--surface-2);
+}
+#ag-prov-step-form > .field > label,
+.provadvanced .field > label,
+.modelcap-grid .field > label {
+  color: hsl(var(--foreground)); font-size: 11.5px; font-weight: 550;
+}
+.modelcap-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+.modelcap-grid .field { margin-bottom: 4px; }
+.modelctx-presets { margin: -1px 0 10px; }
+.modelcap-switches {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin: 2px 0 10px; padding: 9px 11px;
+  border: 1px solid var(--surface-line-soft); border-radius: 10px;
+  background: var(--surface-2);
+}
+.modelcap-switches .hint { margin-left: auto; font-size: 10.5px; }
+.provadvanced, .provadvanced .adv {
+  margin: 10px 0; padding: 10px 12px;
+  border: 1px solid var(--surface-line-soft); border-radius: 11px;
+  background: hsl(var(--foreground) / .02);
+}
+.provadvanced > summary, .provadvanced .adv > summary {
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer; color: hsl(var(--foreground)); font-size: 12px; font-weight: 600;
+}
+.provadvanced[open] > summary { margin-bottom: 9px; }
+.provsummary { color: hsl(var(--muted-foreground)); font-size: 10.5px; font-weight: 450; }
 
 /* 添加模型：models.dev 精简目录 */
 .mdgrid {
@@ -4637,6 +4841,12 @@ html[data-tab="usb"] .params {
 :root[data-theme="auto"] #settings-modal .modalnav {
   background: var(--surface-2);
 }
+/* Confirm/update dialogs are shared overlays and must stay above settings. */
+#ag-dlg,
+#app-update-dlg,
+.kdmodal {
+  z-index: 2100;
+}
 .modalnav-group {
   display: flex; flex-direction: column; gap: 3px;
   padding: 5px; border: 1px solid hsl(var(--foreground) / .035);
@@ -4829,12 +5039,26 @@ html[data-tab="usb"] .params {
   .settings-panes { padding: 14px 18px 22px; }
   #settings-modal .setpane > .field { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   #settings-modal .setcard .field { grid-template-columns: minmax(0, 1fr); }
+  .modelcap-grid { grid-template-columns: minmax(0, 1fr); }
+  #ag-prov-step-form > .field,
+  .provadvanced .field,
+  .modelcap-grid .field { grid-template-columns: minmax(0, 1fr); gap: 7px; }
+  .modelcap-switches .hint { margin-left: 0; flex-basis: 100%; }
+  .provcurrent { grid-template-columns: minmax(0, 1fr); gap: 11px; }
+  .preset-grid { grid-template-columns: minmax(0, 1fr); }
+  .cachehero { align-items: flex-start; flex-wrap: wrap; }
+  .cachehero > .btn { margin-left: 56px; }
+  .cachetoolbar { flex-wrap: wrap; }
 }
 @container app (max-width: 520px) {
   .modal-subtitle { display: none; }
   #settings-modal .modaltab { flex-basis: 165px; width: 165px; }
   .modaltab-copy small { display: none; }
   #settings-modal .setpane > .trow { flex-wrap: wrap; }
+  .provrow { grid-template-columns: minmax(0, 1fr); }
+  .provrow-actions { justify-content: flex-end; }
+  .cachecard { grid-template-columns: 18px minmax(0, 1fr); }
+  .cachecard-icon { display: none; }
 }
 
 @media (prefers-reduced-motion: no-preference) {

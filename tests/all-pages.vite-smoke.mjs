@@ -714,11 +714,13 @@ try {
     button.className = "tb-update";
     button.hidden = true;
     button.innerHTML = '<span class="tb-update-ring"></span><svg class="tb-update-ico" viewBox="0 0 24 24">' +
-      '<defs><clipPath id="tb-update-arrow-clip"><rect x="0" y="0" width="24" height="18"/></clipPath></defs>' +
-      '<g class="tb-update-arrow" clip-path="url(#tb-update-arrow-clip)"><path d="M12 4v11"/><path d="m8 11 4 4 4-4"/></g>' +
+      '<defs><clipPath id="tb-update-arrow-clip"><rect x="0" y="0" width="24" height="19"/></clipPath></defs>' +
+      '<g class="tb-update-arrow-window" clip-path="url(#tb-update-arrow-clip)">' +
+      '<g class="tb-update-arrow"><path d="M12 4v11"/><path d="m8 11 4 4 4-4"/></g></g>' +
       '<path class="tb-update-line" d="M5 19h14"/></svg>';
     document.body.appendChild(button);
     const ring = button.querySelector(".tb-update-ring");
+    const arrowWindow = button.querySelector(".tb-update-arrow-window");
     const arrow = button.querySelector(".tb-update-arrow");
     const line = button.querySelector(".tb-update-line");
     const wasHidden = button.hidden;
@@ -727,6 +729,7 @@ try {
     button.style.setProperty("--update-pct", "37%");
     const rect = button.getBoundingClientRect();
     const ringStyle = getComputedStyle(ring);
+    const arrowWindowStyle = getComputedStyle(arrowWindow);
     const arrowStyle = getComputedStyle(arrow);
     const lineStyle = getComputedStyle(line);
     const result = {
@@ -736,6 +739,7 @@ try {
       height: rect.height,
       borderRadius: getComputedStyle(button).borderRadius,
       ringAnimation: ringStyle.animationName,
+      arrowWindowClip: arrowWindowStyle.clipPath,
       arrowAnimation: arrowStyle.animationName,
       lineAnimation: lineStyle.animationName,
       arrowClip: arrowStyle.clipPath,
@@ -753,8 +757,9 @@ try {
       || !updateIndicatorUi.borderRadius.includes("999")
       || updateIndicatorUi.ringAnimation !== "none"
       || updateIndicatorUi.arrowAnimation !== "tb-update-arrow-drop"
+      || updateIndicatorUi.arrowClip !== "none"
       || updateIndicatorUi.lineAnimation !== "none"
-      || !updateIndicatorUi.arrowClip?.includes("tb-update-arrow-clip")
+      || !updateIndicatorUi.arrowWindowClip?.includes("tb-update-arrow-clip")
       || !updateIndicatorUi.ringMask?.includes("radial-gradient")) {
     throw new Error(`Title-bar update indicator is broken: ${JSON.stringify(updateIndicatorUi)}`);
   }

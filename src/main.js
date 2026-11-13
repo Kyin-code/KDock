@@ -8665,8 +8665,9 @@ function syncSettingsHeader(section) {
     || document.querySelector(".modaltab.active");
   const title = document.getElementById("set-section-title");
   const desc = document.getElementById("set-section-desc");
-  if (title) title.textContent = tab?.querySelector("b")?.textContent?.trim() || tab?.textContent?.trim() || "";
-  if (desc) desc.textContent = tab?.dataset.desc || "";
+  const label = tab?.querySelector("b")?.textContent?.trim() || tab?.textContent?.trim() || "";
+  if (title) title.textContent = en(label);
+  if (desc) desc.textContent = en(tab?.dataset.desc || "");
 }
 function openSettings(section) {
   const m = document.getElementById("settings-modal");
@@ -8678,7 +8679,7 @@ function openSettings(section) {
   }
   syncSettingsHeader(section || document.querySelector(".modaltab.active")?.dataset.set || "general");
   if (section === "model" && !agNewProfile) agLoadConfig();
-  // 打开模型页先落在「使用」面板；实时负载**不主动拉**（等用户展开免费模型那块再拉）
+  // 打开模型页先落在「已配置」列表；新增流程由“添加模型”单独进入。
   if (section === "model") agProvTab("use");
   if (section === "shortcuts" && shortcutSettingsUi) shortcutSettingsUi.refresh();
   if (section === "about") agLoadTools();
@@ -8789,7 +8790,6 @@ function bindSettings() {
   const enb = document.getElementById("set-lang-en");
   if (zh) zh.onclick = () => { applyLang("zh"); toast("语言：中文"); };
   if (enb) enb.onclick = () => { applyLang("en"); toast("Language: English"); };
-  amdBind();
   invoke("agent_config_get").then((c) => {
     const el = document.getElementById("set-datadir");
     if (el) {
@@ -9019,29 +9019,40 @@ const AG_PRESETS = [
     note: "本机跑模型：先 `ollama serve`；API Key 随便填一个（例如 ollama），本机不校验。" },
   { id: "lmstudio", name: "LM Studio（本机）", endpoint: "http://127.0.0.1:1234/v1", model: "local-model", ctx: 32768,
     note: "本机 LM Studio 的 OpenAI 兼容口；Key 随便填。" },
-  { id: "amd-free", name: "AMD Radeon Cloud（免费额度）",
-    endpoint: "https://developer.amd.com.cn/radeon/api/v1", model: "DeepSeek-V4-Flash", ctx: 128000,
-    note: "AMD 的免费额度，同一个 Key 下有十几个模型（DeepSeek / Qwen / GLM / MiniCPM / Gemma…）。" +
-          "这些模型已经内置在「已配置」列表里（AMD 免费 · xxx），删了可以去设置里点「+ AMD 免费模型」加回来。" +
-          "注意：这个服务很挑时间，选模型时下拉里会显示当前是空闲还是满载；Key 在 AMD 后台拿。" },
   { id: "gateway", name: "自定义 / 自建网关", endpoint: "", model: "", ctx: 128000,
     note: "OneAPI / NewAPI / vLLM / 企业内网网关：填它的 base_url（看到 /v1 为止）。Claude、Gemini 官方不是这个格式，也得走这类网关。" },
 ];
 
-/** 预设列表不能等配置接口回来才填；否则刚打开「高级」时下拉是空的。 */
+/** 预设卡片不能等配置接口回来才填，否则首次打开“添加模型”是空的。 */
 function agEnsurePresets() {
-  const ps = agEl("ag-preset");
-  if (!ps) return;
-  if (ps.options.length <= 1) {
-    ps.innerHTML = '<option value="">— 选厂家 —</option>';
-    for (const p of AG_PRESETS) {
-      const o = document.createElement("option");
-      o.value = p.id;
-      o.textContent = en(p.name);
-      ps.appendChild(o);
-    }
+  const grid = agEl("ag-preset-grid");
+  if (!grid || grid.dataset.ready === "1") return;
+  grid.dataset.ready = "1";
+  grid.innerHTML = "";
+  for (const p of AG_PRESETS) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "presetcard";
+    card.dataset.preset = p.id;
+    const mark = document.createElement("span");
+    mark.className = "presetmark";
+    mark.textContent = (p.name.match(/[A-Za-z\u4e00-\u9fff]/) || ["M"])[0].toUpperCase();
+    const copy = document.createElement("span");
+    copy.className = "presetcopy";
+    const name = document.createElement("strong");
+    name.textContent = en(p.name);
+    const detail = document.createElement("small");
+    let host = p.endpoint;
+    try { host = p.endpoint ? new URL(p.endpoint).host : en("自定义地址"); } catch (_) {}
+    detail.textContent = `${host || en("自定义地址")} · ${p.model || en("模型稍后填写")}`;
+    copy.append(name, detail);
+    const kind = document.createElement("span");
+    kind.className = "presetkind";
+    kind.textContent = p.kind === "anthropic" ? "Anthropic" : (p.endpoint ? "OpenAI" : en("自定义"));
+    card.append(mark, copy, kind);
+    card.onclick = () => agPickPreset(p);
+    grid.appendChild(card);
   }
-  if (!ps.value && AG_PRESETS.length) ps.value = AG_PRESETS[0].id;
 }
 
 /* ── models.dev 精简目录 ─────────────────────────────────────────────────────
@@ -11325,9 +11336,18 @@ async function bindAgent() {
   });
   // 供应商：两个子页（使用 / 新增）
   document.querySelectorAll("#ag-prov-tabs .segtab").forEach((b) => {
-    b.onclick = () => agProvTab(b.dataset.provtab);
+    b.onclick = () => b.dataset.provtab === "new" ? agBeginProviderAdd() : agProvTab("use");
   });
   agEnsurePresets();
+  if (agEl("ag-prov-add")) agEl("ag-prov-add").onclick = () => agBeginProviderAdd();
+  if (agEl("ag-open-catalog")) agEl("ag-open-catalog").onclick = () => agProvTab("catalog");
+  if (agEl("md-back")) agEl("md-back").onclick = () => agBeginProviderAdd();
+  if (agEl("ag-prov-back")) {
+    agEl("ag-prov-back").onclick = () => {
+      if (agOnProviderForm()) agShowProviderPicker();
+      else agProvTab("use");
+    };
+  }
   if (agEl("md-search")) {
     agEl("md-search").addEventListener("input", () => { mdQuery = agEl("md-search").value || ""; mdRender(); });
   }
@@ -11347,45 +11367,11 @@ async function bindAgent() {
     if (!id) return;
     agUseProvider(id);
   };
-  if (agEl("ag-free-toggle")) {
-    agEl("ag-free-toggle").onclick = () => {
-      const wrap = agEl("ag-prov-free");
-      if (!wrap) return;
-      wrap.hidden = !wrap.hidden;
-      agSyncFreeSection();
-      // 展开那一刻才去取实时负载（用户手动 show more 才发请求）
-      if (!wrap.hidden) amdLoadPull(false);
-    };
-  }
   if (agEl("ag-prov-cancel")) {
     agEl("ag-prov-cancel").onclick = async () => {
       agNewProfile = false;
       agProvTab("use");
       await agLoadConfig();
-    };
-  }
-  if (agEl("ag-preset-fill")) {
-    agEl("ag-preset-fill").onclick = () => {
-      const p = AG_PRESETS.find((x) => x.id === (agEl("ag-preset") ? agEl("ag-preset").value : ""));
-      if (!p) return toast("先选一个厂家");
-      agNewProfile = true;
-      agClearModelPicker();
-      if (agEl("ag-prov-new-title")) agEl("ag-prov-new-title").textContent = "新增供应商";
-      if (agEl("ag-prov-cancel")) agEl("ag-prov-cancel").hidden = false;
-      agEl("ag-p-id").value = p.id;
-      agEl("ag-p-name").value = p.name;
-      agEl("ag-p-endpoint").value = p.endpoint;
-      agEl("ag-p-model").value = p.model;
-      agEl("ag-p-ctx").value = p.ctx;
-      agSyncTokenLimitBounds(true);
-      agSetReasoningModes(agRecommendedEfforts(p.model, false),
-        agRecommendedEfforts(p.model, false).includes("medium") ? "medium" : "");
-      agFillPricingForm(agPriceFallback(p.model));
-      if (agEl("ag-p-peak-enabled")) agEl("ag-p-peak-enabled").checked = /deepseek/i.test(p.model);
-      if (agEl("ag-p-kind")) agEl("ag-p-kind").value = p.kind || "openai";
-      if (agEl("ag-preset-note")) agEl("ag-preset-note").textContent = p.note;
-      agEl("ag-p-key").focus();
-      toast("已填入（" + (p.kind === "anthropic" ? "Anthropic 格式" : "OpenAI 兼容") + "），只差 API Key");
     };
   }
   document.querySelectorAll("#ag-ctx-presets .chipbtn").forEach((b) => {
@@ -11399,6 +11385,9 @@ async function bindAgent() {
     agEl("ag-p-ctx").onchange = () => agSyncTokenLimitBounds(true);
   }
   if (agEl("ag-p-res")) agEl("ag-p-res").onchange = () => agSyncTokenLimitBounds(true);
+  if (agEl("ag-p-reasoning")) agEl("ag-p-reasoning").onchange = agUpdateAdvancedSummary;
+  if (agEl("ag-p-price-cur")) agEl("ag-p-price-cur").onchange = agUpdateAdvancedSummary;
+  if (agEl("ag-p-peak-enabled")) agEl("ag-p-peak-enabled").onchange = agUpdateAdvancedSummary;
   agEl("ag-prov-save").onclick = agSaveProvider;
   if (agEl("ag-prov-import")) agEl("ag-prov-import").onclick = agImportProviders;
   if (agEl("ag-prov-export")) agEl("ag-prov-export").onclick = agExportProviders;
@@ -11446,15 +11435,6 @@ async function bindAgent() {
       }
     };
   }
-  if (agEl("ag-prov-amd-add")) {
-    agEl("ag-prov-amd-add").onclick = async () => {
-      try {
-        const r = await invoke("agent_amd_reseed");
-        await agLoadConfig();
-        toast(`AMD 免费模型：加了 ${r.added} 个（一共 ${r.total} 个）`);
-      } catch (e) { toast(String(e)); }
-    };
-  }
   agEl("ag-p-models").onclick = async () => {
     const probe = agFormProvider();
     if (!probe.endpoint) return toast("先填地址（endpoint）");
@@ -11489,7 +11469,7 @@ async function agLoadConfig() {
   const sel = agEl("ag-provider");
   if (sel) {
     sel.innerHTML = "";
-    if (!agCfg.providers.length) sel.innerHTML = '<option value="">' + en("（还没有，点新增）") + '</option>';
+    if (!agCfg.providers.length) sel.innerHTML = '<option value="">' + en("还没有模型") + '</option>';
     for (const p of agCfg.providers) {
       const o = document.createElement("option");
       o.value = p.id; o.textContent = agTrName(p.name) + " · " + p.model;
@@ -11515,21 +11495,81 @@ async function agLoadConfig() {
 
 let agNewProfile = false;
 
-/* ── 供应商面板：两个子页（使用 / 新增）──────────────────────────────── */
-/** 现在是不是停在「新增 / 编辑」那一页（后台刷新时别把用户正在填的表单冲掉） */
+/* ── 供应商面板：已配置列表 + 两步添加流程（参考 CC Switch）────────────── */
 function agOnNewTab() {
-  const p = document.querySelector('.provtab[data-provtab-pane="new"]');
-  return !!p && !p.hidden;
+  return ["new", "catalog"].some((name) => {
+    const p = document.querySelector(`.provtab[data-provtab-pane="${name}"]`);
+    return !!p && !p.hidden;
+  });
+}
+
+function agOnProviderForm() {
+  const form = agEl("ag-prov-step-form");
+  return !!form && !form.hidden;
+}
+
+function agShowProviderPicker() {
+  agNewProfile = false;
+  if (agEl("ag-prov-step-pick")) agEl("ag-prov-step-pick").hidden = false;
+  if (agEl("ag-prov-step-form")) agEl("ag-prov-step-form").hidden = true;
+  if (agEl("ag-prov-new-title")) agEl("ag-prov-new-title").textContent = en("添加模型");
+  if (agEl("ag-prov-new-sub")) agEl("ag-prov-new-sub").textContent = en("选择来源，再填写连接信息");
+  if (agEl("ag-prov-step")) agEl("ag-prov-step").textContent = "1 / 2";
+}
+
+function agBeginProviderAdd() {
+  agShowProviderPicker();
+  agProvTab("new");
+}
+
+function agPickPreset(p) {
+  if (!p) return;
+  agNewProfile = true;
+  if (agEl("ag-p-id")) {
+    agEl("ag-p-id").readOnly = false;
+    agEl("ag-p-id").title = "";
+  }
+  agClearModelPicker();
+  agEl("ag-p-id").value = p.id;
+  agEl("ag-p-name").value = p.name;
+  agEl("ag-p-endpoint").value = p.endpoint;
+  agEl("ag-p-model").value = p.model;
+  agEl("ag-p-ctx").value = p.ctx;
+  agSyncTokenLimitBounds(true);
+  const efforts = agRecommendedEfforts(p.model, false);
+  agSetReasoningModes(efforts, efforts.includes("medium") ? "medium" : "");
+  agFillPricingForm(agPriceFallback(p.model));
+  if (agEl("ag-p-peak-enabled")) agEl("ag-p-peak-enabled").checked = /deepseek/i.test(p.model);
+  if (agEl("ag-p-kind")) agEl("ag-p-kind").value = p.kind || "openai";
+  agUpdateAdvancedSummary();
+  const picked = agEl("ag-prov-selected-preset");
+  if (picked) {
+    picked.textContent = "";
+    const mark = document.createElement("span");
+    mark.className = "provselected-mark";
+    mark.textContent = (p.name.match(/[A-Za-z\u4e00-\u9fff]/) || ["M"])[0].toUpperCase();
+    const copy = document.createElement("span");
+    copy.className = "provselected-copy";
+    const name = document.createElement("strong");
+    name.textContent = en(p.name);
+    const note = document.createElement("small");
+    note.textContent = en(p.note || "");
+    copy.append(name, note);
+    picked.append(mark, copy);
+  }
+  if (agEl("ag-prov-step-pick")) agEl("ag-prov-step-pick").hidden = true;
+  if (agEl("ag-prov-step-form")) agEl("ag-prov-step-form").hidden = false;
+  if (agEl("ag-prov-new-title")) agEl("ag-prov-new-title").textContent = en("添加模型") + " · " + en(p.name);
+  if (agEl("ag-prov-new-sub")) agEl("ag-prov-new-sub").textContent = en("补全 API Key，确认参数后保存");
+  if (agEl("ag-prov-step")) agEl("ag-prov-step").textContent = "2 / 2";
+  agEl("ag-p-key").focus();
 }
 
 function agProvTab(name) {
+  const tabName = name === "catalog" ? "new" : name;
   document.querySelectorAll("#ag-prov-tabs .segtab").forEach((b) =>
-    b.classList.toggle("active", b.dataset.provtab === name));
+    b.classList.toggle("active", b.dataset.provtab === tabName));
   document.querySelectorAll(".provtab").forEach((p) => { p.hidden = p.dataset.provtabPane !== name; });
-  if (name === "use") {
-    agSyncFreeSection();
-    if (amdNeedsData()) amdLoadPull(false);
-  }
   if (name === "catalog") mdEnsure(false);
   if (name === "new") agEnsurePresets();
   if (LANG === "en") langWalk();
@@ -11537,23 +11577,31 @@ function agProvTab(name) {
 
 /** 「编辑」= 带着这条的数据跳到「新增 / 编辑」那一页 */
 function agProvToEdit(p) {
-  if (agEl("ag-prov-new-title")) agEl("ag-prov-new-title").textContent = en("编辑：") + agTrName(p.name || p.id);
-  if (agEl("ag-prov-cancel")) agEl("ag-prov-cancel").hidden = false;
-  agProvTab("new");
-}
-
-/** 免费模型那一块是"卷起来的"：默认收起；不收起来就不去发实时负载请求 */
-function agSyncFreeSection() {
-  const wrap = agEl("ag-prov-free");
-  const btn = agEl("ag-free-toggle");
-  const cnt = agEl("ag-free-count");
-  const n = ((agCfg && agCfg.providers) || []).filter(isAmdProfile).length;
-  if (cnt) cnt.textContent = n ? n + " " + en("个免费模型") : "";
-  const open = !!wrap && !wrap.hidden;
-  if (btn) {
-    btn.textContent = open ? en("收起免费模型 ▴") : en("显示免费模型 ▾");
-    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  if (agEl("ag-p-id")) {
+    agEl("ag-p-id").readOnly = true;
+    agEl("ag-p-id").title = en("编辑已有模型时内部 ID 不可修改");
   }
+  if (agEl("ag-prov-new-title")) agEl("ag-prov-new-title").textContent = en("编辑：") + agTrName(p.name || p.id);
+  if (agEl("ag-prov-new-sub")) agEl("ag-prov-new-sub").textContent = en("修改连接、模型和能力参数");
+  if (agEl("ag-prov-step")) agEl("ag-prov-step").textContent = en("编辑");
+  if (agEl("ag-prov-step-pick")) agEl("ag-prov-step-pick").hidden = true;
+  if (agEl("ag-prov-step-form")) agEl("ag-prov-step-form").hidden = false;
+  const picked = agEl("ag-prov-selected-preset");
+  if (picked) {
+    picked.textContent = "";
+    const mark = document.createElement("span");
+    mark.className = "provselected-mark";
+    mark.textContent = (p.name.match(/[A-Za-z\u4e00-\u9fff]/) || ["M"])[0].toUpperCase();
+    const copy = document.createElement("span");
+    copy.className = "provselected-copy";
+    const name = document.createElement("strong");
+    name.textContent = agTrName(p.name || p.id);
+    const note = document.createElement("small");
+    note.textContent = `${p.model} · ${p.endpoint}`;
+    copy.append(name, note);
+    picked.append(mark, copy);
+  }
+  agProvTab("new");
 }
 
 /** 切"当前用哪个模型"：全局 active + 当前会话记住的 profile 一起换 */
@@ -11743,16 +11791,10 @@ function agSetModelOptions(list) {
 }
 
 /** 对话页那个"模型"下拉：切当前生效的 profile */
-/** 这条 profile 是不是"AMD Radeon Cloud 内置"那批（id 形如 amd-xxx） */
-const isAmdProfile = (p) => !!p && /^amd-/.test(String(p.id || ""));
-
-/** 内置 profile 名字里带中文前缀（"AMD 免费 · xxx"）；英文界面下把它换掉。
- *  用户自己改过的名字不动。 */
 function agTrName(name) {
   const s = String(name || "");
   if (LANG !== "en") return s;
-  // 内置/预设名字：先按整名查词典（"DeepSeek（Anthropic 格式）" 这种），再换 AMD 前缀
-  return en(s).replace(/^AMD 免费 · /, "AMD Free · ");
+  return en(s);
 }
 
 /** 出字速度：每个 profile 一条 {last, avg, tokens, ms, samples} */
@@ -11771,6 +11813,20 @@ function agSelectedReasoningEfforts() {
     .filter(Boolean);
 }
 
+function agUpdateAdvancedSummary() {
+  const out = agEl("ag-prov-advanced-summary");
+  if (!out) return;
+  const efforts = agSelectedReasoningEfforts();
+  const selected = agEl("ag-p-reasoning") ? agEl("ag-p-reasoning").value : "";
+  const cur = agEl("ag-p-price-cur") ? agEl("ag-p-price-cur").value : "USD";
+  const peak = !!(agEl("ag-p-peak-enabled") && agEl("ag-p-peak-enabled").checked);
+  if (LANG === "en") {
+    out.textContent = `${efforts.length ? `${efforts.length} efforts` : "No reasoning"}${selected ? ` · ${en(agReasoningName(selected))}` : ""} · ${cur}${peak ? " · peak/off-peak" : ""}`;
+  } else {
+    out.textContent = `${efforts.length ? `${efforts.length} 档思考` : "未启用思考"}${selected ? ` · 默认${agReasoningName(selected)}` : ""} · ${cur}${peak ? " · 峰谷计费" : ""}`;
+  }
+}
+
 function agSyncReasoningDefaultOptions(selected) {
   const sel = agEl("ag-p-reasoning");
   const modes = agSelectedReasoningEfforts();
@@ -11784,6 +11840,7 @@ function agSyncReasoningDefaultOptions(selected) {
     sel.appendChild(o);
   }
   sel.value = modes.includes(want) ? want : "";
+  agUpdateAdvancedSummary();
 }
 
 function agSetReasoningModes(modes, selected) {
@@ -11798,7 +11855,10 @@ function agSetReasoningModes(modes, selected) {
     cb.type = "checkbox";
     cb.value = value;
     cb.checked = chosen.has(value);
-    cb.onchange = () => agSyncReasoningDefaultOptions(value);
+    cb.onchange = () => {
+      agSyncReasoningDefaultOptions(value);
+      agUpdateAdvancedSummary();
+    };
     lb.append(cb, document.createTextNode(en(label)));
     box.appendChild(lb);
   }
@@ -11819,22 +11879,9 @@ function agRecommendedEfforts(model, knownReasoning) {
     : [];
 }
 
-/** 模型名 → 那一行的状态短标签（只有 AMD 的模型有；其它厂商没有状态可查） */
-function agModelStatus(p) {
-  if (!isAmdProfile(p)) return "";
-  const m = amdLoadData && amdLoadData.models ? amdLoadData.models[p.model] : null;
-  // 没这份数据就不标状态（负载只在「设置 → 模型」里手动展开时才取，别在这儿骗人说"取状态中"）
-  if (!m) return "";
-  const label = en(m.state === "full" ? "满载" : m.state === "busy" ? "繁忙" : "空闲");
-  return m.utilization != null ? `${label} ${Math.round(m.utilization)}%` : label;
-}
-
 function agModelOptionText(p) {
   const bits = [agTrName(p.name)];
-  // 名字里已经带了模型名（AMD 那批就是 "AMD 免费 · <模型>"）就别再重复一遍
   if (p.model && !String(p.name || "").includes(p.model)) bits.push(p.model);
-  const st = agModelStatus(p);
-  if (st) bits.push(st);
   const tps = fmtTps((agSpeed[p.id] || {}).last);
   if (tps) bits.push(tps);
   const reasoning = agReasoningName(p.reasoning_effort);
@@ -11893,22 +11940,12 @@ async function agLoadQuickModels() {
   more.value = "__settings__"; more.textContent = en("＋ 新增/编辑…");
   sel.appendChild(more);
   sel.value = agCfg.activeId || agCfg.providers[0].id;
-  agSyncModelBusy();
   agSyncReasoningControl();
-}
-
-/** 正在取 AMD 状态时，下拉旁边转圈（其它厂商不发这个请求，也就不转） */
-function agSyncModelBusy() {
-  const el = agEl("ag-model-busy");
-  if (el) el.hidden = !window.__amdLoading;
 }
 
 function bindQuickModels() {
   const sel = agEl("ag-quick-model");
   if (!sel) return;
-  // 点开下拉就先刷一次状态（后端有 15 秒缓存，不会每次都真发请求）；转圈由 agSyncModelBusy 管
-  sel.onmousedown = () => amdLoadPull(false);
-  sel.onfocus = () => amdLoadPull(false);
   sel.onchange = async () => {
     if (sel.value === "__settings__") {
       openSettings("model");
@@ -11954,6 +11991,7 @@ function agFillProvider(id) {
   agEl("ag-p-tools").checked = !!p.supports_tools;
   agEl("ag-p-stream").checked = !!p.supports_stream;
   agFillPricingForm(agEffectivePricing(p));
+  agUpdateAdvancedSummary();
 }
 
 async function agSaveProvider() {
@@ -12003,59 +12041,97 @@ function agProvRow(p, secrets) {
   const row = document.createElement("div");
   const active = !!(agCfg && agCfg.activeId === p.id);
   row.className = "provrow" + (active ? " active" : "");
+  row.setAttribute("role", "button");
+  row.tabIndex = 0;
+  const main = document.createElement("div");
+  main.className = "provmain";
+  const title = document.createElement("div");
+  title.className = "provtitle";
   const nm = document.createElement("span");
   nm.className = "nm";
-  nm.textContent = (active ? "● " : "") + agTrName(p.name || p.id);
+  nm.textContent = agTrName(p.name || p.id);
   nm.title = active ? en("当前在用") : en("点一下切到它");
   const kind = document.createElement("span");
   const isAnth = (p.kind || "openai") === "anthropic";
   kind.className = "kind" + (isAnth ? " anthropic" : "");
   kind.textContent = isAnth ? "Anthropic" : "OpenAI";
   kind.title = isAnth ? "Anthropic /v1/messages" : en("OpenAI 兼容 /chat/completions");
+  title.append(nm, kind);
+  const activePill = document.createElement("span");
+  activePill.className = "provactive" + (active ? "" : " off");
+  activePill.textContent = active ? en("当前在用") : en("点击使用");
+  title.appendChild(activePill);
   const meta = document.createElement("span");
-  meta.className = "meta";
+  meta.className = "provmeta";
   const hasKey = secrets.includes(p.api_key_ref || p.id);
   const reasoning = agReasoningName(p.reasoning_effort);
-  meta.textContent = `${p.model}${reasoning ? " · " + reasoning : ""} · ${p.endpoint}${hasKey ? "" : " · " + en("⚠ 没密钥")}`;
+  meta.textContent = `${p.model}${reasoning ? " · " + en(reasoning) : ""} · ${p.endpoint}${hasKey ? "" : " · " + en("⚠ 没密钥")}`;
   meta.title = meta.textContent;
+  main.append(title, meta);
   const mk = (label, title, fn) => {
     const b = document.createElement("button");
-    b.className = "btn small"; b.textContent = label; b.title = title;
+    b.className = "btn small provact"; b.textContent = label; b.title = title;
     b.onclick = (e) => { e.stopPropagation(); fn(); };
     return b;
   };
-  row.append(nm, kind, meta);
-  row.appendChild(mk(en("编辑"), en("在这条的基础上改（跳到「新增 / 编辑」）"), () => {
+  const actions = document.createElement("div");
+  actions.className = "provrow-actions";
+  actions.appendChild(mk("⚡", en("测一测"), async () => {
+    try { toast(await invoke("agent_ping_provider", { id: p.id })); }
+    catch (e) { toast(String(e)); }
+  }));
+  actions.appendChild(mk("✎", en("在这条的基础上改"), () => {
     agNewProfile = false;
     agFillProvider(p.id);
     agProvToEdit(p);
   }));
-  row.appendChild(mk(en("删除"), en("删掉这个 profile（密钥一起删）"), async () => {
+  actions.appendChild(mk("×", en("删掉这个 profile（密钥一起删）"), async () => {
     const q = `${en("确定删掉")}「${agTrName(p.name || p.id)}」？${en("它的 API Key 也一起删。")}`;
     if (!(await agConfirm(q, en("删除供应商"), true))) return;
-    await invoke("agent_provider_delete", { id: p.id }).catch((e) => toast(String(e)));
+    try {
+      await invoke("agent_provider_delete", { id: p.id });
+      toast(en("已删除"));
+    } catch (e) {
+      toast(String(e));
+      return;
+    }
     agProvTest[p.id] = undefined;
     await agLoadConfig();
   }));
+  actions.querySelectorAll("button")[2]?.classList.add("danger");
+  row.append(main, actions);
   row.onclick = () => { if (!active) agUseProvider(p.id); };
+  row.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && !active) { e.preventDefault(); agUseProvider(p.id); } };
   return row;
+}
+
+function agUpdateProviderSummary() {
+  const id = (agCfg && agCfg.activeId) || "";
+  const p = ((agCfg && agCfg.providers) || []).find((x) => x.id === id) || null;
+  const name = agEl("ag-provider-name");
+  const meta = agEl("ag-provider-meta");
+  if (name) name.textContent = p ? agTrName(p.name || p.id) : en("尚未选择");
+  if (meta) {
+    meta.textContent = p
+      ? `${p.model} · ${(p.kind || "openai") === "anthropic" ? "Anthropic" : "OpenAI"} · ${p.endpoint}`
+      : en("添加一个模型后即可开始对话");
+    meta.title = meta.textContent;
+  }
 }
 
 function agRenderProviders() {
   const box = agEl("ag-prov-list");
-  const freeBox = agEl("ag-prov-amd");
   if (!box) return;
   const list = (agCfg && agCfg.providers) || [];
   const secrets = (agCfg && agCfg.secrets) || [];
-  const draw = (container, arr, emptyText) => {
-    if (!container) return;
-    container.innerHTML = "";
-    if (!arr.length) { container.innerHTML = '<div class="empty">' + emptyText + '</div>'; return; }
-    for (const p of arr) container.appendChild(agProvRow(p, secrets));
-  };
-  draw(box, list.filter((p) => !isAmdProfile(p)), en("（还没有自建供应商：去「新增 / 编辑」加一个）"));
-  draw(freeBox, list.filter(isAmdProfile), en("（没有免费模型：展开后点「+ AMD 免费模型」加回来）"));
-  agSyncFreeSection();
+  box.innerHTML = "";
+  if (!list.length) {
+    box.innerHTML = '<div class="provempty"><b>' + en("还没有模型") + '</b><span>' +
+      en("点击上方「添加模型」，从预设或模型目录开始") + '</span></div>';
+  } else {
+    for (const p of list) box.appendChild(agProvRow(p, secrets));
+  }
+  agUpdateProviderSummary();
 }
 
 async function agTestAllProviders() {
@@ -12905,25 +12981,48 @@ async function cacheRender() {
   cacheRows = items;
   for (const it of items) {
     const row = document.createElement("div");
-    row.className = "agentrow cacherow";
+    row.className = "cachecard" + (it.confirm ? " danger" : "") + (it.exists ? "" : " missing");
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.dataset.key = it.key;
     cb.onchange = cacheSum;
+    cb.className = "cachecard-check";
+    const icon = document.createElement("span");
+    icon.className = "cachecard-icon";
+    icon.innerHTML = '<svg aria-hidden="true"><use href="#ni-database"></use></svg>';
     const info = document.createElement("div");
     info.className = "info";
+    const head = document.createElement("div");
+    head.className = "cachecard-head";
     const t = document.createElement("div");
     t.className = "nm"; t.textContent = en(it.title);
+    head.appendChild(t);
+    if (it.confirm) {
+      const danger = document.createElement("span");
+      danger.className = "cachecard-badge";
+      danger.textContent = en("会丢失数据");
+      head.appendChild(danger);
+    } else if (!it.exists) {
+      const missing = document.createElement("span");
+      missing.className = "cachecard-badge muted";
+      missing.textContent = en("（不存在）");
+      head.appendChild(missing);
+    }
     const p = document.createElement("div");
     p.className = "meta cmdp";
-    p.textContent = (it.exists ? "" : en("（不存在）")) + it.path +
-      (it.files ? `  ·  ${it.files} ${en("个文件")} / ${fmtBytes(it.bytes)}` : "");
+    p.textContent = it.path;
     p.title = it.path;
     const w = document.createElement("div");
     w.className = "warn";
     w.textContent = en(it.warn || "");
-    info.append(t, p, w);
-    row.append(cb, info);
+    const facts = document.createElement("div");
+    facts.className = "cachecard-facts";
+    if (it.files) facts.textContent = `${it.files} ${en("个文件")} · ${fmtBytes(it.bytes)}`;
+    else if (it.bytes) facts.textContent = fmtBytes(it.bytes);
+    info.append(head, p);
+    if (facts.textContent) info.appendChild(facts);
+    if (w.textContent) info.appendChild(w);
+    row.append(cb, icon, info);
     box.appendChild(row);
   }
   cacheSum();
@@ -12932,9 +13031,19 @@ async function cacheRender() {
 const fmtBytes = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : b >= 1024 ? (b / 1024).toFixed(1) + " KB" : (b || 0) + " B");
 
 function cacheSum() {
-  const n = [...document.querySelectorAll("#cache-list input[type=checkbox]")].filter((c) => c.checked).length;
+  const selected = [...document.querySelectorAll("#cache-list input[type=checkbox]")]
+    .filter((c) => c.checked)
+    .map((c) => cacheRows.find((x) => x.key === c.dataset.key))
+    .filter(Boolean);
   const sum = document.getElementById("cache-sum");
-  if (sum) sum.textContent = n ? `${en("已选")} ${n} ${en("项")}` : "";
+  if (sum) {
+    const bytes = selected.reduce((total, item) => total + (Number(item.bytes) || 0), 0);
+    sum.textContent = selected.length
+      ? `${en("已选")} ${selected.length} ${en("项")}${bytes ? " · " + fmtBytes(bytes) : ""}`
+      : en("未选择项目");
+    const del = document.getElementById("cache-del");
+    if (del) del.disabled = selected.length === 0;
+  }
 }
 
 /** 删除确认：把选中的项列出来，每一项都能再勾一次（危险项默认勾上但要求显式确认） */
@@ -13114,42 +13223,7 @@ function agShowPane(name) {
   if (LANG === "en") langWalk();
 }
 
-/* ── AMD Radeon Cloud（tokenfactory）实时负载 ─────────────────────────
- * 数据源是页面上每条 "Live capacity: N%"（该模型并发额度用了多少）的那份公开 JSON；
- * 响应里没有 CORS 头，浏览器直连会被拦，所以走后端 `amd_load`。
- * 刷新**由代码定时做**（15 秒一次），而且只在页面真的露着的时候才请求 ——
- * 两个显示位置（设置→模型、Agent 信息页）都关着就不打扰人家接口。 */
-let amdLoadData = null;
-const amdTone = (s) => (s === "full" ? "bad" : s === "busy" ? "warn" : "ok");
-const amdLabel = (m) => (m && m.label) || (m && m.state === "full" ? "At capacity" : m && m.state) || "";
-
-async function amdLoadPull(force) {
-  if (window.__amdLoading) return;
-  window.__amdLoading = true;
-  agSyncModelBusy();   // ⚠️ 这里就要转起来（放 finally 里等于"取完了才转"）
-  // 这个接口本身要 20 多秒才回（实测 22~24s），没数据的时候先说明白，别让人以为坏了
-  if (!amdLoadData) {
-    for (const id of ["amd-load-list", "ag-amd"]) {
-      const box = document.getElementById(id);
-      if (box) box.textContent = en("正在取（这个接口本身要 20 多秒）…");
-    }
-  }
-  try {
-    amdLoadData = await invoke("amd_load", { force: !!force });
-    const at = document.getElementById("amd-load-at");
-    if (at) at.textContent = en("上次更新 ") + new Date().toLocaleTimeString();
-  } catch (e) {
-    const at = document.getElementById("amd-load-at");
-    if (at) at.textContent = "取不到：" + String(e).slice(0, 90);
-  } finally {
-    window.__amdLoading = false;
-    agSyncModelBusy();
-    amdRenderLoad();
-    agRefreshModelLabels();
-  }
-}
-
-/** 只改下拉里每条文案（速度 / AMD 状态），不重建整个 select —— 免得把当前选中项弄丢 */
+/** 只改下拉里每条文案（速度），不重建整个 select —— 免得把当前选中项弄丢 */
 function agRefreshModelLabels() {
   const sel = agEl("ag-quick-model");
   if (!sel || !agCfg || !agCfg.providers) return;
@@ -13157,58 +13231,6 @@ function agRefreshModelLabels() {
     const p = agCfg.providers.find((x) => x.id === o.value);
     if (p) o.textContent = agModelOptionText(p);
   }
-}
-
-function amdRenderLoad() {
-  const models = (amdLoadData && amdLoadData.models) || null;
-  const entries = models
-    ? Object.entries(models).map(([name, v]) => [name, v || {}]).sort((a, b) => (a[1].utilization || 0) - (b[1].utilization || 0))
-    : [];
-  const box = document.getElementById("amd-load-list");
-  if (box) {
-    box.textContent = "";
-    if (!entries.length) {
-      const d = document.createElement("div");
-      d.className = "agrow empty";
-      d.textContent = "（还没拿到数据）";
-      box.appendChild(d);
-    }
-    for (const [name, m] of entries) {
-      const row = document.createElement("div");
-      row.className = "agrow";
-      const b = document.createElement("b");
-      b.textContent = name;
-      const d = document.createElement("span");
-      d.className = "d " + amdTone(m.state);
-      d.textContent = amdLabel(m);
-      const sz = document.createElement("span");
-      sz.className = "sz";
-      sz.textContent = (m.utilization != null ? m.utilization + "%" : "-");
-      row.append(b, d, sz);
-      box.appendChild(row);
-    }
-  }
-  // 注：AMD 的状态**不放在 Agent 信息页**（那里只放 token 速度这类"这一轮自己的数据"），
-  // 状态只出现在两处：设置 → 模型 的那张表，以及选模型的下拉里（见 agModelOptionText）。
-}
-
-/// 现在有没有"露着"的地方需要这份数据：
-/// 只有「设置 → 模型 → 使用」面板里那块免费模型**被用户展开**了才去取。
-function amdNeedsData() {
-  const modal = document.getElementById("settings-modal");
-  const modelPane = document.querySelector('.setpane[data-setpane="model"]');
-  if (!modal || modal.hidden || !modelPane || modelPane.hidden) return false;
-  const wrap = document.getElementById("ag-prov-free");
-  if (!wrap || wrap.hidden) return false;      // 免费那块收着：一个请求都不发
-  const useTab = document.querySelector('.provtab[data-provtab-pane="use"]');
-  return !!useTab && !useTab.hidden;
-}
-
-function amdBind() {
-  const btn = document.getElementById("amd-load-refresh");
-  if (btn) btn.onclick = () => amdLoadPull(true);
-  // 代码定时刷：15 秒一拍，只在看得见的时候发请求
-  setInterval(() => { if (amdNeedsData()) amdLoadPull(false); }, 15000);
 }
 
 function agRenderPage(page) {
@@ -14032,6 +14054,9 @@ function applyLang(lang) {
   try {
     safe(outHeadRefresh, "outHeadRefresh");
     safe(outClockTick, "outClockTick");
+    safe(() => syncSettingsHeader(document.querySelector(".modaltab.active")?.dataset.set || "general"), "syncSettingsHeader");
+    safe(agRenderProviders, "agRenderProviders");
+    safe(agUpdateAdvancedSummary, "agUpdateAdvancedSummary");
     safe(refreshHistory, "refreshHistory");
     safe(() => redrawRx(true), "redrawRx");
     safe(sqRender, "sqRender");            // 画布节点正文 + 右侧配置面板，都是运行时拼的

@@ -269,7 +269,7 @@ fn resolve_provider(app: &AppHandle, want: Option<&str>) -> Result<(Provider, St
     if cfg.providers.is_empty() {
         return Err(
             "还没有可用的模型：打开「设置」（左下角齿轮，或 Ctrl+,）→ 模型与供应商 → \
-                    上面选一个厂家预设点「填入表单」，再粘上你的 API Key 保存即可。"
+                    添加模型 → 选择厂家预设，再粘上你的 API Key 保存即可。"
                 .into(),
         );
     }

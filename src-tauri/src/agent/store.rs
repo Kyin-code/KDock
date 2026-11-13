@@ -239,6 +239,37 @@ pub struct ProviderConfig {
     pub providers: Vec<Provider>,
 }
 
+/// AMD Radeon Cloud free profiles were a built-in pilot. They are no longer
+/// shipped or maintained, so old persisted copies are removed during load.
+fn is_removed_free_provider(provider: &Provider) -> bool {
+    let id = provider.id.trim().to_ascii_lowercase();
+    let name = provider.name.trim();
+    id.starts_with("amd-")
+        || name.starts_with("AMD 免费 ·")
+        || name.starts_with("AMD Free ·")
+}
+
+fn remove_legacy_free_providers(cfg: &mut ProviderConfig) -> Vec<String> {
+    let removed: Vec<String> = cfg
+        .providers
+        .iter()
+        .filter(|p| is_removed_free_provider(p))
+        .map(|p| p.id.clone())
+        .collect();
+    if removed.is_empty() {
+        return removed;
+    }
+    cfg.providers.retain(|p| !is_removed_free_provider(p));
+    if cfg
+        .active_id
+        .as_ref()
+        .is_some_and(|id| removed.iter().any(|old| old == id))
+    {
+        cfg.active_id = cfg.providers.first().map(|p| p.id.clone());
+    }
+    removed
+}
+
 pub fn providers_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(agent_dir(app)?.join("providers.json"))
 }
@@ -253,11 +284,26 @@ pub fn load_providers(app: &AppHandle) -> ProviderConfig {
         provider.normalize_efforts();
         provider.normalize_limits();
     }
+    let removed = remove_legacy_free_providers(&mut cfg);
+    if !removed.is_empty() {
+        let _ = write_json(&path, &cfg);
+        let path = secrets_path(app).ok();
+        if let Some(path) = path {
+            if let Some(mut secrets) = read_json::<SecretsFile>(&path) {
+                let before = secrets.entries.len();
+                secrets.entries.retain(|name, _| !removed.iter().any(|id| id == name));
+                if secrets.entries.len() != before {
+                    let _ = write_json(&path, &secrets);
+                }
+            }
+        }
+    }
     cfg
 }
 
 pub fn save_providers(app: &AppHandle, cfg: &ProviderConfig) -> Result<(), String> {
     let mut normalized = cfg.clone();
+    remove_legacy_free_providers(&mut normalized);
     for provider in &mut normalized.providers {
         provider.normalize_efforts();
         provider.normalize_limits();
@@ -1892,6 +1938,32 @@ mod tests {
         p.normalize_limits();
         assert_eq!(p.max_output_tokens, MAX_OUTPUT_TOKENS);
         assert_eq!(p.input_budget(), 1_000_000 - MAX_OUTPUT_TOKENS);
+    }
+
+    #[test]
+    fn legacy_amd_free_profiles_are_removed_and_active_falls_back() {
+        let provider = |id: &str, name: &str| -> Provider {
+            serde_json::from_value(serde_json::json!({
+                "id": id,
+                "name": name,
+                "endpoint": "https://example.com/v1",
+                "model": "m"
+            }))
+            .unwrap()
+        };
+        let mut cfg = ProviderConfig {
+            active_id: Some("amd-deepseek".into()),
+            providers: vec![
+                provider("amd-deepseek", "AMD 免费 · DeepSeek"),
+                provider("custom", "My provider"),
+                provider("amd-qwen", "AMD Free · Qwen"),
+            ],
+        };
+        let removed = remove_legacy_free_providers(&mut cfg);
+        assert_eq!(removed.len(), 2);
+        assert_eq!(cfg.providers.len(), 1);
+        assert_eq!(cfg.providers[0].id, "custom");
+        assert_eq!(cfg.active_id.as_deref(), Some("custom"));
     }
 
     #[test]

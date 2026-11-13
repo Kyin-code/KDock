@@ -67,6 +67,14 @@ assert.deepEqual(
 assert.ok((html.match(/data-en=/g) || []).length >= 60, "static bilingual markup is unexpectedly sparse");
 assert.equal((html.match(/id="set-lang-zh"/g) || []).length, 1);
 assert.equal((html.match(/id="set-lang-en"/g) || []).length, 1);
+const settingsGroupLabels = [...html.matchAll(/class="modalnav-label">([^<]+)</g)]
+  .map((match) => match[1].trim());
+const missingGroupLabels = settingsGroupLabels.filter((label) => !EN[label]);
+assert.deepEqual(
+  missingGroupLabels,
+  [],
+  `Settings navigation group labels have no English translation:\n${missingGroupLabels.join("\n")}`,
+);
 
 console.log(JSON.stringify({
   ok: true,

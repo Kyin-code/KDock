@@ -72,6 +72,14 @@ try {
   });
 
   await page.evaluate(() => window.__setI18nLanguage("en"));
+  const settingsGroupLabels = await page.evaluate(() =>
+    [...document.querySelectorAll(".modalnav-label")]
+      .map((element) => element.textContent.trim()),
+  );
+  assert.ok(
+    settingsGroupLabels.includes("Agent & tools"),
+    `settings group labels were not translated: ${settingsGroupLabels.join(" | ")}`,
+  );
   const english = await page.evaluate(() => {
     const controls = [...document.querySelectorAll("button, label, .navitem, .modaltab, .cardtitle")]
       .filter((element) => element.getClientRects().length && element.textContent.trim())

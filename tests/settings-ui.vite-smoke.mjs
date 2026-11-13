@@ -43,6 +43,8 @@ try {
     const root = document.getElementById("ui-root");
     root.prepend(parsed.querySelector("header.titlebar"));
     root.appendChild(parsed.querySelector("#settings-modal"));
+    root.appendChild(parsed.querySelector("#ag-dlg"));
+    root.appendChild(parsed.querySelector("#app-update-dlg"));
     document.getElementById("settings-modal").hidden = false;
   });
 
@@ -123,8 +125,86 @@ try {
       await page.screenshot({ path: resolve(root, process.env.KDOCK_SETTINGS_SHOT) });
     }
   }
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const settingsPages = await page.evaluate(() => {
+    const modal = document.getElementById("settings-modal");
+    const show = (name) => {
+      modal.hidden = false;
+      document.querySelectorAll(".setpane").forEach((pane) => {
+        pane.hidden = pane.dataset.setpane !== name;
+      });
+      const content = document.querySelector("#settings-modal .settings-panes");
+      if (content) content.scrollTop = 0;
+    };
+    show("model");
+    const tabs = [...document.querySelectorAll("#ag-prov-tabs .segtab")];
+    const current = document.querySelector(".provcurrent");
+    const pick = document.getElementById("ag-prov-step-pick");
+    const form = document.getElementById("ag-prov-step-form");
+    const model = {
+      tabs: tabs.map((tab) => tab.textContent.trim()),
+      currentDisplay: current ? getComputedStyle(current).display : "",
+      presetGridColumns: getComputedStyle(document.getElementById("ag-preset-grid")).gridTemplateColumns,
+      pickerVisible: !!pick && !pick.hidden,
+      formHidden: !!form && form.hidden,
+      addButton: !!document.getElementById("ag-prov-add"),
+      advancedCollapsed: !document.querySelector(".provadvanced")?.open,
+      capacityVisible: !document.getElementById("ag-p-ctx")?.closest("details"),
+      toolsVisible: !document.getElementById("ag-p-tools")?.closest("details"),
+      advancedSections: document.querySelectorAll(".provadvanced").length,
+      freeControls: document.querySelectorAll(
+        "#ag-free-toggle, #ag-prov-free, #ag-prov-amd, #amd-load-list, #ag-model-busy",
+      ).length,
+      catalogEntry: !!document.getElementById("ag-open-catalog"),
+    };
+    show("cache");
+    const cache = {
+      hero: !!document.querySelector(".cachehero"),
+      toolbar: !!document.querySelector(".cachetoolbar"),
+      listClass: document.getElementById("cache-list")?.className || "",
+    };
+    const settingsZ = Number.parseInt(getComputedStyle(modal).zIndex, 10);
+    const confirm = document.getElementById("ag-dlg");
+    const update = document.getElementById("app-update-dlg");
+    confirm.hidden = false;
+    update.hidden = false;
+    const layer = {
+      settingsZ,
+      confirmZ: Number.parseInt(getComputedStyle(confirm).zIndex, 10),
+      updateZ: Number.parseInt(getComputedStyle(update).zIndex, 10),
+      cacheZ: 0,
+    };
+    const kd = document.createElement("div");
+    kd.className = "kdmodal";
+    document.body.appendChild(kd);
+    layer.cacheZ = Number.parseInt(getComputedStyle(kd).zIndex, 10);
+    kd.remove();
+    confirm.hidden = true;
+    update.hidden = true;
+    return { model, cache, layer };
+  });
+  if (settingsPages.model.tabs.join("|") !== "已配置|添加模型"
+      || settingsPages.model.currentDisplay !== "grid"
+      || !settingsPages.model.presetGridColumns
+      || !settingsPages.model.pickerVisible
+      || !settingsPages.model.formHidden
+      || !settingsPages.model.addButton
+      || !settingsPages.model.advancedCollapsed
+      || !settingsPages.model.capacityVisible
+      || !settingsPages.model.toolsVisible
+      || settingsPages.model.advancedSections !== 2
+      || settingsPages.model.freeControls !== 0
+      || !settingsPages.model.catalogEntry
+      || !settingsPages.cache.hero
+      || !settingsPages.cache.toolbar
+      || !settingsPages.cache.listClass.includes("cache-list")
+      || settingsPages.layer.confirmZ <= settingsPages.layer.settingsZ
+      || settingsPages.layer.updateZ <= settingsPages.layer.settingsZ
+      || settingsPages.layer.cacheZ <= settingsPages.layer.settingsZ) {
+    throw new Error(`Settings pages failed: ${JSON.stringify(settingsPages)}`);
+  }
   if (errors.length) throw new Error(`Settings page errors: ${errors.join("; ")}`);
-  console.log(JSON.stringify({ ok: true, profiles: results }, null, 2));
+  console.log(JSON.stringify({ ok: true, profiles: results, settingsPages }, null, 2));
 } finally {
   await browser?.close();
   await server.close();

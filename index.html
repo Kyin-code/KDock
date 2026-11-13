@@ -182,11 +182,13 @@
           <svg class="tb-update-ico" viewBox="0 0 24 24" aria-hidden="true">
             <defs>
               <clipPath id="tb-update-arrow-clip">
-                <rect x="0" y="0" width="24" height="18"/>
+                <rect x="0" y="0" width="24" height="19"/>
               </clipPath>
             </defs>
-            <g class="tb-update-arrow" clip-path="url(#tb-update-arrow-clip)">
-              <path d="M12 4v11"/><path d="m8 11 4 4 4-4"/>
+            <g class="tb-update-arrow-window" clip-path="url(#tb-update-arrow-clip)">
+              <g class="tb-update-arrow">
+                <path d="M12 4v11"/><path d="m8 11 4 4 4-4"/>
+              </g>
             </g>
             <path class="tb-update-line" d="M5 19h14"/>
           </svg>
@@ -372,47 +374,28 @@
             </div>
             <div class="setpane" data-setpane="model" hidden>
               <div class="segtabs" id="ag-prov-tabs">
-                <button class="segtab active" data-provtab="use">使用</button>
-                <button class="segtab" data-provtab="catalog">添加模型</button>
-                <button class="segtab" data-provtab="new">高级</button>
+                <button class="segtab active" data-provtab="use">已配置</button>
+                <button class="segtab" data-provtab="new">添加模型</button>
               </div>
 
               <!-- ① 使用：只挑"用哪个"，行内只有编辑 / 删除 -->
               <div class="provtab" data-provtab-pane="use">
-                <div class="field"><label for="ag-provider">当前模型</label>
-                  <div class="trow grow">
-                    <select id="ag-provider"></select>
+                <div class="provcurrent">
+                  <div class="provcurrent-copy">
+                    <span class="provcurrent-kicker">当前模型</span>
+                    <strong id="ag-provider-name">尚未选择</strong>
+                    <span id="ag-provider-meta" class="provcurrent-meta">添加一个模型后即可开始对话</span>
                   </div>
+                  <select id="ag-provider" hidden></select>
                 </div>
-                <p class="hint">选中的这个模型，agent 后面几轮就用它。点下面任意一条也能直接切过去。</p>
 
-                <div class="cardtitle">自建 / 自己编辑的模型</div>
+                <div class="cardtitle">模型
+                  <span class="grow"></span>
+                  <button id="ag-prov-add" class="btn small primary">＋ 添加模型</button>
+                </div>
                 <div id="ag-prov-list" class="agentlist provlist"></div>
 
-                <div class="cardtitle">
-                  <button id="ag-free-toggle" class="btn small">显示免费模型 ▾</button>
-                  <span class="grow"></span>
-                  <span id="ag-free-count" class="lb"></span>
-                </div>
-                <div id="ag-prov-free" hidden>
-                  <div id="ag-prov-amd" class="agentlist provlist"></div>
-                  <div class="trow">
-                    <button id="ag-prov-amd-add" class="btn small"
-                      title="把 AMD Radeon Cloud 那批免费模型加回列表（删掉之后不会自己回来，点这里加）">+ AMD 免费模型</button>
-                    <span class="grow"></span>
-                  </div>
-                  <div class="cardtitle">实时负载
-                    <span class="grow"></span>
-                    <button id="amd-load-refresh" class="btn small" title="立刻取一次（这个接口本身要 20 多秒）">↻</button>
-                  </div>
-                  <div id="amd-load-list" class="agtable"></div>
-                  <p class="hint">AMD Radeon Cloud（tokenfactory）各模型当前的并发占用，来自他们页面上
-                    "Live capacity" 那份公开数据（后端去取，绕开跨域）。<b>只有你把这块展开时才去取</b>，
-                    展开期间每 15 秒一次。<span id="amd-load-at" class="hint"></span></p>
-                </div>
-
-                <div class="cardtitle">其它</div>
-                <div class="trow">
+                <div class="prov-footer">
                   <button id="ag-prov-import" class="btn small">导入…</button>
                   <button id="ag-prov-export" class="btn small">导出…</button>
                   <button id="ag-prov-testall" class="btn small">全部测一测</button>
@@ -421,8 +404,155 @@
                   换机器本来就带不走，导过去重新粘一次）。</p>
               </div>
 
-              <!-- ② 添加模型：从 models.dev 精简目录里选，自动带出上下文 / 价格 / 工具能力 -->
+              <!-- ② 添加模型：先选预设，再填表单；模型目录是另一条入口 -->
+              <div class="provtab" data-provtab-pane="new" hidden>
+                <div class="provwizard-head">
+                  <button id="ag-prov-back" class="provback" title="返回">←</button>
+                  <div class="provwizard-copy">
+                    <div class="provwizard-title" id="ag-prov-new-title">添加模型</div>
+                    <div class="provwizard-sub" id="ag-prov-new-sub">选择来源，再填写连接信息</div>
+                  </div>
+                  <span class="provstep-pill" id="ag-prov-step">1 / 2</span>
+                </div>
+
+                <section id="ag-prov-step-pick" class="provstep-pick">
+                  <div class="provsource-head">
+                    <span>从预设开始</span>
+                    <span class="grow"></span>
+                    <button id="ag-open-catalog" class="btn small">从模型目录选择</button>
+                  </div>
+                  <div id="ag-preset-grid" class="preset-grid"></div>
+                  <p class="hint">选择服务商后会带入地址、模型和建议参数；你只需要补 API Key。自建网关选最后一项。</p>
+                </section>
+
+                <section id="ag-prov-step-form" hidden>
+                  <div id="ag-prov-selected-preset" class="provselected"></div>
+                  <div class="field"><label for="ag-p-name">名字</label><input id="ag-p-name" placeholder="DeepSeek" /></div>
+                  <div class="field"><label for="ag-p-endpoint">地址</label><input id="ag-p-endpoint" placeholder="https://api.deepseek.com/v1" /></div>
+                  <div class="field"><label for="ag-p-kind">接口格式</label>
+                    <select id="ag-p-kind">
+                      <option value="openai">OpenAI 兼容（/chat/completions）</option>
+                      <option value="anthropic">Anthropic（/v1/messages）</option>
+                    </select>
+                  </div>
+                  <p class="hint">DeepSeek 两种都支持：OpenAI 兼容填 <code>https://api.deepseek.com</code>，
+                    Anthropic 格式填 <code>https://api.deepseek.com/anthropic</code>。</p>
+                  <div class="field"><label for="ag-p-model">模型</label>
+                    <div class="inline grow">
+                      <input id="ag-p-model" class="grow" placeholder="deepseek-chat" list="ag-model-list" />
+                      <select id="ag-model-pick" class="tight" title="从已获取的模型列表中选择" hidden></select>
+                    </div>
+                    <datalist id="ag-model-list"></datalist>
+                  </div>
+                  <div class="modelcap-grid">
+                    <div class="field ag-limit-field"><label for="ag-p-ctx">上下文窗口</label>
+                      <input id="ag-p-ctx" class="num ag-token-input" type="number" inputmode="numeric"
+                             value="128000" min="8192" max="10000000" step="1"
+                             title="这个模型最多能记多少 token" />
+                    </div>
+                    <div class="field ag-limit-field"><label for="ag-p-res">最大输出 tokens</label>
+                      <input id="ag-p-res" class="num ag-token-input" type="number" inputmode="numeric"
+                             value="32768" min="1024" max="65536" step="1"
+                             title="单次回复最多多少 token；思考内容也计入这个额度" />
+                    </div>
+                  </div>
+                  <div class="chips modelctx-presets" id="ag-ctx-presets">
+                    <button class="chipbtn" data-ctx="32000">32K</button>
+                    <button class="chipbtn" data-ctx="65536">64K</button>
+                    <button class="chipbtn" data-ctx="128000">128K</button>
+                    <button class="chipbtn" data-ctx="200000">200K</button>
+                    <button class="chipbtn" data-ctx="262144">256K</button>
+                    <button class="chipbtn" data-ctx="512000">512K</button>
+                    <button class="chipbtn" data-ctx="1000000">1M</button>
+                  </div>
+                  <div class="field"><label for="ag-p-key">API Key</label>
+                    <input id="ag-p-key" type="password" placeholder="粘贴 Key（已保存的会留空）" />
+                  </div>
+                  <div class="modelcap-switches">
+                    <label class="chk"><input type="checkbox" id="ag-p-tools" checked /> 支持工具调用</label>
+                    <label class="chk"><input type="checkbox" id="ag-p-stream" checked /> 流式输出</label>
+                    <span class="hint">代码 Agent 建议保留工具调用；流式输出用于实时显示生成过程。</span>
+                  </div>
+                  <details class="provadvanced" id="ag-prov-advanced">
+                    <summary>
+                      <span>推理与计费</span>
+                      <span class="grow"></span>
+                      <span id="ag-prov-advanced-summary" class="provsummary">默认 · 按量计费</span>
+                    </summary>
+                    <div class="field"><label>可用思考强度</label>
+                      <div id="ag-p-reasoning-modes" class="effortchips"></div>
+                    </div>
+                    <p class="hint">只勾选这个供应商/模型确认支持的档位。Agent 面板会按这里列出可选值；不同厂商未支持的档位可能返回 400。</p>
+                    <div class="field"><label for="ag-p-reasoning">默认思考强度</label>
+                      <select id="ag-p-reasoning">
+                        <option value="">跟随模型默认</option>
+                      </select>
+                    </div>
+                    <div class="trow">
+                      <button id="ag-p-reason-test" class="btn small">测试真实思考强度</button>
+                      <span id="ag-p-reason-test-state" class="lb"></span>
+                    </div>
+                    <div id="ag-p-reason-result" class="reasonresult" hidden></div>
+                    <p class="hint">测试会对每个已勾选档位真实发一次小请求（会产生少量 token 费用），记录接口可见的思考正文、首字延迟、出字耗时和 token。隐藏 CoT 的厂商可能显示 0 字；这只能说明未暴露，不代表没有思考。</p>
+                    <div class="field"><label for="ag-p-price-cur">价格</label>
+                      <select id="ag-p-price-cur" class="tight">
+                        <option value="USD">美元 / 百万 token</option>
+                        <option value="CNY">人民币 / 百万 token</option>
+                      </select>
+                    </div>
+                    <div class="trow">
+                      <label class="chk"><input type="checkbox" id="ag-p-peak-enabled" /> 启用峰谷计费</label>
+                    </div>
+                    <div class="field"><label>峰价</label>
+                      <div class="pricegrid">
+                        <input id="ag-p-peak-hit" class="num" type="number" min="0" step="any" placeholder="缓存命中" />
+                        <input id="ag-p-peak-miss" class="num" type="number" min="0" step="any" placeholder="缓存未命中" />
+                        <input id="ag-p-peak-out" class="num" type="number" min="0" step="any" placeholder="输出" />
+                      </div>
+                    </div>
+                    <div class="field"><label>谷价</label>
+                      <div class="pricegrid">
+                        <input id="ag-p-offpeak-hit" class="num" type="number" min="0" step="any" placeholder="缓存命中" />
+                        <input id="ag-p-offpeak-miss" class="num" type="number" min="0" step="any" placeholder="缓存未命中" />
+                        <input id="ag-p-offpeak-out" class="num" type="number" min="0" step="any" placeholder="输出" />
+                      </div>
+                    </div>
+                    <div class="field"><label for="ag-p-temp">温度</label>
+                      <input id="ag-p-temp" class="num" type="number" step="0.1" min="0" max="2" value="0.2" list="ag-temp-list" />
+                      <datalist id="ag-temp-list">
+                        <option value="0"></option><option value="0.2"></option><option value="0.6"></option>
+                        <option value="0.9"></option><option value="1"></option>
+                      </datalist>
+                    </div>
+                    <p class="hint">温度 = 回答的"随机性"：0 最稳（每次几乎一样，调试/工具调用建议 0~0.3）；越高越发散（0.7~1.0 适合写作）。</p>
+                  </details>
+                  <details class="provadvanced" id="ag-prov-meta">
+                    <summary><span>内部 ID 与维护</span><span class="grow"></span><span class="provsummary">一般无需修改</span></summary>
+                    <div class="field"><label for="ag-p-id">内部 ID</label><input id="ag-p-id" placeholder="deepseek（只给程序用，随便起）" /></div>
+                    <p class="hint">新模型可留空，保存时会根据名称生成。编辑已有模型时请保持原 ID。</p>
+                  </details>
+                  <div class="trow">
+                    <button id="ag-p-models" class="btn small">拉模型列表</button>
+                    <button id="ag-p-ping" class="btn small">测一测</button>
+                    <span class="hint">直接使用当前填写的参数测试，不需要先保存</span>
+                  </div>
+                  <p class="hint" id="ag-key-hint"></p>
+                  <div class="trow endcap">
+                    <button id="ag-prov-cancel" class="btn small">返回模型列表</button>
+                    <span class="grow"></span>
+                    <button id="ag-prov-save" class="btn primary">保存并使用</button>
+                  </div>
+                </section>
+              </div>
+
               <div class="provtab" data-provtab-pane="catalog" hidden>
+                <div class="provwizard-head compact">
+                  <button id="md-back" class="provback" title="返回">←</button>
+                  <div class="provwizard-copy">
+                    <div class="provwizard-title">从模型目录添加</div>
+                    <div class="provwizard-sub">搜索 models.dev，自动带入连接参数</div>
+                  </div>
+                </div>
                 <div class="trow">
                   <input id="md-search" class="dirinput grow" placeholder="搜索模型或供应商，例如 claude / deepseek / glm" />
                   <button id="md-refresh" class="btn small">刷新目录</button>
@@ -454,129 +584,6 @@
                 </div>
               </div>
 
-              <!-- ③ 高级：完整表单，保存放最下面 -->
-              <div class="provtab" data-provtab-pane="new" hidden>
-                <div class="cardtitle" id="ag-prov-new-title">新增供应商</div>
-                <div class="field"><label for="ag-preset">厂家预设</label>
-                  <div class="trow grow">
-                    <select id="ag-preset"></select>
-                    <button id="ag-preset-fill" class="btn small" title="把选中预设的地址 / 模型 / 上下文填进下面">使用默认模版</button>
-                  </div>
-                </div>
-                <p class="hint" id="ag-preset-note">选一个预设 → 使用默认模版 → 只补 API Key 就能用。都是 OpenAI 兼容写法（能填 base_url 的服务）。</p>
-
-                <div class="field"><label for="ag-p-id">ID</label><input id="ag-p-id" placeholder="deepseek（只给程序用，随便起）" /></div>
-                <div class="field"><label for="ag-p-name">名字</label><input id="ag-p-name" placeholder="DeepSeek" /></div>
-                <div class="field"><label for="ag-p-endpoint">地址</label><input id="ag-p-endpoint" placeholder="https://api.deepseek.com/v1" /></div>
-                <div class="field"><label for="ag-p-kind">接口格式</label>
-                  <select id="ag-p-kind">
-                    <option value="openai">OpenAI 兼容（/chat/completions）</option>
-                    <option value="anthropic">Anthropic（/v1/messages）</option>
-                  </select>
-                </div>
-                <p class="hint">DeepSeek 两种都支持：OpenAI 兼容填 <code>https://api.deepseek.com</code>，
-                  Anthropic 格式填 <code>https://api.deepseek.com/anthropic</code>。</p>
-                <div class="field"><label for="ag-p-model">模型</label>
-                  <div class="inline grow">
-                    <input id="ag-p-model" class="grow" placeholder="deepseek-chat" list="ag-model-list" />
-                    <select id="ag-model-pick" class="tight" title="从已获取的模型列表中选择" hidden></select>
-                  </div>
-                  <datalist id="ag-model-list"></datalist>
-                </div>
-                <div class="field"><label for="ag-p-key">API Key</label>
-                  <input id="ag-p-key" type="password" placeholder="粘贴 Key（已保存的会留空）" />
-                </div>
-                <div class="field ag-limit-field"><label for="ag-p-ctx">上下文窗口</label>
-                  <div class="trow grow">
-                    <input id="ag-p-ctx" class="num ag-token-input" type="number" inputmode="numeric"
-                           value="128000" min="8192" max="10000000" step="1"
-                           title="这个模型最多能记多少 token" />
-                    <span id="ag-ctx-presets" class="chips">
-                      <button class="chipbtn" data-ctx="32000">32K</button>
-                      <button class="chipbtn" data-ctx="65536">64K</button>
-                      <button class="chipbtn" data-ctx="128000">128K</button>
-                      <button class="chipbtn" data-ctx="200000">200K</button>
-                      <button class="chipbtn" data-ctx="262144">256K</button>
-                      <button class="chipbtn" data-ctx="512000">512K</button>
-                      <button class="chipbtn" data-ctx="1000000">1M</button>
-                    </span>
-                  </div>
-                </div>
-                <p class="hint">不知道填多少就看服务商文档；填小了会频繁触发"压缩上下文"，填大了没坏处（超了服务端会报错）。</p>
-                <div class="field ag-limit-field"><label for="ag-p-res">最大输出 tokens</label>
-                  <div class="trow grow ag-token-line">
-                    <input id="ag-p-res" class="num ag-token-input" type="number" inputmode="numeric"
-                           value="32768" min="1024" max="65536" step="1"
-                           title="单次回复最多多少 token；思考内容也计入这个额度" />
-                    <span class="hint ag-token-hint">代码 Agent 建议 32K~64K</span>
-                  </div>
-                </div>
-                <div class="field"><label>可用思考强度</label>
-                  <div id="ag-p-reasoning-modes" class="effortchips"></div>
-                </div>
-                <p class="hint">只勾选这个供应商/模型确认支持的档位。Agent 面板会按这里列出可选值；不同厂商未支持的档位可能返回 400。</p>
-                <div class="field"><label for="ag-p-reasoning">默认思考强度</label>
-                  <select id="ag-p-reasoning">
-                    <option value="">跟随模型默认</option>
-                  </select>
-                </div>
-                <div class="trow">
-                  <button id="ag-p-reason-test" class="btn small">测试真实思考强度</button>
-                  <span id="ag-p-reason-test-state" class="lb"></span>
-                </div>
-                <div id="ag-p-reason-result" class="reasonresult" hidden></div>
-                <p class="hint">测试会对每个已勾选档位真实发一次小请求（会产生少量 token 费用），记录接口可见的思考正文、首字延迟、出字耗时和 token。隐藏 CoT 的厂商可能显示 0 字；这只能说明未暴露，不代表没有思考。</p>
-                <div class="field"><label for="ag-p-price-cur">价格</label>
-                  <select id="ag-p-price-cur" class="tight">
-                    <option value="USD">美元 / 百万 token</option>
-                    <option value="CNY">人民币 / 百万 token</option>
-                  </select>
-                </div>
-                <div class="trow">
-                  <label class="chk"><input type="checkbox" id="ag-p-peak-enabled" /> 启用峰谷计费</label>
-                </div>
-                <div class="field"><label>峰价</label>
-                  <div class="pricegrid">
-                    <input id="ag-p-peak-hit" class="num" type="number" min="0" step="any" placeholder="缓存命中" />
-                    <input id="ag-p-peak-miss" class="num" type="number" min="0" step="any" placeholder="缓存未命中" />
-                    <input id="ag-p-peak-out" class="num" type="number" min="0" step="any" placeholder="输出" />
-                  </div>
-                </div>
-                <div class="field"><label>谷价</label>
-                  <div class="pricegrid">
-                    <input id="ag-p-offpeak-hit" class="num" type="number" min="0" step="any" placeholder="缓存命中" />
-                    <input id="ag-p-offpeak-miss" class="num" type="number" min="0" step="any" placeholder="缓存未命中" />
-                    <input id="ag-p-offpeak-out" class="num" type="number" min="0" step="any" placeholder="输出" />
-                  </div>
-                </div>
-                <details class="adv">
-                  <summary>高级</summary>
-                  <div class="field"><label for="ag-p-temp">温度</label>
-                  <input id="ag-p-temp" class="num" type="number" step="0.1" min="0" max="2" value="0.2" list="ag-temp-list" />
-                  <datalist id="ag-temp-list">
-                    <option value="0"></option><option value="0.2"></option><option value="0.6"></option>
-                    <option value="0.9"></option><option value="1"></option>
-                  </datalist>
-                </div>
-                <p class="hint">温度 = 回答的"随机性"：0 最稳（每次几乎一样，调试/工具调用建议 0~0.3）；
-                  越高越发散（0.7~1.0 适合写东西）。这个助手要调工具、要准，建议 0.2。</p>
-                </details>
-                <div class="trow">
-                  <label class="chk"><input type="checkbox" id="ag-p-tools" checked /> 支持工具调用</label>
-                  <label class="chk"><input type="checkbox" id="ag-p-stream" checked /> 流式输出</label>
-                </div>
-                <div class="trow">
-                  <button id="ag-p-models" class="btn small">拉模型列表</button>
-                  <button id="ag-p-ping" class="btn small">测一测</button>
-                  <span class="hint">这两个直接用上面**当前填的值**试，不用先保存</span>
-                </div>
-                <p class="hint" id="ag-key-hint"></p>
-                <div class="trow endcap">
-                  <button id="ag-prov-cancel" class="btn small" hidden>取消编辑</button>
-                  <span class="grow"></span>
-                  <button id="ag-prov-save" class="btn primary">保存</button>
-                </div>
-              </div>
             </div>
             <!-- 缓存：所有持久化数据一览 + 按类删除 -->
             <div class="setpane" data-setpane="netip" hidden>
@@ -603,19 +610,24 @@
               <p class="hint" data-en="Retries are limited to 10 and apply only to manual refreshes. Automatic probes use 5s / 15s / 60s / 180s / 300s backoff; local network checks do not consume the quota.">重试次数最多 10 次，仅用于手动刷新；自动探测采用 5s / 15s / 60s / 180s / 300s 指数退避，本地网络检查不消耗额度。</p>
             </div>
             <div class="setpane" data-setpane="cache" hidden>
-              <div class="cardtitle">持久化数据（缓存）
-                <button id="cache-reload" class="btn small">↻ 刷新</button></div>
-              <p class="hint">这里是本软件在你这台机器上留下的**全部**数据：界面偏好、窗口状态、LLM 供应商与密钥、
-                对话历史、技能副本、MCP 配置、指令表、工作区文件…… 每一项都标了路径，可以单独删。
-                删除后软件会自动重启（避免半截状态）。</p>
-              <div class="trow">
-                <button id="cache-all" class="btn small">全选</button>
-                <button id="cache-none" class="btn small">全不选</button>
+              <div class="cachehero">
+                <span class="cachehero-ico" aria-hidden="true"><svg><use href="#ni-database"></use></svg></span>
+                <div class="cachehero-copy">
+                  <strong>持久化数据</strong>
+                  <p>查看 KDock 在本机保存的配置、会话、密钥和文件。可逐项选择后清理；删除完成会重启应用。</p>
+                </div>
+                <button id="cache-reload" class="btn small">↻ 刷新</button>
+              </div>
+              <div class="cachetoolbar">
+                <div class="cachetoolbar-select">
+                  <button id="cache-all" class="btn small">全选</button>
+                  <button id="cache-none" class="btn small">全不选</button>
+                </div>
                 <span class="grow"></span>
                 <span id="cache-sum" class="lb"></span>
-                <button id="cache-del" class="btn small danger">删除选中…</button>
+                <button id="cache-del" class="btn small danger">删除选中</button>
               </div>
-              <div id="cache-list" class="agentlist"></div>
+              <div id="cache-list" class="cache-list"></div>
             </div>
 
             <div class="setpane" data-setpane="help" hidden>
@@ -1121,7 +1133,6 @@
                 </select>
               </label>
               <span class="grow"></span>
-              <span id="ag-model-busy" class="spin" hidden title="正在取模型状态（AMD 那边约 20 秒）"></span>
               <label class="agctl" id="ag-reasoning-wrap" hidden>
                 <select id="ag-reasoning" title="本会话的思考强度"></select>
               </label>
