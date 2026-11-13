@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.31 -->
+## v0.3.31
+
+### 新增
+
+- feat(settings): streamline provider setup and cache management
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.30 -->
 ## v0.3.30
 
