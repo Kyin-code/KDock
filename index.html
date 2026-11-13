@@ -357,16 +357,37 @@
               </div>
               <div class="cardtitle">配色</div>
               <div id="scheme-row" class="swrow"></div>
-              <div class="cardtitle">字号 / 放大 / 字体</div>
+              <div class="cardtitle" data-en="Text size &amp; UI scale">字号与界面缩放</div>
               <div class="trow">
                 <label class="lb" for="ui-font-scale">字号</label>
                 <select id="ui-font-scale" class="tight"></select>
                 <label class="lb" for="ui-zoom">放大</label>
                 <select id="ui-zoom" class="tight"></select>
-                <label class="lb" for="ui-font">字体</label>
-                <select id="ui-font" class="tight"></select>
               </div>
-              <p class="hint">整体按倍数缩放（控件 / 文本 / 字号一起变），并自动叠加系统的显示缩放；字体只替换正文那一族。</p>
+              <p class="hint">整体按倍数缩放（控件 / 文本 / 字号一起变），并自动叠加系统的显示缩放。</p>
+              <div class="fontstudio">
+                <div class="fontstudio-head">
+                  <span class="fontstudio-badge" aria-hidden="true">Aa</span>
+                  <div>
+                    <strong data-en="Interface font">界面字体</strong>
+                    <span data-en="Applies to settings, Agent, transfer and most interface text. Code and HEX areas keep a monospaced font.">应用于设置、Agent、传输和大多数界面文字；代码与 HEX 区域仍保留等宽字体。</span>
+                  </div>
+                </div>
+                <div class="fontstudio-row">
+                  <label class="lb" for="ui-font" data-en="Font preset">字体预设</label>
+                  <select id="ui-font" class="tight grow"></select>
+                  <button id="ui-font-reset" class="btn small" data-en="Restore default">恢复默认</button>
+                </div>
+                <input id="ui-font-custom" class="fontstudio-custom" hidden
+                       data-en-ph="Enter an installed font name, e.g. MiSans / HarmonyOS Sans SC"
+                       placeholder="输入系统已安装的字体名，例如 MiSans / HarmonyOS Sans SC" />
+                <div id="ui-font-preview" class="fontstudio-preview" aria-live="polite">
+                  <b data-en="KDock Device Debugging">KDock 设备调试</b>
+                  <span data-en="Agent · firmware analysis · Serial 01:23:45">Agent · 固件分析 · Serial 01:23:45</span>
+                  <small>The quick brown fox jumps over the lazy dog. 0123456789</small>
+                </div>
+                <p class="fontstudio-note" data-en="Fonts fall back to installed system fonts. A missing family does not fail, but may look close to the default font.">字体会自动回落到系统中文字体。找不到所选字体时不会报错，但实际效果可能接近默认字体。</p>
+              </div>
             </div>
             <div class="setpane" data-setpane="shortcuts" hidden>
               <div class="cardtitle">快捷键</div>

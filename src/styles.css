@@ -1,8 +1,8 @@
 /* KDock —— 视觉风格：
    HSL 令牌 + 分层半透明 surface + 大圆角 + 柔和阴影 + 亮/暗双主题 */
 :root {
-  --font-ui: "Segoe UI Variable", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
-  --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --font-ui: "MiSans", "HarmonyOS Sans SC", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   /* 深色底跟着配色走（applyScheme 会按当前色相覆盖；这里给的是"默认海洋蓝"那一档，
      免得 JS 跑起来之前先闪一帧蓝黑） */
   --background: 205 24% 10%;
@@ -1980,7 +1980,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agwelcome .agwelcome-sub { font-size: 13px; color: hsl(var(--muted-foreground)); }
 .agwelcome .agwelcome-hint { font-size: 12px; color: hsl(var(--muted-foreground) / 0.85); }
 .agmsg { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.agmsg > .head { display: flex; align-items: center; gap: 7px; font-size: 11px; color: hsl(var(--muted-foreground)); }
+.agmsg > .head { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: hsl(var(--muted-foreground)); }
 .agmsg > .head .who { font-weight: 650; letter-spacing: .3px; }
 .agmsg.user > .head .who { color: hsl(var(--primary)); }
 .agmsg > .bubble {
@@ -2010,7 +2010,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .agmsg .bubble b { font-weight: 650; }
 /* 每条回复下面那行小字：模型 · 回复完成时间 */
-.agmsg > .agmeta { font-size: 10.5px; color: hsl(var(--muted-foreground)); opacity: .85; padding-left: 2px; }
+.agmsg > .agmeta { font-size: 11.5px; color: hsl(var(--muted-foreground)); opacity: .88; padding-left: 2px; }
 /* Agent 状态灯：空闲=绿灯、思考/工具=转圈、出错=红点、等你批准=黄点；后面能挂"未读"角标 */
 .agst { display: inline-flex; align-items: center; gap: 5px; height: 20px; flex: 0 0 auto; }
 .agst > .led { width: 8px; height: 8px; border-radius: 50%; background: hsl(var(--success)); box-shadow: 0 0 0 3px hsl(var(--success) / .16); flex: 0 0 auto; }
@@ -2027,7 +2027,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agst > .badge:hover { color: hsl(var(--foreground)); border-color: hsl(var(--primary) / .6); }
 /* 思考过程（像 Codex）：**不画框** —— 收起来时只是窄窄一行（转圈 + 已思考 N 字 + 箭头），
    展开时正文缩进、挂一条左侧竖线。之前用满宽虚线框，它的上边框看上去就是一条"异常横线"。 */
-.agthink { align-self: flex-start; max-width: 92%; font-size: 11.5px; color: hsl(var(--muted-foreground)); }
+.agthink { align-self: flex-start; max-width: 92%; font-size: 12px; color: hsl(var(--muted-foreground)); }
 .agthink > .th { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
 .agthink > .th .spin { display: none; width: 11px; height: 11px; border-width: 2px; }
 .agthink.busy > .th .spin { display: block; }
@@ -2147,8 +2147,8 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 
 /* Agent 信息面板：上下文占用 / 工作区 git / token 与花费（参考 opencode 的状态栏信息） */
 .aginfo { display: flex; flex-direction: column; gap: 7px; margin: 2px 0 10px; }
-.aginfo .row { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; line-height: 1.55; }
-.aginfo .k { flex: 0 0 72px; color: hsl(var(--muted-foreground)); font-size: 11.5px; letter-spacing: .1px; }
+.aginfo .row { display: flex; align-items: baseline; gap: 10px; font-size: 13px; line-height: 1.6; }
+.aginfo .k { flex: 0 0 78px; color: hsl(var(--muted-foreground)); font-size: 12px; letter-spacing: .1px; }
 .aginfo .v {
   flex: 1; min-width: 0; font-family: inherit; font-variant-numeric: tabular-nums;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -2162,7 +2162,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   transform-origin: left; transition: width .18s ease;
 }
 .aginfo .bar.hot > i { background: hsl(var(--warning)); }
-.aginfo .sub { font-size: 11.5px; color: hsl(var(--muted-foreground)); line-height: 1.6; }
+.aginfo .sub { font-size: 12px; color: hsl(var(--muted-foreground)); line-height: 1.65; }
 .aginfo .sep { height: 1px; background: var(--surface-line-soft); margin: 2px 0 1px; }
 .aginfo .costpill {
   display: inline-block; padding: 1px 7px; border-radius: 6px;
@@ -2595,7 +2595,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .agctl:focus-within { border-color: hsl(var(--primary) / .58); background: var(--surface-1); }
 .agctl:hover { border-color: hsl(var(--primary) / .36); background: var(--surface-3); }
-.agctl-label { flex: 0 0 auto; font-size: 11px; letter-spacing: .15px; }
+.agctl-label { flex: 0 0 auto; font-size: 11.5px; letter-spacing: .15px; }
 .agctl select {
   height: 26px; padding: 0 25px 0 2px; border: 0; background-color: transparent;
   box-shadow: none; color: hsl(var(--foreground)); font-size: 12px;
@@ -2641,7 +2641,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 }
 .agselect-copy { display: flex; flex: 1 1 auto; min-width: 0; flex-direction: column; gap: 2px; }
 .agselect-copy b { font-size: 12px; font-weight: 550; }
-.agselect-copy small { color: hsl(var(--muted-foreground)); font-size: 10.5px; line-height: 1.4; }
+.agselect-copy small { color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.45; }
 .agselect-check { flex: 0 0 auto; width: 14px; color: transparent; font-size: 12px; }
 .agselect-option.selected .agselect-check { color: hsl(var(--foreground)); }
 .agselect-option[data-level="warn"] .agselect-mark,
@@ -4953,6 +4953,35 @@ html[data-tab="usb"] .params {
 }
 #settings-modal .setpane > .trow .btn,
 #settings-modal .setpane > .field .btn { flex: 0 0 auto; }
+.fontstudio {
+  margin-top: 12px; padding: 15px 16px 14px;
+  border: 1px solid var(--surface-line-soft); border-radius: 14px;
+  background: var(--surface-2);
+}
+.fontstudio-head { display: flex; align-items: flex-start; gap: 11px; margin-bottom: 12px; }
+.fontstudio-badge {
+  width: 38px; height: 38px; flex: 0 0 38px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 11px; background: hsl(var(--primary) / .11); color: hsl(var(--primary));
+  font-size: 15px; font-weight: 700; letter-spacing: -.5px;
+}
+.fontstudio-head > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.fontstudio-head strong { font-size: 13px; font-weight: 650; }
+.fontstudio-head span:not(.fontstudio-badge) { color: hsl(var(--muted-foreground)); font-size: 11.5px; line-height: 1.55; }
+.fontstudio-row { display: flex; align-items: center; gap: 9px; }
+.fontstudio-row select { min-width: 0; }
+.fontstudio-custom { margin-top: 8px; }
+.fontstudio-preview {
+  display: flex; flex-direction: column; gap: 3px;
+  margin-top: 11px; padding: 13px 14px;
+  border: 1px solid var(--surface-line-soft); border-radius: 12px;
+  background: var(--surface-0);
+  color: hsl(var(--foreground));
+}
+.fontstudio-preview b { font-size: 20px; line-height: 1.3; font-weight: 650; }
+.fontstudio-preview span { font-size: 14px; line-height: 1.45; }
+.fontstudio-preview small { color: hsl(var(--muted-foreground)); font-size: 12px; line-height: 1.5; }
+.fontstudio-note { margin-top: 8px; color: hsl(var(--muted-foreground)); font-size: 10.5px; line-height: 1.55; }
 #settings-modal .setpane > .setcard,
 #settings-modal .setpane > .aginfo,
 #settings-modal .setpane > .helpindex,
@@ -5055,6 +5084,8 @@ html[data-tab="usb"] .params {
   #settings-modal .modaltab { flex-basis: 165px; width: 165px; }
   .modaltab-copy small { display: none; }
   #settings-modal .setpane > .trow { flex-wrap: wrap; }
+  .fontstudio-row { flex-wrap: wrap; }
+  .fontstudio-row .grow { flex-basis: calc(100% - 92px); }
   .provrow { grid-template-columns: minmax(0, 1fr); }
   .provrow-actions { justify-content: flex-end; }
   .cachecard { grid-template-columns: 18px minmax(0, 1fr); }

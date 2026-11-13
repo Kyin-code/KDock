@@ -157,6 +157,14 @@ try {
       ).length,
       catalogEntry: !!document.getElementById("ag-open-catalog"),
     };
+    show("theme");
+    const font = {
+      studio: !!document.querySelector(".fontstudio"),
+      select: !!document.getElementById("ui-font"),
+      customHidden: !!document.getElementById("ui-font-custom")?.hidden,
+      preview: document.getElementById("ui-font-preview")?.textContent.trim() || "",
+      bodyFamily: getComputedStyle(document.body).fontFamily,
+    };
     show("cache");
     const cache = {
       hero: !!document.querySelector(".cachehero"),
@@ -181,7 +189,7 @@ try {
     kd.remove();
     confirm.hidden = true;
     update.hidden = true;
-    return { model, cache, layer };
+    return { model, font, cache, layer };
   });
   if (settingsPages.model.tabs.join("|") !== "已配置|添加模型"
       || settingsPages.model.currentDisplay !== "grid"
@@ -195,6 +203,11 @@ try {
       || settingsPages.model.advancedSections !== 2
       || settingsPages.model.freeControls !== 0
       || !settingsPages.model.catalogEntry
+      || !settingsPages.font.studio
+      || !settingsPages.font.select
+      || !settingsPages.font.customHidden
+      || !settingsPages.font.preview.includes("KDock")
+      || !settingsPages.font.bodyFamily
       || !settingsPages.cache.hero
       || !settingsPages.cache.toolbar
       || !settingsPages.cache.listClass.includes("cache-list")

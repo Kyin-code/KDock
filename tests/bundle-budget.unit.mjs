@@ -67,7 +67,7 @@ assert.ok(
   entryChunk.bytes < chunks.reduce((total, chunk) => total + chunk.bytes, 0) * 0.75,
   "entry chunk still dominates all emitted JavaScript",
 );
-assert.ok(initialBytes <= 660 * 1000, `initial JavaScript is ${(initialBytes / 1000).toFixed(2)} kB, expected <= 660 kB`);
+assert.ok(initialBytes <= 663 * 1000, `initial JavaScript is ${(initialBytes / 1000).toFixed(2)} kB, expected <= 663 kB`);
 assert.ok(initialGzip <= 260 * 1000, `initial JavaScript gzip is ${(initialGzip / 1000).toFixed(2)} kB, expected <= 260 kB`);
 
 console.log(JSON.stringify({

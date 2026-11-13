@@ -7629,11 +7629,47 @@ const UI_FONT_STEPS = [["small", "小", 0.9], ["normal", "标准", 1.0], ["large
 const UI_ZOOM_STEPS = [["0.8", "80%"], ["0.9", "90%"], ["1", "100%"], ["1.1", "110%"], ["1.25", "125%"], ["1.4", "140%"], ["1.6", "160%"]];
 const UI_FONTS = [
   ["system", "系统默认", ""],
-  ["segoe", "Segoe UI Variable", '"Segoe UI Variable", "Segoe UI"'],
+  ["segoe", "Segoe UI", '"Segoe UI Variable", "Segoe UI"'],
   ["yahei", "微软雅黑", '"Microsoft YaHei UI", "Microsoft YaHei"'],
+  ["misans", "MiSans", '"MiSans", "MiSans VF", "MiSans Normal"'],
+  ["harmony", "HarmonyOS Sans SC", '"HarmonyOS Sans SC", "HarmonyOS Sans"'],
+  ["pingfang", "PingFang SC", '"PingFang SC", "PingFang TC"'],
   ["noto", "思源黑体 / Noto", '"Noto Sans SC", "Source Han Sans SC", "HarmonyOS Sans SC"'],
+  ["sourcehan", "Source Han Sans SC", '"Source Han Sans SC", "Source Han Sans CN"'],
+  ["dengxian", "等线 DengXian", '"DengXian", "DengXian Light"'],
+  ["simhei", "黑体 SimHei", '"SimHei"'],
+  ["kaiti", "楷体 KaiTi", '"KaiTi", "STKaiti"'],
+  ["lxgw", "霞鹜文楷 LXGW WenKai", '"LXGW WenKai", "LXGW WenKai Screen", "霞鹜文楷"'],
   ["inter", "Inter / 系统无衬线", 'Inter, "Segoe UI Variable", system-ui'],
+  ["custom", "自定义字体…", ""],
 ];
+const UI_FONT_CUSTOM = "custom:";
+function sanitizeUiFontName(value) {
+  return String(value || "")
+    .replace(/[\u0000-\u001f"'`;{}<>\\]/g, "")
+    .trim()
+    .slice(0, 80);
+}
+function uiFontSelection(raw = localStorage.getItem("kdock_ui_font") || "system") {
+  const value = String(raw || "system");
+  if (value.startsWith(UI_FONT_CUSTOM)) {
+    return { id: "custom", custom: sanitizeUiFontName(value.slice(UI_FONT_CUSTOM.length)) };
+  }
+  const preset = UI_FONTS.find((x) => x[0] === value);
+  if (preset) return { id: preset[0], custom: "" };
+  return { id: "custom", custom: sanitizeUiFontName(value) };
+}
+function uiFontStack(selection = uiFontSelection()) {
+  if (selection.id === "custom") {
+    return selection.custom ? `"${selection.custom}"` : "";
+  }
+  return (UI_FONTS.find((x) => x[0] === selection.id) || UI_FONTS[0])[2];
+}
+function paintUiFontPreview(stack) {
+  const preview = $("ui-font-preview");
+  if (!preview) return;
+  preview.style.fontFamily = stack ? `${stack}, var(--font-ui)` : "var(--font-ui)";
+}
 function uiScaleValue() {
   const f = (UI_FONT_STEPS.find((x) => x[0] === (localStorage.getItem("kdock_font_scale") || "normal")) || UI_FONT_STEPS[1])[2];
   const z = Number(localStorage.getItem("kdock_ui_zoom") || "1") || 1;
@@ -7648,17 +7684,31 @@ function applyUiScale() {
   root.style.setProperty("--app-vw", (window.innerWidth / scale / 100) + "px");
   root.style.setProperty("--app-vh", (window.innerHeight / scale / 100) + "px");
   root.dataset.uiScale = scale.toFixed(3);
-  const id = localStorage.getItem("kdock_ui_font") || "system";
-  const fam = (UI_FONTS.find((x) => x[0] === id) || UI_FONTS[0])[2];
+  const selection = uiFontSelection();
+  const fam = uiFontStack(selection);
   if (fam) root.style.setProperty("--ui-font", `${fam}, var(--font-ui)`);
   else root.style.removeProperty("--ui-font");
+  paintUiFontPreview(fam);
   syncParamStrip();
+}
+function refreshUiFontOptions() {
+  const fm = $("ui-font");
+  if (!fm) return;
+  fillSelect(fm, UI_FONTS.map((x) => [x[0], en(x[1])]), uiFontSelection().id);
+  syncUiScaleControls();
 }
 function syncUiScaleControls() {
   const set = (id, v) => { const s = $(id); if (s && v != null) s.value = String(v); };
   set("ui-font-scale", localStorage.getItem("kdock_font_scale") || "normal");
   set("ui-zoom", String(Number(localStorage.getItem("kdock_ui_zoom") || "1")));
-  set("ui-font", localStorage.getItem("kdock_ui_font") || "system");
+  const selection = uiFontSelection();
+  set("ui-font", selection.id);
+  const custom = $("ui-font-custom");
+  if (custom) {
+    custom.hidden = selection.id !== "custom";
+    custom.value = selection.custom;
+  }
+  paintUiFontPreview(uiFontStack(selection));
   if (agNetip) {
     set("netip-retry", agNetip.retryCount);
     set("netip-debounce", agNetip.debounceMs);
@@ -7675,8 +7725,57 @@ function bindUiScale() {
     zm.onchange = () => { localStorage.setItem("kdock_ui_zoom", zm.value); applyUiScale(); uiPrefsSave(); };
   }
   if (fm) {
-    fillSelect(fm, UI_FONTS.map((x) => [x[0], x[1]]), localStorage.getItem("kdock_ui_font") || "system");
-    fm.onchange = () => { localStorage.setItem("kdock_ui_font", fm.value); applyUiScale(); uiPrefsSave(); };
+    refreshUiFontOptions();
+    const custom = $("ui-font-custom");
+    const commitCustom = (silent) => {
+      const name = sanitizeUiFontName(custom ? custom.value : "");
+      if (custom && custom.value !== name) custom.value = name;
+      localStorage.setItem("kdock_ui_font_custom", name);
+      localStorage.setItem("kdock_ui_font", UI_FONT_CUSTOM + name);
+      applyUiScale();
+      if (!silent) uiPrefsSave();
+    };
+    fm.onchange = () => {
+      if (fm.value === "custom") {
+        const name = localStorage.getItem("kdock_ui_font_custom") || "";
+        localStorage.setItem("kdock_ui_font", UI_FONT_CUSTOM + name);
+        if (custom) {
+          custom.hidden = false;
+          custom.value = name;
+          custom.focus();
+        }
+        applyUiScale();
+        uiPrefsSave();
+      } else {
+        localStorage.setItem("kdock_ui_font", fm.value);
+        if (custom) custom.hidden = true;
+        applyUiScale();
+        uiPrefsSave();
+      }
+    };
+    if (custom) {
+      let customTimer = null;
+      custom.oninput = () => {
+        clearTimeout(customTimer);
+        commitCustom(true);
+        customTimer = setTimeout(() => uiPrefsSave(), 350);
+      };
+      custom.onchange = () => commitCustom(false);
+      custom.onkeydown = (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commitCustom(false);
+        }
+      };
+    }
+    const reset = $("ui-font-reset");
+    if (reset) reset.onclick = () => {
+      localStorage.setItem("kdock_ui_font", "system");
+      fm.value = "system";
+      if (custom) custom.hidden = true;
+      applyUiScale();
+      uiPrefsSave();
+    };
   }
   syncUiScaleControls();
   applyUiScale();
@@ -7755,7 +7854,12 @@ async function uiPrefsLoad() {
   if (p.lang) localStorage.setItem("kdock_lang", p.lang);
   if (p.fontScale) localStorage.setItem("kdock_font_scale", p.fontScale);
   if (p.zoom) localStorage.setItem("kdock_ui_zoom", p.zoom);
-  if (p.font) localStorage.setItem("kdock_ui_font", p.font);
+  if (p.font) {
+    localStorage.setItem("kdock_ui_font", p.font);
+    if (String(p.font).startsWith(UI_FONT_CUSTOM)) {
+      localStorage.setItem("kdock_ui_font_custom", sanitizeUiFontName(String(p.font).slice(UI_FONT_CUSTOM.length)));
+    }
+  }
   if (typeof p.outputDir === "string") localStorage.setItem("kdock_output_dir", p.outputDir);
   if (p.shortcuts && typeof p.shortcuts === "object" && !Array.isArray(p.shortcuts)) {
     localStorage.setItem("kdock_shortcuts", JSON.stringify(p.shortcuts));
@@ -14055,6 +14159,7 @@ function applyLang(lang) {
     safe(outHeadRefresh, "outHeadRefresh");
     safe(outClockTick, "outClockTick");
     safe(() => syncSettingsHeader(document.querySelector(".modaltab.active")?.dataset.set || "general"), "syncSettingsHeader");
+    safe(refreshUiFontOptions, "refreshUiFontOptions");
     safe(agRenderProviders, "agRenderProviders");
     safe(agUpdateAdvancedSummary, "agUpdateAdvancedSummary");
     safe(refreshHistory, "refreshHistory");

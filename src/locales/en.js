@@ -361,6 +361,9 @@ export const EN = {
   "已思考": "thought", "思考过程": "reasoning", "有未读回复": "unread reply",
   "方向标记": "Direction", "agent 连上了主连接：": "the agent connected the main link: ",
   "字号 / 放大 / 字体": "Text size / zoom / font", "字号": "Text size", "放大": "Zoom", "字体": "Font",
+  "自定义字体…": "Custom font…",
+  "输入系统已安装的字体名，例如 MiSans / HarmonyOS Sans SC":
+    "Enter an installed font name, e.g. MiSans / HarmonyOS Sans SC",
   "系统默认": "System default", "整体按倍数缩放（控件 / 文本 / 字号一起变），并自动叠加系统的显示缩放；字体只替换正文那一族。":
     "Everything scales by this factor (controls, text and font size together) on top of the system display scaling; the font only replaces the UI text family.",
   "常驻": "Always on", "常驻技能": "Always-on skills", "其中常驻技能": "of which always-on skills",
