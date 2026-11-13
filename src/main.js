@@ -23,7 +23,7 @@ import {
   summarizeToolArgs,
 } from "./agent-activity.js";
 import { isWebBrowserUrl, normalizeBrowserUrl } from "./browser-url.js";
-import { bindAgentResize } from "./agent-layout.js";
+import { bindAgentResize, captureAgentChatAnchor, restoreAgentChatAnchor } from "./agent-layout.js";
 import { agentRunPresentation, pendingBatchText } from "./agent-pending.js";
 import { showAdbPage } from "./adb-pages.js";
 import { findAdbConnectService, normalizeAdbAddress, pairGuidFromText, parseAdbMdns } from "./adb-wireless.js";
@@ -1817,10 +1817,21 @@ function paintParamToggle() {
 }
 
 function setNoParam(off, persist = false) {
+  const agentAnchor = document.documentElement.dataset.tab === "agent"
+    ? captureAgentChatAnchor()
+    : null;
   document.documentElement.classList.toggle("noparam", off);
   if (persist) localStorage.setItem("kdock_noparam", off ? "1" : "0");
   paintParamToggle();
   syncParamStrip();
+  if (agentAnchor) {
+    const restore = () => restoreAgentChatAnchor(agentAnchor);
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => requestAnimationFrame(restore));
+    } else {
+      restore();
+    }
+  }
 }
 
 /** 窄窗口的 Agent 页优先保住对话与输入区；右栏自动折叠，

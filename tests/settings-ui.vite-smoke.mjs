@@ -157,7 +157,37 @@ try {
       ).length,
       catalogEntry: !!document.getElementById("ag-open-catalog"),
     };
+    document.getElementById("ag-prov-step-pick").hidden = true;
+    form.hidden = false;
+    document.querySelector('[data-provtab-pane="use"]').hidden = true;
+    document.querySelector('[data-provtab-pane="new"]').hidden = false;
+    const capacityInput = document.getElementById("ag-p-ctx");
+    const capacityField = capacityInput.closest(".field");
+    const capacityLabel = capacityField.querySelector("label");
+    const capacity = {
+      inputWidth: capacityInput.getBoundingClientRect().width,
+      inputHeight: capacityInput.getBoundingClientRect().height,
+      fieldWidth: capacityField.getBoundingClientRect().width,
+      maxWidth: getComputedStyle(capacityInput).maxWidth,
+      labelAbove: capacityLabel.getBoundingClientRect().bottom <= capacityInput.getBoundingClientRect().top,
+    };
     show("theme");
+    const schemeRow = document.getElementById("scheme-row");
+    schemeRow.innerHTML = "";
+    for (const color of ["#64748b", "#3b82f6", "#2dd4bf", "#22c55e", "#8b5cf6", "#f59e0b", "#ec4899"]) {
+      const swatch = document.createElement("button");
+      swatch.className = "sw" + (color === "#3b82f6" ? " active" : "");
+      swatch.style.background = color;
+      schemeRow.appendChild(swatch);
+    }
+    const swatches = [...schemeRow.querySelectorAll(".sw")];
+    const scheme = {
+      count: swatches.length,
+      width: swatches[0]?.getBoundingClientRect().width || 0,
+      height: swatches[0]?.getBoundingClientRect().height || 0,
+      gap: parseFloat(getComputedStyle(schemeRow).gap),
+      overflow: schemeRow.scrollWidth - schemeRow.clientWidth,
+    };
     const font = {
       studio: !!document.querySelector(".fontstudio"),
       select: !!document.getElementById("ui-font"),
@@ -189,7 +219,7 @@ try {
     kd.remove();
     confirm.hidden = true;
     update.hidden = true;
-    return { model, font, cache, layer };
+    return { model, capacity, scheme, font, cache, layer };
   });
   if (settingsPages.model.tabs.join("|") !== "已配置|添加模型"
       || settingsPages.model.currentDisplay !== "grid"
@@ -203,6 +233,13 @@ try {
       || settingsPages.model.advancedSections !== 2
       || settingsPages.model.freeControls !== 0
       || !settingsPages.model.catalogEntry
+      || !settingsPages.capacity.labelAbove
+      || settingsPages.capacity.inputHeight < 34
+      || settingsPages.capacity.inputWidth / settingsPages.capacity.fieldWidth < 0.85
+      || settingsPages.capacity.maxWidth !== "none"
+      || settingsPages.scheme.count !== 7
+      || settingsPages.scheme.width < 29 || settingsPages.scheme.height < 29
+      || settingsPages.scheme.gap < 9 || settingsPages.scheme.overflow > 0
       || !settingsPages.font.studio
       || !settingsPages.font.select
       || !settingsPages.font.customHidden

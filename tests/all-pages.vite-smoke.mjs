@@ -70,6 +70,54 @@ try {
     throw new Error(`Transfer controls/popover regression: ${JSON.stringify(transferUi)}`);
   }
 
+  const selectArrowAlignment = await page.evaluate(() => {
+    const host = document.createElement("div");
+    host.style.cssText = "position:fixed;left:0;top:0;visibility:hidden";
+    document.body.appendChild(host);
+    const samples = [26, 32, 38].map((height) => {
+      const select = document.createElement("select");
+      select.style.height = `${height}px`;
+      select.innerHTML = "<option>sample</option>";
+      host.appendChild(select);
+      return {
+        height,
+        backgroundPositionY: getComputedStyle(select).backgroundPositionY,
+      };
+    });
+    const chevron = document.createElement("span");
+    chevron.className = "agselect-chev";
+    host.appendChild(chevron);
+    const chevronStyle = getComputedStyle(chevron);
+    const customChevron = {
+      width: parseFloat(chevronStyle.width),
+      height: parseFloat(chevronStyle.height),
+      clipPath: chevronStyle.clipPath,
+    };
+    const listBackgrounds = [
+      Object.assign(document.createElement("select"), { className: "list" }),
+      Object.assign(document.createElement("select"), { size: 5 }),
+      Object.assign(document.createElement("select"), { multiple: true }),
+    ].map((select) => {
+      select.innerHTML = "<option>sample</option>";
+      host.appendChild(select);
+      return getComputedStyle(select).backgroundImage;
+    });
+    host.remove();
+    return {
+      samples,
+      customChevron,
+      listBackgrounds,
+    };
+  });
+  if (selectArrowAlignment.samples.some(({ backgroundPositionY }) =>
+    backgroundPositionY.split(",").some((value) => value.trim() !== "50%"))
+      || selectArrowAlignment.customChevron.clipPath === "none"
+      || selectArrowAlignment.customChevron.width <= 0
+      || selectArrowAlignment.customChevron.height <= 0
+      || selectArrowAlignment.listBackgrounds.some((background) => background !== "none")) {
+    throw new Error(`Select arrows are not vertically centered: ${JSON.stringify(selectArrowAlignment)}`);
+  }
+
   const browserUi = await page.evaluate(() => {
     window.__showAllPagesPage("kb");
     const rect = (selector) => document.querySelector(selector)?.getBoundingClientRect();
@@ -451,6 +499,53 @@ try {
   if (paramToggleStability.shown.paramsHeight < 100 || paramToggleStability.hidden.paramsHeight !== 0) {
     throw new Error(`Agent parameter overlay did not open/close correctly: ${JSON.stringify(paramToggleStability)}`);
   }
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.evaluate(() => {
+    window.__showAllPagesPage("agent");
+    document.documentElement.classList.remove("noparam");
+  });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const agentParamScrollAnchor = await page.evaluate(async () => {
+    const { captureAgentChatAnchor, restoreAgentChatAnchor } = await import("/src/agent-layout.js");
+    const chat = document.getElementById("ag-chat");
+    chat.innerHTML = "";
+    for (let i = 0; i < 30; i++) {
+      const message = document.createElement("div");
+      message.className = "agmsg assistant";
+      message.dataset.index = String(i);
+      message.innerHTML = `<div class="head"><span class="who">Agent</span></div>`
+        + `<div class="bubble">${`message ${i} ${"long output ".repeat(24)}`}</div>`;
+      chat.appendChild(message);
+    }
+    chat.scrollTop = chat.scrollHeight * 0.55;
+    const anchor = captureAgentChatAnchor();
+    if (!anchor || anchor.atBottom || anchor.index < 0) return { invalidAnchor: anchor };
+    const widthBefore = chat.clientWidth;
+    document.documentElement.classList.add("noparam");
+    const anchoredElement = chat.children[anchor.index];
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    chat.scrollTop = Math.max(0, chat.scrollTop - 96);
+    const deltaBeforeRestore = anchoredElement.getBoundingClientRect().top - anchor.top;
+    restoreAgentChatAnchor(anchor);
+    return {
+      anchorIndex: anchor.index,
+      widthBefore,
+      widthAfter: chat.clientWidth,
+      deltaBeforeRestore,
+      deltaAfterRestore: anchoredElement.getBoundingClientRect().top - anchor.top,
+      scrollTop: chat.scrollTop,
+      scrollHeight: chat.scrollHeight,
+    };
+  });
+  if (agentParamScrollAnchor.invalidAnchor || agentParamScrollAnchor.anchorIndex < 0
+      || agentParamScrollAnchor.widthAfter < agentParamScrollAnchor.widthBefore + 40
+      || Math.abs(agentParamScrollAnchor.deltaBeforeRestore) < 40
+      || Math.abs(agentParamScrollAnchor.deltaAfterRestore) > 1) {
+    throw new Error(`Agent output anchor jumps when parameters collapse: ${JSON.stringify(agentParamScrollAnchor)}`);
+  }
+  await page.setViewportSize({ width: 980, height: 800 });
+  await page.evaluate(() => window.__showAllPagesPage("agent"));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.evaluate(() => {
     document.documentElement.classList.add("noparam");
     window.dispatchEvent(new Event("resize"));
@@ -1022,6 +1117,7 @@ try {
 
   console.log(JSON.stringify({
     ok: true,
+    selectArrowAlignment,
     pageCount: pages.length,
     pages: results,
     adbUi,
@@ -1030,6 +1126,7 @@ try {
     agentAfterWindowShrink,
     navStability,
     paramToggleStability,
+    agentParamScrollAnchor,
     agentVisual,
     turnVisual,
     railScroll,

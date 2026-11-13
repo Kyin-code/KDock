@@ -485,8 +485,11 @@ select {
   appearance: none; padding-right: 26px;
   background-image: linear-gradient(45deg, transparent 50%, hsl(var(--muted-foreground)) 50%),
                     linear-gradient(135deg, hsl(var(--muted-foreground)) 50%, transparent 50%);
-  background-position: calc(100% - 15px) 13px, calc(100% - 10px) 13px;
+  background-position: calc(100% - 15px) center, calc(100% - 10px) center;
   background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+}
+select.list, select[multiple], select[size] {
+  padding-right: 10px; background-image: none;
 }
 input:focus, select:focus, textarea:focus { outline: 2px solid hsl(var(--ring) / 0.35); outline-offset: 1px; border-color: hsl(var(--ring) / 0.6); }
 input:disabled { opacity: .5; }
@@ -827,13 +830,24 @@ select.list option { padding: 4px 8px; border-radius: 6px; font-family: Consolas
 
 /* 外观弹层：主题 + 配色 */
 .themebox { flex-direction: column; align-items: flex-start; gap: 8px; width: 236px; white-space: normal; }
-.swrow { display: flex; gap: 6px; }
+.swrow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 4px 2px 6px; }
 .sw {
   width: 18px; height: 18px; padding: 0; border-radius: 50%; cursor: pointer;
   border: 2px solid transparent; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
 }
 .sw.active { border-color: hsl(var(--foreground)); }
 .sw:hover { filter: brightness(1.1); }
+.swrow .sw {
+  width: 30px; height: 30px; flex: 0 0 30px;
+  border-color: hsl(var(--foreground) / .12);
+  box-shadow: inset 0 0 0 1px hsl(var(--background) / .16), 0 2px 7px rgba(0, 0, 0, .2);
+  transition: transform .14s ease, border-color .14s ease, box-shadow .14s ease;
+}
+.swrow .sw:hover { transform: scale(1.07); filter: brightness(1.08); }
+.swrow .sw.active {
+  border-color: hsl(var(--foreground) / .92);
+  box-shadow: inset 0 0 0 3px var(--surface-1), 0 0 0 1px hsl(var(--foreground) / .3);
+}
 details.more > summary { list-style: none; }
 details.more > summary::-webkit-details-marker { display: none; }
 
@@ -1619,7 +1633,13 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   border-radius: 999px; background: var(--surface-3); color: hsl(var(--muted-foreground));
   font-size: 10px; font-weight: 650; letter-spacing: 0;
 }
-.navchev { flex: 0 0 auto; margin-left: auto; opacity: .68; font-size: 10px; }
+.navchev {
+  flex: 0 0 7px; width: 7px; height: 7px; margin-left: auto; opacity: .68;
+  display: inline-block; overflow: hidden; font-size: 0;
+  background: currentColor; clip-path: polygon(0 0, 100% 50%, 0 100%);
+  transition: transform .14s ease;
+}
+#nav-advanced-toggle.open .navchev { transform: rotate(90deg); }
 .navadvanced .navgroup { padding-left: 26px; }
 .navadvanced .navitem { padding-left: 27px; }
 /* 日志框：默认高度 + 拖拽把手 */
@@ -1763,7 +1783,6 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .workpane[data-work="agent"] > .inpane {
   flex: 0 1 320px; min-height: 180px; overflow: auto;
 }
-.workpane[data-work="agent"] { --agent-input-height: 320px; }
 /* 左栏变宽/变窄时，Agent 顶栏和底栏不能改变行数：
    一旦 flex-wrap 重新折行，整个对话区会跟着上下跳。窄了就横向滚动。 */
 .workpane[data-work="agent"] > .trow:first-child {
@@ -2029,6 +2048,12 @@ summary.tb-icon::-webkit-details-marker { display: none; }
    展开时正文缩进、挂一条左侧竖线。之前用满宽虚线框，它的上边框看上去就是一条"异常横线"。 */
 .agthink { align-self: flex-start; max-width: 92%; font-size: 12px; color: hsl(var(--muted-foreground)); }
 .agthink > .th { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
+.agthink > .th .chev {
+  flex: 0 0 7px; width: 7px; height: 7px; overflow: hidden; font-size: 0;
+  background: currentColor; clip-path: polygon(0 0, 100% 50%, 0 100%);
+  transition: transform .14s ease;
+}
+.agthink.open > .th .chev { transform: rotate(90deg); }
 .agthink > .th .spin { display: none; width: 11px; height: 11px; border-width: 2px; }
 .agthink.busy > .th .spin { display: block; }
 .agthink > .bd {
@@ -2147,8 +2172,14 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 
 /* Agent 信息面板：上下文占用 / 工作区 git / token 与花费（参考 opencode 的状态栏信息） */
 .aginfo { display: flex; flex-direction: column; gap: 7px; margin: 2px 0 10px; }
-.aginfo .row { display: flex; align-items: baseline; gap: 10px; font-size: 13px; line-height: 1.6; }
-.aginfo .k { flex: 0 0 78px; color: hsl(var(--muted-foreground)); font-size: 12px; letter-spacing: .1px; }
+.aginfo .row {
+  display: grid; grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
+  align-items: baseline; gap: 10px; font-size: 13px; line-height: 1.6;
+}
+.aginfo .k {
+  min-width: 0; color: hsl(var(--muted-foreground)); font-size: 12px; letter-spacing: .1px;
+  white-space: nowrap; overflow-wrap: normal;
+}
 .aginfo .v {
   flex: 1; min-width: 0; font-family: inherit; font-variant-numeric: tabular-nums;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -2484,7 +2515,7 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .modalcontent .field.ag-limit-field { grid-template-columns: 118px minmax(0, 1fr); }
 .ag-token-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .ag-token-input {
-  flex: 0 0 10rem; width: 10rem; min-width: 10rem; max-width: 12rem;
+  flex: 1 1 auto; width: 100%; min-width: 0; max-width: none;
   font-variant-numeric: tabular-nums;
   appearance: textfield; -moz-appearance: textfield;
 }
@@ -2622,7 +2653,10 @@ summary.tb-icon::-webkit-details-marker { display: none; }
 .agselect-trigger:hover { border-color: hsl(var(--foreground) / .16); background: hsl(var(--foreground) / .055); }
 .agselect-trigger[aria-expanded="true"] { border-color: hsl(var(--foreground) / .22); background: hsl(var(--foreground) / .06); }
 .agselect-value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-.agselect-chev { flex: 0 0 auto; color: hsl(var(--muted-foreground)); font-size: 12px; }
+.agselect-chev {
+  flex: 0 0 7px; width: 7px; height: 5px; overflow: hidden; font-size: 0;
+  background: currentColor; clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
 .agselect-menu {
   position: fixed; z-index: 2200; display: flex; flex-direction: column; gap: 2px;
   padding: 6px; border: 1px solid hsl(var(--foreground) / .09); border-radius: 12px;
@@ -3550,7 +3584,12 @@ summary.tb-icon::-webkit-details-marker { display: none; }
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
 }
-.modelcap-grid .field { margin-bottom: 4px; }
+.modelcap-grid .field.ag-limit-field {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch; gap: 7px; margin-bottom: 4px;
+}
+.modelcap-grid .field > label { min-width: 0; white-space: nowrap; }
+#settings-modal .modelcap-grid .ag-token-input { width: 100%; min-width: 0; max-width: none; }
 .modelctx-presets { margin: -1px 0 10px; }
 .modelcap-switches {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;

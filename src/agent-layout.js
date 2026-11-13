@@ -10,6 +10,47 @@ export function clampAgentInputHeight(inputHeight, availableHeight) {
   return Math.round(Math.max(AGENT_INPUT_MIN, Math.min(inputHeight, max)));
 }
 
+/** Remember the first visible message and its screen position across a layout
+ *  change. Expanding the workspace when the inspector closes makes message
+ *  bubbles reflow; without an explicit anchor the browser can scroll the
+ *  conversation to a different message, which looks like the output jumped. */
+export function captureAgentChatAnchor(doc = document) {
+  const chat = doc.getElementById("ag-chat");
+  if (!chat || chat.getBoundingClientRect().height <= 0) return null;
+  const atBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight <= 2;
+  const children = [...chat.children];
+  if (atBottom) return { atBottom: true, scrollTop: chat.scrollTop };
+  const viewTop = chat.getBoundingClientRect().top;
+  const index = children.findIndex((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.bottom > viewTop + 1;
+  });
+  if (index < 0) return { atBottom: false, index: -1, scrollTop: chat.scrollTop, top: 0 };
+  return {
+    atBottom: false,
+    index,
+    scrollTop: chat.scrollTop,
+    top: children[index].getBoundingClientRect().top,
+  };
+}
+
+export function restoreAgentChatAnchor(anchor, doc = document) {
+  if (!anchor) return;
+  const chat = doc.getElementById("ag-chat");
+  if (!chat) return;
+  if (anchor.atBottom) {
+    chat.scrollTop = chat.scrollHeight;
+    return;
+  }
+  const element = anchor.index >= 0 ? chat.children[anchor.index] : null;
+  if (!element) {
+    chat.scrollTop = anchor.scrollTop;
+    return;
+  }
+  const delta = element.getBoundingClientRect().top - anchor.top;
+  if (Math.abs(delta) > 0.5) chat.scrollTop += delta;
+}
+
 /** Resize the conversation/input split. The conversation flexes to fill what
  *  the input baseline leaves; the divider changes that baseline instead of
  *  setting the conversation to an unbounded pixel height. */

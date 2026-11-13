@@ -8,6 +8,8 @@ import { EN } from "../src/locales/en.js";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const dictionary = EN;
+const versionLabels = ["当前版本", "版本号来源", "变更记录", "发版约定", "固件包版本"]
+  .map((label) => dictionary[label] || label);
 
 const server = await createServer({
   root,
@@ -271,6 +273,20 @@ try {
             cls: String(element.className || "").slice(0, 80),
             text: (element.placeholder || element.dataset.tip || element.getAttribute("title") || element.textContent.trim()).slice(0, 120),
           }));
+          const wrappedLabels = lang !== "en" ? [] : [...modal.querySelectorAll(
+            ".setpane:not([hidden]) .field > label, .setpane:not([hidden]) .aginfo .k, .setpane:not([hidden]) .trow > label.lb",
+          )].filter((element) => element.getClientRects().length && element.textContent.trim())
+            .map((element) => {
+              const range = document.createRange();
+              range.selectNodeContents(element);
+              const lines = [...range.getClientRects()].filter((rect) => rect.width > 1).length;
+              return {
+                text: element.textContent.trim().slice(0, 100),
+                lines,
+                clipped: element.scrollWidth > element.clientWidth + 1,
+              };
+            })
+            .filter((item) => item.lines > 1 || item.clipped);
           return {
             pane,
             language: lang,
@@ -281,6 +297,7 @@ try {
             })(),
             clipped: clipped.slice(0, 30),
             untranslated: untranslated.slice(0, 30),
+            wrappedLabels: wrappedLabels.slice(0, 30),
           };
         }, { pane, lang: language });
         results.push({ profile: profile.name, settings: true, ...state });
@@ -332,6 +349,56 @@ try {
     }
   }
 
+  const versionLayouts = [];
+  for (const profile of profiles) {
+    await page.setViewportSize({ width: profile.width, height: profile.height });
+    await page.evaluate(({ width, height, scale, labels }) => {
+      const root = document.documentElement;
+      root.style.setProperty("--ui-scale", String(scale));
+      root.style.setProperty("--app-vw", `${width / scale / 100}px`);
+      root.style.setProperty("--app-vh", `${height / scale / 100}px`);
+      root.dataset.uiScale = scale.toFixed(3);
+      window.__setI18nLanguage("en");
+      window.__showI18nSettings("about");
+      const box = document.getElementById("set-versioning");
+      box.innerHTML = "";
+      const values = [
+        "v0.3.31",
+        "Semifold automatic bump; npm / Cargo / Tauri manifests kept in sync",
+        "CHANGELOG.md (one entry per release)",
+        "Packaging runs smif version automatically; CI commits version changes after success",
+        "Three-part PD_HW.PD_SW.PD_FIX (stored in the .fw header; independent of the app version)",
+      ];
+      labels.forEach((label, index) => {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.innerHTML = `<span class="k">${label}</span><span class="v">${values[index]}</span>`;
+        box.appendChild(row);
+      });
+    }, { ...profile, labels: versionLabels });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const state = await page.evaluate(() => {
+      const box = document.getElementById("set-versioning");
+      const rows = [...box.querySelectorAll(".row")].map((row) => {
+        const label = row.querySelector(".k");
+        const range = document.createRange();
+        range.selectNodeContents(label);
+        return {
+          label: label.textContent.trim(),
+          columns: getComputedStyle(row).gridTemplateColumns.split(/\s+/).length,
+          lines: [...range.getClientRects()].filter((rect) => rect.width > 1).length,
+          clipped: label.scrollWidth > label.clientWidth + 1,
+          whiteSpace: getComputedStyle(label).whiteSpace,
+        };
+      });
+      return {
+        boxOverflow: box.scrollWidth - box.clientWidth,
+        rows,
+      };
+    });
+    versionLayouts.push({ profile: profile.name, ...state });
+  }
+
   const failures = results.filter((item) =>
     item.bodyOverflow > 2
     || item.navOverflow > 2
@@ -340,6 +407,7 @@ try {
     || item.clipped?.length
     || item.collisions?.length
     || item.untranslated?.length
+    || item.wrappedLabels?.length
     || (item.updatePrompt && item.manualHidden !== true)
     || item.viewportOverflow > 2
     || item.buttonsOutside?.length
@@ -350,12 +418,24 @@ try {
     [],
     `i18n layout failures (${failures.length}/${results.length}):\n${JSON.stringify(failures.slice(0, 12), null, 2)}`,
   );
+  const versionFailures = versionLayouts.filter((item) =>
+    item.boxOverflow > 2
+    || item.rows.length !== versionLabels.length
+    || item.rows.some((row) =>
+      row.columns !== 2 || row.lines !== 1 || row.clipped || row.whiteSpace !== "nowrap"),
+  );
+  assert.deepEqual(
+    versionFailures,
+    [],
+    `Version metadata labels wrap or clip in English:\n${JSON.stringify(versionFailures, null, 2)}`,
+  );
 
   console.log(JSON.stringify({
     ok: true,
     dictionaryEntries: Object.keys(dictionary).length,
     profiles: profiles.length,
     checks: results.length,
+    versionLayouts: versionLayouts.length,
     englishCopySamples: english.controls.filter((text) => text !== initial.controls[english.controls.indexOf(text)]).slice(0, 12),
     maxBodyOverflow: Math.max(0, ...results.map((item) => item.bodyOverflow || 0)),
     maxNavOverflow: Math.max(0, ...results.map((item) => item.navOverflow || 0)),
