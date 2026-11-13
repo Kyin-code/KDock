@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.33 -->
+## v0.3.33
+
+### 修复
+
+- fix(ui): polish localization and stabilize agent layout
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.32 -->
 ## v0.3.32
 
