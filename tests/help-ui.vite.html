@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KDock Help UI Vite Test</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { background: hsl(var(--background)); color: hsl(var(--foreground)); }
+    #ui-root { width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="ui-root"></div>
+  <div id="test-help-index" hidden></div>
+  <script type="module">
+    import { createHelpRenderer } from "/src/help-view.js";
+    import { HELP_GROUPS, HELP_TITLE_EN } from "/src/help-content.js";
+    import { EN } from "/src/locales/en.js";
+
+    const source = await fetch("/index.html").then((response) => response.text());
+    const parsed = new DOMParser().parseFromString(source, "text/html");
+    document.getElementById("ui-root").appendChild(parsed.querySelector("#help-modal"));
+    document.getElementById("help-modal").hidden = false;
+
+    let language = "zh";
+    const groupTitle = (title) => language === "en" ? (EN[title] || HELP_TITLE_EN[title] || title) : title;
+    const translate = (text) => {
+      if (language !== "en") return text;
+      return EN[text] || groupTitle(text);
+    };
+    const titleOf = (item) => language === "en" ? (item.enTitle || item.title) : item.title;
+    const textOf = (item) => language === "en" ? item.en : item.zh;
+    let renderer;
+    const selectGroup = (title) => showGroup(title);
+
+    renderer = createHelpRenderer({
+      groups: HELP_GROUPS,
+      getLang: () => language,
+      translate,
+      titleOf,
+      textOf,
+      onSelectGroup: selectGroup,
+      onOpenItem: (id) => {
+        const found = renderer.groupForItem(id);
+        if (found) showGroup(found.group.title, found.item.id, true);
+      },
+    });
+
+    function showGroup(title, anchorId = "", focusAnchor = false) {
+      const result = renderer.renderPage(renderer.groupIndex(title), anchorId, focusAnchor);
+      window.__helpCurrent = result;
+      return result;
+    }
+
+    window.__showHelpGroup = showGroup;
+    window.__renderer = renderer;
+    window.__helpGroups = HELP_GROUPS;
+    window.__setHelpLanguage = (next) => {
+      language = next === "en" ? "en" : "zh";
+      renderer.renderNav(document.getElementById("help-nav"), window.__helpCurrent?.group?.title || HELP_GROUPS[0].title);
+      showGroup(window.__helpCurrent?.group?.title || HELP_GROUPS[0].title);
+    };
+
+    renderer.renderNav(document.getElementById("help-nav"), HELP_GROUPS[0].title);
+    renderer.renderIndex(document.getElementById("test-help-index"));
+    document.getElementById("help-search").addEventListener("input", (event) => {
+      renderer.filterNav(event.currentTarget.value);
+    });
+    showGroup(HELP_GROUPS[0].title);
+    document.documentElement.dataset.helpReady = "1";
+  </script>
+</body>
+</html>

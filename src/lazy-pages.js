@@ -15,6 +15,7 @@ function once(key, importer) {
 }
 
 export const loadHelpPage = () => once("help", () => import("./help-content.js"));
+export const loadHelpView = () => once("help-view", () => import("./help-view.js"));
 export const loadLogicPage = () => once("logic", () => import("./logic-analyzer.js"));
 export const loadRuntimePage = () => once("runtime", () => import("./runtime-graph.js"));
 export const loadToolsPage = () => once("tools", () => import("./tools-batch-calc.js"));

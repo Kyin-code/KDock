@@ -43,6 +43,7 @@ const initialGzip = initialChunks.reduce((total, chunk) => total + chunk.gzip, 0
 
 const lazySources = [
   "src/help-content.js",
+  "src/help-view.js",
   "src/logic-analyzer.js",
   "src/runtime-graph.js",
   "src/tools-batch-calc.js",

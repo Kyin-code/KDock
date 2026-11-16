@@ -43,6 +43,7 @@ import {
 import { EN } from "./locales/en.js";
 import {
   loadHelpPage,
+  loadHelpView,
   loadLogicPage,
   loadRuntimePage,
   loadToolsPage,
@@ -8410,15 +8411,25 @@ let HELP_GROUPS = [];
 let HELP_TITLE_EN = {};
 let helpItemById = new Map();
 let helpContentReady = false;
+let helpRenderer = null;
 
 async function ensureHelpContent() {
   if (helpContentReady) return;
-  const module = await loadHelpPage();
+  const [module, view] = await Promise.all([loadHelpPage(), loadHelpView()]);
   HELP_GROUPS = module.HELP_GROUPS;
   HELP_TITLE_EN = module.HELP_TITLE_EN;
   helpItemById = new Map(HELP_GROUPS.flatMap((group) =>
     group.items.map((item) => [item.id, { ...item, group: group.title }]),
   ));
+  helpRenderer = view.createHelpRenderer({
+    groups: HELP_GROUPS,
+    getLang: helpLang,
+    translate: en,
+    titleOf: helpTitle,
+    textOf: helpText,
+    onSelectGroup: (title) => showHelpGroup(title),
+    onOpenItem: (id) => openHelp(id),
+  });
   helpContentReady = true;
 }
 
@@ -8458,6 +8469,7 @@ const HELP_SUMMARY_MAP = {
 };
 
 let helpCurrent = "help-work";
+let helpCurrentGroup = "概览";
 
 function helpLang() { return LANG === "en" ? "en" : "zh"; }
 function helpTitle(it) { return helpLang() === "en" ? (it.enTitle || HELP_TITLE_EN[it.title] || en(it.title)) : it.title; }
@@ -8529,22 +8541,12 @@ async function buildHelpNav() {
     lazyPageError("help", error);
     return false;
   }
-  nav.innerHTML = "";
-  for (const g of HELP_GROUPS) {
-    const h = document.createElement("div");
-    h.className = "helpnav-page";
-    h.textContent = en(g.title);
-    nav.appendChild(h);
-    for (const it of g.items) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.dataset.help = it.id;
-      b.textContent = helpTitle(it);
-      b.onclick = () => showHelpItem(it.id);
-      nav.appendChild(b);
-    }
-  }
+  helpRenderer.renderNav(nav, helpCurrentGroup);
   return true;
+}
+
+function helpFilterNav(query) {
+  helpRenderer?.filterNav(query);
 }
 
 async function buildHelpIndex() {
@@ -8556,77 +8558,30 @@ async function buildHelpIndex() {
     lazyPageError("help", error);
     return false;
   }
-  box.innerHTML = "";
-  for (const g of HELP_GROUPS) {
-    const h = document.createElement("div");
-    h.className = "helpindex-page";
-    h.textContent = en(g.title);
-    box.appendChild(h);
-    for (const it of g.items) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.dataset.help = it.id;
-      const t = document.createElement("span");
-      t.textContent = helpTitle(it);
-      const d = document.createElement("small");
-      d.textContent = helpText(it);
-      b.append(t, d);
-      b.onclick = () => openHelp(it.id);
-      box.appendChild(b);
-    }
-  }
+  helpRenderer.renderIndex(box);
   helpSyncPageLabel();
   return true;
 }
 
-async function showHelpItem(id) {
+async function showHelpGroup(groupTitle, anchorId = "", focusAnchor = false) {
   try {
     await ensureHelpContent();
   } catch (error) {
     lazyPageError("help", error);
     return;
   }
-  const it = helpItemById.get(id) || helpItemById.get("help-work");
-  if (!it) return;
-  helpCurrent = it.id;
-  document.querySelectorAll("#help-nav button").forEach((b) => b.classList.toggle("active", b.dataset.help === it.id));
-  const active = document.querySelector(`#help-nav button[data-help="${it.id}"]`);
-  if (active && active.scrollIntoView) active.scrollIntoView({ block: "nearest" });
-  const crumb = $("help-crumb");
-  if (crumb) crumb.textContent = `${en(it.group)} / ${helpTitle(it)}`;
-  const label = $("help-page-label");
-  if (label) label.textContent = en(it.group);
-  const body = $("help-body");
-  if (!body) return;
-  body.innerHTML = "";
-  const h = document.createElement("h2");
-  h.textContent = helpTitle(it);
-  body.appendChild(h);
-  let ul = null;
-  for (const raw of helpText(it).split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
-    if (line.startsWith("### ")) {
-      ul = null;
-      const h3 = document.createElement("h3");
-      const heading = line.slice(4);
-      h3.textContent = heading;
-      if (/^(联动|Relationships?|Relationship)$/i.test(heading)) h3.classList.add("help-related");
-      body.appendChild(h3);
-    } else if (line.startsWith("- ")) {
-      if (!ul) { ul = document.createElement("ul"); body.appendChild(ul); }
-      const li = document.createElement("li");
-      li.textContent = line.slice(2);
-      ul.appendChild(li);
-    } else {
-      ul = null;
-      const p = document.createElement("p");
-      p.textContent = line;
-      body.appendChild(p);
-    }
-  }
-  const content = body.closest(".helpcontent");
-  if (content) content.scrollTop = 0;
+  const index = helpRenderer.groupIndex(groupTitle);
+  const rendered = helpRenderer.renderPage(index, anchorId, focusAnchor);
+  if (!rendered) return;
+  helpCurrentGroup = rendered.group.title;
+  helpCurrent = rendered.currentId;
+}
+
+async function showHelpItem(id, focusAnchor = true) {
+  await ensureHelpContent();
+  const found = helpRenderer.groupForItem(id);
+  if (!found) return showHelpGroup(HELP_GROUPS[0]?.title || "概览");
+  return showHelpGroup(found.group.title, found.item.id, focusAnchor);
 }
 
 async function openHelp(anchor) {
@@ -8638,9 +8593,11 @@ async function openHelp(anchor) {
     : "";
   const id = anchor || HELP_SETTINGS_ROOT[settingsPane] || HELP_PAGE_ROOT[helpCurrentPage()] || "help-work";
   if (sm && !sm.hidden) closeSettings();
+  const search = $("help-search");
+  if (search) search.value = "";
   m.hidden = false;
   if (!await buildHelpNav()) return;
-  await showHelpItem(id);
+  await showHelpItem(id, !!anchor);
   kbSyncSoon();
 }
 
@@ -8656,11 +8613,48 @@ function bindHelp() {
   const close = $("help-close");
   if (close) close.onclick = closeHelp;
   m.addEventListener("click", (e) => { if (e.target === m) closeHelp(); });
+  const search = $("help-search");
+  if (search) {
+    search.addEventListener("input", () => helpFilterNav(search.value));
+    search.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && search.value) {
+        e.preventDefault();
+        e.stopPropagation();
+        search.value = "";
+        helpFilterNav("");
+        return;
+      }
+      if (e.key === "Enter") {
+        const first = document.querySelector("#help-nav .helppagebtn:not([hidden])");
+        if (first) {
+          e.preventDefault();
+          first.click();
+        }
+      }
+    });
+  }
+  if ($("help-prev")) $("help-prev").onclick = () => {
+    const index = HELP_GROUPS.findIndex((group) => group.title === helpCurrentGroup);
+    if (index > 0) void showHelpGroup(HELP_GROUPS[index - 1].title);
+  };
+  if ($("help-next")) $("help-next").onclick = () => {
+    const index = HELP_GROUPS.findIndex((group) => group.title === helpCurrentGroup);
+    if (index >= 0 && index < HELP_GROUPS.length - 1) void showHelpGroup(HELP_GROUPS[index + 1].title);
+  };
   if ($("set-help-open")) $("set-help-open").onclick = () => openHelp();
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !m.hidden) {
       e.preventDefault();
       closeHelp();
+      return;
+    }
+    if (!m.hidden && e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      const index = HELP_GROUPS.findIndex((group) => group.title === helpCurrentGroup);
+      const next = index + (e.key === "ArrowRight" ? 1 : -1);
+      if (next >= 0 && next < HELP_GROUPS.length) {
+        e.preventDefault();
+        void showHelpGroup(HELP_GROUPS[next].title);
+      }
     }
   });
   decorateHelpHeadings();
@@ -8669,7 +8663,7 @@ function bindHelp() {
     void buildHelpIndex();
     if (!m.hidden) {
       void buildHelpNav();
-      void showHelpItem(helpCurrent);
+      void showHelpItem(helpCurrent, false);
     }
   });
 }

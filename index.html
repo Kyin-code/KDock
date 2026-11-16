@@ -821,17 +821,49 @@
     <!-- 上下文帮助：所有页面的标题栏 ?、F1、设置里的帮助入口都落到这里 -->
     <div id="help-modal" class="modal" hidden>
       <div class="modalbox helpbox">
-        <div class="modalhead">
-          <span class="modaltitle">功能帮助</span>
-          <span id="help-page-label" class="lb"></span>
+        <div class="modalhead helphead">
+          <span class="helphead-icon" aria-hidden="true">
+            <svg><use href="#ni-help"></use></svg>
+          </span>
+          <div class="helphead-copy">
+            <span class="modaltitle" data-en="Help center">帮助中心</span>
+            <span id="help-page-label" class="modal-subtitle" data-en="Browse help by page">按页面浏览功能说明</span>
+          </div>
           <span class="grow"></span>
+          <span class="help-keyhint"><kbd>F1</kbd><span data-en="Current page">当前页面</span></span>
           <button id="help-close" class="tb-wbtn">×</button>
         </div>
-        <div class="modalbody">
-          <div id="help-nav" class="modalnav helpnav"></div>
+        <div class="modalbody helpbody">
+          <aside class="helppane">
+            <div class="helpnavhead">
+              <b data-en="Pages">页面</b>
+              <span id="help-page-count"></span>
+            </div>
+            <label class="helpsearch">
+              <svg aria-hidden="true"><use href="#ni-search"></use></svg>
+              <input id="help-search" type="search"
+                     placeholder="搜索页面或功能"
+                     data-en-ph="Search pages or features" />
+            </label>
+            <div id="help-nav" class="helpnav"></div>
+            <div id="help-nav-empty" class="helpnavempty" data-en="No matching pages" hidden>没有匹配的页面</div>
+          </aside>
           <div class="modalcontent helpcontent">
-            <div id="help-crumb" class="helpcrumb"></div>
-            <div id="help-body"></div>
+            <div class="helpdoc">
+              <div id="help-crumb" class="helpcrumb"></div>
+              <div id="help-body"></div>
+            </div>
+            <footer class="helppager">
+              <button id="help-prev" class="helppagerbtn" type="button">
+                <span data-en="Previous page">上一页</span>
+                <b id="help-prev-title"></b>
+              </button>
+              <span id="help-position" class="helppager-state"></span>
+              <button id="help-next" class="helppagerbtn next" type="button">
+                <span data-en="Next page">下一页</span>
+                <b id="help-next-title"></b>
+              </button>
+            </footer>
           </div>
         </div>
       </div>

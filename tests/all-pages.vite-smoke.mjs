@@ -900,6 +900,9 @@ try {
       border: getComputedStyle(permWrap).borderColor,
       permColor: getComputedStyle(permTrigger).color,
       sandboxColor: getComputedStyle(sandboxTrigger).color,
+      permBorderAlpha: alphaOf(getComputedStyle(permTrigger).borderColor),
+      permBackgroundAlpha: alphaOf(getComputedStyle(permTrigger).backgroundColor),
+      permWeight: Number(getComputedStyle(permTrigger).fontWeight),
     };
     meta.perm = "ask";
     meta.sandbox_mode = "workspace";
@@ -912,6 +915,9 @@ try {
       border: getComputedStyle(permWrap).borderColor,
       permColor: getComputedStyle(permTrigger).color,
       sandboxColor: getComputedStyle(sandboxTrigger).color,
+      permBorderAlpha: alphaOf(getComputedStyle(permTrigger).borderColor),
+      permBackgroundAlpha: alphaOf(getComputedStyle(permTrigger).backgroundColor),
+      permWeight: Number(getComputedStyle(permTrigger).fontWeight),
     };
     meta.perm = "auto";
     meta.sandbox_mode = "trusted";
@@ -924,6 +930,9 @@ try {
       border: getComputedStyle(permWrap).borderColor,
       permColor: getComputedStyle(permTrigger).color,
       sandboxColor: getComputedStyle(sandboxTrigger).color,
+      permBorderAlpha: alphaOf(getComputedStyle(permTrigger).borderColor),
+      permBackgroundAlpha: alphaOf(getComputedStyle(permTrigger).backgroundColor),
+      permWeight: Number(getComputedStyle(permTrigger).fontWeight),
     };
     meta.perm = "ask";
     meta.sandbox_mode = "workspace";
@@ -956,6 +965,9 @@ try {
     const pendingRow = pending.querySelector(".agpending-row");
     const pendingPreview = pending.querySelector(".agpending-preview");
     const pendingAction = pending.querySelector(".agpending-row > .btn");
+    const attach = document.getElementById("ag-attach");
+    const reasoningWrap = document.getElementById("ag-reasoning-wrap");
+    const modelWrap = document.querySelector(".agctl-model");
     const result = {
       goalVisible: !goal.hidden,
       goalText: document.getElementById("ag-goal-text").value,
@@ -967,6 +979,15 @@ try {
       sandboxLevels: [defaultPolicy.sandboxLevel, warnedPolicy.sandboxLevel, cautionPolicy.sandboxLevel],
       policyTextColors: [defaultPolicy.permColor, warnedPolicy.permColor, cautionPolicy.permColor],
       sandboxTextColors: [defaultPolicy.sandboxColor, warnedPolicy.sandboxColor, cautionPolicy.sandboxColor],
+      policyControlChromeTransparent: [defaultPolicy, warnedPolicy, cautionPolicy].every((policy) =>
+        policy.permBorderAlpha === 0 && policy.permBackgroundAlpha === 0),
+      policyWeights: [defaultPolicy.permWeight, warnedPolicy.permWeight, cautionPolicy.permWeight],
+      attachChromeTransparent: alphaOf(getComputedStyle(attach).borderColor) === 0
+        && alphaOf(getComputedStyle(attach).backgroundColor) === 0,
+      modelChromeTransparent: alphaOf(getComputedStyle(modelWrap).borderColor) === 0
+        && alphaOf(getComputedStyle(modelWrap).backgroundColor) === 0,
+      reasoningChromeTransparent: alphaOf(getComputedStyle(reasoningWrap).borderColor) === 0
+        && alphaOf(getComputedStyle(reasoningWrap).backgroundColor) === 0,
       policyWrapperNeutral: defaultPolicy.background === warnedPolicy.background
         && defaultPolicy.background === cautionPolicy.background
         && defaultPolicy.border === warnedPolicy.border
@@ -1009,6 +1030,10 @@ try {
       || composerUi.policyTextColors[1] === composerUi.policyTextColors[2]
       || composerUi.sandboxTextColors[0] === composerUi.sandboxTextColors[1]
       || composerUi.sandboxTextColors[1] === composerUi.sandboxTextColors[2]
+      || !composerUi.policyControlChromeTransparent
+      || composerUi.policyWeights[1] < 600 || composerUi.policyWeights[2] < 650
+      || !composerUi.attachChromeTransparent || !composerUi.modelChromeTransparent
+      || !composerUi.reasoningChromeTransparent
       || !composerUi.policyWrapperNeutral
       || !composerUi.selectMenuVisible || composerUi.selectOptions !== 3
       || composerUi.selectSelected !== "需要批准" || composerUi.selectMenuPosition !== "fixed"
