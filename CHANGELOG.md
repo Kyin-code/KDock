@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.34 -->
+## v0.3.34
+
+### 新增
+
+- feat(ui): redesign page-based help and refine agent composer
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.33 -->
 ## v0.3.33
 
