@@ -1,5 +1,13 @@
 # Changelog
 
+<!-- semifold:release version=0.3.35 -->
+## v0.3.35
+
+### 新增
+
+- feat(agent): add inline visualizations and trusted full access
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.34 -->
 ## v0.3.34
 
