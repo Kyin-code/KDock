@@ -263,7 +263,7 @@ pub fn catalog() -> Vec<ToolDef> {
     );
     push(
         "workspace_read",
-        "读文本文件（只读）。相对路径按工作区解析；绝对路径可直接读取，包括工作区外项目。一次可以给 path，或 paths 数组批量读（推荐）。修改仍需 workspace_edit/write，且只能写工作区。",
+        "读文本文件（只读）。相对路径按工作区解析；绝对路径可直接读取，包括工作区外项目。一次可以给 path，或 paths 数组批量读（推荐）。完全访问模式下 workspace_edit/write/mkdir 也可使用工作区外绝对路径。",
         json!({"type":"object","properties":{
             "path":{"type":"string","description":"单个文件；相对工作区或绝对路径"},
             "paths":{"type":"array","items":{"type":"string"},"description":"批量读取多个文件"},
@@ -273,7 +273,7 @@ pub fn catalog() -> Vec<ToolDef> {
     );
     push(
         "workspace_write",
-        "写工作区里的文件（会自动建目录）。一次可以给 path+content，或者给 files 数组批量创建/覆盖多个文件。",
+        "写文件（会自动建目录）。工作区模式只接受工作区内相对路径；完全访问模式允许工作区外绝对路径。一次可以给 path+content，或者给 files 数组批量创建/覆盖多个文件。",
         json!({"type":"object","properties":{
             "path":{"type":"string"},
             "content":{"type":"string"},
@@ -286,15 +286,15 @@ pub fn catalog() -> Vec<ToolDef> {
     );
     push(
         "workspace_mkdir",
-        "在工作区里建目录。",
+        "建目录。工作区模式限制在工作区内；完全访问模式允许工作区外绝对路径。",
         json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
         false,
     );
     push(
         "workspace_edit",
-        "结构化改文件：把 old_text 精确替换成 new_text，返回 unified diff。支持一次给 edits 数组批量改多个位置/文件；old_text 必须唯一（除非 replace_all=true）。",
+        "结构化改文件：把 old_text 精确替换成 new_text，返回 unified diff。工作区模式只接受工作区内路径；完全访问模式允许工作区外绝对路径。支持一次给 edits 数组批量改多个位置/文件；old_text 必须唯一（除非 replace_all=true）。",
         json!({"type":"object","properties":{
-            "path":{"type":"string","description":"单个文件的相对路径（批量时可在每个 edit 里给 path）"},
+            "path":{"type":"string","description":"单个文件路径；工作区模式用相对路径，完全访问模式也可用绝对路径（批量时可在每个 edit 里给 path）"},
             "old_text":{"type":"string","description":"要替换的原文（精确匹配）"},
             "new_text":{"type":"string","description":"替换后的文本，可为空"},
             "replace_all":{"type":"boolean","description":"默认 false；true 才允许替换所有出现"},
@@ -329,22 +329,22 @@ pub fn catalog() -> Vec<ToolDef> {
     );
     push(
         "workspace_run",
-        "在工作区目录里跑本机命令，返回退出码和输出。复杂探测请用 script 一次跑多步 PowerShell，避免“写脚本 + 再运行”占两轮；cmd 与 script 二选一。命令仍然拥有本机权限；需要审批。",
+        "跑本机命令，返回退出码和输出。工作区模式固定在 AppContainer；完全访问模式可把 cwd 指向工作区外绝对路径并使用宿主权限。复杂探测请用 script 一次跑多步 PowerShell；cmd 与 script 二选一。需要审批。",
         json!({"type":"object","properties":{
             "cmd":{"type":"string","description":"单条 cmd /C 命令"},
             "script":{"type":"string","description":"多行脚本；默认 PowerShell，一次调用完成整段探测，工具会临时落盘并在结束后删除"},
             "shell":{"type":"string","enum":["powershell","cmd"],"description":"script 使用的解释器，默认 powershell"},
-            "cwd":{"type":"string","description":"相对工作区的子目录，默认工作区根"},
+            "cwd":{"type":"string","description":"相对工作区的子目录；完全访问模式也可用绝对路径，默认工作区根"},
             "timeout_ms":{"type":"integer","description":"默认 120000"}
         },"anyOf":[{"required":["cmd"]},{"required":["script"]}]}),
         false,
     );
     push(
         "workspace_test",
-        "跑项目测试：自动识别 Cargo.toml / package.json / pytest，也允许显式给 cmd；在工作区目录执行，返回退出码 + 尾部输出。",
+        "跑项目测试：自动识别 Cargo.toml / package.json / pytest，也允许显式给 cmd；完全访问模式可测试工作区外绝对路径项目，返回退出码 + 尾部输出。",
         json!({"type":"object","properties":{
             "cmd":{"type":"string","description":"不填就自动识别"},
-            "cwd":{"type":"string","description":"相对工作区的子目录，默认工作区根"},
+            "cwd":{"type":"string","description":"相对工作区的子目录；完全访问模式也可用绝对路径，默认工作区根"},
             "timeout_ms":{"type":"integer","description":"默认 300000"}
         }}),
         false,
@@ -641,10 +641,10 @@ offset/limit 按**字符**算，默认从 0 读 1200 字；一次读不完就接
     );
     push(
         "web_download",
-        "把 URL 直接下载到当前工作区，流式写盘并返回大小和 SHA-256。安装包、固件、压缩包优先用它，别再用 PowerShell 写下载脚本。",
+        "把 URL 直接下载到文件，流式写盘并返回大小和 SHA-256。工作区模式写工作区；完全访问模式允许工作区外绝对路径。安装包、固件、压缩包优先用它。",
         json!({"type":"object","properties":{
             "url":{"type":"string","description":"http:// 或 https:// 地址"},
-            "path":{"type":"string","description":"相对工作区的目标路径"},
+            "path":{"type":"string","description":"工作区模式用相对路径；完全访问模式也可用绝对路径"},
             "max_mb":{"type":"integer","description":"最大下载大小，默认 256 MB，上限 1024 MB"},
             "sha256":{"type":"string","description":"可选，给定期望的 SHA-256；不匹配会保留 .part 并报错"}
         },"required":["url","path"]}),
@@ -3318,6 +3318,15 @@ fn sandbox_settings(
     }
 }
 
+fn tool_mutation_path(ctx: &ToolCtx, requested: &str) -> Result<std::path::PathBuf, String> {
+    let (mode, _) = sandbox_settings(ctx);
+    store::resolve_tool_path(
+        &ctx.workspace,
+        requested,
+        mode == crate::agent::sandbox::SandboxMode::Trusted,
+    )
+}
+
 fn with_workspace_write_gate<T>(
     ctx: &ToolCtx,
     run: impl FnOnce() -> Result<T, String>,
@@ -3459,7 +3468,7 @@ fn adb_screenshot_text(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let serial = arg_str(args, "serial").ok_or("缺少 serial")?;
     let rel =
         arg_str(args, "save_as").unwrap_or_else(|| format!("adb_shot_{}.png", crate::now_ms()));
-    let path = ws_path(ctx, &rel)?;
+    let path = tool_write_path(ctx, &rel)?;
     let v = crate::android::adb_screenshot(serial, path.to_string_lossy().to_string())?;
     Ok(format!(
         "已截图存到 {}（{} 字节）\n（这是**安卓设备自己的屏幕**；KDock 的「安卓 ADB」页也能直接投屏看）",
@@ -3472,7 +3481,7 @@ fn adb_push_text(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let serial = arg_str(args, "serial").ok_or("缺少 serial")?;
     let local = arg_str(args, "local").ok_or("缺少 local（本机文件）")?;
     let remote = arg_str(args, "remote").ok_or("缺少 remote（设备上的目标路径）")?;
-    let local_abs = ws_path(ctx, &local)?.to_string_lossy().to_string();
+    let local_abs = tool_read_path(ctx, &local)?.to_string_lossy().to_string();
     let v = crate::android::adb_push(serial, local_abs, remote)?;
     Ok(jstr(&v, "text"))
 }
@@ -3486,7 +3495,7 @@ fn adb_pull_text(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| format!("adb_pull_{}", crate::now_ms()))
     });
-    let path = ws_path(ctx, &rel)?;
+    let path = tool_write_path(ctx, &rel)?;
     let v = crate::android::adb_pull(serial, remote, path.to_string_lossy().to_string())?;
     Ok(format!(
         "已取回 {}（{} 字节）\n{}",
@@ -3499,7 +3508,7 @@ fn adb_pull_text(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
 fn adb_install_text(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let serial = arg_str(args, "serial").ok_or("缺少 serial")?;
     let apk = arg_str(args, "apk").ok_or("缺少 apk（本机 APK 路径）")?;
-    let apk_abs = ws_path(ctx, &apk)?.to_string_lossy().to_string();
+    let apk_abs = tool_read_path(ctx, &apk)?.to_string_lossy().to_string();
     let re = args
         .get("reinstall")
         .and_then(|v| v.as_bool())
@@ -3555,24 +3564,12 @@ fn desktop_action(_ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     )
 }
 
-/// 相对工作区的文件名 → 工作区内的绝对路径（也允许直接给工作区里的绝对路径；跑到外面就拒）
-fn ws_path(ctx: &ToolCtx, rel: &str) -> Result<std::path::PathBuf, String> {
-    let p = std::path::Path::new(rel.trim());
-    let joined = if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        ctx.workspace.join(p)
-    };
-    let ws = ctx
-        .workspace
-        .canonicalize()
-        .unwrap_or_else(|_| ctx.workspace.clone());
-    let probe = joined.parent().unwrap_or(&joined);
-    let parent = probe.canonicalize().unwrap_or_else(|_| probe.to_path_buf());
-    if !parent.starts_with(&ws) {
-        return Err(format!("只能写到这个会话的工作区里（{rel} 看着在外面）"));
-    }
-    Ok(joined)
+fn tool_read_path(ctx: &ToolCtx, requested: &str) -> Result<std::path::PathBuf, String> {
+    store::resolve_read_path(&ctx.workspace, requested)
+}
+
+fn tool_write_path(ctx: &ToolCtx, requested: &str) -> Result<std::path::PathBuf, String> {
+    tool_mutation_path(ctx, requested)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3662,7 +3659,7 @@ fn screen_shot(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         .ok_or("缺少 session（screen_open 给的 id）")? as u32;
     screen_owned(ctx, id)?;
     let rel = arg_str(args, "save_as").unwrap_or_else(|| format!("shot_{}.png", crate::now_ms()));
-    let path = ws_path(ctx, &rel)?;
+    let path = tool_write_path(ctx, &rel)?;
     let v = crate::remote_screen::rs_snapshot(id, Some(path.to_string_lossy().to_string()))?;
     Ok(format!(
         "会话 #{}（{}）\nPNG：{}（{} 字节，输出 {}x{}；会话尺寸 {}x{}，帧时间 {}ms 前）\n\n字符画（@ 亮 / 空格 暗，只能看版面，读不了文字）：\n{}",
@@ -3681,7 +3678,7 @@ fn screen_shot(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
 
 fn image_ocr(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let rel = arg_str(args, "path").ok_or("缺少 path")?;
-    let path = ws_path(ctx, &rel)?;
+    let path = tool_read_path(ctx, &rel)?;
     if !path.is_file() {
         return Err(format!("图片不存在：{}", path.display()));
     }
@@ -3696,7 +3693,7 @@ fn screen_ocr(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         .ok_or("缺少 session（screen_open 给的 id）")? as u32;
     screen_owned(ctx, id)?;
     let rel = arg_str(args, "save_as").unwrap_or_else(|| format!("ocr_{}.png", crate::now_ms()));
-    let path = ws_path(ctx, &rel)?;
+    let path = tool_write_path(ctx, &rel)?;
     let v = crate::remote_screen::rs_snapshot(id, Some(path.to_string_lossy().to_string()))?;
     let text = crate::ocr::ocr_image(&path)?;
     Ok(format!(
@@ -4367,7 +4364,7 @@ fn fetch_url_text(url: &str, max: usize) -> Result<String, String> {
 fn web_download(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let url = checked_web_url(&arg_str(args, "url").ok_or("缺少 url")?)?;
     let rel = arg_str(args, "path").ok_or("缺少 path")?;
-    let target = store::resolve_in_workspace(&ctx.workspace, &rel)?;
+    let target = tool_mutation_path(ctx, &rel)?;
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("建目录 {} 失败：{e}", parent.display()))?;
@@ -4535,7 +4532,7 @@ fn workspace_write(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let append = arg_bool(args, "append", false);
     let mut out = Vec::new();
     for (rel, content) in files {
-        let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
+        let path = tool_mutation_path(ctx, &rel)?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
@@ -4560,7 +4557,7 @@ fn workspace_write(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
 
 fn workspace_mkdir(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let rel = arg_str(args, "path").ok_or("缺少 path")?;
-    let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
+    let path = tool_mutation_path(ctx, &rel)?;
     std::fs::create_dir_all(&path).map_err(|e| format!("建目录失败: {e}"))?;
     ctx.state.cache_clear(ctx.session);
     Ok(format!("已建目录 {}", path.display()))
@@ -4647,7 +4644,7 @@ fn workspace_edit(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         std::collections::HashMap::new();
     for (rel, old, new, all) in specs {
         if !files.contains_key(&rel) {
-            let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
+            let path = tool_mutation_path(ctx, &rel)?;
             let text = std::fs::read_to_string(&path).map_err(|e| format!("读不了 {rel}: {e}"))?;
             files.insert(rel.clone(), (text.clone(), text, 0));
         }
@@ -4670,7 +4667,7 @@ fn workspace_edit(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     }
     let mut out = Vec::new();
     for (rel, (before, after, count)) in files {
-        let path = store::resolve_in_workspace(&ctx.workspace, &rel)?;
+        let path = tool_mutation_path(ctx, &rel)?;
         std::fs::write(&path, &after).map_err(|e| format!("写失败: {e}"))?;
         out.push(format!(
             "已改 {}（{} 处）\n{}",
@@ -4800,7 +4797,7 @@ fn workspace_run(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
         return Err("cmd 和 script 只能选一个".into());
     }
     let cwd_rel = arg_str(args, "cwd").unwrap_or_else(|| ".".into());
-    let cwd = store::resolve_in_workspace(&ctx.workspace, &cwd_rel)?;
+    let cwd = tool_mutation_path(ctx, &cwd_rel)?;
     let timeout = arg_u64(args, "timeout_ms", 120_000).min(600_000);
     let mut temp_script: Option<std::path::PathBuf> = None;
     let cmd = if let Some(body) = script {
@@ -4906,7 +4903,7 @@ fn detect_test_cmd(dir: &std::path::Path) -> Option<String> {
 
 fn workspace_test(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
     let cwd_rel = arg_str(args, "cwd").unwrap_or_else(|| ".".into());
-    let cwd = store::resolve_in_workspace(&ctx.workspace, &cwd_rel)?;
+    let cwd = tool_mutation_path(ctx, &cwd_rel)?;
     let cmd = arg_str(args, "cmd")
         .or_else(|| detect_test_cmd(&cwd))
         .ok_or("没识别出测试命令（没有 Cargo.toml / npm test / pytest），请显式给 cmd")?;

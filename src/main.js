@@ -9515,6 +9515,11 @@ function agMdTable(s) {
 
 /** 极简 markdown：代码块 / 表格 / 行内代码 / 粗体。其余按纯文本，绝不直接 innerHTML 模型输出 */
 function agMd(text) {
+  const visuals = [];
+  text = String(text).replace(/```(?:visualize|kdock-viz)\s*\n([\s\S]*?)```/gi, (_m, config) => {
+    const index = visuals.push(config.trim()) - 1;
+    return `\u0000V${index}\u0000`;
+  });
   let s = agEscape(text);
   const blocks = [];
   s = s.replace(/```[a-zA-Z0-9_+-]*\n?([\s\S]*?)```/g, (_m, code) => {
@@ -9525,7 +9530,27 @@ function agMd(text) {
   s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
   s = s.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
   s = s.replace(/\u0000B(\d+)\u0000/g, (_m, i) => "<pre>" + blocks[Number(i)] + "</pre>");
+  s = s.replace(/\u0000V(\d+)\u0000/g, (_m, i) =>
+    `<div class="agvizmount" data-viz="${encodeURIComponent(visuals[Number(i)] || "")}"></div>`);
   return s;
+}
+
+let agVisualImport = null;
+function agDecorateCodeBlocks(root) {
+  if (!root?.querySelector("pre:not([data-copy-ready])")) return;
+  agRailImport ||= import("./agent-rail.js");
+  agRailImport
+    .then(({ decorateCodeBlocks }) => decorateCodeBlocks(root))
+    .catch(() => {});
+}
+
+function agDecorateAssistant(root) {
+  agDecorateCodeBlocks(root);
+  if (!root?.querySelector(".agvizmount")) return;
+  agVisualImport ||= import("./agent-visualize.js");
+  agVisualImport
+    .then(({ renderVisualizations }) => renderVisualizations(root))
+    .catch(() => {});
 }
 
 /** 运行中**不再禁用**输入：这时候发出去 = "补充"，后端排队、在这一轮的下一个步骤并入（和 codex 一样）。
@@ -9689,6 +9714,7 @@ function agMsgNode(kind, text, ev, opts = {}) {
   body.className = "bubble";
   if (kind === "assistant") body.innerHTML = agMd(text);
   else body.textContent = text;
+  if (kind === "assistant") agDecorateAssistant(body);
   if (head.childNodes.length) wrap.appendChild(head);
   wrap.appendChild(body);
   if (kind === "user") {
@@ -11262,7 +11288,10 @@ function agEnsureStreamNode() {
 function agFlushStream() {
   if (!agStreamNode) return;
   const bubble = agStreamNode.querySelector(".bubble");
-  if (bubble) bubble.innerHTML = agMd(agStreamText);
+  if (bubble) {
+    bubble.innerHTML = agMd(agStreamText);
+    agDecorateAssistant(bubble);
+  }
   agScrollTail(false);
 }
 
@@ -13877,7 +13906,9 @@ async function bindAgentEvents() {
     if (agThinkNode) agThinkSettle();      // 正文开始了：把思考块收起来
     agStreamText += p.text || "";
     const node = agEnsureStreamNode();
-    node.querySelector(".bubble").innerHTML = agMd(agStreamText);
+    const bubble = node.querySelector(".bubble");
+    bubble.innerHTML = agMd(agStreamText);
+    agDecorateAssistant(bubble);
     agScrollTail(false);
   });
   await agOn("agent://round", (ev) => {

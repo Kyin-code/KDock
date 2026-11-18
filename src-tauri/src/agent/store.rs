@@ -1895,9 +1895,28 @@ pub fn resolve_in_workspace(root: &Path, rel: &str) -> Result<PathBuf, String> {
     Ok(out)
 }
 
+/// Workspace tools keep their normal boundary. In trusted mode an explicit
+/// absolute path may leave the workspace; relative `..` escapes stay rejected
+/// so a typo cannot silently widen a relative path.
+pub fn resolve_tool_path(
+    root: &Path,
+    requested: &str,
+    allow_outside: bool,
+) -> Result<PathBuf, String> {
+    let requested = requested.trim();
+    if requested.is_empty() {
+        return Err("路径不能为空".into());
+    }
+    let path = PathBuf::from(requested);
+    if allow_outside && path.is_absolute() {
+        return Ok(path);
+    }
+    resolve_in_workspace(root, requested)
+}
+
 /// Read-only file tools may inspect an absolute path anywhere the KDock process
 /// can read. Relative paths keep the workspace boundary, and every mutating
-/// tool must continue to use `resolve_in_workspace`.
+/// workspace-mode tool continues to use `resolve_tool_path`.
 pub fn resolve_read_path(root: &Path, requested: &str) -> Result<PathBuf, String> {
     let requested = requested.trim();
     if requested.is_empty() {
@@ -1984,7 +2003,7 @@ mod tests {
     }
 
     #[test]
-    fn absolute_paths_are_read_only_not_writable_workspace_paths() {
+    fn absolute_paths_are_readable_but_default_write_boundary_rejects_them() {
         let workspace = tmp_dir("read-scope-workspace");
         let outside = tmp_dir("read-scope-outside");
         let file = outside.join("outside.txt");
@@ -2003,6 +2022,31 @@ mod tests {
         assert!(
             resolve_read_path(&workspace, "../outside.txt").is_err(),
             "relative workspace escapes should remain rejected"
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn trusted_tools_can_use_absolute_paths_outside_workspace() {
+        let workspace = tmp_dir("trusted-scope-workspace");
+        let outside = tmp_dir("trusted-scope-outside");
+        let file = outside.join("outside.txt");
+        let absolute = file.to_string_lossy().to_string();
+
+        assert!(
+            resolve_tool_path(&workspace, &absolute, false).is_err(),
+            "workspace mode must reject absolute paths"
+        );
+        assert_eq!(
+            resolve_tool_path(&workspace, &absolute, true).unwrap(),
+            file,
+            "trusted mode should allow explicit absolute paths"
+        );
+        assert!(
+            resolve_tool_path(&workspace, "../outside.txt", true).is_err(),
+            "trusted mode must still reject relative path escapes"
         );
 
         let _ = std::fs::remove_dir_all(&workspace);

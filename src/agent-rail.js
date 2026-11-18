@@ -2,6 +2,64 @@
  * Build the Agent message rail and its hover preview.
  * Kept out of the initial bundle because it is only needed on the Agent page.
  */
+async function copyPlainText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0";
+  document.body.appendChild(area);
+  area.select();
+  const ok = document.execCommand("copy");
+  area.remove();
+  if (!ok) throw new Error("copy failed");
+}
+
+/** Add compact copy controls to fenced code and command blocks. */
+export function decorateCodeBlocks(root) {
+  if (!root) return;
+  for (const pre of root.querySelectorAll("pre:not([data-copy-ready])")) {
+    pre.dataset.copyReady = "1";
+    const wrap = document.createElement("div");
+    wrap.className = "agcodewrap";
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "agcodecopy";
+    button.dataset.en = "Copy";
+    button.dataset.enTitle = "Copy code";
+    const english = document.documentElement.dataset.lang === "en";
+    button.textContent = english ? "Copy" : "复制";
+    button.title = english ? "Copy code" : "复制代码";
+    button.setAttribute("aria-label", button.title);
+    button.onclick = async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        await copyPlainText(pre.textContent || "");
+        button.classList.add("copied");
+        button.textContent = document.documentElement.dataset.lang === "en" ? "Copied" : "已复制";
+        button.title = document.documentElement.dataset.lang === "en" ? "Copied" : "已复制";
+      } catch (_) {
+        button.classList.add("failed");
+        button.textContent = document.documentElement.dataset.lang === "en" ? "Failed" : "失败";
+      }
+      setTimeout(() => {
+        if (!button.isConnected) return;
+        button.classList.remove("copied", "failed");
+        const isEnglish = document.documentElement.dataset.lang === "en";
+        button.textContent = isEnglish ? "Copy" : "复制";
+        button.title = isEnglish ? "Copy code" : "复制代码";
+      }, 1200);
+    };
+    wrap.appendChild(button);
+  }
+}
+
 export function buildAgentRail({ rail, box, users, userEvents }) {
   const host = rail.parentElement;
   if (!host) return;

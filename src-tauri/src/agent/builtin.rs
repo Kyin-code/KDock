@@ -68,7 +68,21 @@ pub static BLOCKS: &[Block] = &[
                · 尽量一次工具调用覆盖一个阶段：workspace_read(paths=[...]) 批量读、workspace_write(files=[...]) 批量写、\n\
                workspace_edit(edits=[...]) 批量改、workspace_context 一次拿目录+搜索+文件、workspace_check 一次做 diff+测试；\n\
                这些工具比 local_run 里手写 grep/sed/git diff 更安全，也少烧模型轮次；\n\
-               注意只有读取工具可访问绝对路径，write/edit/mkdir/run/test 仍限制在工作区内。",
+               工作区模式可用绝对路径读取，但 write/edit/mkdir/run/test 固定在当前工作区；\n\
+               完全访问模式下 write/edit/mkdir 可直接用工作区外绝对路径，run/test 的 cwd 也可用绝对路径。",
+    },
+    Block {
+        id: "visualize",
+        note: "消息内图表：用受控 visualize JSON 输出折线、柱状、散点、饼图等",
+        body: "当数据用图表比长表格更容易判断，或用户明确要求可视化时，在最终回复里输出：\n\
+               ```visualize\n\
+               {\"type\":\"line\",\"title\":\"标题\",\"x\":[\"A\",\"B\",\"C\"],\"series\":[{\"name\":\"序列 A\",\"values\":[1,3,2]},{\"name\":\"序列 B\",\"values\":[2,4,3]}],\"y_label\":\"耗时\",\"y_unit\":\"ms\"}\n\
+               ```\n\
+               type 支持 line / area / bar / barh / scatter / pie / donut / sparkline。\n\
+               barh 使用第一组 values 和 x 标签；pie/donut 把第一组 values 作为各扇区。\n\
+               scatter 可给 series[].points=[{\"x\":1,\"y\":2}]，也可给 values 并用 x 标签。\n\
+               title/subtitle/x_label/y_label/y_unit/height 均可选。数据要精简并保留单位和关键标签。\n\
+               visualize 块会由 KDock 原生渲染；不要输出任意 HTML、CSS、JavaScript 或 CDN 地址。",
     },
     Block {
         id: "context-hygiene",

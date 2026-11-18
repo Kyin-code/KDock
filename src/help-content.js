@@ -130,14 +130,14 @@ export const HELP_GROUPS = [
       {
         id: "help-agent-workspace",
         title: "工作区与会话",
-        zh: "### 用途\n工作区是 Agent 读写文件和保存技能/指导的根目录；会话保存对话与工具历史。\n### 操作\n- 点 Agent 行右侧的文件夹+新建工作区。\n- 工作区树可以切换当前目录；历史会话可以重命名或删除。\n- 子 Agent 会显示在父会话下方，带 SUB 标记、运行状态和独立任务摘要。\n- 有子任务运行时，标题栏出现「子任务 N」，可以一次停止当前父会话的全部子任务。\n### 联动\n- workspace_* 工具只能在工作区内按相对路径操作。\n- 多个 Agent 的写文件和命令执行会串行化；调查和只读操作仍可并行。\n- 工作区里的 AGENTS.md 会作为项目级指导注入。\n- 运行结构分析可以读取工作区里的 ELF/BIN。",
-        en: "### Purpose\nA workspace is the Agent's file root for files, skills and guidance; sessions store conversation and tool history.\n### Usage\n- Use the folder+ button beside Agent to create a workspace.\n- Switch workspaces from the tree; rename or delete old sessions.\n- Subagents appear below their parent with a SUB badge, run state and task summary.\n- While child tasks are running, the header shows Subagents N and can stop all children of the current parent.\n### Relationships\n- workspace_* tools use relative paths inside the active workspace.\n- File writes and command execution are serialized across Agents, while investigation and reads remain parallel.\n- AGENTS.md in the workspace is injected as project guidance.\n- Runtime graph can analyze ELF/BIN files from the workspace."
+        zh: "### 用途\n工作区是 Agent 读写文件和保存技能/指导的根目录；会话保存对话与工具历史。\n### 操作\n- 点 Agent 行右侧的文件夹+新建工作区。\n- 工作区树可以切换当前目录；历史会话可以重命名或删除。\n- 子 Agent 会显示在父会话下方，带 SUB 标记、运行状态和独立任务摘要。\n- 有子任务运行时，标题栏出现「子任务 N」，可以一次停止当前父会话的全部子任务。\n### 联动\n- 工作区模式：workspace_* 工具用相对路径，读写和命令都限制在当前工作区。\n- 完全访问模式：读取始终可用绝对路径；write/edit/mkdir 可写工作区外绝对路径，run/test 的 cwd 也可指向工作区外。\n- 多个 Agent 的写文件和命令执行会串行化；调查和只读操作仍可并行。\n- 工作区里的 AGENTS.md 会作为项目级指导注入。\n- 运行结构分析可以读取工作区里的 ELF/BIN。",
+        en: "### Purpose\nA workspace is the Agent's file root for files, skills and guidance; sessions store conversation and tool history.\n### Usage\n- Use the folder+ button beside Agent to create a workspace.\n- Switch workspaces from the tree; rename or delete old sessions.\n- Subagents appear below their parent with a SUB badge, run state and task summary.\n- While child tasks are running, the header shows Subagents N and can stop all children of the current parent.\n### Relationships\n- Workspace mode: workspace_* tools use relative paths and keep reads, writes and commands inside the active workspace.\n- Full access: reads accept absolute paths; write/edit/mkdir can use absolute paths outside the workspace, and run/test cwd may target another folder.\n- File writes and command execution are serialized across Agents, while investigation and reads remain parallel.\n- AGENTS.md in the workspace is injected as project guidance.\n- Runtime graph can analyze ELF/BIN files from the workspace."
       },
       {
         id: "help-agent-sandbox",
         title: "命令沙箱",
-        zh: "### 三种边界\n- 工作区：Windows AppContainer 启动本机命令，默认没有 InternetClient 网络能力；只对工作区和 KDock 工具目录授予 ACL。\n- 工作区+网络：同样隔离文件，但显式授予网络能力。\n- 完全访问：明确使用当前用户和整台机器的权限，只用于必须访问全机的工具链。\n### 进程限制\n每个命令使用独立 Job Object，限制 64 个进程和单进程 4 GiB 内存；超时、停止或父进程退出会杀掉整棵进程树。\n### 注意\n完全访问不会提供文件/网络隔离；需要隔离时不要切过去。",
-        en: "### Three boundaries\n- Workspace: starts host commands in a Windows AppContainer without InternetClient capability by default; ACLs are granted only to the workspace and KDock tool directories.\n- Workspace + network: the same file isolation with an explicit network capability.\n- Full access: explicitly runs with the current user's full-machine permissions, only for toolchains that require it.\n### Process limits\nEach command gets its own Job Object with 64-process and 4 GiB per-process limits; timeout, stop or parent exit kills the whole process tree.\n### Note\nFull access provides no file or network isolation."
+        zh: "### 三种边界\n- 工作区：Windows AppContainer 启动本机命令，默认没有 InternetClient 网络能力；只对工作区和 KDock 工具目录授予 ACL。\n- 工作区+网络：同样隔离文件，但显式授予网络能力。\n- 完全访问：明确使用当前用户和整台机器的权限；文件写改、建目录及命令 cwd 都可使用工作区外绝对路径。\n### 进程限制\n每个命令使用独立 Job Object，限制 64 个进程和单进程 4 GiB 内存；超时、停止或父进程退出会杀掉整棵进程树。\n### 注意\n完全访问不会提供文件/网络隔离；需要隔离时不要切过去。",
+        en: "### Three boundaries\n- Workspace: starts host commands in a Windows AppContainer without InternetClient capability by default; ACLs are granted only to the workspace and KDock tool directories.\n- Workspace + network: the same file isolation with an explicit network capability.\n- Full access: uses the current user's full-machine permissions; file write/edit/mkdir and command cwd may use absolute paths outside the workspace.\n### Process limits\nEach command gets its own Job Object with 64-process and 4 GiB per-process limits; timeout, stop or parent exit kills the whole process tree.\n### Note\nFull access provides no file or network isolation."
       },
       {
         id: "help-agent-tool-discovery",
@@ -162,6 +162,12 @@ export const HELP_GROUPS = [
         title: "上下文成分",
         zh: "### 用途\n拆解系统提示、工具定义、技能、历史对话、工具结果和摘要各占多少 token。\n### 怎么判断\n- 输入预算是模型上下文减去最大输出；自动摘要和单次请求裁剪都在输入预算的 80% 触发。\n- 工具定义很大时，在设置 → 工具关闭不用的分类。\n- 历史过长时，压缩会提炼摘要；原始记录仍可用 history_search 回查。\n### 诊断\n- 压缩、跳过和每次请求裁剪的原因记录在 Agent 数据目录的 logs/context.jsonl，也可以在设置 → 数据位置里查看。\n### 联动\n- 工具开关按会话冻结，新会话才应用。\n- 技能正文按需读取；只有常驻技能会每轮进入提示。",
         en: "### Purpose\nBreak down context usage across system prompt, tool schemas, skills, history, tool results and summaries.\n### How to use it\n- Input budget is the model context minus reserved output; automatic summaries and per-request trimming trigger at 80% of that budget.\n- If tool schemas dominate, disable unused tool categories in Settings → Tools.\n- Long history is compacted into a summary; history_search can still find original details.\n### Diagnostics\n- Compaction, skip and request-trim reasons are written to logs/context.jsonl under the Agent data directory, also listed in Settings → Data locations.\n### Relationships\n- Tool switches are frozen per session and apply to new sessions.\n- Skill bodies are loaded on demand; only always-on skills enter every turn."
+      },
+      {
+        id: "help-agent-visualize",
+        title: "消息内图表",
+        zh: "### 用途\n当趋势、分布或对比用图表更容易判断时，Agent 可以直接在回复里嵌入图表。\n### 输出格式\n使用 `visualize` 代码块，内容是一个 JSON 对象：\n```visualize\n{\"type\":\"line\",\"title\":\"耗时\",\"x\":[\"A\",\"B\",\"C\"],\"series\":[{\"name\":\"优化前\",\"values\":[120,100,90]},{\"name\":\"优化后\",\"values\":[90,75,62]}],\"y_unit\":\"ms\"}\n```\n### 支持类型\n- line / area：折线、面积趋势。\n- bar / barh：纵向、横向柱状对比。\n- scatter：散点关系。\n- pie / donut：占比。\n- sparkline：紧凑趋势。\n### 注意\n图表由 KDock 原生渲染，只接受受限 JSON，不执行回复里的任意 HTML、CSS 或 JavaScript。历史消息和流式回复都可以显示。",
+        en: "### Purpose\nWhen trends, distributions or comparisons are easier to judge visually, the Agent can embed a chart directly in its reply.\n### Format\nUse a `visualize` code block containing one JSON object:\n```visualize\n{\"type\":\"line\",\"title\":\"Latency\",\"x\":[\"A\",\"B\",\"C\"],\"series\":[{\"name\":\"Before\",\"values\":[120,100,90]},{\"name\":\"After\",\"values\":[90,75,62]}],\"y_unit\":\"ms\"}\n```\n### Types\n- line / area: trends.\n- bar / barh: vertical or horizontal comparisons.\n- scatter: relationships between points.\n- pie / donut: proportions.\n- sparkline: compact trends.\n### Note\nKDock renders charts natively from restricted JSON. It never executes arbitrary HTML, CSS or JavaScript from the reply. Historical and streaming messages are both supported."
       },
       {
         id: "help-agent-skills",
@@ -824,6 +830,7 @@ export const HELP_TITLE_EN = {
   "工作区与会话": "Workspaces and sessions",
   "Agent 信息": "Agent info",
   "上下文成分": "Context breakdown",
+  "消息内图表": "In-message charts",
   "技能": "Skills",
   "MCP 服务": "MCP servers",
   "工具、权限与审批": "Tools, permissions and approvals",

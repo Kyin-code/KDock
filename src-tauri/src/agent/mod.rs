@@ -1548,6 +1548,16 @@ fn state_note(
             "禁止（命令和 web_fetch / web_download / browser_* 均不可用）"
         }
     ));
+    if mode == sandbox::SandboxMode::Trusted {
+        parts.push(
+            "完全访问：write/edit/mkdir 可使用工作区外绝对路径；run/test 的 cwd 也可指向工作区外"
+                .to_string(),
+        );
+    }
+    parts.push(
+        "消息图表=可用（用 ```visualize JSON```；支持 line/area/bar/barh/scatter/pie/donut/sparkline）"
+            .to_string(),
+    );
     if !goal.trim().is_empty() {
         parts.push(format!("目标={}", goal.trim()));
     }

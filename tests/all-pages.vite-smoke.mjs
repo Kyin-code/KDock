@@ -670,6 +670,164 @@ try {
   if (!turnVisual.finalMeta.includes("本轮用时")) {
     throw new Error(`Final turn metadata lacks elapsed time: ${JSON.stringify(turnVisual)}`);
   }
+  const codeCopyFixture = await page.evaluate(async () => {
+    const chat = document.getElementById("ag-chat");
+    chat.innerHTML = "";
+    const message = document.createElement("div");
+    message.className = "agmsg assistant";
+    message.innerHTML = `<div class="bubble"><pre>cd /d D:\\work\nbuild.bat</pre><pre>Expand-Archive -Path demo.zip</pre></div>`;
+    chat.appendChild(message);
+    const { decorateCodeBlocks } = await import("/src/agent-rail.js");
+    decorateCodeBlocks(message.querySelector(".bubble"));
+    window.__copiedCode = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text) => window.__copiedCode.push(text) },
+    });
+    const buttons = [...message.querySelectorAll(".agcodecopy")];
+    const rect = buttons[0].getBoundingClientRect();
+    return {
+      wrappers: message.querySelectorAll(".agcodewrap").length,
+      buttons: buttons.length,
+      firstCode: message.querySelector("pre")?.textContent || "",
+      firstButton: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+    };
+  });
+  await page.mouse.move(codeCopyFixture.firstButton.x, codeCopyFixture.firstButton.y);
+  await page.waitForTimeout(220);
+  const codeCopyState = await page.evaluate(() => {
+    const button = document.querySelector("#ag-chat .agcodecopy");
+    const bubble = button?.closest(".bubble");
+    return {
+      opacity: button ? getComputedStyle(button).opacity : "",
+      label: button?.textContent || "",
+      firstCode: bubble?.querySelector("pre")?.textContent || "",
+    };
+  });
+  await page.locator("#ag-chat .agcodecopy").first().click();
+  await page.waitForTimeout(30);
+  const codeCopyResult = await page.evaluate(() => {
+    const button = document.querySelector("#ag-chat .agcodecopy");
+    const result = {
+      copiedText: window.__copiedCode?.[0] || "",
+      label: button?.textContent || "",
+      copiedClass: !!button?.classList.contains("copied"),
+    };
+    document.getElementById("ag-chat").innerHTML = "";
+    return result;
+  });
+  if (codeCopyFixture.wrappers !== 2 || codeCopyFixture.buttons !== 2
+      || !codeCopyFixture.firstCode.includes("build.bat")
+      || codeCopyState.opacity !== "1" || codeCopyState.label !== "复制"
+      || codeCopyState.firstCode !== codeCopyFixture.firstCode
+      || !codeCopyResult.copiedText.includes("build.bat")
+      || codeCopyResult.label !== "已复制" || !codeCopyResult.copiedClass) {
+    throw new Error(`Agent code copy regression: ${JSON.stringify({
+      codeCopyFixture,
+      codeCopyState,
+      codeCopyResult,
+    })}`);
+  }
+  const visualizeState = await page.evaluate(async () => {
+    const chat = document.getElementById("ag-chat");
+    chat.innerHTML = "";
+    document.documentElement.dataset.theme = "dark";
+    const root = document.createElement("div");
+    const line = {
+      type: "line",
+      title: "<img src=x onerror=alert(1)>CPU",
+      x: ["0s", "1s", "2s", "3s"],
+      series: [
+        { name: "Core 0", values: [22, 45, 31, 58] },
+        { name: "Core 1", values: [18, 36, 42, 49] },
+      ],
+      y_label: "Load",
+      y_unit: "%",
+    };
+    const bar = { type: "bar", title: "Memory", x: ["A", "B", "C"], values: [12, 28, 19] };
+    const pie = { type: "donut", title: "Budget", x: ["Firmware", "App", "Cache"], values: [40, 35, 25] };
+    root.innerHTML = [line, bar, pie].map((item) =>
+      `<div class="agvizmount" data-viz="${encodeURIComponent(JSON.stringify(item))}"></div>`).join("")
+      + `<div class="agvizmount" data-viz="${encodeURIComponent("{bad json")}"></div>`;
+    const message = document.createElement("div");
+    message.className = "agmsg assistant";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.appendChild(root);
+    message.appendChild(bubble);
+    chat.appendChild(message);
+    const { renderVisualizations } = await import("/src/agent-visualize.js");
+    renderVisualizations(root);
+    const charts = [...root.querySelectorAll(".agvizmount")];
+    const darkStroke = charts[0].querySelector(".agviz-line")?.getAttribute("stroke") || "";
+    const yTicks = [...charts[0].querySelectorAll("text.agviz-tick")]
+      .map((node) => node.textContent)
+      .filter((text) => /^\d/.test(text));
+    document.documentElement.dataset.theme = "light";
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    return {
+      charts: charts.length,
+      svgs: root.querySelectorAll("svg").length,
+      linePaths: charts[0].querySelectorAll(".agviz-line").length,
+      bars: charts[1].querySelectorAll("rect.agviz-mark").length,
+      pieSlices: charts[2].querySelectorAll("path.agviz-mark").length,
+      legends: root.querySelectorAll(".agviz-legend").length,
+      error: charts[3].querySelector(".agviz-error")?.textContent || "",
+      title: charts[0].querySelector(".agviz-head strong")?.textContent || "",
+      injectedImages: root.querySelectorAll("img").length,
+      darkStroke,
+      lightStroke: charts[0].querySelector(".agviz-line")?.getAttribute("stroke") || "",
+      mountWidth: Math.round(charts[0].getBoundingClientRect().width),
+      bubbleWidth: Math.round(bubble.getBoundingClientRect().width),
+      yTicks,
+      overflow: root.scrollWidth - root.clientWidth,
+    };
+  });
+  if (visualizeState.charts !== 4 || visualizeState.svgs !== 3
+      || visualizeState.linePaths !== 2 || visualizeState.bars !== 3
+      || visualizeState.pieSlices !== 3 || visualizeState.legends < 2
+      || !visualizeState.error.includes("JSON")
+      || !visualizeState.title.includes("<img")
+      || visualizeState.injectedImages !== 0
+      || !visualizeState.darkStroke || visualizeState.darkStroke === visualizeState.lightStroke
+      || visualizeState.mountWidth < 400 || Math.abs(visualizeState.mountWidth - visualizeState.bubbleWidth) > 24
+      || visualizeState.yTicks.some((tick) => tick.includes("."))
+      || visualizeState.overflow > 2) {
+    throw new Error(`Agent visualize chart regression: ${JSON.stringify(visualizeState)}`);
+  }
+  await page.evaluate(() => {
+    document.getElementById("ag-chat").innerHTML = "";
+    document.documentElement.dataset.theme = "dark";
+  });
+  const railCentering = await page.evaluate(() => {
+    const box = document.getElementById("ag-box").getBoundingClientRect();
+    const rail = document.getElementById("ag-rail");
+    rail.innerHTML = "";
+    for (let i = 0; i < 3; i++) {
+      const tick = document.createElement("button");
+      tick.className = "tick";
+      rail.appendChild(tick);
+    }
+    const railRect = rail.getBoundingClientRect();
+    const first = rail.firstElementChild.getBoundingClientRect();
+    const last = rail.lastElementChild.getBoundingClientRect();
+    return {
+      railCenterOffset: Math.round(
+        (railRect.top + railRect.height / 2) - (box.top + box.height / 2),
+      ),
+      ticksCenterOffset: Math.round(
+        (first.top + last.bottom) / 2 - (railRect.top + railRect.height / 2),
+      ),
+      railHeight: Math.round(railRect.height),
+      tickCount: rail.children.length,
+    };
+  });
+  if (Math.abs(railCentering.railCenterOffset) > 1
+      || Math.abs(railCentering.ticksCenterOffset) > 1
+      || railCentering.railHeight >= 150
+      || railCentering.tickCount !== 3) {
+    throw new Error(`Agent message rail is not centered for short histories: ${JSON.stringify(railCentering)}`);
+  }
   const railScroll = await page.evaluate(() => {
     window.__showAllPagesPage("agent");
     const rail = document.getElementById("ag-rail");
@@ -1154,6 +1312,10 @@ try {
     agentParamScrollAnchor,
     agentVisual,
     turnVisual,
+    codeCopyState,
+    codeCopyResult,
+    visualizeState,
+    railCentering,
     railScroll,
     railHover,
     railPreview: { ...previewState, stayedOpen: previewStayedOpen, closed: previewClosed },
