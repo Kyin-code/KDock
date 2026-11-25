@@ -2048,6 +2048,23 @@ impl AppState {
 
 // ── reader 线程 ───────────────────────────────────────────────
 
+/// Split stream reads into newline-delimited blocks, while datagram transports
+/// (UDP) preserve each read as its own record even when the payload has no `\n`.
+fn take_read_records(stream_like: bool, pending: &mut Vec<u8>, chunk: &[u8]) -> Vec<Vec<u8>> {
+    if !stream_like {
+        return if chunk.is_empty() {
+            Vec::new()
+        } else {
+            vec![chunk.to_vec()]
+        };
+    }
+    pending.extend_from_slice(chunk);
+    let Some(pos) = pending.iter().rposition(|&b| b == b'\n') else {
+        return Vec::new();
+    };
+    vec![pending.drain(..=pos).collect()]
+}
+
 fn start_reader(
     app: AppHandle,
     st: Arc<AppState>,
@@ -2088,9 +2105,9 @@ fn start_reader(
         // ── 行装配 ─────────────────────────────────────────────────────
         // 一次 read() 常常只回来小半行；而且设备回显很慢(实测长命令每 1.6s 才补一段)。
         // 所以分两种事件：
-        //   link://data —— 已经结束的**整行**(落到会话日志、可保存/回放)
-        //   link://tail —— 还没等到换行的**半行**，界面就地把它"长出来"，
-        //                  不再切成一截一截的新行（这是用户看到的"一行被劈开"的根因）
+        //   link://data —— 流式传输里已结束的整行，或 UDP 的一个完整数据报
+        //                  (落到会话日志、可保存/回放)
+        //   link://tail —— 仅流式传输里还没等到换行的半行，界面就地把它"长出来"
         const FLUSH_IDLE: std::time::Duration = std::time::Duration::from_millis(60);
         const MAX_PENDING: usize = 16384;
 
@@ -2163,10 +2180,8 @@ fn start_reader(
                         state.char_counts.lock().expect("chars mutex").1 +=
                             String::from_utf8_lossy(&buf[..n]).chars().count() as u64;
                     }
-                    pending.extend_from_slice(&buf[..n]);
                     last_rx = std::time::Instant::now();
-                    if let Some(pos) = pending.iter().rposition(|&b| b == b'\n') {
-                        let block: Vec<u8> = pending.drain(..=pos).collect();
+                    for block in take_read_records(stream_like, &mut pending, &buf[..n]) {
                         log_lines(&app, &block, last_rx_ts);
                         let _ = app.emit("link://tail", "");   // 整行已落库，尾巴清空
                     }
@@ -3672,7 +3687,7 @@ fn hsl_to_rgb(h: f64, s: f64, l: f64) -> tauri::window::Color {
 
 #[cfg(test)]
 mod tests {
-    use super::hsl_to_rgb;
+    use super::{hsl_to_rgb, take_read_records};
 
     /// 这两个值直接对应 splash.html 的底色：暗色 = hsl(205 24% 10%)（抓图实测就是 #131B20）、
     /// 亮色 = CSS 里写死的 hsl(220 43% 97%)。改了配色表就容易把这两处改脱钩，钉住。
@@ -3685,6 +3700,31 @@ mod tests {
         // 换个色相也要跟着走（森林绿：hsl(128 24% 10%)）
         let forest = hsl_to_rgb(128.0, 24.0, 10.0);
         assert!(forest.1 > forest.0 && forest.1 > forest.2);
+    }
+
+    #[test]
+    fn udp_reads_stay_separate_without_newlines() {
+        let mut pending = Vec::new();
+        assert_eq!(
+            take_read_records(false, &mut pending, b"A0000028D000"),
+            vec![b"A0000028D000".to_vec()]
+        );
+        assert_eq!(
+            take_read_records(false, &mut pending, b"A0000028D001"),
+            vec![b"A0000028D001".to_vec()]
+        );
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn stream_reads_wait_for_newline_and_keep_the_tail() {
+        let mut pending = Vec::new();
+        assert!(take_read_records(true, &mut pending, b"partial").is_empty());
+        assert_eq!(
+            take_read_records(true, &mut pending, b" line\nnext"),
+            vec![b"partial line\n".to_vec()]
+        );
+        assert_eq!(pending, b"next");
     }
 }
 
