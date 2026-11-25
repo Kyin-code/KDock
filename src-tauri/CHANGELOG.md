@@ -1,5 +1,17 @@
 # Changelog
 
+<!-- semifold:release version=0.3.36 -->
+## v0.3.36
+
+### 修复
+
+- fix(transport): frame UDP replies per datagram
+
+### Dependencies
+
+- Update kdock-core to 0.3.36.
+<!-- semifold:release:end -->
+
 <!-- semifold:release version=0.3.35 -->
 ## v0.3.35
 
